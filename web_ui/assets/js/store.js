@@ -1,48 +1,50 @@
-/**
- * 状态管理器 (Pub/Sub 模式)
- * 职责：管理应用级状态，解耦组件间通信。
- */
 export default class Store {
     constructor() {
         this.state = {
-            currentView: 'console', // 默认视图
-            config: {
-                modelName: '',
-                apiKey: '',
-                systemPrompt: '你是一个得力的 AI 助手。',
-                enableStream: true
-            },
-            isConnected: false // 设备连接状态
+            mode: 'console', // 'console' 或 'chat'
+            currentConsoleView: 'welcome', // 控制台侧边栏激活的视图
+            theme: localStorage.getItem('tidebot_theme') || 'light', // 'light' 或 'dark'
+            appConnect: {
+                apiAddress: null,
+                apiKey: null
+            }
         };
         this.listeners = {};
     }
 
-    // 订阅事件
     subscribe(event, callback) {
-        if (!this.listeners[event]) {
-            this.listeners[event] = [];
-        }
+        if (!this.listeners[event]) this.listeners[event] = [];
         this.listeners[event].push(callback);
     }
 
-    // 发布事件
     emit(event, data) {
         if (this.listeners[event]) {
             this.listeners[event].forEach(callback => callback(data));
         }
     }
 
-    // 更新配置
-    updateConfig(key, value) {
-        this.state.config[key] = value;
-        this.emit('configUpdated', this.state.config);
+    setMode(mode) {
+        if (this.state.mode !== mode) {
+            this.state.mode = mode;
+            this.emit('modeChanged', mode);
+        }
     }
 
-    // 切换视图
-    setView(viewName) {
-        if (this.state.currentView !== viewName) {
-            this.state.currentView = viewName;
-            this.emit('viewChanged', viewName);
+    setConsoleView(view) {
+        if (this.state.currentConsoleView !== view) {
+            this.state.currentConsoleView = view;
+            this.emit('consoleViewChanged', view);
         }
+    }
+
+    toggleTheme() {
+        this.state.theme = this.state.theme === 'light' ? 'dark' : 'light';
+        localStorage.setItem('tidebot_theme', this.state.theme);
+        this.emit('themeChanged', this.state.theme);
+    }
+
+    updateAppConnect(key, value) {
+        this.state.appConnect[key] = value;
+        this.emit('appConnectUpdated', this.state.appConnect);
     }
 }
