@@ -1,231 +1,139 @@
-/* ==================== CSS 变量 (iOS 风格) ==================== */
 :root {
-    --bg-color: #f5f5f7;        /* 苹果经典灰底 */
-    --card-bg: rgba(255, 255, 255, 0.8);
-    --card-border: rgba(0, 0, 0, 0.05);
-    --primary: #007aff;         /* iOS 蓝 */
-    --primary-hover: #0066d6;
-    --success: #34c759;         /* iOS 绿 */
+    /* 日间模式 (Apple 轻质感) */
+    --bg-color: #f5f5f7;
+    --header-bg: rgba(255, 255, 255, 0.7);
+    --card-bg: #ffffff;
     --text-main: #1d1d1f;
     --text-muted: #86868b;
-    --radius-lg: 16px;
-    --radius-md: 10px;
+    --border-color: rgba(0, 0, 0, 0.08);
+    --primary: #007aff;
+    --primary-hover: #0066d6;
+    --segment-bg: #e3e3e8;
     --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.08);
-    --sidebar-width: 260px;
-    --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-/* ==================== 基础重置与布局 ==================== */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box; /* 彻底解决溢出屏幕问题 */
+body.theme-dark {
+    /* 夜间模式 (Telegram / macOS 暗黑) */
+    --bg-color: #121212;
+    --header-bg: rgba(28, 28, 30, 0.7);
+    --card-bg: #1c1c1e;
+    --text-main: #f5f5f7;
+    --text-muted: #98989d;
+    --border-color: rgba(255, 255, 255, 0.1);
+    --segment-bg: #3a3a3c;
+    --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, sans-serif;
     background-color: var(--bg-color);
     color: var(--text-main);
-    line-height: 1.5;
-    overflow-x: hidden;
-}
-
-#app {
-    display: flex;
-    height: 100vh;
-    width: 100vw;
+    transition: background-color 0.4s ease, color 0.4s ease;
     overflow: hidden;
 }
 
-/* ==================== 侧边栏 ==================== */
-#sidebar {
-    width: var(--sidebar-width);
-    background: var(--card-bg);
+/* --- 全局 Header --- */
+#global-header {
+    height: 60px;
+    background: var(--header-bg);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border-right: 1px solid var(--card-border);
-    display: flex;
-    flex-direction: column;
-    z-index: 100;
-    transition: var(--transition);
+    border-bottom: 1px solid var(--border-color);
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 24px; position: fixed; top: 0; width: 100%; z-index: 100;
 }
+#brand-title { font-size: 20px; font-weight: 600; }
+#brand-title .subtitle { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+.header-right { display: flex; align-items: center; gap: 16px; }
 
-.sidebar-header {
-    padding: 32px 24px 16px;
-}
-.sidebar-header h2 {
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.5px;
-}
-
-.nav-links {
-    list-style: none;
-    padding: 0 12px;
-}
-
-.nav-links li { margin-bottom: 4px; }
-
-.nav-links a {
-    display: block;
-    padding: 10px 16px;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-radius: var(--radius-md);
-    font-size: 15px;
-    font-weight: 500;
-    transition: var(--transition);
-}
-
-.nav-links a:hover {
-    background: rgba(0, 0, 0, 0.03);
-    color: var(--text-main);
-}
-
-.nav-links a.active {
-    background: var(--primary);
-    color: #fff;
-}
-
-/* ==================== 主内容区 ==================== */
-#main-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 40px;
-    position: relative;
-}
-
-#view-container {
-    max-width: 800px; /* 限制阅读宽度，避免满屏太挤或太空 */
-    margin: 0 auto;
-    animation: fadeIn 0.4s ease-out;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* ==================== 移动端适配 (核心修复) ==================== */
-#mobile-header {
-    display: none;
-    height: 56px;
-    background: var(--card-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--card-border);
-    align-items: center;
-    padding: 0 16px;
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    z-index: 99;
-}
-#menu-toggle {
-    background: none; border: none; cursor: pointer;
-    color: var(--text-main); display: flex; align-items: center;
-}
-.mobile-title {
-    margin-left: 16px; font-weight: 600; font-size: 17px;
-}
-
-@media (max-width: 768px) {
-    #app { flex-direction: column; }
-    #mobile-header { display: flex; }
-    #sidebar {
-        position: fixed;
-        left: calc(var(--sidebar-width) * -1);
-        top: 56px;
-        height: calc(100vh - 56px);
-        border-right: none;
-        box-shadow: var(--shadow-md);
-    }
-    #sidebar.open { left: 0; }
-    #main-content {
-        padding: 76px 20px 40px; /* 给固定 Header 留出空间 */
-    }
-}
-
-/* ==================== 通用组件 UI (卡片, 表单, 按钮) ==================== */
-.view-header {
-    margin-bottom: 24px;
-}
-.view-header h1 {
-    font-size: 28px; font-weight: 600; letter-spacing: -0.5px;
-}
-.view-header p {
-    color: var(--text-muted); margin-top: 4px; font-size: 15px;
-}
-
-.card {
-    background: #fff;
-    border-radius: var(--radius-lg);
-    padding: 24px;
-    box-shadow: var(--shadow-sm);
-    margin-bottom: 24px;
-    border: 1px solid var(--card-border);
-}
-
-.form-group {
-    margin-bottom: 20px;
-}
-.form-group label {
-    display: block; font-size: 14px; font-weight: 500;
-    margin-bottom: 8px; color: var(--text-main);
-}
-.form-control {
-    width: 100%;
-    padding: 12px 16px;
-    border: 1px solid #d2d2d7;
-    border-radius: var(--radius-md);
-    font-size: 15px;
-    font-family: inherit;
-    transition: var(--transition);
-    background: #fff;
-}
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
-}
-textarea.form-control { resize: vertical; min-height: 100px; }
-
+/* 按钮交互设计 (带回弹) */
 .btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 12px 24px; border: none; border-radius: var(--radius-md);
-    font-size: 15px; font-weight: 500; cursor: pointer;
-    transition: var(--transition);
+    padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 500;
+    cursor: pointer; border: none; transition: transform 0.15s ease, background 0.2s;
 }
-.btn-primary {
-    background: var(--primary); color: #fff;
-}
-.btn-primary:hover { background: var(--primary-hover); }
+.btn:active { transform: scale(0.94); }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-ghost { background: transparent; color: var(--text-main); border: 1px solid var(--border-color); }
+.btn-ghost:hover { background: var(--border-color); }
 
-/* iOS 风格开关 */
-.switch-wrapper {
-    display: flex; align-items: center; justify-content: space-between;
+.icon-btn {
+    background: transparent; border: none; color: var(--text-main);
+    cursor: pointer; padding: 8px; border-radius: 50%; display: flex;
+    transition: transform 0.15s ease, background 0.2s;
 }
-.switch {
-    position: relative; display: inline-block;
-    width: 50px; height: 30px;
-}
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-    position: absolute; cursor: pointer;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-color: #e9e9ea; transition: .3s; border-radius: 30px;
-}
-.slider:before {
-    position: absolute; content: "";
-    height: 26px; width: 26px; left: 2px; bottom: 2px;
-    background-color: white; transition: .3s; border-radius: 50%;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-input:checked + .slider { background-color: var(--success); }
-input:checked + .slider:before { transform: translateX(20px); }
+.icon-btn:hover { background: var(--border-color); }
+.icon-btn:active { transform: scale(0.9); }
 
-/* 空状态 (Empty State) */
-.empty-state {
-    text-align: center; padding: 40px 20px;
-    color: var(--text-muted);
+/* iOS 分段控制器 */
+.segmented-control {
+    display: flex; background: var(--segment-bg); padding: 3px;
+    border-radius: 10px; position: relative;
+}
+.segment-item {
+    padding: 6px 16px; font-size: 13px; font-weight: 500; cursor: pointer;
+    z-index: 2; color: var(--text-muted); transition: color 0.3s;
+}
+.segment-item.active { color: var(--text-main); }
+.segment-indicator {
+    position: absolute; top: 3px; bottom: 3px; left: 3px; width: 50%;
+    background: var(--card-bg); border-radius: 7px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    z-index: 1;
+}
+
+/* --- 工作区布局 --- */
+#workspace {
+    display: flex; height: 100vh; padding-top: 60px;
+}
+
+/* 侧边栏 */
+#sidebar {
+    width: 240px; background: transparent; border-right: 1px solid var(--border-color);
+    overflow-y: auto; padding: 16px 12px; transition: width 0.3s ease, opacity 0.3s ease;
+}
+#sidebar.hidden { width: 0; opacity: 0; padding: 0; border: none; overflow: hidden; }
+
+.nav-links { list-style: none; }
+.nav-links li { margin-bottom: 2px; }
+.nav-links a {
+    display: block; padding: 10px 14px; color: var(--text-main);
+    text-decoration: none; border-radius: 8px; font-size: 14px;
+    transition: background 0.2s;
+}
+.nav-links a:hover { background: var(--border-color); }
+.nav-links a.active { background: var(--primary); color: #fff; font-weight: 500; }
+
+/* 主内容区 */
+#main-content {
+    flex: 1; overflow-y: auto; padding: 32px 40px; position: relative;
+    background: var(--bg-color); transition: background-color 0.4s ease;
+}
+#view-container { max-width: 900px; margin: 0 auto; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 卡片与表单 */
+.card { background: var(--card-bg); border-radius: 16px; padding: 24px; box-shadow: var(--shadow-sm); margin-bottom: 24px; border: 1px solid var(--border-color); }
+.card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+.input-group { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+.input-field {
+    flex: 1; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border-color);
+    background: var(--bg-color); color: var(--text-main); font-family: monospace; font-size: 14px;
+}
+
+/* Chat 沉浸式视图 */
+.chat-wrapper {
+    display: flex; flex-direction: column; height: calc(100vh - 124px);
+    max-width: 800px; margin: 0 auto;
+}
+.chat-messages { flex: 1; overflow-y: auto; padding: 20px 0; }
+.chat-input-area {
+    padding: 16px; background: var(--card-bg); border-radius: 24px;
+    border: 1px solid var(--border-color); box-shadow: var(--shadow-sm);
+    display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+}
+.chat-input-area input {
+    flex: 1; border: none; background: transparent; font-size: 15px;
+    color: var(--text-main); outline: none; padding: 8px;
 }
