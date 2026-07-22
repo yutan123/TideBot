@@ -1,8 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from core.config_manager import ConfigManager
 import logging
+import os
 
 # 导入路由模块
 from server.route_web import router as web_router
@@ -48,27 +51,32 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ---------------- 新增：处理根路径和图标请求 ----------------
-    
-    @app.get("/", tags=["System"])
-    async def root_path():
-        """根路径路由，友好的系统运行状态提示"""
-        return {
-            "message": "欢迎来到 TideBot API！核心引擎正在运行中 🌊",
-            "docs_url": "/docs",
-            "tip": "请访问 http://127.0.0.1:8000/docs 查看完整的 Swagger API 文档"
-        }
+    # 注册 Backend API 路由组
+    app.include_router(web_router)
+    app.include_router(app_router)
+
+    # ---------------- 挂载前端控制台 UI 静态资源 ----------------
+    # 获取 web_ui 文件夹的绝对路径
+    web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
+
+    if os.path.exists(web_ui_path):
+        # 1. 挂载静态资源（如 CSS, JS 文件），访问路径映射为 /static/...
+        app.mount("/static", StaticFiles(directory=web_ui_path), name="static")
+
+        # 2. 根路径直接返回 index.html 页面
+        @app.get("/", tags=["Frontend Console"])
+        async def render_web_console():
+            index_file = os.path.join(web_ui_path, "index.html")
+            if os.path.exists(index_file):
+                return FileResponse(index_file)
+            return {"error": "index.html 未在 web_ui 目录中找到"}
+    else:
+        logger.warning(f"⚠️ 未找到前端目录: {web_ui_path}，控制台页面将无法访问。")
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():
-        """静默处理浏览器自动请求的 favicon 图标，避免后台报 404 警告"""
+        """静默处理浏览器自动请求的 favicon 图标"""
         return {}
-        
-    # ----------------------------------------------------------
-
-    # 注册路由组
-    app.include_router(web_router)
-    app.include_router(app_router)
 
     return app
 
