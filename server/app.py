@@ -61,14 +61,14 @@ def create_app() -> FastAPI:
     # 获取当前 app.py 的绝对路径所在的目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # 动态智能寻找 webui 目录 (统一使用你的结构名 webui，去掉下划线)
+    # 动态智能寻找 webui 目录 (统一使用你的结构名 web_ui，去掉下划线)
     # 兼容 app.py 在项目根目录 或 在 server/ 目录下的两种情况
-    if os.path.exists(os.path.join(current_dir, "webui")):
-        webui_path = os.path.join(current_dir, "webui")
+    if os.path.exists(os.path.join(current_dir, "web_ui")):
+        web_ui_path = os.path.join(current_dir, "web_ui")
     else:
-        webui_path = os.path.join(os.path.dirname(current_dir), "webui")
+        web_ui_path = os.path.join(os.path.dirname(current_dir), "web_ui")
 
-    assets_path = os.path.join(webui_path, "assets")
+    assets_path = os.path.join(web_ui_path, "assets")
 
     # 1. 挂载 /assets 静态资源路径
     if os.path.exists(assets_path):
