@@ -3,42 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TideBot Console</title>
-    <!-- 使用现代无衬线字体 -->
+    <title>TideBot</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
+    <link rel="stylesheet" href="./assets/css/style.css">
 </head>
 <body>
     <div id="app">
-        <!-- 移动端顶部导航 (桌面端隐藏) -->
-        <header id="mobile-header">
-            <button id="menu-toggle" aria-label="Menu">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-            </button>
-            <span class="mobile-title">TideBot</span>
+        <!-- 全局顶部控制栏 -->
+        <header id="global-header">
+            <div class="header-left">
+                <h1 id="brand-title">TideBot <span class="subtitle">控制台</span></h1>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-ghost" id="btn-connect-app">连接 APP</button>
+                <button class="icon-btn" id="btn-theme-toggle" aria-label="Toggle Theme">
+                    <!-- 默认为太阳图标 (由JS控制切换) -->
+                    <svg id="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                </button>
+                <!-- 大模式分段控制器 -->
+                <div class="segmented-control">
+                    <div class="segment-item active" data-mode="console">控制台</div>
+                    <div class="segment-item" data-mode="chat">Chat</div>
+                    <div class="segment-indicator"></div>
+                </div>
+            </div>
         </header>
 
-        <!-- 侧边栏 -->
-        <nav id="sidebar">
-            <div class="sidebar-header">
-                <h2>TideBot</h2>
-            </div>
-            <ul class="nav-links">
-                <li><a href="#" data-view="console" class="active">核心配置</a></li>
-                <li><a href="#" data-view="chat">对话测试</a></li>
-                <li><a href="#" data-view="connect">终端连接</a></li>
-            </ul>
-        </nav>
+        <div id="workspace">
+            <!-- 侧边栏 (Chat 模式下隐藏) -->
+            <nav id="sidebar">
+                <ul class="nav-links">
+                    <li><a href="#" data-view="welcome" class="active">欢迎</a></li>
+                    <li><a href="#" data-view="basic-settings">普通设置</a></li>
+                    <li><a href="#" data-view="advanced-settings">高级设置</a></li>
+                    <li><a href="#" data-view="model-providers">模型提供商</a></li>
+                    <li><a href="#" data-view="platform-adapters">平台适配器</a></li>
+                    <li><a href="#" data-view="bots">机器人</a></li>
+                    <li><a href="#" data-view="personas">人格设定</a></li>
+                    <li><a href="#" data-view="plugin-market">插件市场</a></li>
+                    <li><a href="#" data-view="plugin-list">插件列表</a></li>
+                    <li><a href="#" data-view="dashboard">数据大盘</a></li>
+                    <li><a href="#" data-view="skills">Skills</a></li>
+                </ul>
+            </nav>
 
-        <!-- 主内容容器 -->
-        <main id="main-content">
-            <div id="view-container">
-                <!-- JS 会将各个 View 渲染到这里 -->
-            </div>
-        </main>
+            <!-- 动态视图渲染区 -->
+            <main id="main-content">
+                <div id="view-container"></div>
+            </main>
+        </div>
     </div>
 
-    <!-- ES6 模块入口 -->
-    <script type="module" src="assets/js/app.js"></script>
+    <script type="module" src="./assets/js/app.js"></script>
 </body>
 </html>
