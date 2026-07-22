@@ -1,73 +1,44 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TideBot 控制台</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        ios: {
-                            blue: '#007AFF',
-                            green: '#34C759',
-                            indigo: '#5856D6',
-                            orange: '#FF9500',
-                            red: '#FF3B30',
-                            teal: '#30B0C7',
-                            yellow: '#FFCC00',
-                            gray: '#8E8E93',
-                            bgLight: '#F2F2F7',
-                            cardLight: 'rgba(255, 255, 255, 0.75)',
-                            bgDark: '#0B0F19',
-                            cardDark: 'rgba(30, 41, 59, 0.70)'
-                        }
-                    },
-                    boxShadow: {
-                        'glass-sm': '0 4px 16px 0 rgba(31, 38, 135, 0.07)',
-                        'glass-md': '0 8px 32px 0 rgba(0, 0, 0, 0.12)',
-                        'glass-lg': '0 12px 48px 0 rgba(0, 0, 0, 0.18)',
-                        'ios-active': '0 6px 20px -2px rgba(0, 122, 255, 0.4)'
-                    }
-                }
-            }
-        }
-    </script>
-    <!-- Vue 3 CDN -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TideBot Console</title>
+    <!-- 使用现代无衬线字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
-<body class="bg-ios-bgLight dark:bg-ios-bgDark text-slate-800 dark:text-slate-100 transition-colors duration-500 min-h-screen font-sans antialiased selection:bg-ios-blue selection:text-white">
-    <div id="app" class="flex flex-col h-screen overflow-hidden">
-        <!-- Top Navbar -->
-        <navbar-component></navbar-component>
+<body>
+    <div id="app">
+        <!-- 移动端顶部导航 (桌面端隐藏) -->
+        <header id="mobile-header">
+            <button id="menu-toggle" aria-label="Menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </button>
+            <span class="mobile-title">TideBot</span>
+        </header>
 
-        <!-- Main Content Router Area -->
-        <main class="flex-1 overflow-hidden relative">
-            <transition name="fade-slide" mode="out-in">
-                <console-view v-if="store.currentMode === 'console' && store.currentView === 'main'"></console-view>
-                <chat-view v-else-if="store.currentMode === 'chat' && store.currentView === 'main'"></chat-view>
-                <app-connect-view v-else-if="store.currentView === 'app-connect'"></app-connect-view>
-            </transition>
+        <!-- 侧边栏 -->
+        <nav id="sidebar">
+            <div class="sidebar-header">
+                <h2>TideBot</h2>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" data-view="console" class="active">核心配置</a></li>
+                <li><a href="#" data-view="chat">对话测试</a></li>
+                <li><a href="#" data-view="connect">终端连接</a></li>
+            </ul>
+        </nav>
+
+        <!-- 主内容容器 -->
+        <main id="main-content">
+            <div id="view-container">
+                <!-- JS 会将各个 View 渲染到这里 -->
+            </div>
         </main>
-
-        <!-- Global Custom Modal & Toast System -->
-        <modal-component></modal-component>
     </div>
 
-    <!-- Application Scripts -->
-    <script src="assets/js/store.js"></script>
-    <script src="assets/js/components/Navbar.js"></script>
-    <script src="assets/js/components/ConsoleView.js"></script>
-    <script src="assets/js/components/ChatView.js"></script>
-    <script src="assets/js/components/AppConnectView.js"></script>
-    <script src="assets/js/components/Modal.js"></script>
-    <script src="assets/js/app.js"></script>
+    <!-- ES6 模块入口 -->
+    <script type="module" src="assets/js/app.js"></script>
 </body>
 </html>
