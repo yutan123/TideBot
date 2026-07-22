@@ -48,6 +48,24 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # ---------------- 新增：处理根路径和图标请求 ----------------
+    
+    @app.get("/", tags=["System"])
+    async def root_path():
+        """根路径路由，友好的系统运行状态提示"""
+        return {
+            "message": "欢迎来到 TideBot API！核心引擎正在运行中 🌊",
+            "docs_url": "/docs",
+            "tip": "请访问 http://127.0.0.1:8000/docs 查看完整的 Swagger API 文档"
+        }
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        """静默处理浏览器自动请求的 favicon 图标，避免后台报 404 警告"""
+        return {}
+        
+    # ----------------------------------------------------------
+
     # 注册路由组
     app.include_router(web_router)
     app.include_router(app_router)
