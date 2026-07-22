@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     )
 
     # 配置 CORS 中间件，允许跨域访问
+    # 读取配置，保留了你原有的逻辑
     cors_origins = config.config.get("server", {}).get("cors_origins", ["*"])
     app.add_middleware(
         CORSMiddleware,
@@ -55,27 +56,34 @@ def create_app() -> FastAPI:
     app.include_router(web_router)
     app.include_router(app_router)
 
-    # ---------------- 挂载前端控制台 UI 静态资源 ----------------
-    # 获取项目根目录及 web_ui 路径
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    web_ui_path = os.path.join(base_dir, "web_ui")
-    assets_path = os.path.join(web_ui_path, "assets")
+    # ---------------- 修复区：挂载前端控制台 UI 静态资源 ----------------
+    
+    # 获取当前 app.py 的绝对路径所在的目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 动态智能寻找 webui 目录 (统一使用你的结构名 webui，去掉下划线)
+    # 兼容 app.py 在项目根目录 或 在 server/ 目录下的两种情况
+    if os.path.exists(os.path.join(current_dir, "webui")):
+        webui_path = os.path.join(current_dir, "webui")
+    else:
+        webui_path = os.path.join(os.path.dirname(current_dir), "webui")
 
-    # 1. 挂载 /assets 静态资源路径（精准匹配 index.html 中的 assets/ 路径）
+    assets_path = os.path.join(webui_path, "assets")
+
+    # 1. 挂载 /assets 静态资源路径
     if os.path.exists(assets_path):
         app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
-    elif os.path.exists(web_ui_path):
-        app.mount("/assets", StaticFiles(directory=web_ui_path), name="assets")
+        logger.info(f"✅ 成功挂载静态资源目录: {assets_path}")
     else:
-        logger.warning(f"⚠️ 未找到前端静态资源目录，控制台可能无法加载。")
+        logger.error(f"❌ 严重错误: 未找到静态资源目录 {assets_path}。请检查路径！")
 
     # 2. 根路径直接返回 index.html 页面
     @app.get("/", tags=["Frontend Console"])
     async def render_web_console():
-        index_file = os.path.join(web_ui_path, "index.html")
+        index_file = os.path.join(webui_path, "index.html")
         if os.path.exists(index_file):
             return FileResponse(index_file)
-        return {"error": "index.html 未在 web_ui 目录中找到"}
+        return {"error": f"index.html 未找到，请检查 {webui_path} 目录。"}
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():
