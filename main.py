@@ -1,16 +1,13 @@
-import asyncio
 import sys
 import logging
-
-# 假设核心引导程序存在于 core/bootstrap.py 中
-from core.bootstrap import main as bootstrap_main
+from core.bootstrap import start_server
 
 def start():
-    """TideBot 启动入口函数"""
-    print("🌊 正在启动 TideBot AI Agent 核心引擎...")
+    """TideBot 统一一键启动入口"""
+    print("🌊 正在启动 TideBot AI Agent 全栈引擎...")
     try:
-        # 运行核心层定义好的异步引导生命周期
-        asyncio.run(bootstrap_main())
+        # 直接启动内置 Web 服务与核心引擎
+        start_server()
     except KeyboardInterrupt:
         print("\n[TideBot] 收到退出信号 (Ctrl+C)，正在安全关闭服务...")
         sys.exit(0)
