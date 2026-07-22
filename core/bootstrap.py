@@ -1,4 +1,5 @@
 import logging
+import uvicorn
 from .config_manager import ConfigManager
 from .logger import setup_logger
 from .event_bus import EventBus
@@ -25,30 +26,25 @@ async def initialize_system():
     logger.info("✔ 事件总线 (EventBus) 初始化成功。")
 
     # 4. 数据库初始化 (预留位置给 core/database/connection.py)
-    # await init_db_connection(config_manager.env.database_url)
     logger.info("✔ 数据库连接模块就绪。")
 
     # 5. 加载能力中心与插件 (预留位置给 core/capabilities/)
-    # await capability_registry.initialize()
     logger.info("✔ 能力注册中心就绪。")
 
     logger.info("TideBot 核心启动序列执行完毕。")
 
-async def main():
+def start_server():
     """
-    核心启动挂载点，由外层的 main.py 唤起。
+    统一 Web API 与核心引擎的一体化启动入口
     """
-    await initialize_system()
-    
-    # 正常运行中，这里会启动 FastAPI/Uvicorn 服务或保持事件循环活跃
-    # 此处使用占位阻塞，保证基础服务不会立刻退出
-    import asyncio
-    logger = logging.getLogger("TideBot")
-    logger.info("主事件循环已启动，等待外部连接...")
-    
-    try:
-        # 维持异步事件循环不退出
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        logger.info("收到中止信号，退出事件循环。")
+    config_manager = ConfigManager()
+    host = config_manager.config.get("server", {}).get("host", "0.0.0.0")
+    port = config_manager.config.get("server", {}).get("port", 8000)
+
+    # 启动 Uvicorn Web 服务器，加载 server.app 应用对象
+    uvicorn.run(
+        "server.app:app",
+        host=host,
+        port=port,
+        reload=False
+    )
