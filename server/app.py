@@ -56,22 +56,26 @@ def create_app() -> FastAPI:
     app.include_router(app_router)
 
     # ---------------- 挂载前端控制台 UI 静态资源 ----------------
-    # 获取 web_ui 文件夹的绝对路径
-    web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
+    # 获取项目根目录及 web_ui 路径
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    web_ui_path = os.path.join(base_dir, "web_ui")
+    assets_path = os.path.join(web_ui_path, "assets")
 
-    if os.path.exists(web_ui_path):
-        # 1. 挂载静态资源（如 CSS, JS 文件），访问路径映射为 /static/...
-        app.mount("/static", StaticFiles(directory=web_ui_path), name="static")
-
-        # 2. 根路径直接返回 index.html 页面
-        @app.get("/", tags=["Frontend Console"])
-        async def render_web_console():
-            index_file = os.path.join(web_ui_path, "index.html")
-            if os.path.exists(index_file):
-                return FileResponse(index_file)
-            return {"error": "index.html 未在 web_ui 目录中找到"}
+    # 1. 挂载 /assets 静态资源路径（精准匹配 index.html 中的 assets/ 路径）
+    if os.path.exists(assets_path):
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+    elif os.path.exists(web_ui_path):
+        app.mount("/assets", StaticFiles(directory=web_ui_path), name="assets")
     else:
-        logger.warning(f"⚠️ 未找到前端目录: {web_ui_path}，控制台页面将无法访问。")
+        logger.warning(f"⚠️ 未找到前端静态资源目录，控制台可能无法加载。")
+
+    # 2. 根路径直接返回 index.html 页面
+    @app.get("/", tags=["Frontend Console"])
+    async def render_web_console():
+        index_file = os.path.join(web_ui_path, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        return {"error": "index.html 未在 web_ui 目录中找到"}
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():
