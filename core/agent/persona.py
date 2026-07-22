@@ -1,3 +1,5 @@
+# 导入 typing 模块中的 Dict 类型，解决 NameError 报错
+from typing import Dict
 from core.config_manager import ConfigManager
 
 class PersonaBuilder:
