@@ -41,10 +41,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # ⚠️ 必须先挂载 API 路由，以防被 Catch-All 拦截
     app.include_router(web_router)
     app.include_router(app_router)
 
-    # ---------------- 核心修复：静态资源挂载 ----------------
+    # ---------------- 核心修复：SPA 静态资源与路由挂载 ----------------
     
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -56,25 +57,41 @@ def create_app() -> FastAPI:
 
     assets_path = os.path.join(web_ui_path, "assets")
 
-    # FastAPI 的 StaticFiles 如果目录不存在会直接抛出 RuntimeError 导致 500 错误
-    # 这里增加严格的路径存在性校验
+    # 1. 挂载 Vite 打包生成的 /assets 静态资源目录
     if os.path.exists(assets_path):
         app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
         logger.info(f"✅ 成功挂载前端静态资源: {assets_path}")
     else:
-        logger.error(f"❌ 静态目录不存在，跳过挂载: {assets_path}")
+        logger.error(f"❌ 静态目录不存在，跳过挂载: {assets_path} (请确认前端是否已执行 build)")
 
-    @app.get("/", tags=["Frontend Console"])
-    async def render_web_console():
-        index_file = os.path.join(web_ui_path, "index.html")
-        if os.path.exists(index_file):
-            return FileResponse(index_file)
-        # 返回 404 状态码而不是触发 500 异常
-        return JSONResponse(status_code=404, content={"error": f"前端入口文件未找到: {index_file}"})
+    # 2. 挂载前端的根目录零散静态文件 (如 vite.svg)
+    @app.get("/vite.svg", include_in_schema=False)
+    async def vite_svg():
+        svg_file = os.path.join(web_ui_path, "vite.svg")
+        if os.path.exists(svg_file):
+            return FileResponse(svg_file)
+        return JSONResponse(status_code=404, content={})
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():
-        return {}
+        favicon_file = os.path.join(web_ui_path, "favicon.ico")
+        if os.path.exists(favicon_file):
+            return FileResponse(favicon_file)
+        return JSONResponse(status_code=404, content={})
+
+    # 3. Catch-All 路由：Vue Router History 模式核心
+    # 只要不是以上明确声明的后端 API 或静态文件，一律返回 index.html 扔给前端解析
+    @app.get("/{catchall:path}", tags=["Frontend Console"])
+    async def render_web_console(catchall: str):
+        index_file = os.path.join(web_ui_path, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        
+        # 依然找不到，说明开发者忘记打包了
+        return JSONResponse(
+            status_code=404, 
+            content={"error": f"前端入口文件未找到，请在前端目录执行 npm run build。预期路径: {index_file}"}
+        )
 
     return app
 
