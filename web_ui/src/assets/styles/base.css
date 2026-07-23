@@ -1,1 +1,35 @@
+/* 基础重置与排版 */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent; /* 去除移动端点击蓝光 */
+}
 
+html, body {
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-main);
+  transition: background-color 0.4s var(--ease-out), color 0.4s var(--ease-out);
+  overflow: hidden; /* 防止全局滚动，滚动交给内部容器 */
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* 隐藏 Webkit 滚动条，保持界面极致干净 */
+::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}

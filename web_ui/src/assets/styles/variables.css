@@ -1,0 +1,42 @@
+/* 核心设计系统：iOS & Telegram 融合色彩与质感 */
+:root {
+  /* ================= 浅色主题 (Day Mode) ================= */
+  --bg-base: #f0f2f5;           /* 类似 Telegram macOS 的冷灰底色 */
+  --text-main: #1c1c1e;         /* iOS 经典黑 */
+  --text-secondary: #8e8e93;    /* iOS 经典灰 */
+  
+  /* 毛玻璃系统 (Glassmorphism) */
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.6);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0,0,0,0.02);
+  
+  /* 品牌与强调色 */
+  --primary: #007aff;           /* iOS 蓝 */
+  --primary-hover: #0062cc;
+  --switch-bg: #e9e9ea;         /* iOS 未激活开关色 */
+  
+  /* 圆角系统 (iOS 风的核心) */
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --radius-pill: 9999px;
+  
+  /* 动效曲线 (丝滑弹性) */
+  --spring: cubic-bezier(0.175, 0.885, 0.32, 1.15);
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ================= 深色主题 (Night Mode) ================= */
+html.dark {
+  --bg-base: #000000;           /* 纯黑背景，OLED 更省电深邃 */
+  --text-main: #ffffff;
+  --text-secondary: #ebebf5;    
+  
+  --glass-bg: rgba(28, 28, 30, 0.75);  /* iOS 深色 Modal 质感 */
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(255,255,255,0.05);
+  
+  --primary: #0a84ff;
+  --primary-hover: #409cff;
+  --switch-bg: #39393d;
+}
