@@ -1,0 +1,51 @@
+name: tide_bot
+description: TideBot - 本地化沉浸式多模态 AI 伴侣 APP
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  
+  # 本地存储与极密底座
+  sqflite: ^2.3.0
+  shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.0.0
+  path_provider: ^2.1.1
+  
+  # 网络与底层通信
+  http: ^1.1.0
+  
+  # UI 特效与多模态交互
+  flutter_svg: ^2.0.9 # 全局 SVG 渲染，拒绝 Emoji
+  rive: ^0.12.0 # 预留后期高帧率交互图标
+  record: ^5.0.5 # 流式录音
+  audioplayers: ^5.2.1 # TTS 语音播放
+  heic_to_jpg: ^0.2.0 # HEIC 图片格式适配
+  image_picker: ^1.0.4 # 图片选择
+  file_picker: ^6.1.1 # 文档上传
+  
+  # 后台守护与保活
+  flutter_background_service: ^3.2.1
+  flutter_local_notifications: ^17.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
+    - assets/images/
+  fonts:
+    - family: TideFont
+      fonts:
+        - asset: assets/fonts/TideFont-Regular.ttf
+        - asset: assets/fonts/TideFont-Bold.ttf
+          weight: 700
