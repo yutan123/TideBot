@@ -1,5 +1,5 @@
-name: tide_bot
-description: TideBot - 本地化沉浸式多模态 AI 伴侣 APP
+name: TideBot
+description: TideBot AI
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -30,7 +30,7 @@ dependencies:
   file_picker: ^6.1.1 # 文档上传
   
   # 后台守护与保活
-  flutter_background_service: ^3.2.1
+  flutter_background_service: ^5.1.0
   flutter_local_notifications: ^17.0.0
 
 dev_dependencies:
