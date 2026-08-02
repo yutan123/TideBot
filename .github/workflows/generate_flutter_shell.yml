@@ -28,15 +28,16 @@ jobs:
         # 强制指定 project-name 为 tide_bot，防止它抓取带大写的仓库名报错
         flutter create --platforms android --org com.example.tidebot --project-name tide_bot .
 
-        - name: 🛠️ 5. 覆盖应用你自定义的 Android 文件
+    - name: 🛠️ 5. 覆盖应用你自定义的 Android 文件
       run: |
-        mkdir -p android/app/src/main/kotlin/com/example/tidebot/tide_bot/
+        mkdir -p android/app/src/main/kotlin/com/example/tidebot/
         mkdir -p android/app/src/main/res/xml/
         mkdir -p android/app/src/main/res/values/
         
+        # 将你暂存的 custom_android 覆盖进标准目录
         if [ -d "custom_android" ]; then
           cp -f custom_android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
-          cp -f custom_android/MainActivity.kt android/app/src/main/kotlin/com/example/tidebot/tide_bot/MainActivity.kt || true
+          cp -f custom_android/MainActivity.kt android/app/src/main/kotlin/com/example/tidebot/MainActivity.kt || true
           cp -f custom_android/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml || true
           cp -f custom_android/strings.xml android/app/src/main/res/values/strings.xml || true
         fi
