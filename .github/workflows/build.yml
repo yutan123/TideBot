@@ -1,7 +1,7 @@
 name: Build TideBot APK
 
 on:
-  workflow_dispatch: # 支持手动点击编译
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,28 +23,18 @@ jobs:
         flutter-version: '3.22.0'
         channel: 'stable'
 
-    - name: 📦 4. 拉取所有依赖库
-      run: flutter pub get
-
-    - name: 🔧 5. 自动修复 NDK 与陈旧插件(heic_to_jpg)的冲突
+    - name: 📦 4. 注入 NDK 并拉取依赖
       run: |
-        # 1. 自动定位并在 app/build.gradle 中注入系统要求的 NDK 版本
-        sed -i '/android {/a \    ndkVersion "25.1.8937393"' android/app/build.gradle
-        
-        # 2. 全盘搜索并暴力破解 heic_to_jpg 插件，强行将其陈旧的 Kotlin 版本升级为 1.8.22，防闪退
-        HEIC_GRADLE_PATH=$(find /home/runner -path "*/heic_to_jpg*/android/build.gradle" 2>/dev/null | head -n 1)
-        if [ -n "$HEIC_GRADLE_PATH" ]; then
-          echo "找到陈旧插件配置，正在执行强行升级替换: $HEIC_GRADLE_PATH"
-          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.8.22"/g' "$HEIC_GRADLE_PATH"
-          sed -i 's/compileSdkVersion .*/compileSdkVersion 34/g' "$HEIC_GRADLE_PATH"
-        else
-          echo "未找到 heic_to_jpg 配置文件，继续编译..."
-        fi
+        # 优雅解决云端缺失 NDK 的系统报错
+        mkdir -p android
+        echo "flutter.ndkVersion=25.1.8937393" >> android/local.properties
+        sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "25.1.8937393"/g' android/app/build.gradle || true
+        flutter pub get
 
-    - name: 🚀 6. 编译打包 APK
+    - name: 🚀 5. 编译打包 APK
       run: flutter build apk --release
 
-    - name: 📤 7. 提取并上传安装包
+    - name: 📤 6. 提取并上传安装包
       uses: actions/upload-artifact@v4
       with:
         name: TideBot-Release-APK
