@@ -1,0 +1,48 @@
+name: Build TideBot APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 1. 拉取完整代码
+      uses: actions/checkout@v4
+
+    - name: ☕ 2. 配置 Java 17 编译环境
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: 🐦 3. 配置 Flutter 引擎
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.22.0'
+        channel: 'stable'
+
+    - name: 📁 4. 补全资源空目录 (防 Git 吞噬)
+      run: |
+        mkdir -p assets/icons/
+        mkdir -p assets/images/
+        mkdir -p assets/fonts/
+        touch assets/icons/.gitkeep
+        touch assets/images/.gitkeep
+
+    - name: 📦 5. 注入 NDK 并拉取依赖
+      run: |
+        mkdir -p android
+        echo "flutter.ndkVersion=25.1.8937393" >> android/local.properties
+        sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "25.1.8937393"/g' android/app/build.gradle || true
+        flutter pub get
+
+    - name: 🚀 6. 编译打包 APK
+      run: flutter build apk --release
+
+    - name: 📤 7. 提取并上传安装包
+      uses: actions/upload-artifact@v4
+      with:
+        name: TideBot-Release-APK
+        path: build/app/outputs/flutter-apk/app-release.apk
