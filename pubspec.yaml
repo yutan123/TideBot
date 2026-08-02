@@ -25,11 +25,11 @@ dependencies:
   rive: ^0.13.0
   record: ^5.1.2
   audioplayers: ^5.2.1
-  heic_to_jpg: ^0.2.0
+  heif_converter: ^1.0.7  # 已替换为现代化的 HEIC/HEIF 转换引擎
   image_picker: ^1.1.2
   file_picker: ^8.0.5
 
-  # 后台守护与保活 (已精准升级至匹配 Flutter 3.22 的要求)
+  # 后台守护与保活
   flutter_background_service: ^5.1.0
   flutter_local_notifications: ^17.1.2
 
