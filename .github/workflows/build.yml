@@ -1,1 +1,56 @@
+name: Build TideBot APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # 允许你在网页上手动点击编译
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 1. 拉取你的代码
+      uses: actions/checkout@v4
+
+    - name: ☕ 2. 配置 Java 编译环境
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: 🐦 3. 配置 Flutter 环境
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.22.0'
+        channel: 'stable'
+
+    - name: 🏗️ 4. 自动生成缺失的原生壳子文件
+      run: |
+        # 这一步会自动补齐 android/ 目录下的所有 Gradle 配置，且不会破坏你的 lib 目录
+        flutter create --platforms android --org com.example.tidebot .
+
+    - name: 🛠️ 5. 覆盖你定制的 Android 原生文件
+      run: |
+        # 建立对应的深层目录
+        mkdir -p android/app/src/main/kotlin/com/example/tidebot/
+        mkdir -p android/app/src/main/res/xml/
+        mkdir -p android/app/src/main/res/values/
+        
+        # 将 custom_android 里的文件强行替换进刚刚生成的壳子里
+        cp custom_android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+        cp custom_android/MainActivity.kt android/app/src/main/kotlin/com/example/tidebot/MainActivity.kt
+        cp custom_android/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml
+        cp custom_android/strings.xml android/app/src/main/res/values/strings.xml
+
+    - name: 📦 6. 获取依赖并打包 APK
+      run: |
+        flutter pub get
+        flutter build apk --release
+
+    - name: 🚀 7. 提取生成的 APK 供手机下载
+      uses: actions/upload-artifact@v4
+      with:
+        name: TideBot-Release-APK
+        path: build/app/outputs/flutter-apk/app-release.apk
 
