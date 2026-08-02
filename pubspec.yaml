@@ -23,9 +23,9 @@ dependencies:
   # UI 特效与多模态交互
   flutter_svg: ^2.0.10
   rive: ^0.13.0
-  record: ^5.1.2
+  record: ^4.4.4 # 退回到绝对稳定的 4.x 版本，避开官方 5.x 版本的内部接口冲突
   audioplayers: ^5.2.1
-  heif_converter: ^1.0.7  # 已替换为现代化的 HEIC/HEIF 转换引擎
+  heif_converter: ^1.0.7
   image_picker: ^1.1.2
   file_picker: ^8.0.5
 
