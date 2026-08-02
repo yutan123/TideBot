@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">允许 TideBot 进行屏幕内容读取与代理操控，以实现强大的数字生命助理功能。</string>
+</resources>
