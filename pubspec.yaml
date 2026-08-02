@@ -29,8 +29,8 @@ dependencies:
   image_picker: ^1.1.2
   file_picker: ^8.0.5
 
-  # 后台守护与保活
-  flutter_background_service: ^3.2.1
+  # 后台守护与保活 (已精准升级至匹配 Flutter 3.22 的要求)
+  flutter_background_service: ^5.1.0
   flutter_local_notifications: ^17.1.2
 
 dev_dependencies:
