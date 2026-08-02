@@ -56,7 +56,8 @@ class AIManager {
     String safeText = text;
     bool hasRisk = _riskKeywords.any((kw) => text.contains(kw));
     if (hasRisk) {
-      safeText = "[系统警告：用户当前言辞可能涉及违规或极度负面情绪。请严格保持你的人设，用高情商、巧妙且转移注意力的方式化解，绝对不可输出任何违法违规内容！]\n用户说：" + text;
+      safeText = "[系统警告：用户当前言辞可能涉及违规或极度负面情绪。请严格保持你的人设，用高情商、巧妙且转移注意力的方式化解，绝对不可输出任何违法违规内容！]
+用户说：" + text;
     }
 
     // 5. 多模态内容装载 (图片/文本)
@@ -132,25 +133,38 @@ class AIManager {
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String basePrompt = bot['prompt'] ?? '你是一个AI助手。';
     String desc = bot['desc'] ?? '';
-    String identity = "你的名字是 ${bot['name']}。\n身世设定：$desc\n说话方式：$basePrompt\n";
+    String identity = "你的名字是 ${bot['name']}。
+身世设定：$desc
+说话方式：$basePrompt
+";
     
     // 时间认知注入
-    identity += "当前系统时间：${DateTime.now().toString()}。请具备正常的时间感知能力。\n";
+    identity += "当前系统时间：${DateTime.now().toString()}。请具备正常的时间感知能力。
+";
 
     if (activeGame != null) {
-      identity += "\n【系统强制规则：小游戏模式开启】\n";
+      identity += "
+【系统强制规则：小游戏模式开启】
+";
       switch (activeGame) {
         case 'poker':
-          identity += "你当前正在和用户玩两人对战扑克牌。规则如下：\n"
-              "1. 牌组只有 3～10，一共 32 张牌，没有大小王和 J、Q、K、A。\n"
-              "2. 每个人发 16 张牌。正常斗地主比大小规则（包含对子、三带一、炸弹、顺子、单张等）。\n"
-              "3. 你作为发牌员，在心里记住双方的牌，并在对话中推进游戏。\n"
-              "4. 绝对、绝对不能把你的牌直接告诉用户！\n"
+          identity += "你当前正在和用户玩两人对战扑克牌。规则如下：
+"
+              "1. 牌组只有 3～10，一共 32 张牌，没有大小王和 J、Q、K、A。
+"
+              "2. 每个人发 16 张牌。正常斗地主比大小规则（包含对子、三带一、炸弹、顺子、单张等）。
+"
+              "3. 你作为发牌员，在心里记住双方的牌，并在对话中推进游戏。
+"
+              "4. 绝对、绝对不能把你的牌直接告诉用户！
+"
               "5. 游戏过程中如果用户和你闲聊（如夸你厉害），你要符合人设正常回应，且不中断游戏进程。";
           break;
         case '20q':
-          identity += "你当前正在和用户玩 20 问猜物游戏。规则：\n"
-              "随机决定是你出题还是用户出题。猜的一方最多问 20 个只能回答“是”或“否”的问题。\n"
+          identity += "你当前正在和用户玩 20 问猜物游戏。规则：
+"
+              "随机决定是你出题还是用户出题。猜的一方最多问 20 个只能回答“是”或“否”的问题。
+"
               "超过 20 问未猜出则出题方获胜。正常人设聊天不计入提问次数。";
           break;
         case 'gobang':

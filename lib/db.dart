@@ -219,18 +219,23 @@ class DBManager {
       final history = await getChatHistory(botId, limit: 10000); // 导出全部
       
       StringBuffer mdContent = StringBuffer();
-      mdContent.writeln('# $botName 的数字生命档案与纪元纪事\n');
-      mdContent.writeln('**导出时间**: ${DateTime.now().toString()}\n');
-      mdContent.writeln('---\n');
+      mdContent.writeln('# $botName 的数字生命档案与纪元纪事
+');
+      mdContent.writeln('**导出时间**: ${DateTime.now().toString()}
+');
+      mdContent.writeln('---
+');
       
       for (var msg in history) {
         final role = msg['role'] == 'user' ? '我' : botName;
         mdContent.writeln('### $role [${DateTime.fromMillisecondsSinceEpoch(msg['timestamp'])}]');
         if (msg['content'] != null) {
-          mdContent.writeln('${msg['content']}\n');
+          mdContent.writeln('${msg['content']}
+');
         }
         if (msg['image_path'] != null) {
-          mdContent.writeln('*(包含图片文件: ${msg['image_path']})*\n');
+          mdContent.writeln('*(包含图片文件: ${msg['image_path']})*
+');
         }
       }
 

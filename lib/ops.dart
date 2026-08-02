@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:heif_converter/heif_converter.dart'; // 更新了导入路径
+import 'package:heif_converter/heif_converter.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -94,7 +94,6 @@ class OpsManager {
 
     // 严密适配 iOS/Android 高效图片格式
     if (extension == 'heic' || extension == 'heif') {
-      // 语法同步更新为 HeifConverter
       final String? jpegPath = await HeifConverter.convert(finalPath);
       if (jpegPath != null) {
         finalPath = jpegPath;
