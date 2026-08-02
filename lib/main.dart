@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,10 +32,12 @@ void main() async {
   runApp(TideBotApp(initialTheme: themeStr));
 }
 
+// 修复点：5.1.0 版本的 onIosBackground 必须返回 Future<bool>
 @pragma('vm:entry-point')
-Future<void> onIosBackground(ServiceInstance service) async {
+Future<bool> onIosBackground(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+  return true;
 }
 
 @pragma('vm:entry-point')
@@ -45,9 +48,6 @@ void onStart(ServiceInstance service) async {
   service.on('stopService').listen((event) {
     service.stopSelf();
   });
-
-  // 每 15 分钟触发一次后台任务 (例如：检查待回复的微信消息、生成日记)
-  // 此处仅维持保活心跳，具体业务逻辑在 ops.dart 和 ai.dart 中调度
 }
 
 Future<void> initBackgroundService() async {
@@ -249,7 +249,6 @@ class _TideMainScaffoldState extends State<TideMainScaffold> with SingleTickerPr
             child: IndexedStack(
               index: _currentIndex,
               children: [
-                // 占位，将由真实页面替换
                 const ChatListPage(),
                 const SpacePage(),
                 const SquarePage(),
