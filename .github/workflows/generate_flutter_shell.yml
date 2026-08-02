@@ -1,0 +1,49 @@
+name: Generate Flutter Shell Files
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate-shell:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 1. 拉取当前代码
+      uses: actions/checkout@v4
+
+    - name: ☕ 2. 配置 Java 17 环境
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: 🐦 3. 配置 Flutter 环境
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.22.0'
+        channel: 'stable'
+
+    - name: 🏗️ 4. 运行 flutter create 补充原生壳子文件
+      run: |
+        # 强制指定 project-name 为 tide_bot，防止它抓取带大写的仓库名报错
+        flutter create --platforms android --org com.example.tidebot --project-name tide_bot .
+
+    - name: 🛠️ 5. 覆盖应用你自定义的 Android 文件
+      run: |
+        mkdir -p android/app/src/main/kotlin/com/example/tidebot/
+        mkdir -p android/app/src/main/res/xml/
+        mkdir -p android/app/src/main/res/values/
+        
+        # 将你暂存的 custom_android 覆盖进标准目录
+        if [ -d "custom_android" ]; then
+          cp -f custom_android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
+          cp -f custom_android/MainActivity.kt android/app/src/main/kotlin/com/example/tidebot/MainActivity.kt || true
+          cp -f custom_android/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml || true
+          cp -f custom_android/strings.xml android/app/src/main/res/values/strings.xml || true
+        fi
+
+    - name: 📤 6. 将补齐的文件提交并写回 GitHub 仓库
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore: 云端自动补齐 Flutter Android 原生工程壳文件"
+        branch: ${{ github.ref_name }}
