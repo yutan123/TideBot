@@ -133,11 +133,91 @@ class DBManager {
     return null;
   }
 
-  // 利用 KV Store 存储提供商信息，保持核心 6 表结构干净
+  // ================= 新 UI 适配别名与方法扩展 =================
+
+  // 别名：新代码统一用 queryBots
+  Future<List<Map<String, dynamic>>> queryBots() async => getAllBots();
+
+  // 别名：新代码用 insertMessage
+  Future<void> insertMessage(Map<String, dynamic> msg) async => insertChatMessage(msg);
+
+  // 别名：新代码用 queryMessages，支持可选 limit
+  Future<List<Map<String, dynamic>>> queryMessages(String botId, {int? limit}) async {
+    final db = await database;
+    return await db.query('chat_history',
+        where: 'bot_id = ?', whereArgs: [botId],
+        orderBy: 'timestamp ASC',
+        limit: limit);
+  }
+
+  // 别名：新代码用 deleteMessages (清空聊天)
+  Future<void> deleteMessages(String botId) async => clearChatHistory(botId);
+
+  // 查询日程 (schedule_tasks 表)
+  Future<List<Map<String, dynamic>>> querySchedules(String botId, {int? limit}) async {
+    final db = await database;
+    return await db.query('schedule_tasks',
+        where: 'bot_id = ?', whereArgs: [botId],
+        orderBy: 'time ASC',
+        limit: limit);
+  }
+
+  // 查询记忆 (memories 表)
+  Future<List<Map<String, dynamic>>> queryMemories(String botId, {String? type, int? limit}) async {
+    final db = await database;
+    String? whereStr;
+    List<dynamic>? whereArgs;
+    if (type != null) {
+      whereStr = 'bot_id = ? AND type = ?';
+      whereArgs = [botId, type];
+    } else {
+      whereStr = 'bot_id = ?';
+      whereArgs = [botId];
+    }
+    return await db.query('memories',
+        where: whereStr, whereArgs: whereArgs,
+        orderBy: 'timestamp DESC',
+        limit: limit);
+  }
+
+  // 删除指定机器人的记忆
+  Future<void> deleteMemories(String botId) async => clearMemories(botId);
+
+  // 别名：新代码用 insertKV
+  Future<void> insertKV(String key, String value) async => setKV(key, value);
+
+  // ================= Provider 管理 (兼容新旧接口) =================
+
+  // 新接口：insertProvider(name, url, key)
+  Future<void> insertProviderNew(String name, String url, String apiKey) async {
+    final existing = await getProvidersByType('chat');
+    // 清空旧 chat 类型 provider，只保留一条
+    existing.clear();
+    existing.add({
+      'id': 'provider_chat_0',
+      'type': 'chat',
+      'name': name,
+      'base_url': url,
+      'api_key': apiKey,
+    });
+    await setKV('providers_chat', jsonEncode(existing));
+  }
+
+  // 旧接口兼容
   Future<void> insertProvider(Map<String, dynamic> provider) async {
-    final existing = await getProvidersByType(provider['type']);
+    final existing = await getProvidersByType(provider['type'] ?? 'chat');
     existing.add(provider);
     await setKV('providers_${provider['type']}', jsonEncode(existing));
+  }
+
+  // 查询所有 chat 类型的 provider
+  Future<List<Map<String, dynamic>>> queryProviders() async {
+    return await getProvidersByType('chat');
+  }
+
+  // 清空所有 provider (chat 类型)
+  Future<void> deleteProviders() async {
+    await setKV('providers_chat', '[]');
   }
 
   Future<List<Map<String, dynamic>>> getProvidersByType(String type) async {

@@ -1,11 +1,11 @@
-import 'dart:ui';
-import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'ui_chat_core.dart'; 
+import 'ui_chat_list.dart';
 import 'ui_space_square.dart';
 import 'db.dart';
 
@@ -19,27 +19,17 @@ void main() async {
   await _initPersistentService();
 }
 
-// 严格遵循 flutter_background_service ^5.1.0 的要求，确保在 Android 上不被杀后台
 Future<void> _initPersistentService() async {
   final service = FlutterBackgroundService();
-  const channel = AndroidNotificationChannel(
-    'tide_bot_alive', 
-    'TideBot Core', 
-    importance: Importance.low
-  );
-  final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-  await flutterLocalNotificationsPlugin
-      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-      ?.createNotificationChannel(channel);
-      
+  const channel = AndroidNotificationChannel('tide_bot_alive', 'TideBot Core', importance: Importance.low);
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
   await service.configure(
     androidConfiguration: AndroidConfiguration(
-      onStart: onStart, 
-      autoStart: true, 
-      isForegroundMode: true,
-      notificationChannelId: 'tide_bot_alive', 
-      initialNotificationTitle: 'TideBot', 
-      initialNotificationContent: '数字生命引擎已连接', 
+      onStart: onStart, autoStart: true, isForegroundMode: true,
+      notificationChannelId: 'tide_bot_alive',
+      initialNotificationTitle: 'TideBot',
+      initialNotificationContent: '数字生命引擎已连接',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(),
@@ -48,192 +38,85 @@ Future<void> _initPersistentService() async {
 }
 
 @pragma('vm:entry-point')
-Future<bool> onStart(ServiceInstance service) async {
-  // 保持后台活跃
-  return true; 
+Future<bool> onStart(ServiceInstance service) async => true;
+
+// ========== 全局流光 ==========
+class FlowProvider extends ChangeNotifier {
+  Offset _pos = const Offset(200, 500);
+  Offset _tg = const Offset(200, 500);
+  Timer? _t;
+  Offset get pos => _pos;
+  void moveTo(Offset t) { _tg = t; _t?.cancel(); _t = Timer.periodic(const Duration(milliseconds: 16), (tm) { _pos = Offset(_pos.dx + (_tg.dx - _pos.dx) * 0.15, _pos.dy + (_tg.dy - _pos.dy) * 0.15); if ((_pos - _tg).distance < 0.5) { _pos = _tg; tm.cancel(); } notifyListeners(); }); }
+  @override void dispose() { _t?.cancel(); super.dispose(); }
+}
+final FlowProvider flowProvider = FlowProvider();
+
+class FlowGlassBg extends StatelessWidget {
+  final Widget child;
+  const FlowGlassBg({Key? key, required this.child}) : super(key: key);
+  @override Widget build(BuildContext context) => Stack(children: [
+    Container(decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFF2F2F7), Color(0xFFE8E8F0), Color(0xFFF0F0F5)]))),
+    ListenableBuilder(listenable: flowProvider, builder: (c, _) => Stack(children: [
+      Positioned(left: flowProvider.pos.dx - 120, top: flowProvider.pos.dy - 80, child: IgnorePointer(child: Container(width: 240, height: 240, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFFFB5A7).withOpacity(0.3), const Color(0xFFFCD5CE).withOpacity(0.1), Colors.transparent]))))),
+      Positioned(left: flowProvider.pos.dx - 160, top: flowProvider.pos.dy - 40, child: IgnorePointer(child: Container(width: 280, height: 280, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFA2D2FF).withOpacity(0.25), const Color(0xFFBDE0FE).withOpacity(0.08), Colors.transparent]))))),
+      Positioned(left: flowProvider.pos.dx - 100, top: flowProvider.pos.dy - 100, child: IgnorePointer(child: Container(width: 180, height: 180, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFCDB4DB).withOpacity(0.2), Colors.transparent]))))),
+    ])),
+    child,
+  ]);
 }
 
 class TideBotApp extends StatelessWidget {
   final bool hasSeenOnboarding;
   const TideBotApp({Key? key, required this.hasSeenOnboarding}) : super(key: key);
-  
-  @override 
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'TideBot',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        fontFamily: 'TideFont', // 强制使用全局自定义字体
-        scaffoldBackgroundColor: const Color(0xFFF2F2F7), // 标准 iOS 灰色背景
-        appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
-        useMaterial3: true,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent, // 彻底禁用原生水波纹
-      ),
-      home: hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen(), 
-    );
-  }
+  @override Widget build(BuildContext context) => MaterialApp(title: 'TideBot', debugShowCheckedModeBanner: false, theme: ThemeData(fontFamily: 'TideFont', scaffoldBackgroundColor: const Color(0xFFF2F2F7), appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0), useMaterial3: true, splashColor: Colors.transparent, highlightColor: Colors.transparent), home: hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen());
 }
 
-// 新手引导页 (极致简约 iOS 风)
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({Key? key}) : super(key: key);
   @override State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
-
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  final PageController _pc = PageController();
-  int _cur = 0;
+  final PageController _pc = PageController(); int _cur = 0;
   final _pages = [
-    {"t": "绝对隐私", "s": "零服务器，你的数字伴侣与记忆 100% 安全留存本地。"}, 
-    {"t": "多模态感知", "s": "支持语音、视觉与系统级操作，不仅仅是对话。"}, 
-    {"t": "极致美学", "s": "沉浸式 iOS 风格，流光溢彩的陪伴。"}
+    {"icon": Icons.shield_rounded, "t": "绝对隐私", "s": "零服务器架构，你的数字伴侣与记忆\n100% 安全留存本地。"},
+    {"icon": Icons.auto_awesome_rounded, "t": "多模态感知", "s": "支持语音、视觉与系统级操作，\n不仅仅是对话工具。"},
+    {"icon": Icons.palette_rounded, "t": "极致美学", "s": "沉浸式 iOS 风格设计，\n流光溢彩的数字陪伴。"},
   ];
-  
   void _finish() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('seen_onboarding', true);
-    await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '一个温柔略带傲娇的数字伴侣。', 'prompt': '说话温柔细腻，对主人充满关怀。', 'created_at': DateTime.now().millisecondsSinceEpoch});
+    final prefs = await SharedPreferences.getInstance(); await prefs.setBool('seen_onboarding', true);
+    await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '温柔傲娇的数字伴侣', 'prompt': '说话温柔细腻，偶尔害羞。【输出格式】每条回复最前面用方括号标明心情', 'avatar': '', 'created_at': DateTime.now().millisecondsSinceEpoch});
     if (!mounted) return;
-    Navigator.pushReplacement(context, PageRouteBuilder(
-      pageBuilder: (context, animation, secondaryAnimation) => const TideMainScaffold(),
-      transitionsBuilder: (context, animation, secondaryAnimation, child) => FadeTransition(opacity: animation, child: child),
-      transitionDuration: const Duration(milliseconds: 600),
-    ));
+    Navigator.pushReplacement(context, PageRouteBuilder(pageBuilder: (c, a, s) => const TideMainScaffold(), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child), transitionDuration: const Duration(milliseconds: 600)));
   }
-
-  @override 
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(child: Column(children: [
-        Expanded(child: PageView.builder(
-          controller: _pc, 
-          itemCount: 3, 
-          onPageChanged: (i) {
-            HapticFeedback.lightImpact();
-            setState(() => _cur = i);
-          }, 
-          itemBuilder: (c, i) => Padding(padding: const EdgeInsets.all(40), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Container(width: 140, height: 140, decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(42), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 30, offset: const Offset(0, 15))]), alignment: Alignment.center, child: const Icon(Icons.all_inclusive, color: Colors.white, size: 70)), 
-            const SizedBox(height: 60), 
-            Text(_pages[i]['t']!, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: -0.5), textAlign: TextAlign.center), 
-            const SizedBox(height: 20), 
-            Text(_pages[i]['s']!, style: TextStyle(fontSize: 17, color: Colors.grey.shade600, height: 1.6), textAlign: TextAlign.center)
-          ]))
-        )),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(3, (i) => AnimatedContainer(duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic, margin: const EdgeInsets.symmetric(horizontal: 5), width: _cur == i ? 32 : 10, height: 10, decoration: BoxDecoration(color: _cur == i ? Colors.black : Colors.grey.shade300, borderRadius: BorderRadius.circular(5))))),
-        const SizedBox(height: 48),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20), child: GestureDetector(onTap: () { HapticFeedback.mediumImpact(); if (_cur < 2) _pc.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeOutCubic); else _finish(); }, child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 20), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(28), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))]), alignment: Alignment.center, child: Text(_cur == 2 ? "开启旅程" : "下一步", style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))))),
-      ])),
-    );
-  }
+  @override Widget build(BuildContext context) => Scaffold(body: FlowGlassBg(child: SafeArea(child: Column(children: [
+    const SizedBox(height: 20),
+    Expanded(child: PageView.builder(controller: _pc, onPageChanged: (i) => setState(() => _cur = i), itemCount: _pages.length, itemBuilder: (c, i) => _buildP(i))),
+    Padding(padding: const EdgeInsets.symmetric(vertical: 20), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(_pages.length, (i) => AnimatedContainer(duration: const Duration(milliseconds: 300), width: _cur == i ? 28 : 8, height: 8, margin: const EdgeInsets.symmetric(horizontal: 3), decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), color: _cur == i ? const Color(0xFF6B5B95) : const Color(0xFFD4D4D8)))))),
+    Padding(padding: const EdgeInsets.fromLTRB(32, 8, 32, 40), child: SizedBox(width: double.infinity, height: 52, child: _cur == _pages.length - 1 ? _btn('开始体验', _finish, true) : _btn('下一步', () => _pc.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeOutCubic), false))),
+  ]))));
+  Widget _btn(String t, VoidCallback cb, bool p) => GestureDetector(onTap: cb, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(26), gradient: p ? const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]) : null, color: p ? null : Colors.white.withOpacity(0.7), boxShadow: p ? [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))] : null), child: Center(child: Text(t, style: TextStyle(color: p ? Colors.white : const Color(0xFF6B5B95), fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont')))));
+  Widget _buildP(int i) { final p = _pages[i]; return Padding(padding: const EdgeInsets.symmetric(horizontal: 48), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    Container(width: 100, height: 100, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]), child: Icon(p["icon"] as IconData, color: Colors.white, size: 44)),
+    const SizedBox(height: 36),
+    Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+    const SizedBox(height: 14),
+    Text(p["s"] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: Color(0xFF636366))),
+  ])); }
 }
 
-// 核心主页布局 (流光玻璃 Dock 导航)
 class TideMainScaffold extends StatefulWidget {
   const TideMainScaffold({Key? key}) : super(key: key);
   @override State<TideMainScaffold> createState() => _TideMainScaffoldState();
 }
-
 class _TideMainScaffoldState extends State<TideMainScaffold> {
-  int _currentIndex = 0;
-  final List<Map<String, dynamic>> _tabs = [
-    {"name": "聊天", "icon": Icons.chat_bubble_rounded},
-    {"name": "空间", "icon": Icons.space_dashboard_rounded},
-    {"name": "广场", "icon": Icons.public},
-    {"name": "我的", "icon": Icons.person_rounded}
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final dockWidth = screenWidth * 0.92; 
-    final tabWidth = dockWidth / _tabs.length;      
-
-    return Scaffold(
-      // 禁用默认底部导航，完全自定义
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: IndexedStack(
-              index: _currentIndex,
-              children: const [ChatListPage(), SpacePage(), SquarePage(), ProfilePage()],
-            ),
-          ),
-          
-          // 悬浮流光底座
-          Positioned(
-            bottom: MediaQuery.of(context).padding.bottom > 0 ? MediaQuery.of(context).padding.bottom + 10 : 30,
-            left: (screenWidth - dockWidth) / 2,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(40),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                child: Container(
-                  width: dockWidth,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.55), 
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.5),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 30, offset: const Offset(0, 15))],
-                  ),
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      // 滑动流光指示器
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 350),
-                        curve: Curves.easeOutCubic,
-                        left: _currentIndex * tabWidth + 6,
-                        top: 6, bottom: 6,
-                        width: tabWidth - 12,
-                        child: Container(
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))]),
-                        ),
-                      ),
-                      // 按钮内容
-                      Row(
-                        children: List.generate(_tabs.length, (index) {
-                          bool isActive = _currentIndex == index;
-                          return GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () { 
-                              HapticFeedback.lightImpact(); 
-                              setState(() => _currentIndex = index); 
-                            },
-                            child: SizedBox(
-                              width: tabWidth, height: 72,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    AnimatedSwitcher(
-                                      duration: const Duration(milliseconds: 250),
-                                      transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-                                      child: Icon(_tabs[index]["icon"], key: ValueKey(isActive), size: 24, color: isActive ? Colors.black : Colors.grey.shade400),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    AnimatedDefaultTextStyle(
-                                      duration: const Duration(milliseconds: 200),
-                                      style: TextStyle(fontFamily: 'TideFont', fontSize: 11, fontWeight: isActive ? FontWeight.w900 : FontWeight.w600, color: isActive ? Colors.black : Colors.grey.shade400),
-                                      child: Text(_tabs[index]["name"]),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      )
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  int _idx = 0;
+  final List<Widget> _pages = const [ChatListPage(), SpacePage(), SquarePage(), ProfilePage()];
+  @override Widget build(BuildContext context) => FlowGlassBg(child: Scaffold(
+    backgroundColor: Colors.transparent, extendBody: true,
+    body: GestureDetector(onTapDown: (d) => flowProvider.moveTo(d.localPosition), behavior: HitTestBehavior.translucent, child: IndexedStack(index: _idx, children: _pages)),
+    bottomNavigationBar: Padding(padding: const EdgeInsets.fromLTRB(24, 0, 24, 20), child: ClipRRect(borderRadius: BorderRadius.circular(28), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20), child: Container(height: 64, decoration: BoxDecoration(color: Colors.white.withOpacity(0.55), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))]), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+      _dockItem(0, Icons.chat_bubble_rounded, '聊天'), _dockItem(1, Icons.space_dashboard_rounded, '空间'), _dockItem(2, Icons.explore_rounded, '广场'), _dockItem(3, Icons.person_rounded, '我的'),
+    ])))),
+  ));
+  Widget _dockItem(int i, IconData ic, String lb) { final act = _idx == i; return GestureDetector(onTap: () { if (_idx != i) setState(() => _idx = i); }, child: AnimatedContainer(duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: act ? const Color(0xFF6B5B95).withOpacity(0.15) : Colors.transparent, borderRadius: BorderRadius.circular(20)), child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [Icon(ic, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93), size: 24), const SizedBox(height: 2), Text(lb, style: TextStyle(fontSize: 10, fontFamily: 'TideFont', fontWeight: act ? FontWeight.w700 : FontWeight.w400, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93)))]))); }
 }

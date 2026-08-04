@@ -1,0 +1,122 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'db.dart';
+import 'ui_components.dart';
+import 'ui_chat_room.dart';
+import 'ui_create_bot.dart';
+import 'main.dart';
+
+class ChatListPage extends StatefulWidget {
+  const ChatListPage({Key? key}) : super(key: key);
+  @override State<ChatListPage> createState() => _ChatListPageState();
+}
+
+class _ChatListPageState extends State<ChatListPage> {
+  List<Map<String, dynamic>> _bots = [];
+  bool _showParticles = false;
+  final List<Offset> _origins = [];
+
+  @override void initState() { super.initState(); _load(); }
+  void _load() async {
+    final bots = await DBManager().queryBots();
+    final enriched = <Map<String, dynamic>>[];
+    for (var b in bots) {
+      final msgs = await DBManager().queryMessages(b['id'] as String, limit: 1);
+      String preview = '';
+      int lastTime = (b['last_msg_time'] as int?) ?? (b['created_at'] as int?) ?? 0;
+      if (msgs.isNotEmpty) {
+        preview = (msgs.first['content'] as String?)?.replaceAll('\n', ' ') ?? '';
+        if (preview.length > 25) preview = '${preview.substring(0, 25)}...';
+        lastTime = msgs.first['timestamp'] as int? ?? lastTime;
+      }
+      enriched.add({...b, 'preview': preview, 'lastTime': lastTime});
+    }
+    enriched.sort((a, b) => (b['lastTime'] as int).compareTo(a['lastTime'] as int));
+    if (mounted) setState(() => _bots = enriched);
+  }
+
+  void _deleteBot(Map<String, dynamic> bot, GlobalKey key) async {
+    final confirm = await TideDialogs.show<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, children: [
+          const Center(child: Text('确认删除', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
+          const SizedBox(height: 10),
+          Center(child: Text('确定删除「${bot['name']}」吗？\n此操作不可恢复。', textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF636366), fontFamily: 'TideFont'))),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(child: TideDialogs.glassButton('取消', onTap: () => Navigator.pop(ctx, false), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))),
+            const SizedBox(width: 12),
+            Expanded(child: TideDialogs.glassButton('删除', onTap: () => Navigator.pop(ctx, true), color: const Color(0xFFE74C3C))),
+          ]),
+        ]),
+      ),
+    );
+    if (confirm == true) {
+      final box = key.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null) {
+        final pos = box.localToGlobal(Offset.zero);
+        setState(() { _origins.add(Offset(pos.dx + box.size.width / 2, pos.dy + box.size.height / 2)); _showParticles = true; });
+      }
+      await DBManager().deleteBot(bot['id'] as String);
+      _load();
+      Future.delayed(const Duration(milliseconds: 1400), () { if (mounted) setState(() => _showParticles = false); });
+    }
+  }
+
+  @override Widget build(BuildContext context) {
+    Widget content = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(child: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 8), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('TideBot', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+          GestureDetector(onTap: () async { await DBManager().exportToMarkdown(); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已导出数据', style: TextStyle(fontFamily: 'TideFont')), backgroundColor: Color(0xFF6B5B95))); }, child: const Icon(Icons.ios_share_rounded, color: Color(0xFF6B5B95), size: 22)),
+        ])),
+        Expanded(child: _bots.isEmpty ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.inbox_rounded, size: 50, color: Colors.grey.shade400), const SizedBox(height: 10), const Text('还没有机器人', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 15, fontFamily: 'TideFont')), const Text('点击右下角 + 创建', style: TextStyle(color: Color(0xFFC7C7CC), fontSize: 13, fontFamily: 'TideFont'))])) : _list()),
+      ])),
+      floatingActionButton: GestureDetector(
+        onTap: () async { final r = await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => const CreateBotPage(), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); if (r == true) _load(); },
+        child: Container(width: 52, height: 52, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.4), blurRadius: 16, offset: const Offset(0, 5))]), child: const Icon(Icons.add, color: Colors.white, size: 26)),
+      ),
+    );
+    return _showParticles ? ParticleOverlay(child: content, origins: _origins, onDone: () { if (mounted) setState(() => _showParticles = false); }) : content;
+  }
+
+  Widget _list() => ListView.builder(padding: const EdgeInsets.fromLTRB(16, 4, 16, 100), itemCount: _bots.length, itemBuilder: (ctx, i) {
+    final bot = _bots[i];
+    final key = GlobalKey();
+    return GestureDetector(
+      key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
+      onLongPress: () => showTideSheet(context: context, height: 160, child: Column(children: [
+        const SizedBox(height: 10),
+        ListTile(leading: const Icon(Icons.push_pin_rounded, color: Color(0xFF6B5B95)), title: const Text('置顶', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
+        ListTile(leading: const Icon(Icons.delete_rounded, color: Color(0xFFE74C3C)), title: const Text('删除机器人', style: TextStyle(fontFamily: 'TideFont', color: Color(0xFFE74C3C))), onTap: () { Navigator.pop(context); _deleteBot(bot, key); }),
+      ])),
+      child: Padding(padding: const EdgeInsets.only(bottom: 10), child: _card(bot)),
+    );
+  });
+
+  Widget _card(Map<String, dynamic> bot) {
+    final av = (bot['avatar'] as String?) ?? '';
+    final hasAv = av.isNotEmpty;
+    return GlassCard(
+      padding: const EdgeInsets.all(14), radius: 20,
+      onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
+      child: Row(children: [
+        ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF6B5B95), fontFamily: 'TideFont'))))),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(bot['name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+          const SizedBox(height: 3),
+          Text(bot['preview'] as String? ?? '点击开始对话', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
+        ])),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(fmtTime(bot['lastTime'] as int? ?? 0), style: const TextStyle(fontSize: 11, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')),
+          const SizedBox(height: 4),
+          const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFC7C7CC)),
+        ]),
+      ]),
+    );
+  }
+}

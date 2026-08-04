@@ -169,8 +169,8 @@ class AIManager {
     return "今天也要开心度过哦。";
   }
 
-  // API 测速
-  Future<Map<String, dynamic>> testConnection(String baseUrl, String apiKey, String modelName) async {
+  // API 测速（返回 Map，兼容旧代码）
+  Future<Map<String, dynamic>> testConnectionMap(String baseUrl, String apiKey, String modelName) async {
     final start = DateTime.now();
     try {
       final res = await http.post(
@@ -183,6 +183,15 @@ class AIManager {
     } catch (e) {
       return {'success': false, 'error': '无法连接，请检查 URL 格式或网络'};
     }
+  }
+
+  // API 测速（返回 int 毫秒，供新 UI 使用；失败抛异常）
+  Future<int> testConnection(String baseUrl, String apiKey, String modelName) async {
+    final result = await testConnectionMap(baseUrl, apiKey, modelName);
+    if (result['success'] == true) {
+      return result['delay'] as int;
+    }
+    throw Exception(result['error'] ?? '连接失败');
   }
 
   // 构建核心防御护栏与游戏机制注入
