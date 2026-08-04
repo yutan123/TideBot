@@ -30,7 +30,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   bool _isRecording = false;
   bool _loading = false;
   bool _typing = false;
-  final AudioRecorder _rec = AudioRecorder();
+  final Record _rec = Record();
   final AudioPlayer _player = AudioPlayer();
   Timer? _recTimer;
   int _recSecs = 0;

@@ -112,12 +112,48 @@ class TideMainScaffold extends StatefulWidget {
 class _TideMainScaffoldState extends State<TideMainScaffold> {
   int _idx = 0;
   final List<Widget> _pages = const [ChatListPage(), SpacePage(), SquarePage(), ProfilePage()];
-  @override Widget build(BuildContext context) => FlowGlassBg(child: Scaffold(
-    backgroundColor: Colors.transparent, extendBody: true,
-    body: GestureDetector(onTapDown: (d) => flowProvider.moveTo(d.localPosition), behavior: HitTestBehavior.translucent, child: IndexedStack(index: _idx, children: _pages)),
-    bottomNavigationBar: Padding(padding: const EdgeInsets.fromLTRB(24, 0, 24, 20), child: ClipRRect(borderRadius: BorderRadius.circular(28), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20), child: Container(height: 64, decoration: BoxDecoration(color: Colors.white.withOpacity(0.55), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))]), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-      _dockItem(0, Icons.chat_bubble_rounded, '聊天'), _dockItem(1, Icons.space_dashboard_rounded, '空间'), _dockItem(2, Icons.explore_rounded, '广场'), _dockItem(3, Icons.person_rounded, '我的'),
-    ])))),
-  ));
+  @override
+  Widget build(BuildContext context) {
+    return FlowGlassBg(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        extendBody: true,
+        body: GestureDetector(
+          onTapDown: (d) => flowProvider.moveTo(d.localPosition),
+          behavior: HitTestBehavior.translucent,
+          child: IndexedStack(index: _idx, children: _pages),
+        ),
+        bottomNavigationBar: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                height: 64,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.55),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _dockItem(0, Icons.chat_bubble_rounded, '聊天'),
+                    _dockItem(1, Icons.space_dashboard_rounded, '空间'),
+                    _dockItem(2, Icons.explore_rounded, '广场'),
+                    _dockItem(3, Icons.person_rounded, '我的'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
   Widget _dockItem(int i, IconData ic, String lb) { final act = _idx == i; return GestureDetector(onTap: () { if (_idx != i) setState(() => _idx = i); }, child: AnimatedContainer(duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: act ? const Color(0xFF6B5B95).withOpacity(0.15) : Colors.transparent, borderRadius: BorderRadius.circular(20)), child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [Icon(ic, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93), size: 24), const SizedBox(height: 2), Text(lb, style: TextStyle(fontSize: 10, fontFamily: 'TideFont', fontWeight: act ? FontWeight.w700 : FontWeight.w400, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93)))]))); }
 }

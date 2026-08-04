@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -133,7 +134,33 @@ class DBManager {
     return null;
   }
 
-  // ================= 新 UI 适配别名与方法扩展 =================
+  // 导出数据为 Markdown
+  Future<void> exportToMarkdown() async {
+    final db = await database;
+    final bots = await db.query('bots');
+    final buf = StringBuffer();
+    buf.writeln('# TideBot 数据导出');
+    buf.writeln('导出时间: ${DateTime.now()}');
+    buf.writeln();
+    for (var bot in bots) {
+      final botId = bot['id'] as String;
+      buf.writeln('## ${bot['name']}');
+      buf.writeln('> ${bot['desc']}');
+      buf.writeln();
+      final msgs = await db.query('chat_history', where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
+      for (var m in msgs) {
+        final role = m['role'] == 'user' ? '用户' : bot['name'];
+        buf.writeln('**$role**: ${m['content']}');
+        buf.writeln();
+      }
+    }
+    final dir = await getDatabasesPath();
+    final file = File('$dir/tidebot_export.md');
+    await file.writeAsString(buf.toString());
+  }
+
+  // 添加 path 依赖的导入需要确认已存在; File 来自 dart:io
+  // 需要在文件顶部已 import 'dart:io';
 
   // 别名：新代码统一用 queryBots
   Future<List<Map<String, dynamic>>> queryBots() async => getAllBots();

@@ -117,10 +117,7 @@ class _SpacePageState extends State<SpacePage> {
           final db = DBManager();
           final bots = await db.queryBots();
           if (!mounted) return;
-          showTideSheet(context, builder: (ctx) {
-            return Container(
-              padding: const EdgeInsets.all(16),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
+          showTideSheet(context: context, height: 350, child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const Text('切换机器人', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, fontFamily: 'TideFont')),
                 const SizedBox(height: 12),
                 ...bots.map((b) => ListTile(
@@ -128,15 +125,14 @@ class _SpacePageState extends State<SpacePage> {
                       subtitle: Text(b['personality'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93))),
                       onTap: () {
                         setState(() { _botId = b['id'] ?? ''; _botName = b['name'] ?? ''; });
-                        Navigator.pop(ctx);
+                        Navigator.pop(context);
                         _loadData();
                       },
                     )),
               ]),
             );
-          });
-        },
-        child: Container(
+          },
+          child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.white.withOpacity(0.8)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -434,7 +430,7 @@ class _ProfilePageState extends State<ProfilePage> {
         GestureDetector(
           onTap: () async {
             final ctrl = TextEditingController(text: _userName);
-            final result = await showTideDialog(context, builder: (ctx) => AlertDialog(
+            final result = await showTideDialog(context: context, builder: (ctx) => AlertDialog(
               title: const Text('修改昵称', style: TextStyle(fontFamily: 'TideFont')),
               content: TextField(controller: ctrl, decoration: const InputDecoration(hintText: '输入新昵称')),
               actions: [
