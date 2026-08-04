@@ -35,14 +35,14 @@ class _CreateBotPageState extends State<CreateBotPage> {
     final name = _nameC.text.trim();
     if (name.isEmpty) return;
     final basePrompt = _styleC.text.trim();
-    final data = {
+    final Map<String, dynamic> data = {
       'name': name, 'desc': _promptC.text.trim(),
       'prompt': basePrompt.isNotEmpty ? '$basePrompt\n\n【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]' : '【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]',
       'avatar': _avatar,
     };
     if (_isEdit) {
       data['id'] = widget.editBot!['id'];
-      await DBManager().updateBot(data);
+      await DBManager().updateBot(data['id'] as String, data);
     } else {
       data['id'] = 'bot_${DateTime.now().millisecondsSinceEpoch}';
       data['created_at'] = DateTime.now().millisecondsSinceEpoch;

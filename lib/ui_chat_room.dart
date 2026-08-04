@@ -109,7 +109,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       if (await _rec.hasPermission()) {
         final dir = await getApplicationDocumentsDirectory();
         final p = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        await _rec.start(const RecordConfig(), path: p);
+        await _rec.start(path: p, encoder: AudioEncoder.aacLc, bitRate: 128000);
         setState(() => _isRecording = true);
         _recTimer = Timer.periodic(const Duration(seconds: 1), (t) { if (mounted) setState(() => _recSecs++); });
       }
