@@ -8,7 +8,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// 系统底层执行引擎 (ops.dart)
 class OpsManager {
   static final OpsManager _instance = OpsManager._internal();
   factory OpsManager() => _instance;
@@ -16,7 +15,6 @@ class OpsManager {
 
   static const MethodChannel _nativeChannel = MethodChannel('tidebot.native.channel');
   
-  // 回退到 4.x 版本的 Record 类调用方式
   final Record _audioRecorder = Record();
   final AudioPlayer _audioPlayer = AudioPlayer();
 
@@ -89,7 +87,7 @@ class OpsManager {
   Future<File?> pickDocument() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['txt', 'md', 'csv', 'json'],
+      allowedExtensions: ['txt', 'md', 'csv', 'json', 'jpg', 'png', 'pdf'],
     );
 
     if (result != null && result.files.single.path != null) {

@@ -5,20 +5,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'db.dart';
-import 'ui_chat_core.dart'; // 引入极简弹窗
+import 'ui_chat_core.dart';
 
 class SpaceIcons {
-  static String get gear => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSI+PHBhdGggZD0iTTEyIDE1YTMgMyAwIDEwMC02IDMgMyAwIDAwMCA2eiIvPjxwYXRoIGQ9Ik0xOS40IDE1YTEuNjUgMS42NSAwIDAwLjMzIDEuODJsLjA2LjA2YTIgMiAwIDAxMCAyLjgzIDIgMiAwIDAxLTIuODMgMGwtLjA2LS4wNmExLjY1IDEuNjUgMCAwMC0xLjgyLS4zMyAxLjY1IDEuNjUgMCAwMC0xIDEuNTFWMjFhMiAyIDAgMDEtMiAyIDIgMiAwIDAxLTItMnYtLjA5QTEuNjUgMS42NSAwIDAwOSAxOS40YTEuNjUgMS42NSAwIDAwLTEuODIuMzNsLS4wNi4wNmEyIDIgMCAwMS0yLjgzIDAgMiAyIDAgMDEwLTIuODNsLjA2LjA2YTEuNjUgMS42NSAwIDAwLjMzLTEuODIgMS42NSAxLjY1IDAgMDAtMS41MS0xSDNhMiAyIDAgMDEtMi0yIDIgMiAwIDAxMi0yaC4wOUExLjY1IDEuNjUgMCAwMDQuNiA5YTEuNjUgMS42NSAwIDAwLS4zMy0xLjgybC0uMDYtLjA2YTIgMiAwIDAxMC0yLjgzIDIgMiAwIDAxMi44MyAwbC4wNi4wNmExLjY1IDEuNjUgMCAwMDEuODIuMzNIOWExLjY1IDEuNjUgMCAwMDEtMS41MVYzYTIgMiAwIDAxMi0yIDIgMiAwIDAxMiAydi4wOWExLjY1IDEuNjUgMCAwMDEgMS41MSAxLjY1IDEuNjUgMCAwMDEuODItLjMzbC4wNi0uMDZhMiAyIDAgMDEyLjgzIDAgMiAyIDAgMDEwSURJdU9ETnNMUzR3Tmk0d05tRXhMalkxSURFdU5qVWdNQ0F3TUMwdU16TWdNUzQ0TWxZNVlURXVOalVnTVM0Mk5TQXdJREF3TVM0MU1TQXhTREl4WVRJZ01pQXdJREF4TWlBeUlESWdNaUF3SURBeExUSWdNbWd0TGpBNVlURXVOalVnTVM0Mk5TQXdJREF3TFRFdU5URWdNWG9pTHo0OEwzTjJaejQ9'));
-  static String get switchDynamic => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSI+PHBhdGggZD0iTTIxIDExLjVhOC4zOCA4LjM4IDAgMDEtLjkgMy44IDguNSA4LjUgMCAwMS03LjYgNC43IDguMzggOC4zOCAwIDAxLTMuOC0uOUwzIDIxbDEuOS01LjdhOC4zOCA4LjM4IDAgMDEtLjktMy44IDguNSA4LjUgMCAwMTQuNy03LjYgOC4zOCA4LjM4IDAgMDEzLjgtLjloLjVhOC40OCA4LjQ4IDAgMDE4IDh2LjV6Ii8+PC9zdmc+'));
+  static String get gear => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSI+PHBhdGggZD0iTTEyIDE1YTMgMyAwIDEwMC02IDMgMyAwIDAwMCA2eiIvPjxwYXRoIGQ9Ik0xOS40IDE1YTEuNjUgMS42NSAwIDAwLjMzIDEuODJsLjA2LjA2YTIgMiAwIDAxMCAyLjgzIDIgMiAwIDAxLTIuODMgMGwtLjA2LS4wNmExLjY1IDEuNjUgMCAwMC0xLjgyLS4zMyAxLjY1IDEuNjUgMCAwMC0xIDEuNTFWMjFhMiAyIDAgMDEtMiAyIDIgMiAwIDAxLTItMnYtLjA5QTEuNjUgMS42NSAwIDAwOSAxOS40YTEuNjUgMS42NSAwIDAwLTEuODIuMzNsLS4wNi4wNmEyIDIgMCAwMS0yLjgzIDAgMiAyIDAgMDEwLTIuODNsLjA2LjA2YTEuNjUgMS42NSAwIDAwLjMzLTEuODIgMS42NSAxLjY1IDAgMDAtMS41MS0xSDNhMiAyIDAgMDEtMi0yIDIgMiAwIDAxMi0yaC4wOUExLjY1IDEuNjUgMCAwMDQuNiA5YTEuNjUgMS42NSAwIDAwLS4zMy0xLjgybC0uMDYtLjA2YTIgMiAwIDAxMC0yLjgzIDIgMiAwIDAxMi44MyAwbC4wNi4wNmExLjY1IDEuNjUgMCAwMDEuODIuMzNIOWExLjY1IDEuNjUgMCAwMDEtMS41MVYzYTIgMiAwIDAxMi0yIDIgMiAwIDAxMiAydi4wOWExLjY1IDEuNjUgMCAwMDEgMS41MSAxLjY1IDEuNjUgMCAwMDEuODItLjMzbC4wNi0uMDZhMiAyIDAgMDEyLjgzIDAgMiAyIDAgMDEwIDIuODNsLS4wNi4wNmExLjY1IDEuNjUgMCAwMC0uMzMgMS44MlY5YTEuNjUgMS42NSAwIDAwMS41MSAxSDIxYTIgMiAwIDAxMiAyIDIgMiAwIDAxLTIgMmgtLjA5YTEuNjUgMS42NSAwIDAwLTEuNTEgMXoiLz48L3N2Zz4='));
+  static String get switchDynamic => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSI+PHBhdGggZD0iTTIxIDExLjVhOC4zOCA4LjM4IDAgMDEtLjkgMy44IDguNSA4LjUgMCAwMS03LjYgNC43IDguMzggOC4zOCAwIDAxLTMuOC0uOUwzIDIxbDEuOS01.$JthOC4zOCA4LjM4IDAgMDEtLjktMy44IDguNSA4LjUgMCAwMTQuNy03LjYgOC4zOCA4LjM4IDAgMDEzLjgtLjloLjVhOC40OCA4LjQ4IDAgMDE4IDh2LjV6Ii8+PC9zdmc+'));
 }
 
 Widget renderSvg(String svgStr, {double size = 20, Color? color}) {
-  return SvgPicture.string(svgStr, width: size, height: size, colorFilter: color != null ? ColorFilter.mode(color, BlendMode.srcIn) : null);
+  try {
+    return SvgPicture.string(svgStr, width: size, height: size, colorFilter: color != null ? ColorFilter.mode(color, BlendMode.srcIn) : null);
+  } catch (_) {
+    return Icon(Icons.circle, size: size, color: color ?? Colors.black);
+  }
 }
 
-// ======================================================================
-// 空间页面 SpacePage (尺寸调小)
-// ======================================================================
 class SpacePage extends StatefulWidget {
   const SpacePage({Key? key}) : super(key: key);
   @override State<SpacePage> createState() => _SpacePageState();
@@ -27,6 +28,8 @@ class SpacePage extends StatefulWidget {
 class _SpacePageState extends State<SpacePage> {
   String _userName = "创造者";
   String _botName = "未连接";
+  String _botId = "";
+  List<Map<String, dynamic>> _bots = [];
   bool _isLoading = true;
   
   String get _currentDate {
@@ -47,9 +50,37 @@ class _SpacePageState extends State<SpacePage> {
     final db = DBManager();
     final bots = await db.getAllBots();
     setState(() {
-      if (bots.isNotEmpty) _botName = bots.first['name'];
+      _bots = bots;
+      if (bots.isNotEmpty) {
+        _botName = bots.first['name'];
+        _botId = bots.first['id'];
+      }
       _isLoading = false;
     });
+  }
+
+  void _showBotSelector() {
+    TideDialogs.showBottomSheet(
+      context: context,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("选择数字生命", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 16),
+          ..._bots.map((b) => ListTile(
+            title: Text(b['name'], style: const TextStyle(fontWeight: FontWeight.w600)),
+            onTap: () {
+              setState(() {
+                _botName = b['name'];
+                _botId = b['id'];
+              });
+              Navigator.pop(context);
+            },
+          )),
+        ],
+      ),
+    );
   }
 
   @override
@@ -70,16 +101,19 @@ class _SpacePageState extends State<SpacePage> {
                   children: [
                     Text(_syncTime, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.05), borderRadius: BorderRadius.circular(16)),
-                      child: Row(
-                        children: [
-                          Text(_botName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                          const SizedBox(width: 2),
-                          const Icon(Icons.keyboard_arrow_down, size: 14)
-                        ],
-                      )
+                    GestureDetector(
+                      onTap: _showBotSelector,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(color: Colors.black.withOpacity(0.05), borderRadius: BorderRadius.circular(16)),
+                        child: Row(
+                          children: [
+                            Text(_botName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                            const SizedBox(width: 2),
+                            const Icon(Icons.keyboard_arrow_down, size: 14)
+                          ],
+                        )
+                      ),
                     ),
                   ],
                 )
@@ -95,7 +129,7 @@ class _SpacePageState extends State<SpacePage> {
                 children: [
                   Container(width: 40, height: 40, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.grey.shade200), alignment: Alignment.center, child: Text(_botName.isNotEmpty ? _botName.substring(0,1) : "A", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                   const SizedBox(width: 12),
-                  const Expanded(child: Text("这是一句由机器人凌晨自动生成的占位今日一言。", style: TextStyle(fontSize: 14, color: Colors.black87, height: 1.5, fontWeight: FontWeight.w500))),
+                  const Expanded(child: Text("今天也要开开心心迎接每一刻哦。", style: TextStyle(fontSize: 14, color: Colors.black87, height: 1.5, fontWeight: FontWeight.w500))),
                 ],
               ),
             ),
@@ -156,9 +190,7 @@ class _SpacePageState extends State<SpacePage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text("8月1日: 今天主人跟我说了一个很好笑的笑话...", style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.5)),
-                  const SizedBox(height: 6),
-                  Text("7月31日: 陪他熬夜加班，感觉他很累。", style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.5)),
+                  Text("今天跟主人聊得很开心，数字生命也会感到温暖。", style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.5)),
                 ],
               ),
             ),
@@ -170,13 +202,11 @@ class _SpacePageState extends State<SpacePage> {
   }
 }
 
-// ======================================================================
-// 广场页面 SquarePage 
-// ======================================================================
 class SquarePage extends StatefulWidget {
   const SquarePage({Key? key}) : super(key: key);
   @override State<SquarePage> createState() => _SquarePageState();
 }
+
 class _SquarePageState extends State<SquarePage> {
   bool isGameMode = false;
   void _toggleMode() {
@@ -223,7 +253,7 @@ class _SquarePageState extends State<SquarePage> {
                         _buildGameCard("五子棋", "经典双人对弈", Colors.blue.shade50),
                         _buildGameCard("井字棋", "轻松休闲AI随时奉陪", Colors.orange.shade50),
                         _buildGameCard("20问猜物", "互猜谜底看谁知识广", Colors.purple.shade50),
-                        _buildGameCard("32张棋牌", "无大小王真实算力决胜", Colors.teal.shade50),
+                        _buildGameCard("32张扑克牌", "无大小王真实算力决胜", Colors.teal.shade50),
                       ],
                     ) 
                   : ListView(
@@ -231,7 +261,7 @@ class _SquarePageState extends State<SquarePage> {
                       children: [
                         Container(
                           padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28)),
-                          child: const Text("动态流占位符：用户发布图片和文字，机器人随机评论、点赞。具体实现见后续。", style: TextStyle(fontSize: 14)),
+                          child: const Text("广场动态流：发布日常瞬间，机器人与你实时互动、点赞、评论。", style: TextStyle(fontSize: 14)),
                         )
                       ],
                     ),
@@ -262,9 +292,6 @@ class _SquarePageState extends State<SquarePage> {
   }
 }
 
-// ======================================================================
-// 我的页面 ProfilePage (API 设置真实连通)
-// ======================================================================
 class ProfilePage extends StatelessWidget {
   const ProfilePage({Key? key}) : super(key: key);
 
@@ -272,6 +299,26 @@ class ProfilePage extends StatelessWidget {
     TideDialogs.showBottomSheet(
       context: context,
       child: const APIConfigSheet(),
+    );
+  }
+
+  void _openWeChatBind(BuildContext context) {
+    TideDialogs.showCustomDialog(
+      context: context,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("绑定微信", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            Container(width: 160, height: 160, color: Colors.grey.shade200, alignment: Alignment.center, child: const Text("微信扫码绑定", style: TextStyle(color: Colors.grey))),
+            const SizedBox(height: 16),
+            const Text("使用微信扫一扫绑定 OpenClaw 桥接服务", style: TextStyle(fontSize: 13, color: Colors.grey), textAlign: TextAlign.center),
+          ],
+        ),
+      ),
     );
   }
 
@@ -297,7 +344,7 @@ class ProfilePage extends StatelessWidget {
             _buildSettingRow("本地模型", onTap: (){}),
             _buildSettingRow("主题设置", onTap: (){}),
             _buildSettingRow("聊天背景", onTap: (){}),
-            _buildSettingRow("绑定微信", onTap: (){}),
+            _buildSettingRow("绑定微信", onTap: () => _openWeChatBind(context)),
             const SizedBox(height: 20),
             _buildSettingRow("普通设置", onTap: (){}),
             _buildSettingRow("高级设置", onTap: (){}),
@@ -321,9 +368,6 @@ class ProfilePage extends StatelessWidget {
   }
 }
 
-// ======================================================================
-// API 真实配置弹窗 (打通真实存取和测速)
-// ======================================================================
 class APIConfigSheet extends StatefulWidget {
   const APIConfigSheet({Key? key}) : super(key: key);
   @override State<APIConfigSheet> createState() => _APIConfigSheetState();
@@ -356,7 +400,7 @@ class _APIConfigSheetState extends State<APIConfigSheet> {
   }
 
   void _save() async {
-    await DBManager().setKV('api_provider_$_provider', jsonEncode({'url': _urlCtrl.text, 'key': _keyCtrl.text}));
+    await DBManager().setKV('provider_$_provider', jsonEncode({'url': _urlCtrl.text, 'key': _keyCtrl.text}));
     Navigator.pop(context);
   }
 
@@ -372,7 +416,7 @@ class _APIConfigSheetState extends State<APIConfigSheet> {
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _provider, isExpanded: true,
-              items: ["DeepSeek", "Siliconflow", "Kimi", "自定义"].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontWeight: FontWeight.w600)))).toList(),
+              items: ["DeepSeek", "Siliconflow", "Gitee", "阿里云百炼", "Kimi", "自定义"].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontWeight: FontWeight.w600)))).toList(),
               onChanged: (v) { setState(() { _provider = v!; }); },
             ),
           ),

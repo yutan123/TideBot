@@ -1,29 +1,35 @@
 import 'dart:ui';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'db.dart';
+import 'ops.dart';
+import 'ai.dart';
 
 class TideIcons {
   static String get back => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTUgMThsLTYtNiA2LTYiLz48L3N2Zz4='));
   static String get menu => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMyAxMmgxOE0zIDZoMThNMyAxOGgxOCIvPjwvc3ZnPg=='));
   static String get settings => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMyIvPjxwYXRoIGQ9Ik0xOS40IDE1YTEuNjUgMS42NSAwIDAwLjMzIDEuODJsLjA2LjA2YTIgMiAwIDAxMCAyLjgzIDIgMiAwIDAxLTIuODMgMGwtLjA2LS4wNmExLjY1IDEuNjUgMCAwMC0xLjgyLS4zMyAxLjY1IDEuNjUgMCAwMC0xIDEuNTFWMjFhMiAyIDAgMDEtMiAyIDIgMiAwIDAxLTItMnYtLjA5QTEuNjUgMS42NSAwIDAwOSAxOS40YTEuNjUgMS42NSAwIDAwLTEuODIuMzNsLS4wNi4wNmEyIDIgMCAwMS0yLjgzIDAgMiAyIDAgMDEwLTIuODNsLjA2LjA2YTEuNjUgMS42NSAwIDAwLjMzLTEuODIgMS42NSAxLjY1IDAgMDAtMS41MS0xSDNhMiAyIDAgMDEtMi0yIDIgMiAwIDAxMi0yaC4wOUExLjY1IDEuNjUgMCAwMDQuNiA5YTEuNjUgMS42NSAwIDAwLS4zMy0xLjgybC0uMDYtLjA2YTIgMiAwIDAxMC0yLjgzIDIgMiAwIDAxMi44MyAwbC4wNi4wNmExLjY1IDEuNjUgMCAwMDEuODIuMzNIOWExLjY1IDEuNjUgMCAwMDEtMS41MVYzYTIgMiAwIDAxMi0yIDIgMiAwIDAxMiAydi4wOWExLjY1IDEuNjUgMCAwMDEgMS41MSAxLjY1IDEuNjUgMCAwMDEuODItLjMzbC4wNi0uMDZhMiAyIDAgMDEyLjgzIDAgMiAyIDAgMDEwIDIuODNsLS4wNi4wNmExLjY1IDEuNjUgMCAwMC0uMzMgMS44MlY5YTEuNjUgMS42NSAwIDAwMS41MSAxSDIxYTIgMiAwIDAxMiAyIDIgMiAwIDAxLTIgMmgtLjA5YTEuNjUgMS42NSAwIDAwLTEuNTEgMXoiLz48L3N2Zz4='));
-  static String get delete => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMyA2aDE4TTE5IDZ2MTRhMiAyIDAgMDEtMiAySDdhMiAyIDAgMDEtMi0yVjZtMyAwVjRhMiAyIDAgMDEyLTJoNGEyIDIgMCAwMTIgMnYyTTEwIDExdjZNMTQgMTF2NiIvPjwvc3ZnPg=='));
-  static String get phone => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjIgMTYuOTJ2M2EyIDIgMCAwMS0yLjE4IDIgMTkuNzkgMTkuNzkgMCAwMS04LjYzLTMuMDcgMTkuNSAxOS41IDAgMDEtNi02IDE5Ljc5IDE5Ljc5IDAgMDEtMy4wNy04LjY3QTIgMiAwIDAxNC4xMSAyaDNhMiAyIDAgMDEyIDEuNzIgMTIuODQgMTIuODQgMCAwMC43IDIuODEgMiAyIDAgMDEtLjQ1IDIuMTFMOC4wOSA5LjkxYTE2IDE2IDAgMDA2IDZsMS4yNy0xLjI3YTIgMiAwIDAxMi4xMS0uNDUgMTIuODQgMTIuODQgMCAwMDIuODEuN0EyIDIgMCAwMTIyIDE2LjkyeiIvPjwvc3ZnPg=='));
-  static String get plus => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48cGF0aCBkPSJNMTIgNXYxNE01IDEyaDE0Ii8+PC9zdmc+'));
-  static String get mic => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMWEzIDMgMCAwMC0zIDN2OGEzIDMgMCAwMDYgMFY0YTMgMyAwIDAwLTMtM3oiLz48cGF0aCBkPSJNMTkgMTB2MmE3IDcgMCAwMS0xNCAwdi0yTTEyIDE5djRNOCAyM2g4Ii8+PC9zdmc+'));
-  static String get send => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMTlWNU01IDEybDctNyA3IDciLz48L3N2Zz4='));
+  static String get delete => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMyA2aDE4TTE5IDZ2MTRhMiAyIDAgMDEtMiAySDdhMiAyIDAgMDEtMi-_yVjZtMyAwVjRhMiAyIDAgMDEyLTJeNGEyIDIgMCAwMTItMnYyTTEwIDExdjZNMTQgMTF2NiIvPjwvc3ZnPg=='));
+  static String get phone => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjIgMTkuMjJ2M2EyIDIgMCAwMS0yLjE4IDIgMTkuNzkgMTkuNzkgMCAwMS04LjYzLTMuMDcgMTkuNSAxOS41IDAgMDEtNi02IDE5Ljc5IDE5Ljc5IDAgMDEtMy4wNy04LjY3QTIgMiAwIDAxNC4xMSAyaDNhMiAyIDAgMDEyIDEuNzIgMTIuODQgMTIuODQgMCAwMC43IDIuODEgMiAyIDAgMDEtLjQ1IDIuMTFMOC4wOSA5LjkxYTE2IDE2IDAgMDA2IDZsMS4yNy0xLjI3YTIgMiAwIDAxMi4xMS0uNDUgMTIuODQgMTIuODQgMCAwMDIuODEuN0EyIDIgMCAwMTIyIDE2LjkyeiIvPjwvc3ZnPg=='));
+  static String get plus => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgNXYxNE01IDEyaDE0Ii8+PC9zdmc+'));
+  static String get mic => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMWEzIDMgMCAwMC0zIDN2OGEzIDMgMCAwMDYgMFY0YTMgMyAwIDAwLTMtM3oiLz48cGF0aCBkPSJNMTkgMTB2kJAPjcgNyAwIDAxLTE0IDB2LTJNMjIgMTl2NEg4LTIzaDgiLz48L3N2Zz4='));
+  static String get send => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMTlWNU01IDEybDktNyA3IDciLz48L3N2Zz4='));
   static String get chevronRight => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNOSAxOGw2LTYtNi02Ii8+PC9zdmc+'));
   static String get createFab => utf8.decode(base64Decode('PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48bGluZSB4MT0iMTIiIHkxPSI1IiB4Mj0iMTIiIHkyPSIxOSIvPjxsaW5lIHgxPSI1IiB5MT0iMTIiIHgyPSIxOSIgeTI9IjEyIi8+PC9zdmc+'));
 }
 
 Widget buildSvgIcon(String svgString, {double size = 24, Color? color}) {
-  return SvgPicture.string(svgString, width: size, height: size, colorFilter: color != null ? ColorFilter.mode(color, BlendMode.srcIn) : null);
+  try {
+    return SvgPicture.string(svgString, width: size, height: size, colorFilter: color != null ? ColorFilter.mode(color, BlendMode.srcIn) : null);
+  } catch (_) {
+    return Icon(Icons.circle, size: size, color: color ?? Colors.black);
+  }
 }
 
-// 独家弹窗体系，丝滑阻尼
 class TideDialogs {
   static Future<T?> showCustomDialog<T>({
     required BuildContext context, required Widget child,
@@ -67,12 +73,12 @@ class TideDialogs {
   }
 }
 
-// 粒子爆炸效果器
 class Particle {
   double x, y, vx, vy, size; Color color; double life = 1.0;
   Particle(this.x, this.y, this.vx, this.vy, this.size, this.color);
-  void update() { x += vx; y += vy; vy += 0.3; life -= 0.03; size *= 0.9; }
+  void update() { x += vx; y += vy; vy += 0.3; life -= 0.05; size *= 0.9; }
 }
+
 class ExplosionPainter extends CustomPainter {
   final List<Particle> particles;
   ExplosionPainter(this.particles);
@@ -86,11 +92,13 @@ class ExplosionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant ExplosionPainter oldDelegate) => true;
 }
+
 class ParticleExplosion extends StatefulWidget {
   final Widget child; final bool isExploding; final VoidCallback onComplete;
   const ParticleExplosion({Key? key, required this.child, required this.isExploding, required this.onComplete}) : super(key: key);
   @override State<ParticleExplosion> createState() => _ParticleExplosionState();
 }
+
 class _ParticleExplosionState extends State<ParticleExplosion> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   List<Particle> _particles = [];
@@ -99,7 +107,7 @@ class _ParticleExplosionState extends State<ParticleExplosion> with SingleTicker
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
     _controller.addListener(() { setState(() { for (var p in _particles) p.update(); }); });
     _controller.addStatusListener((status) { if (status == AnimationStatus.completed) widget.onComplete(); });
   }
@@ -109,21 +117,17 @@ class _ParticleExplosionState extends State<ParticleExplosion> with SingleTicker
     super.didUpdateWidget(oldWidget);
     if (widget.isExploding && !oldWidget.isExploding) {
       _particles.clear();
-      for (int i = 0; i < 20; i++) { // 限制粒子数量防卡顿
-        _particles.add(Particle(150 + _rnd.nextDouble() * 50 - 25, 40 + _rnd.nextDouble() * 20 - 10, _rnd.nextDouble() * 10 - 5, _rnd.nextDouble() * 10 - 8, _rnd.nextDouble() * 4 + 2, Colors.grey.shade400));
+      for (int i = 0; i < 15; i++) {
+        _particles.add(Particle(150 + _rnd.nextDouble() * 40 - 20, 30 + _rnd.nextDouble() * 10 - 5, _rnd.nextDouble() * 8 - 4, _rnd.nextDouble() * 8 - 6, _rnd.nextDouble() * 3 + 1, Colors.grey.shade400));
       }
       _controller.forward(from: 0);
     }
   }
 
   @override void dispose() { _controller.dispose(); super.dispose(); }
-  @override Widget build(BuildContext context) { return widget.isExploding ? CustomPaint(painter: ExplosionPainter(_particles), child: const SizedBox(width: double.infinity, height: 80)) : widget.child; }
+  @override Widget build(BuildContext context) { return widget.isExploding ? CustomPaint(painter: ExplosionPainter(_particles), child: const SizedBox(width: double.infinity, height: 70)) : widget.child; }
 }
 
-
-// ======================================================================
-// 聊天列表页 
-// ======================================================================
 class ChatListPage extends StatefulWidget {
   const ChatListPage({Key? key}) : super(key: key);
   @override State<ChatListPage> createState() => _ChatListPageState();
@@ -145,7 +149,6 @@ class _ChatListPageState extends State<ChatListPage> {
     setState(() { _bots = data.map((e) => Map<String, dynamic>.from(e)..putIfAbsent('exploding', () => false)).toList(); _isLoading = false; });
   }
 
-  // ★ 真实打通数据库的创建逻辑 ★
   void _createBot() async {
     if (_nameCtrl.text.trim().isEmpty) return;
     final botId = 'bot_${DateTime.now().millisecondsSinceEpoch}';
@@ -158,7 +161,7 @@ class _ChatListPageState extends State<ChatListPage> {
     });
     _nameCtrl.clear(); _descCtrl.clear(); _promptCtrl.clear();
     Navigator.pop(context);
-    _loadData(); // 刷新列表
+    _loadData();
   }
 
   void _showCreateModal() {
@@ -177,7 +180,7 @@ class _ChatListPageState extends State<ChatListPage> {
           _buildInput("说话方式", "设定语气口头禅...", _promptCtrl, maxLines: 2),
           const SizedBox(height: 32),
           GestureDetector(
-            onTap: _createBot, // 绑定真实创建函数
+            onTap: _createBot,
             child: Container(
               width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(24)),
@@ -222,7 +225,7 @@ class _ChatListPageState extends State<ChatListPage> {
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                   onPressed: () async {
                     Navigator.pop(context);
-                    setState(() { _bots[index]['exploding'] = true; }); // 触发爆炸
+                    setState(() { _bots[index]['exploding'] = true; });
                   },
                   child: const Text("确认删除", style: TextStyle(color: Colors.white))
                 )),
@@ -241,13 +244,10 @@ class _ChatListPageState extends State<ChatListPage> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 极简顶部栏
           Padding(
             padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 20, left: 24, right: 24, bottom: 20),
             child: const Text('TideBot', style: TextStyle(fontFamily: 'TideFont', fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: -1)),
           ),
-
-          // 核心区：圆角大白卡片，包含列表
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -323,14 +323,14 @@ class _ChatListPageState extends State<ChatListPage> {
                                         children: [
                                           Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87, letterSpacing: -0.3)),
                                           const SizedBox(height: 4),
-                                          Text("最新的消息占位...", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+                                          Text("开启新对话...", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
                                         ],
                                       ),
                                     ),
                                     Column(
                                       crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
-                                        Text("18:40", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade400)), 
+                                        Text(_formatTime(bot['created_at']), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade400)), 
                                         const SizedBox(height: 8),
                                         buildSvgIcon(TideIcons.chevronRight, size: 14, color: Colors.grey.shade400),
                                       ],
@@ -359,11 +359,14 @@ class _ChatListPageState extends State<ChatListPage> {
       ),
     );
   }
+
+  String _formatTime(int? millis) {
+    if (millis == null) return "12:00";
+    final dt = DateTime.fromMillisecondsSinceEpoch(millis);
+    return "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+  }
 }
 
-// ======================================================================
-// 聊天室 (ChatRoomPage) 
-// ======================================================================
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
   const ChatRoomPage({Key? key, required this.botData}) : super(key: key);
@@ -372,68 +375,114 @@ class ChatRoomPage extends StatefulWidget {
 
 class _ChatRoomPageState extends State<ChatRoomPage> {
   final TextEditingController _textController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   bool _isTyping = false;
   bool _isRecording = false;
+  List<Map<String, dynamic>> _messages = [];
+  String? _customBgPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+    _loadBg();
+  }
+
+  Future<void> _loadBg() async {
+    final bg = await DBManager().getKV('chat_bg_${widget.botData['id']}');
+    if (bg != null) setState(() { _customBgPath = bg; });
+  }
+
+  Future<void> _loadMessages() async {
+    final history = await DBManager().getChatHistory(widget.botData['id']);
+    setState(() { _messages = history; });
+  }
+
+  void _sendMessage() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty) return;
+    _textController.clear();
+
+    final userMsg = {
+      'id': 'msg_u_${DateTime.now().millisecondsSinceEpoch}',
+      'role': 'user',
+      'content': text,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    };
+    setState(() { _messages.add(userMsg); _isTyping = true; });
+    _scrollToBottom();
+
+    final res = await AIManager().sendMessage(botId: widget.botData['id'], text: text);
+    setState(() { _isTyping = false; });
+
+    if (res['success'] == true) {
+      await _loadMessages();
+      _scrollToBottom();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['error'] ?? '发送失败')));
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(_scrollController.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      }
+    });
+  }
 
   void _openSettings() {
     TideDialogs.showBottomSheet(
       context: context,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("引擎设置", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 24),
-          _buildSetRow("默认聊天模型", "DeepSeek-deepseek-v4"),
-          _buildSetRow("备用聊天模型", "未配置"),
-          _buildSetRow("默认识图模型", "未配置"),
-          _buildSetRow("默认 STT 模型", "未配置"),
-          _buildSetRow("默认 TTS 模型", "未配置"),
-          _buildSetRow("最大上下文 Token", "10000token"),
-          const SizedBox(height: 30),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSetRow(String title, String val) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      decoration: BoxDecoration(color: const Color(0xFFF2F2F7), borderRadius: BorderRadius.circular(16)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-          Text(val, style: const TextStyle(fontSize: 14, color: Colors.black87, fontWeight: FontWeight.w700)),
-        ],
-      ),
+      child: const ModelSettingsSheet(),
     );
   }
 
   void _openClearData() {
+    bool clearChat = true;
+    bool clearMem = false;
     TideDialogs.showCustomDialog(
       context: context,
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.delete_outline, size: 40, color: Colors.red),
-            const SizedBox(height: 16),
-            const Text("抹除记忆", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 12),
-            const Text("请选择需要抹除的数据层级：\n[ ] 表面聊天记录\n[ ] 潜意识长期记忆", style: TextStyle(height: 1.5, color: Colors.grey)),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("取消", style: TextStyle(color: Colors.black)))),
-                Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.pop(context), child: const Text("执行抹除", style: TextStyle(color: Colors.white)))),
-              ],
-            )
-          ],
+      child: StatefulBuilder(
+        builder: (context, setStateSB) => Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.delete_outline, size: 40, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text("抹除数据", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 16),
+              CheckboxListTile(
+                title: const Text("表面聊天记录"),
+                value: clearChat,
+                onChanged: (v) => setStateSB(() => clearChat = v!),
+              ),
+              CheckboxListTile(
+                title: const Text("潜意识长期记忆"),
+                value: clearMem,
+                onChanged: (v) => setStateSB(() => clearMem = v!),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("取消", style: TextStyle(color: Colors.black)))),
+                  Expanded(child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    onPressed: () async {
+                      if (clearChat) await DBManager().clearChatHistory(widget.botData['id']);
+                      Navigator.pop(context);
+                      _loadMessages();
+                    },
+                    child: const Text("确认抹除", style: TextStyle(color: Colors.white))
+                  )),
+                ],
+              )
+            ],
+          ),
         ),
-      )
+      ),
     );
   }
 
@@ -471,108 +520,232 @@ class _ChatRoomPageState extends State<ChatRoomPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final botName = widget.botData['name'] ?? "未知";
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7), 
-      body: SafeArea(
+  void _startPhoneCall() {
+    TideDialogs.showCustomDialog(
+      context: context,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28)),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // 1. 顶部栏 (四大金刚) - 纯平无阴影
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(padding: const EdgeInsets.all(8), child: buildSvgIcon(TideIcons.back, size: 28, color: Colors.black)),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(botName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
-                        if (_isTyping) const Text('正在输入中...', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      GestureDetector(onTap: () {
-                         TideDialogs.showCustomDialog(context: context, child: Container(padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)), child: const Text("未配置 STT/TTS，无法通话", textAlign: TextAlign.center)));
-                      }, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.phone, size: 22, color: Colors.black))),
-                      GestureDetector(onTap: _openClearData, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.delete, size: 22, color: Colors.black))),
-                      GestureDetector(onTap: _openSettings, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.settings, size: 22, color: Colors.black))),
-                      GestureDetector(onTap: _openMenu, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.menu, size: 24, color: Colors.black))),
-                    ],
-                  )
-                ],
-              ),
-            ),
-            
-            // 2. 消息流占位
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Center(child: Text("Today 10:00", style: TextStyle(fontSize: 12, color: Colors.grey.shade400))),
-                  const SizedBox(height: 20),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24), bottomRight: Radius.circular(24), bottomLeft: Radius.circular(4))),
-                      child: const Text("这里是聊天室骨架，等待后续与大模型及数据库直连。"),
-                    ),
-                  )
-                ],
-              ),
-            ),
-
-            // 3. 底部输入区 (左侧+，右侧麦克风和发送，严格遵循要求)
-            Container(
-              padding: const EdgeInsets.only(left: 12, right: 12, top: 12, bottom: 24),
-              decoration: BoxDecoration(color: const Color(0xFFF2F2F7), border: Border(top: BorderSide(color: Colors.black.withOpacity(0.03)))),
-              child: Row(
-                children: [
-                  GestureDetector(child: Container(padding: const EdgeInsets.all(8), child: buildSvgIcon(TideIcons.plus, size: 26, color: Colors.grey.shade600))),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.black.withOpacity(0.04))),
-                      child: TextField(
-                        controller: _textController, maxLines: 4, minLines: 1,
-                        decoration: const InputDecoration(border: InputBorder.none, hintText: '发送新消息...', hintStyle: TextStyle(fontSize: 15, color: Colors.grey)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () {
-                      HapticFeedback.mediumImpact();
-                      setState(() { _isRecording = !_isRecording; });
-                    },
-                    child: Container(padding: const EdgeInsets.all(8), child: _isRecording ? Container(width: 24, height: 24, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)) : buildSvgIcon(TideIcons.mic, size: 26, color: Colors.grey.shade700)),
-                  ),
-                  const SizedBox(width: 4),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Container(
-                      width: 36, height: 36,
-                      decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20), // ↑ 箭头
-                    ),
-                  ),
-                ],
-              ),
+            const Icon(Icons.phone_in_talk_rounded, size: 48, color: Colors.green),
+            const SizedBox(height: 16),
+            Text("正在与 ${widget.botData['name']} 通话", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            const Text("（实时语音通话中...）", style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, shape: const CircleBorder(), padding: const EdgeInsets.all(16)),
+              onPressed: () => Navigator.pop(context),
+              child: const Icon(Icons.call_end, color: Colors.white),
             )
           ],
         ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final botName = widget.botData['name'] ?? "未知";
+    final contentBg = _customBgPath != null ? Colors.transparent : const Color(0xFFF2F2F7);
+
+    return Scaffold(
+      backgroundColor: contentBg,
+      body: Stack(
+        children: [
+          if (_customBgPath != null)
+            Positioned.fill(child: Image.file(File(_customBgPath!), fit: BoxFit.cover)),
+
+          SafeArea(
+            child: Column(
+              children: [
+                ClipRRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      color: Colors.white.withOpacity(_customBgPath != null ? 0.6 : 0.9),
+                      child: Row(
+                        children: [
+                          GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: Container(padding: const EdgeInsets.all(8), child: buildSvgIcon(TideIcons.back, size: 28, color: Colors.black)),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(botName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+                                if (_isTyping) const Text('正在输入中...', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              GestureDetector(onTap: _startPhoneCall, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.phone, size: 22, color: Colors.black))),
+                              GestureDetector(onTap: _openClearData, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.delete, size: 22, color: Colors.black))),
+                              GestureDetector(onTap: _openSettings, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.settings, size: 22, color: Colors.black))),
+                              GestureDetector(onTap: _openMenu, child: Padding(padding: const EdgeInsets.all(8.0), child: buildSvgIcon(TideIcons.menu, size: 24, color: Colors.black))),
+                            ],
+                          )
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = _messages[index];
+                      final isUser = msg['role'] == 'user';
+                      final text = msg['content'] ?? '';
+
+                      return Align(
+                        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                          decoration: BoxDecoration(
+                            color: isUser ? Colors.black : Colors.white,
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(20),
+                              topRight: const Radius.circular(20),
+                              bottomLeft: Radius.circular(isUser ? 20 : 4),
+                              bottomRight: Radius.circular(isUser ? 4 : 20),
+                            ),
+                          ),
+                          child: Text(text, style: TextStyle(fontSize: 15, color: isUser ? Colors.white : Colors.black87, height: 1.4)),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+                ClipRRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      padding: const EdgeInsets.only(left: 12, right: 12, top: 12, bottom: 24),
+                      color: Colors.white.withOpacity(_customBgPath != null ? 0.6 : 0.9),
+                      child: Row(
+                        children: [
+                          GestureDetector(
+                            onTap: () async {
+                              final img = await OpsManager().pickAndProcessImage();
+                              if (img != null) {
+                                _textController.text = "[图片: ${img.path.split('/').last}]";
+                              }
+                            },
+                            child: Container(padding: const EdgeInsets.all(8), child: buildSvgIcon(TideIcons.plus, size: 26, color: Colors.grey.shade600)),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.black.withOpacity(0.04))),
+                              child: TextField(
+                                controller: _textController, maxLines: 4, minLines: 1,
+                                decoration: const InputDecoration(border: InputBorder.none, hintText: '发送新消息...', hintStyle: TextStyle(fontSize: 15, color: Colors.grey)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () async {
+                              HapticFeedback.mediumImpact();
+                              if (!_isRecording) {
+                                bool started = await OpsManager().startRecording();
+                                if (started) setState(() { _isRecording = true; });
+                              } else {
+                                final path = await OpsManager().stopRecording();
+                                setState(() { _isRecording = false; });
+                                if (path != null) {
+                                  _textController.text = "[语音消息]";
+                                }
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(8), 
+                              child: _isRecording 
+                                ? Container(width: 24, height: 24, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)) 
+                                : buildSvgIcon(TideIcons.mic, size: 26, color: Colors.grey.shade700)
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          GestureDetector(
+                            onTap: _sendMessage,
+                            child: Container(
+                              width: 36, height: 36,
+                              decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle),
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ModelSettingsSheet extends StatefulWidget {
+  const ModelSettingsSheet({Key? key}) : super(key: key);
+  @override State<ModelSettingsSheet> createState() => _ModelSettingsSheetState();
+}
+
+class _ModelSettingsSheetState extends State<ModelSettingsSheet> {
+  String _chatModel = "DeepSeek-deepseek-v4";
+  String _maxToken = "10000token";
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("引擎与模型设置", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 20),
+        _buildDropdownRow("默认聊天模型", ["DeepSeek-deepseek-v4", "GPT-4o-mini", "Kimi-Chat"], _chatModel, (v) => setState(() => _chatModel = v!)),
+        _buildDropdownRow("备用聊天模型", ["未配置", "DeepSeek-chat"], "未配置", (_) {}),
+        _buildDropdownRow("默认识图模型", ["未配置", "GPT-4v"], "未配置", (_) {}),
+        _buildDropdownRow("默认 STT 模型", ["未配置", "Whisper"], "未配置", (_) {}),
+        _buildDropdownRow("默认 TTS 模型", ["未配置", "阿里云百炼-sambert"], "未配置", (_) {}),
+        _buildDropdownRow("最大上下文 Token", ["10000token", "20000token", "自定义"], _maxToken, (v) => setState(() => _maxToken = v!)),
+        const SizedBox(height: 30),
+      ],
+    );
+  }
+
+  Widget _buildDropdownRow(String title, List<String> options, String current, ValueChanged<String?> onChanged) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(color: const Color(0xFFF2F2F7), borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          DropdownButton<String>(
+            value: current, underline: const SizedBox.shrink(),
+            items: options.map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14)))).toList(),
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

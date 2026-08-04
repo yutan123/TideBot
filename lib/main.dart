@@ -9,6 +9,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'ui_chat_core.dart'; 
 import 'ui_space_square.dart';
+import 'db.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -19,8 +20,9 @@ void main() async {
 
   final prefs = await SharedPreferences.getInstance();
   final String themeStr = prefs.getString('tide_theme') ?? 'apple'; 
+  final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
 
-  runApp(TideBotApp(initialTheme: themeStr));
+  runApp(TideBotApp(initialTheme: themeStr, hasSeenOnboarding: hasSeenOnboarding));
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     try {
@@ -31,7 +33,7 @@ void main() async {
       }
       await initBackgroundService();
     } catch (e) {
-      debugPrint("Background Service Init Failed: \$e");
+      debugPrint("Background Service Init Failed: $e");
     }
   });
 }
@@ -77,7 +79,8 @@ Future<void> initBackgroundService() async {
 
 class TideBotApp extends StatefulWidget {
   final String initialTheme;
-  const TideBotApp({Key? key, required this.initialTheme}) : super(key: key);
+  final bool hasSeenOnboarding;
+  const TideBotApp({Key? key, required this.initialTheme, required this.hasSeenOnboarding}) : super(key: key);
   static _TideBotAppState of(BuildContext context) => context.findAncestorStateOfType<_TideBotAppState>()!;
   @override
   State<TideBotApp> createState() => _TideBotAppState();
@@ -104,7 +107,7 @@ class _TideBotAppState extends State<TideBotApp> {
       title: 'TideBot',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: 'TideFont', // 全局指定自有字体
+        fontFamily: 'TideFont',
         primaryColor: currentTheme.accentColor,
         scaffoldBackgroundColor: currentTheme.chatBg, 
         colorScheme: ColorScheme.fromSeed(
@@ -113,27 +116,143 @@ class _TideBotAppState extends State<TideBotApp> {
         ),
         useMaterial3: true,
       ),
-      home: TideMainScaffold(themeColors: currentTheme), 
+      home: widget.hasSeenOnboarding 
+          ? TideMainScaffold(themeColors: currentTheme)
+          : const OnboardingScreen(), 
     );
   }
 }
 
-// ======================================================================
-// 全局基座：带有“粘性”物理过渡的毛玻璃流光底部导航
-// ======================================================================
+class OnboardingScreen extends StatefulWidget {
+  const OnboardingScreen({Key? key}) : super(key: key);
+  @override State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  final List<Map<String, String>> _pages = [
+    {
+      "title": "纯本地 绝对隐私",
+      "subtitle": "没有官方服务器，没有云端数据库。你的所有记忆与对话日志，100%安全留存本地 SQLite。"
+    },
+    {
+      "title": "沉浸式 情感陪伴",
+      "subtitle": "极致 iOS 风毛玻璃美学与阻尼动画，随时随地与你的专属数字生命深度对话。"
+    },
+    {
+      "title": "智能 Agent 助手",
+      "subtitle": "支持闹钟管理、小游戏对弈、动态广场互动以及微信桥接同步，开启 AI 陪伴新纪元。"
+    }
+  ];
+
+  void _finishOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_onboarding', true);
+    // 自动创建一个默认机器人
+    await DBManager().insertBot({
+      'id': 'bot_default_1',
+      'name': '屿潭',
+      'desc': '一个温柔、善解人意且略带傲娇的数字生命伴侣。',
+      'prompt': '说话温柔细腻，喜欢使用emoji和颜文字，对主人充满关怀。',
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => TideMainScaffold(themeColors: ThemeConfig.getTheme('apple'))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F7),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: _pages.length,
+                onChanged: (idx) => setState(() => _currentPage = idx),
+                itemBuilder: (context, index) {
+                  final p = _pages[index];
+                  return Padding(
+                    padding: const EdgeInsets.all(32.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 120, height: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            borderRadius: BorderRadius.circular(36),
+                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10))]
+                          ),
+                          alignment: Alignment.center,
+                          child: const Text("T", style: TextStyle(color: Colors.white, fontSize: 60, fontWeight: FontWeight.w900)),
+                        ),
+                        const SizedBox(height: 48),
+                        Text(p["title"]!, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -0.5), textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        Text(p["subtitle"]!, style: TextStyle(fontSize: 16, color: Colors.grey.shade600, height: 1.5), textAlign: TextAlign.center),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_pages.length, (index) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: _currentPage == index ? 24 : 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: _currentPage == index ? Colors.black : Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              )),
+            ),
+            const SizedBox(height: 32),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.mediumImpact();
+                  if (_currentPage < _pages.length - 1) {
+                    _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                  } else {
+                    _finishOnboarding();
+                  }
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(24)),
+                  alignment: Alignment.center,
+                  child: Text(_currentPage == _pages.length - 1 ? "开启旅程" : "下一步", style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class TideMainScaffold extends StatefulWidget {
   final ThemeColors themeColors;
   const TideMainScaffold({Key? key, required this.themeColors}) : super(key: key);
-  @override
-  State<TideMainScaffold> createState() => _TideMainScaffoldState();
+  @override State<TideMainScaffold> createState() => _TideMainScaffoldState();
 }
 
 class _TideMainScaffoldState extends State<TideMainScaffold> {
-  int _currentIndex = 0; // 默认打开 Chats
+  int _currentIndex = 0;
   final List<String> _tabs = ["聊天", "空间", "广场", "我的"];
-
-  // 控制滑动胶囊的动画变量
-  double _dragPosition = 0.0; 
 
   @override
   Widget build(BuildContext context) {
@@ -145,7 +264,6 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
       backgroundColor: widget.themeColors.chatBg, 
       body: Stack(
         children: [
-          // 主体内容路由
           SafeArea(
             bottom: false,
             child: IndexedStack(
@@ -159,7 +277,6 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             ),
           ),
 
-          // 悬浮滑动 Dock 
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 16,
             left: (screenWidth - dockWidth) / 2,
@@ -181,10 +298,9 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                   child: Stack(
                     alignment: Alignment.centerLeft,
                     children: [
-                      // 带有弹簧粘性动效的流光胶囊底座
                       AnimatedPositioned(
                         duration: const Duration(milliseconds: 500),
-                        curve: Curves.elasticOut, // 弹性/粘性曲线，滑过去会有黏糊糊的颤动
+                        curve: Curves.elasticOut,
                         left: _currentIndex * tabWidth + (tabWidth * 0.1),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 250),
@@ -192,7 +308,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                           width: tabWidth * 0.8,
                           height: 46,
                           decoration: BoxDecoration(
-                            color: Colors.white, // 流光白色滑块
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(23),
                             boxShadow: [
                               BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 2))
@@ -200,7 +316,6 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                           ),
                         ),
                       ),
-                      // 文字层
                       Row(
                         children: List.generate(_tabs.length, (index) {
                           bool isActive = _currentIndex == index;
@@ -253,7 +368,7 @@ class ThemeConfig {
   static ThemeColors getTheme(String name) {
     return ThemeColors(
       accentColor: Colors.black, 
-      chatBg: const Color(0xFFF2F2F7), // iOS 灰背景
+      chatBg: const Color(0xFFF2F2F7),
       isDark: false,
     );
   }
