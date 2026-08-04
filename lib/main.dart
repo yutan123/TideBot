@@ -150,7 +150,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void _finishOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('seen_onboarding', true);
-    // 自动创建一个默认机器人
+    
     await DBManager().insertBot({
       'id': 'bot_default_1',
       'name': '屿潭',
@@ -175,7 +175,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: PageView.builder(
                 controller: _pageController,
                 itemCount: _pages.length,
-                onChanged: (idx) => setState(() => _currentPage = idx),
+                onPageChanged: (idx) => setState(() => _currentPage = idx), // 修复了报错，必须使用 onPageChanged
                 itemBuilder: (context, index) {
                   final p = _pages[index];
                   return Padding(
@@ -269,10 +269,10 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             child: IndexedStack(
               index: _currentIndex,
               children: const [
-                ChatListPage(),    // 聊天
-                SpacePage(),       // 空间
-                SquarePage(),      // 广场
-                ProfilePage(),     // 我的
+                ChatListPage(),    
+                SpacePage(),       
+                SquarePage(),      
+                ProfilePage(),     
               ],
             ),
           ),

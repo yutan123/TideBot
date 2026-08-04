@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io'; // 修复了报错，加入了必要的文件处理导入
 import 'package:http/http.dart' as http;
 import 'db.dart';
 import 'ops.dart';
@@ -177,7 +178,7 @@ class AIManager {
   Future<String?> generateTTS(String text, String ttsProviderId) async {
     try {
       final path = "/tmp/tide_tts_${DateTime.now().millisecondsSinceEpoch}.audio";
-      final file = File(path);
+      final file = File(path); // 由于刚才没有引入 dart:io，这里导致了报错，现已修复
       await file.writeAsBytes([]);
       return path;
     } catch (e) {
