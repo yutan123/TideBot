@@ -55,7 +55,7 @@ Future<void> initBackgroundService() async {
   final service = FlutterBackgroundService();
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'tide_bot_foreground', 'TideBot Core', 
-    description: '数字生命持续链接中', importance: Importance.low, 
+    description: '数字生命持续运作中', importance: Importance.low, 
   );
 
   await flutterLocalNotificationsPlugin
@@ -119,7 +119,7 @@ class _TideBotAppState extends State<TideBotApp> {
 }
 
 // ======================================================================
-// 全局基座：复刻图片 1000037076.jpg 的丝滑胶囊滑动导航
+// 全局基座：带有“粘性”物理过渡的毛玻璃流光底部导航
 // ======================================================================
 class TideMainScaffold extends StatefulWidget {
   final ThemeColors themeColors;
@@ -129,18 +129,20 @@ class TideMainScaffold extends StatefulWidget {
 }
 
 class _TideMainScaffoldState extends State<TideMainScaffold> {
-  int _currentIndex = 1; // 默认打开 Chats
-  final List<String> _tabs = ["Home", "Chats", "Square", "Diary"];
+  int _currentIndex = 0; // 默认打开 Chats
+  final List<String> _tabs = ["聊天", "空间", "广场", "我的"];
+
+  // 控制滑动胶囊的动画变量
+  double _dragPosition = 0.0; 
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final dockWidth = screenWidth * 0.9; // Dock 总宽度
-    final tabWidth = dockWidth / 4;      // 单个 Tab 宽度
-    final capsuleWidth = tabWidth * 0.9; // 灰色滑块胶囊宽度
+    final dockWidth = screenWidth * 0.9; 
+    final tabWidth = dockWidth / 4;      
 
     return Scaffold(
-      backgroundColor: widget.themeColors.chatBg, // 极简底色
+      backgroundColor: widget.themeColors.chatBg, 
       body: Stack(
         children: [
           // 主体内容路由
@@ -149,47 +151,52 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             child: IndexedStack(
               index: _currentIndex,
               children: const [
-                SpacePage(),       // Home对应的是Space界面
-                ChatListPage(),    // Chats对应的是聊天列表
-                SquarePage(),      // Square广场
-                ProfilePage(),     // Diary对应设置和日记
+                ChatListPage(),    // 聊天
+                SpacePage(),       // 空间
+                SquarePage(),      // 广场
+                ProfilePage(),     // 我的
               ],
             ),
           ),
 
-          // 悬浮滑动 Dock (严格参照图片设计)
+          // 悬浮滑动 Dock 
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 16,
             left: (screenWidth - dockWidth) / 2,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(30),
+              borderRadius: BorderRadius.circular(36),
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
                 child: Container(
                   width: dockWidth,
-                  height: 60,
+                  height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.85), // iOS 毛玻璃白
-                    borderRadius: BorderRadius.circular(30),
+                    color: Colors.white.withOpacity(0.75), 
+                    borderRadius: BorderRadius.circular(36),
                     border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.5),
                     boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 8))
+                      BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 8))
                     ],
                   ),
                   child: Stack(
                     alignment: Alignment.centerLeft,
                     children: [
-                      // 滑动的灰色胶囊底座
+                      // 带有弹簧粘性动效的流光胶囊底座
                       AnimatedPositioned(
-                        duration: const Duration(milliseconds: 350),
-                        curve: Curves.easeOutCubic, // 丝滑阻尼曲线
-                        left: _currentIndex * tabWidth + (tabWidth - capsuleWidth) / 2,
-                        child: Container(
-                          width: capsuleWidth,
-                          height: 44,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.elasticOut, // 弹性/粘性曲线，滑过去会有黏糊糊的颤动
+                        left: _currentIndex * tabWidth + (tabWidth * 0.1),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeOut,
+                          width: tabWidth * 0.8,
+                          height: 46,
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.06), // 极淡的灰色
-                            borderRadius: BorderRadius.circular(22),
+                            color: Colors.white, // 流光白色滑块
+                            borderRadius: BorderRadius.circular(23),
+                            boxShadow: [
+                              BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 2))
+                            ]
                           ),
                         ),
                       ),
@@ -200,21 +207,20 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                           return GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onTap: () {
-                              HapticFeedback.lightImpact(); // 触感反馈
+                              HapticFeedback.lightImpact(); 
                               setState(() { _currentIndex = index; });
                             },
                             child: SizedBox(
                               width: tabWidth,
-                              height: 60,
+                              height: 64,
                               child: Center(
                                 child: AnimatedDefaultTextStyle(
-                                  duration: const Duration(milliseconds: 300),
+                                  duration: const Duration(milliseconds: 200),
                                   style: TextStyle(
                                     fontFamily: 'TideFont',
                                     fontSize: 16,
-                                    fontWeight: isActive ? FontWeight.w800 : FontWeight.w500,
-                                    color: isActive ? Colors.black : Colors.grey.shade400,
-                                    letterSpacing: 0.5,
+                                    fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
+                                    color: isActive ? Colors.black : Colors.grey.shade500,
                                   ),
                                   child: Text(_tabs[index]),
                                 ),
@@ -235,24 +241,19 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
   }
 }
 
-// ----------------------------------------------------------------------
-// 主题色彩管理：极致 Apple 白
-// ----------------------------------------------------------------------
 class ThemeColors {
   final Color accentColor;
-  final Color textMain;
   final Color chatBg;
   final bool isDark;
 
-  ThemeColors({required this.accentColor, required this.textMain, required this.chatBg, this.isDark = false});
+  ThemeColors({required this.accentColor, required this.chatBg, this.isDark = false});
 }
 
 class ThemeConfig {
   static ThemeColors getTheme(String name) {
     return ThemeColors(
       accentColor: Colors.black, 
-      textMain: Colors.black87,
-      chatBg: const Color(0xFFF2F2F7), // Apple 经典的浅灰色背景
+      chatBg: const Color(0xFFF2F2F7), // iOS 灰背景
       isDark: false,
     );
   }
