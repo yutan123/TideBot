@@ -8,26 +8,37 @@ class AIManager {
   factory AIManager() => _instance;
   AIManager._internal();
 
-  // 1. 发送消息逻辑
-  Future<Map<String, dynamic>> sendMessage({required String botId, required String text, String? imagePath, String? activeGame}) async {
+  // 核心通信引擎
+  Future<Map<String, dynamic>> sendMessage({
+    required String botId, 
+    required String text, 
+    String? imagePath, 
+    String? activeGame // 支持动态注入游戏规则
+  }) async {
     final db = DBManager();
     final bots = await db.getAllBots();
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
-    if (bot.isEmpty) return {'error': '档案不存在'};
+    if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
 
     final providerId = bot['chat_model'];
-    if (providerId == null || providerId.isEmpty) return {'error': '未配置聊天模型，请在右上角设置中配置'};
+    if (providerId == null || providerId.isEmpty) return {'error': '未配置引擎中枢，请在设置中配置'};
     final provider = await db.getProviderById(providerId);
-    if (provider == null) return {'error': '选中的模型提供商已被删除，请重新配置'};
+    if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
 
     List<Map<String, dynamic>> messages = [];
+    
+    // 注入底层角色设定与游戏规则
     messages.add({'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)});
 
+    // 截取最近 20 条对话作为短记忆上下文
     final history = await db.getChatHistory(botId);
-    for (var msg in history.take(30)) {
-      if (msg['type'] == 'text') messages.add({'role': msg['role'], 'content': msg['content']});
+    for (var msg in history.take(20)) {
+      if (msg['type'] == 'text') {
+        messages.add({'role': msg['role'], 'content': msg['content']});
+      }
     }
 
+    // 视觉模态处理 (图片 Base64 注入)
     if (imagePath != null && imagePath.isNotEmpty) {
       try {
         final bytes = await File(imagePath).readAsBytes();
@@ -35,7 +46,7 @@ class AIManager {
         messages.add({
           'role': 'user',
           'content': [
-            {'type': 'text', 'text': text.isEmpty ? "请看图片" : text},
+            {'type': 'text', 'text': text == "[语音/图片]" ? "请看这张图片。" : text},
             {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,$b64'}}
           ]
         });
@@ -49,39 +60,53 @@ class AIManager {
     try {
       final response = await http.post(
         Uri.parse("${provider['base_url']}/chat/completions"),
-        headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
+        headers: {
+          "Content-Type": "application/json", 
+          "Authorization": "Bearer ${provider['api_key']}"
+        },
         body: jsonEncode({
           "model": provider['name'].toString().split(' / ').last, 
           "messages": messages, 
           "max_tokens": bot['max_tokens'] ?? 10000
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 40));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(utf8.decode(response.bodyBytes));
         String replyText = json['choices'][0]['message']['content'] ?? '';
+        
+        // 情绪提取器：解析并剔除底层情绪标签
         String mood = _extractMood(replyText);
         replyText = replyText.replaceAll(RegExp(r'\[心情:.*?\]'), '').trim();
 
-        // 真实处理 TTS (如果配置了)
+        // 语音模态处理：如果配置了 TTS，则生成语音文件
         String? audioPath;
         if (bot['tts_model'] != null && bot['tts_model'].toString().isNotEmpty) {
           audioPath = await _generateTTS(replyText, bot['tts_model']);
         }
 
         final ts = DateTime.now().millisecondsSinceEpoch;
-        await db.insertChatMessage({'id': 'msg_${ts+1}', 'bot_id': botId, 'role': 'assistant', 'type': audioPath != null ? 'audio' : 'text', 'content': replyText, 'file_path': audioPath, 'mood': mood, 'timestamp': ts + 1});
+        await db.insertChatMessage({
+          'id': 'msg_a_${ts+1}', 
+          'bot_id': botId, 
+          'role': 'assistant', 
+          'type': audioPath != null ? 'audio' : 'text', 
+          'content': replyText, 
+          'file_path': audioPath, 
+          'mood': mood, 
+          'timestamp': ts + 1
+        });
         
         return {'success': true};
       } else {
-        return {'error': 'API响应错误: ${response.statusCode}'};
+        return {'error': '大模型节点拥堵或拒绝访问: ${response.statusCode}'};
       }
     } catch (e) {
-      return {'error': '网络超时或跨域错误'};
+      return {'error': '本地网络异常或网关超时'};
     }
   }
 
-  // 2. TTS 生成逻辑 (包含阿里云格式适配)
+  // 特异化 TTS 处理 (兼容标准协议与阿里云百炼特异 Payload)
   Future<String?> _generateTTS(String text, String providerId) async {
     final provider = await DBManager().getProviderById(providerId);
     if (provider == null) return null;
@@ -89,20 +114,19 @@ class AIManager {
     try {
       http.Response res;
       final modelName = provider['name'].toString().split(' / ').last;
+      
       if (provider['base_url'].toString().contains('dashscope')) {
-        // 阿里云百炼 TTS 特殊格式
         res = await http.post(
           Uri.parse("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav"),
           headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
           body: jsonEncode({"model": modelName, "input": {"text": text}, "parameters": {"format": "wav"}}),
-        ).timeout(const Duration(seconds: 15));
+        ).timeout(const Duration(seconds: 20));
       } else {
-        // 标准 OpenAI TTS 格式
         res = await http.post(
           Uri.parse("${provider['base_url']}/audio/speech"),
           headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
           body: jsonEncode({"model": modelName, "input": text, "voice": "alloy"}),
-        ).timeout(const Duration(seconds: 15));
+        ).timeout(const Duration(seconds: 20));
       }
       
       if (res.statusCode == 200) {
@@ -116,7 +140,7 @@ class AIManager {
     return null;
   }
 
-  // 3. 今日一言自动生成器
+  // 空间广场：今日一言生成逻辑
   Future<String> getDailyQuote(String botId) async {
     final db = DBManager();
     final todayStr = "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
@@ -129,11 +153,13 @@ class AIManager {
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty || bot['chat_model'] == null) return "今天也要开心度过哦。";
 
+    // 暗中调用 AI 引擎生成，但不暴露在聊天历史中
     final res = await sendMessage(botId: botId, text: "请结合你的人设，生成一句今天的早安问候或感悟，字数严格在10到15字，不要废话，不要包含[心情]标签。");
     if (res['success'] == true) {
       final history = await db.getChatHistory(botId);
       final lastMsg = history.last['content'].toString();
-      await db.deleteMessage(history.last['id']); // 生成完删掉避免污染聊天记录
+      // 阅后即焚，防止污染日常对话
+      await db.deleteMessage(history.last['id']); 
       await db.deleteMessage(history[history.length-2]['id']);
       
       await db.setKV('quote_date_$botId', todayStr);
@@ -143,7 +169,7 @@ class AIManager {
     return "今天也要开心度过哦。";
   }
 
-  // 4. 真实测速
+  // API 测速
   Future<Map<String, dynamic>> testConnection(String baseUrl, String apiKey, String modelName) async {
     final start = DateTime.now();
     try {
@@ -151,20 +177,27 @@ class AIManager {
         Uri.parse("$baseUrl/chat/completions"),
         headers: {"Content-Type": "application/json", "Authorization": "Bearer $apiKey"},
         body: jsonEncode({"model": modelName, "messages": [{"role": "user", "content": "1"}], "max_tokens": 5}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 15));
       if (res.statusCode == 200) return {'success': true, 'delay': DateTime.now().difference(start).inMilliseconds};
-      return {'success': false, 'error': '错误码: ${res.statusCode}'};
+      return {'success': false, 'error': '服务端返回 HTTP ${res.statusCode}'};
     } catch (e) {
-      return {'success': false, 'error': '连接超时或无效配置'};
+      return {'success': false, 'error': '无法连接，请检查 URL 格式或网络'};
     }
   }
 
+  // 构建核心防御护栏与游戏机制注入
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
-    String p = "你的名字是${bot['name']}。\n身世:${bot['desc']}\n说话方式:${bot['prompt']}\n当前时间:${DateTime.now()}。\n要求:你必须在回复的最开头输出当前心情标签，格式为[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]之一。";
-    if (activeGame == 'poker') p += "\n【系统强制规则】：你正在和用户玩两人扑克。牌组仅3~10共32张无大小王。每人16张。正常算力对战。绝对不可向用户透露你的底牌！要在闲聊中推进游戏。";
-    if (activeGame == '20q') p += "\n【系统强制规则】：你正在玩20问猜物。只能回答是或否。";
-    if (activeGame == 'gomoku') p += "\n【系统强制规则】：五子棋对战，使用棋盘坐标交互。";
-    if (activeGame == 'tictactoe') p += "\n【系统强制规则】：井字棋对战，3x3坐标交互。";
+    String p = "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
+               "当前现实时间:${DateTime.now()}。\n"
+               "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。";
+    
+    if (activeGame == 'poker') {
+      p += "\n【系统级游戏劫持】：你当前正在和用户玩双人扑克牌。规则极度严格：牌组仅限 3~10，共32张，没有大小王。每人随机发16张牌。正常的算力对战（单张、对子、三带一、顺子、炸弹）。绝对不可向用户透露你手中的底牌！你需要在每次闲聊中推进游戏局势并描述你出的牌。";
+    } else if (activeGame == '20q') {
+      p += "\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的“是”或“否”推断出答案；如果你是出题人，你只能回答“是”或“否”。在 20 问内未能猜出则判定输。";
+    } else if (activeGame == 'gomoku') {
+      p += "\n【系统级游戏劫持】：你正在进行五子棋心算对战，请使用标准的棋盘坐标系与用户交互落子点。";
+    }
     return p;
   }
 
