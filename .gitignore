@@ -12,6 +12,10 @@
 .swiftpm/
 migrate_working_dir/
 
+# Workspace internal dirs (do not track)
+.backup/
+.operit/
+
 # IntelliJ related
 *.iml
 *.ipr
