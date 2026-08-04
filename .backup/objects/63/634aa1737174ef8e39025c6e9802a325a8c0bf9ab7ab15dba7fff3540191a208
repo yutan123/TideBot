@@ -41,13 +41,13 @@ class DBManager {
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
-         // 3. 记忆表 (长/中/短)
-         await db.execute('''
-           CREATE TABLE memories (
-             id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT, content TEXT, timestamp INTEGER,
-             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
-           )
-         ''');
+        // 3. 记忆表 (长/中/短)
+        await db.execute('''
+          CREATE TABLE memories (
+            id TEXT PRIMARY KEY, bot_id TEXT, type TEXT, content TEXT, timestamp INTEGER,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+          )
+        ''');
         // 4. 日程规划表
         await db.execute('''
           CREATE TABLE schedule_tasks (

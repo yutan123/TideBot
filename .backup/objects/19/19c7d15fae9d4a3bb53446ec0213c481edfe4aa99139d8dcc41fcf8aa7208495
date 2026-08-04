@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
@@ -58,10 +57,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
       if (img != null) {
         String path = img.path;
         if (path.toLowerCase().endsWith('.heic') || path.toLowerCase().endsWith('.heif')) {
-          try {
-            final converted = await HeifConverter.convert(path);
-            if (converted != null) path = converted;
-          } catch (_) {}
+          try { path = await HeifConverter.convert(path); } catch (_) {}
         }
         final dir = await getApplicationDocumentsDirectory();
         final dest = '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';

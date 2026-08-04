@@ -15,10 +15,10 @@ class AIManager {
     required String botPrompt,
     String imageBase64 = '',
   }) async {
-    // 用最后一条 user 消息作为文本
+    // 简单实现：用最后一条 user 消息调用 sendMessage
     final lastUser = messages.lastWhere((m) => m['role'] == 'user', orElse: () => {'content': ''});
     final text = lastUser['content'] as String? ?? '';
-
+    // 这里需要 botId，但新接口没传。从 providerId 反向查 botId
     final db = DBManager();
     final bots = await db.getAllBots();
     String botId = '';
@@ -27,17 +27,7 @@ class AIManager {
     }
     if (botId.isEmpty && bots.isNotEmpty) botId = bots.first['id'];
 
-    // 如果有 Base64 图片，先写入临时文件再传给 sendMessage
-    String? imgPath;
-    if (imageBase64.isNotEmpty) {
-      try {
-        final tmpFile = File('/tmp/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await tmpFile.writeAsBytes(base64Decode(imageBase64));
-        imgPath = tmpFile.path;
-      } catch (_) {}
-    }
-
-    final res = await sendMessage(botId: botId, text: text, imagePath: imgPath);
+    final res = await sendMessage(botId: botId, text: text, imagePath: imageBase64.isNotEmpty ? imageBase64 : null);
     if (res['success'] == true) {
       final history = await db.getChatHistory(botId);
       if (history.isNotEmpty) return history.last['content']?.toString() ?? '';

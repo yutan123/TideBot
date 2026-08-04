@@ -1,16 +1,9 @@
 import 'dart:math';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 
 // ========== 自定义弹窗系统 ==========
-
-// 顶层函数别名（新代码用 showTideDialog）
-Future<T?> showTideDialog<T>({required BuildContext context, required WidgetBuilder builder, bool barrierDismissible = true}) {
-  return TideDialogs.show<T>(context: context, builder: builder, barrierDismissible: barrierDismissible);
-}
-
 class TideDialogs {
   static Future<T?> show<T>({required BuildContext context, required WidgetBuilder builder, bool barrierDismissible = true}) {
     HapticFeedback.lightImpact();
@@ -133,69 +126,12 @@ class GlassCard extends StatelessWidget {
   }
 }
 
-// FrostCard: GlassCard 别名（新代码用，支持 margin）
-class FrostCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-  final EdgeInsetsGeometry margin;
-  final double radius;
-  final VoidCallback? onTap;
-  const FrostCard({Key? key, required this.child, this.padding = const EdgeInsets.all(16), this.margin = EdgeInsets.zero, this.radius = 20, this.onTap}) : super(key: key);
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: margin,
-      child: GestureDetector(
-        onTap: onTap,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.7),
-                borderRadius: BorderRadius.circular(radius),
-                border: Border.all(color: Colors.white.withOpacity(0.5), width: 0.5),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 3))],
-              ),
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ========== 时间格式化 ==========
-String fmtTime(dynamic ts) {
-  if (ts == null) return '';
-  if (ts is String) {
-    final dt = DateTime.tryParse(ts);
-    if (dt != null) return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    return ts;
-  }
-  if (ts is int) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(ts);
-    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-  }
-  return ts.toString();
+String fmtTime(int ts) {
+  final dt = DateTime.fromMillisecondsSinceEpoch(ts);
+  return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 }
-
-// 别名：新代码用 formatTime
-String formatTime(dynamic ts) => fmtTime(ts);
-
-String fmtDate(dynamic ts) {
-  if (ts == null) return '';
-  if (ts is String) {
-    final dt = DateTime.tryParse(ts);
-    if (dt != null) return '${dt.year}.${dt.month}.${dt.day}';
-    return ts;
-  }
-  if (ts is int) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(ts);
-    return '${dt.year}.${dt.month}.${dt.day}';
-  }
-  return ts.toString();
+String fmtDate(int ts) {
+  final dt = DateTime.fromMillisecondsSinceEpoch(ts);
+  return '${dt.year}.${dt.month}.${dt.day}';
 }

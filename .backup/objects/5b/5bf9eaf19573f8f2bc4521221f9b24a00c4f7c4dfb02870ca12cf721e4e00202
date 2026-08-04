@@ -135,10 +135,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   Future<String> _fixHeic(String path) async {
     final l = path.toLowerCase();
     if (l.endsWith('.heic') || l.endsWith('.heif')) {
-      try {
-        final converted = await HeifConverter.convert(path);
-        if (converted != null) return converted;
-      } catch (_) {}
+      try { return await HeifConverter.convert(path); } catch (_) {}
     }
     return path;
   }
@@ -160,11 +157,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       const SizedBox(height: 10), _mLabel('人格设定'), _mField(d, h: 80),
       const SizedBox(height: 10), _mLabel('说话方式'), _mField(p, h: 100),
       const SizedBox(height: 16),
-      SizedBox(width: double.infinity, child: TideDialogs.glassButton('保存', onTap: () async {
+      SizedBox(width: double.infinity, child: TideDialogs.glassButton('保存', onTap: () {
         _bot['name'] = n.text; _bot['desc'] = d.text; _bot['prompt'] = p.text;
-        await DBManager().updateBot(_bot['id'] as String, {
-          'name': n.text, 'desc': d.text, 'prompt': p.text,
-        });
+        DBManager().updateBot(_bot);
         Navigator.pop(ctx); setState(() {});
       })),
     ])));
@@ -217,7 +212,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     ])));
   }
 
-  Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
+  Widget _modelPicker(BuildContext ctx, List<Map> providers, String cur, Function(String) onPick) {
     final disp = providers.isNotEmpty
         ? (providers.firstWhereOrNull((p) => p['id'] == cur)?['name'] ?? '未选择')
         : '无可用模型';

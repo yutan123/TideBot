@@ -217,7 +217,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     ])));
   }
 
-  Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
+  Widget _modelPicker(BuildContext ctx, List<Map> providers, String cur, Function(String) onPick) {
     final disp = providers.isNotEmpty
         ? (providers.firstWhereOrNull((p) => p['id'] == cur)?['name'] ?? '未选择')
         : '无可用模型';

@@ -8,42 +8,7 @@ class AIManager {
   factory AIManager() => _instance;
   AIManager._internal();
 
-  // 新 UI 调用的 chat 包装（兼容 chat_room 的调用方式）
-  Future<String> chat({
-    required List<Map<String, dynamic>> messages,
-    required String providerId,
-    required String botPrompt,
-    String imageBase64 = '',
-  }) async {
-    // 用最后一条 user 消息作为文本
-    final lastUser = messages.lastWhere((m) => m['role'] == 'user', orElse: () => {'content': ''});
-    final text = lastUser['content'] as String? ?? '';
-
-    final db = DBManager();
-    final bots = await db.getAllBots();
-    String botId = '';
-    for (var b in bots) {
-      if (b['chat_model'] == providerId) { botId = b['id']; break; }
-    }
-    if (botId.isEmpty && bots.isNotEmpty) botId = bots.first['id'];
-
-    // 如果有 Base64 图片，先写入临时文件再传给 sendMessage
-    String? imgPath;
-    if (imageBase64.isNotEmpty) {
-      try {
-        final tmpFile = File('/tmp/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await tmpFile.writeAsBytes(base64Decode(imageBase64));
-        imgPath = tmpFile.path;
-      } catch (_) {}
-    }
-
-    final res = await sendMessage(botId: botId, text: text, imagePath: imgPath);
-    if (res['success'] == true) {
-      final history = await db.getChatHistory(botId);
-      if (history.isNotEmpty) return history.last['content']?.toString() ?? '';
-    }
-    return res['error']?.toString() ?? '';
-  }
+  // 核心通信引擎
   Future<Map<String, dynamic>> sendMessage({
     required String botId, 
     required String text, 
