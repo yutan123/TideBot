@@ -4,16 +4,42 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 
-// ========== 自定义弹窗系统 ==========
+// ========== 全局弹性点击包装器 ==========
+class BouncyTap extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final double scaleAmount;
+  const BouncyTap({Key? key, required this.child, this.onTap, this.scaleAmount = 0.05}) : super(key: key);
+  @override State<BouncyTap> createState() => _BouncyTapState();
+}
+class _BouncyTapState extends State<BouncyTap> with SingleTickerProviderStateMixin {
+  late AnimationController _c;
+  late Animation<double> _scale;
+  @override void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 120));
+    _scale = Tween<double>(begin: 1.0, end: 1.0 - widget.scaleAmount).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic));
+    _c.addStatusListener((s) { if (s == AnimationStatus.completed) _c.reverse(); });
+  }
+  @override void dispose() { _c.dispose(); super.dispose(); }
+  @override Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) { _c.forward(); HapticFeedback.lightImpact(); },
+      onTapUp: (_) => _c.reverse(),
+      onTapCancel: () => _c.reverse(),
+      onTap: widget.onTap,
+      child: AnimatedBuilder(animation: _scale, builder: (c, child) => Transform.scale(scale: _scale.value, child: child), child: widget.child),
+    );
+  }
+}
 
-// 顶层函数别名（新代码用 showTideDialog）
+// ========== 自定义弹窗系统 ==========
 Future<T?> showTideDialog<T>({required BuildContext context, required WidgetBuilder builder, bool barrierDismissible = true}) {
   return TideDialogs.show<T>(context: context, builder: builder, barrierDismissible: barrierDismissible);
 }
 
 class TideDialogs {
   static Future<T?> show<T>({required BuildContext context, required WidgetBuilder builder, bool barrierDismissible = true}) {
-    HapticFeedback.lightImpact();
     return showGeneralDialog<T>(
       context: context, barrierDismissible: barrierDismissible, barrierLabel: '',
       barrierColor: Colors.black.withOpacity(0.35),
@@ -40,7 +66,7 @@ class TideDialogs {
   }
 
   static Widget glassButton(String label, {required VoidCallback onTap, Color color = const Color(0xFF6B5B95), Color textColor = Colors.white}) {
-    return GestureDetector(
+    return BouncyTap(
       onTap: onTap,
       child: Container(
         height: 44, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
@@ -52,7 +78,6 @@ class TideDialogs {
 
 // ========== 底部弹窗 ==========
 Future<T?> showTideSheet<T>({required BuildContext context, required Widget child, double height = 300}) {
-  HapticFeedback.lightImpact();
   return showModalBottomSheet<T>(
     context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withOpacity(0.35),
@@ -83,7 +108,6 @@ class Particle {
   Particle(this.x, this.y, this.vx, this.vy, this.size, this.color);
   void update() { x += vx; y += vy; vy += 0.3; life -= 0.025; size *= 0.94; }
 }
-
 class ExplosionPainter extends CustomPainter {
   final List<Particle> ps;
   ExplosionPainter(this.ps);
@@ -93,7 +117,6 @@ class ExplosionPainter extends CustomPainter {
   }
   @override bool shouldRepaint(covariant ExplosionPainter o) => true;
 }
-
 class ParticleOverlay extends StatefulWidget {
   final Widget child; final List<Offset> origins; final VoidCallback? onDone;
   const ParticleOverlay({Key? key, required this.child, required this.origins, this.onDone}) : super(key: key);
@@ -132,17 +155,10 @@ class GlassCard extends StatelessWidget {
     );
   }
 }
-
-// FrostCard: GlassCard 别名（新代码用，支持 margin）
 class FrostCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-  final EdgeInsetsGeometry margin;
-  final double radius;
-  final VoidCallback? onTap;
+  final Widget child; final EdgeInsetsGeometry padding; final EdgeInsetsGeometry margin; final double radius; final VoidCallback? onTap;
   const FrostCard({Key? key, required this.child, this.padding = const EdgeInsets.all(16), this.margin = EdgeInsets.zero, this.radius = 20, this.onTap}) : super(key: key);
-  @override
-  Widget build(BuildContext context) {
+  @override Widget build(BuildContext context) {
     return Padding(
       padding: margin,
       child: GestureDetector(
@@ -182,10 +198,7 @@ String fmtTime(dynamic ts) {
   }
   return ts.toString();
 }
-
-// 别名：新代码用 formatTime
 String formatTime(dynamic ts) => fmtTime(ts);
-
 String fmtDate(dynamic ts) {
   if (ts == null) return '';
   if (ts is String) {

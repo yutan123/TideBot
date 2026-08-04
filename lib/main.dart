@@ -8,7 +8,9 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'ui_chat_list.dart';
 import 'ui_space_square.dart';
+import 'ui_profile.dart';
 import 'db.dart';
+import 'ui_components.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,6 +74,7 @@ class TideBotApp extends StatelessWidget {
   @override Widget build(BuildContext context) => MaterialApp(title: 'TideBot', debugShowCheckedModeBanner: false, theme: ThemeData(fontFamily: 'TideFont', scaffoldBackgroundColor: const Color(0xFFF2F2F7), appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0), useMaterial3: true, splashColor: Colors.transparent, highlightColor: Colors.transparent), home: hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen());
 }
 
+// ========== 新手引导 ==========
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({Key? key}) : super(key: key);
   @override State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -83,37 +86,192 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     {"icon": Icons.auto_awesome_rounded, "t": "多模态感知", "s": "支持语音、视觉与系统级操作，\n不仅仅是对话工具。"},
     {"icon": Icons.palette_rounded, "t": "极致美学", "s": "沉浸式 iOS 风格设计，\n流光溢彩的数字陪伴。"},
   ];
-  void _finish() async {
-    final prefs = await SharedPreferences.getInstance(); await prefs.setBool('seen_onboarding', true);
+
+  Future<void> _finish() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_onboarding', true);
     await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '温柔傲娇的数字伴侣', 'prompt': '说话温柔细腻，偶尔害羞。【输出格式】每条回复最前面用方括号标明心情', 'avatar': '', 'created_at': DateTime.now().millisecondsSinceEpoch});
     if (!mounted) return;
     Navigator.pushReplacement(context, PageRouteBuilder(pageBuilder: (c, a, s) => const TideMainScaffold(), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child), transitionDuration: const Duration(milliseconds: 600)));
   }
+
+  void _next() {
+    if (_cur < _pages.length - 1) {
+      _pc.animateToPage(_cur + 1, duration: const Duration(milliseconds: 400), curve: Curves.easeOutCubic);
+    } else {
+      _finish();
+    }
+  }
+
   @override Widget build(BuildContext context) => Scaffold(body: FlowGlassBg(child: SafeArea(child: Column(children: [
-    const SizedBox(height: 20),
-    Expanded(child: PageView.builder(controller: _pc, onPageChanged: (i) => setState(() => _cur = i), itemCount: _pages.length, itemBuilder: (c, i) => _buildP(i))),
-    Padding(padding: const EdgeInsets.symmetric(vertical: 20), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(_pages.length, (i) => AnimatedContainer(duration: const Duration(milliseconds: 300), width: _cur == i ? 28 : 8, height: 8, margin: const EdgeInsets.symmetric(horizontal: 3), decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), color: _cur == i ? const Color(0xFF6B5B95) : const Color(0xFFD4D4D8)))))),
-    Padding(padding: const EdgeInsets.fromLTRB(32, 8, 32, 40), child: SizedBox(width: double.infinity, height: 52, child: _cur == _pages.length - 1 ? _btn('开始体验', _finish, true) : _btn('下一步', () => _pc.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeOutCubic), false))),
+    const SizedBox(height: 40),
+    Expanded(child: PageView.builder(
+      controller: _pc, onPageChanged: (i) => setState(() => _cur = i),
+      itemCount: _pages.length, itemBuilder: (c, i) => _buildP(i),
+    )),
+    Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(_pages.length, (i) =>
+        AnimatedContainer(duration: const Duration(milliseconds: 350), width: _cur == i ? 28 : 8, height: 8,
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), color: _cur == i ? const Color(0xFF6B5B95) : const Color(0xFFD4D4D8)),
+        )),
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.fromLTRB(32, 0, 32, 48),
+      child: BouncyTap(
+        onTap: _next,
+        child: Container(
+          width: double.infinity, height: 52,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(26),
+            gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
+            boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
+          ),
+          child: Center(child: Text(_cur == _pages.length - 1 ? '开始体验' : '下一步', style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont'))),
+        ),
+      ),
+    ),
   ]))));
-  Widget _btn(String t, VoidCallback cb, bool p) => GestureDetector(onTap: cb, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(26), gradient: p ? const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]) : null, color: p ? null : Colors.white.withOpacity(0.7), boxShadow: p ? [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))] : null), child: Center(child: Text(t, style: TextStyle(color: p ? Colors.white : const Color(0xFF6B5B95), fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont')))));
-  Widget _buildP(int i) { final p = _pages[i]; return Padding(padding: const EdgeInsets.symmetric(horizontal: 48), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    Container(width: 100, height: 100, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]), child: Icon(p["icon"] as IconData, color: Colors.white, size: 44)),
-    const SizedBox(height: 36),
-    Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
-    const SizedBox(height: 14),
-    Text(p["s"] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: Color(0xFF636366))),
-  ])); }
+
+  Widget _buildP(int i) {
+    final p = _pages[i];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 48),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Container(width: 100, height: 100,
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]),
+          child: Icon(p["icon"] as IconData, color: Colors.white, size: 44)),
+        const SizedBox(height: 36),
+        Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+        const SizedBox(height: 14),
+        Text(p["s"] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: Color(0xFF636366))),
+      ]);
+  }
 }
 
+// ========== 果冻胶囊 Dock ==========
+class JellyDock extends StatefulWidget {
+  final int currentIndex;
+  final Function(int) onTap;
+  const JellyDock({Key? key, required this.currentIndex, required this.onTap}) : super(key: key);
+  @override State<JellyDock> createState() => _JellyDockState();
+}
+class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMixin {
+  late AnimationController _c;
+  late Animation<double> _pos;
+  late Animation<double> _w;
+  int _prev = 0;
+  final List<double> _stops = [0.0, 0.25, 0.5, 0.75];
+
+  @override void initState() {
+    super.initState();
+    _prev = widget.currentIndex;
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
+    _pos = Tween<double>(begin: _stops[_prev], end: _stops[widget.currentIndex]).animate(
+      CurvedAnimation(parent: _c, curve: Curves.elasticOut)
+    );
+    _w = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 56.0, end: 72.0), weight: 30),
+      TweenSequenceItem(tween: Tween(begin: 72.0, end: 56.0), weight: 70),
+    ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
+    _c.forward();
+  }
+
+  @override void didUpdateWidget(JellyDock old) {
+    super.didUpdateWidget(old);
+    if (old.currentIndex != widget.currentIndex) {
+      _prev = old.currentIndex;
+      _pos = Tween<double>(begin: _stops[_prev], end: _stops[widget.currentIndex]).animate(
+        CurvedAnimation(parent: _c, curve: Curves.elasticOut)
+      );
+      _w = TweenSequence<double>([
+        TweenSequenceItem(tween: Tween(begin: 56.0, end: 72.0), weight: 30),
+        TweenSequenceItem(tween: Tween(begin: 72.0, end: 56.0), weight: 70),
+      ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
+      _c.reset(); _c.forward();
+    }
+  }
+
+  @override void dispose() { _c.dispose(); super.dispose(); }
+
+  static const _icons = [Icons.chat_bubble_rounded, Icons.space_dashboard_rounded, Icons.explore_rounded, Icons.person_rounded];
+
+  @override Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: 68,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))],
+            ),
+            child: Stack(children: [
+              AnimatedBuilder(
+                animation: _c,
+                builder: (c, child) {
+                  final totalW = MediaQuery.of(context).size.width - 48;
+                  final pillX = _pos.value * totalW + 12;
+                  final pillW = _w.value;
+                  return Positioned(
+                    left: pillX + (40 - pillW) / 2,
+                    top: 8,
+                    child: Container(width: pillW, height: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6B5B95).withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(26),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: List.generate(4, (i) {
+                final act = widget.currentIndex == i;
+                return Expanded(child: GestureDetector(
+                  onTapDown: (_) => HapticFeedback.lightImpact(),
+                  onTap: () => widget.onTap(i),
+                  child: Center(child: AnimatedBuilder(
+                    animation: _c,
+                    builder: (c, child) => Transform.scale(
+                      scale: act ? 1.1 : 0.9,
+                      child: Icon(_icons[i], color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93), size: 26),
+                    ),
+                  )),
+                ));
+              })),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ========== 主脚手架 ==========
 class TideMainScaffold extends StatefulWidget {
   const TideMainScaffold({Key? key}) : super(key: key);
   @override State<TideMainScaffold> createState() => _TideMainScaffoldState();
 }
 class _TideMainScaffoldState extends State<TideMainScaffold> {
   int _idx = 0;
+  final PageController _pageCtrl = PageController();
   final List<Widget> _pages = const [ChatListPage(), SpacePage(), SquarePage(), ProfilePage()];
-  @override
-  Widget build(BuildContext context) {
+
+  void _onDockTap(int i) {
+    if (_idx != i) {
+      setState(() => _idx = i);
+      _pageCtrl.animateToPage(i, duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic);
+    }
+  }
+
+  @override Widget build(BuildContext context) {
     return FlowGlassBg(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -121,39 +279,15 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
         body: GestureDetector(
           onTapDown: (d) => flowProvider.moveTo(d.localPosition),
           behavior: HitTestBehavior.translucent,
-          child: IndexedStack(index: _idx, children: _pages),
-        ),
-        bottomNavigationBar: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                height: 64,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.55),
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4)),
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _dockItem(0, Icons.chat_bubble_rounded, '聊天'),
-                    _dockItem(1, Icons.space_dashboard_rounded, '空间'),
-                    _dockItem(2, Icons.explore_rounded, '广场'),
-                    _dockItem(3, Icons.person_rounded, '我的'),
-                  ],
-                ),
-              ),
-            ),
+          child: PageView(
+            controller: _pageCtrl,
+            physics: const NeverScrollableScrollPhysics(),
+            onPageChanged: (i) => setState(() => _idx = i),
+            children: _pages,
           ),
         ),
+        bottomNavigationBar: JellyDock(currentIndex: _idx, onTap: _onDockTap),
       ),
     );
   }
-  Widget _dockItem(int i, IconData ic, String lb) { final act = _idx == i; return GestureDetector(onTap: () { if (_idx != i) setState(() => _idx = i); }, child: AnimatedContainer(duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: act ? const Color(0xFF6B5B95).withOpacity(0.15) : Colors.transparent, borderRadius: BorderRadius.circular(20)), child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [Icon(ic, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93), size: 24), const SizedBox(height: 2), Text(lb, style: TextStyle(fontSize: 10, fontFamily: 'TideFont', fontWeight: act ? FontWeight.w700 : FontWeight.w400, color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93)))]))); }
 }
