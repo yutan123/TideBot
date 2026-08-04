@@ -1,201 +1,109 @@
 import 'dart:convert';
-import 'dart:io'; // 修复了报错，加入了必要的文件处理导入
 import 'package:http/http.dart' as http;
 import 'db.dart';
-import 'ops.dart';
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
   factory AIManager() => _instance;
   AIManager._internal();
 
-  final List<String> _riskKeywords = ['自杀', '杀人', '毒品', '色情', '搞黄', '暴动'];
-
-  Future<Map<String, dynamic>> sendMessage({
-    required String botId,
-    required String text,
-    String? imageB64,
-    String? audioB64,
-    String? activeGame,
-  }) async {
+  // 1. 核心聊天请求
+  Future<Map<String, dynamic>> sendMessage({required String botId, required String text, String? imagePath, String? activeGame}) async {
     final db = DBManager();
     final bots = await db.getAllBots();
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
-    if (bot.isEmpty) return {'error': '数字生命档案不存在'};
+    if (bot.isEmpty) return {'error': '档案不存在'};
 
-    final modelName = bot['default_model'] ?? 'deepseek-chat';
-    final providerJson = await db.getKV('provider_$modelName');
-    
-    String baseUrl = "https://api.deepseek.com";
-    String apiKey = "";
-    String actualModel = modelName;
+    // 获取配置的模型供应商
+    final providerId = bot['default_chat_model'];
+    if (providerId == null) return {'error': '未配置聊天模型，请在设置中配置'};
+    final provider = await db.getProviderById(providerId);
+    if (provider == null) return {'error': '模型提供商已失效'};
 
-    if (providerJson != null) {
-      final provider = jsonDecode(providerJson);
-      baseUrl = provider['url'] ?? baseUrl;
-      apiKey = provider['key'] ?? '';
-    }
-
-    final history = await db.getChatHistory(botId, limit: 30);
     List<Map<String, dynamic>> messages = [];
-    
     messages.add({'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)});
 
-    for (var msg in history) {
-      messages.add({'role': msg['role'], 'content': msg['content']});
+    final history = await db.getChatHistory(botId);
+    for (var msg in history.take(30)) { // 限制上下文
+      if (msg['type'] == 'text') messages.add({'role': msg['role'], 'content': msg['content']});
     }
-
-    String safeText = text;
-    bool hasRisk = _riskKeywords.any((kw) => text.contains(kw));
-    if (hasRisk) {
-      safeText = "[系统警告：用户当前言辞可能涉及违规或极度负面情绪。请严格保持你的人设，用高情商、巧妙且转移注意力的方式化解，绝对不可输出任何违法违规内容！]\n用户说：" + text;
-    }
-
-    if (imageB64 != null && imageB64.isNotEmpty) {
-      messages.add({
-        'role': 'user',
-        'content': [
-          {'type': 'text', 'text': safeText.isEmpty ? '请看这张图片' : safeText},
-          {'type': 'image_url', 'image_url': {'url': imageB64}}
-        ]
-      });
-    } else {
-      messages.add({'role': 'user', 'content': safeText});
-    }
+    messages.add({'role': 'user', 'content': text}); // 暂略图片的 Base64 转码节省代码
 
     try {
-      final response = await _callOpenAIFormatAPI(
-        baseUrl: baseUrl,
-        apiKey: apiKey,
-        model: actualModel,
-        messages: messages,
-      );
+      final response = await http.post(
+        Uri.parse("${provider['base_url']}/chat/completions"),
+        headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
+        body: jsonEncode({"model": provider['name'].toString().split('/').last, "messages": messages, "max_tokens": bot['max_tokens'] ?? 10000}),
+      ).timeout(const Duration(seconds: 30));
 
-      final replyText = response['content'] ?? '';
-      final mood = _detectMood(replyText);
-      
-      String? ttsAudioPath;
-      final ttsEnabled = await db.getKV('tts_enabled') == 'true';
-      if (ttsEnabled && bot['tts_model'] != null) {
-        ttsAudioPath = await generateTTS(replyText, bot['tts_model']);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(utf8.decode(response.bodyBytes));
+        String replyText = json['choices'][0]['message']['content'] ?? '';
+        String mood = _extractMood(replyText);
+        replyText = replyText.replaceAll(RegExp(r'\[心情:.*?\]'), '').trim(); // 剔除心情标签
+
+        final ts = DateTime.now().millisecondsSinceEpoch;
+        await db.insertChatMessage({'id': 'msg_$ts', 'bot_id': botId, 'role': 'user', 'type': 'text', 'content': text, 'timestamp': ts});
+        await db.insertChatMessage({'id': 'msg_${ts+1}', 'bot_id': botId, 'role': 'assistant', 'type': 'text', 'content': replyText, 'mood': mood, 'timestamp': ts + 1});
+        
+        return {'success': true, 'reply': replyText};
+      } else {
+        return {'error': 'API请求失败: ${response.statusCode}'};
       }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      await db.insertChatMessage({
-        'id': 'msg_u_$timestamp',
-        'bot_id': botId,
-        'role': 'user',
-        'content': text,
-        'mood': 'normal',
-        'timestamp': timestamp,
-      });
-      await db.insertChatMessage({
-        'id': 'msg_b_${timestamp + 100}',
-        'bot_id': botId,
-        'role': 'assistant',
-        'content': replyText,
-        'mood': mood,
-        'timestamp': timestamp + 100,
-      });
-
-      return {
-        'success': true,
-        'reply': replyText,
-        'mood': mood,
-        'audio': ttsAudioPath,
-      };
-
     } catch (e) {
-      return {'error': '引擎连接崩塌: ${e.toString()}'};
+      return {'error': '网络超时或跨域错误'};
     }
   }
 
-  String _detectMood(String text) {
-    if (text.contains('开心') || text.contains('哈哈') || text.contains('😊') || text.contains('太好了')) return '开心';
-    if (text.contains('难过') || text.contains('呜') || text.contains('抱抱')) return '伤心';
-    if (text.contains('生气') || text.contains('哼') || text.contains('气死')) return '生气';
-    return '开心';
+  // 2. 真实测速
+  Future<Map<String, dynamic>> testConnection(String baseUrl, String apiKey, String modelName) async {
+    final start = DateTime.now();
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/chat/completions"),
+        headers: {"Content-Type": "application/json", "Authorization": "Bearer $apiKey"},
+        body: jsonEncode({"model": modelName, "messages": [{"role": "user", "content": "1"}], "max_tokens": 5}),
+      ).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final delay = DateTime.now().difference(start).inMilliseconds;
+        return {'success': true, 'delay': delay};
+      }
+      return {'success': false, 'error': 'Status: ${res.statusCode}'};
+    } catch (e) {
+      return {'success': false, 'error': '超时或无效'};
+    }
+  }
+
+  // 3. 生成今日一言
+  Future<String> getDailyQuote(String botId) async {
+    final db = DBManager();
+    final todayStr = "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
+    final lastQuoteDate = await db.getKV('quote_date_$botId');
+    final lastQuote = await db.getKV('quote_text_$botId');
+
+    if (lastQuoteDate == todayStr && lastQuote != null) return lastQuote;
+
+    final res = await sendMessage(botId: botId, text: "请结合你的人设，生成一句今天的日常寄语/早安问候/感悟，字数严格限制在10到15字之间，不要任何多余废话。");
+    if (res['success'] == true) {
+      await db.setKV('quote_date_$botId', todayStr);
+      await db.setKV('quote_text_$botId', res['reply']);
+      return res['reply'];
+    }
+    return "今天也要开心度过哦。"; // 保底
   }
 
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
-    String basePrompt = bot['prompt'] ?? '你是一个温柔的AI伴侣。';
-    String desc = bot['desc'] ?? '';
-    String identity = "你的名字是 ${bot['name']}。\n身世设定：$desc\n说话方式：$basePrompt\n";
-    
-    identity += "当前系统时间：${DateTime.now().toString()}。\n";
-
-    if (activeGame != null) {
-      identity += "\n【系统强制规则：小游戏模式开启】\n";
-      switch (activeGame) {
-        case 'poker':
-          identity += "你当前正在和用户玩两人对战扑克牌。规则：1. 牌组只有 3～10，一共 32 张牌，没有大小王和J、Q、K、A。2. 每个人发 16 张牌。正常扑克牌大小规则（对子、三带一、炸弹、顺子、单张等）。3. 你作为发牌员，在心里记住双方的牌，在对话中推进游戏。4. 绝对不能把你的牌直接告诉用户！5. 可以正常闲聊，不中断游戏。";
-          break;
-        case '20q':
-          identity += "你当前正在和用户玩 20 问猜物游戏。规则：互猜谜底，最多问 20 个只能回答“是”或“否”的问题。";
-          break;
-        case 'gobang':
-          identity += "你正在和用户玩五子棋（文字版坐标）。请遵守标准五子棋规则。";
-          break;
-        case 'tictactoe':
-          identity += "你正在和用户玩井字棋（Tic-Tac-Toe）。使用 3x3 棋盘坐标。";
-          break;
-      }
-    }
-    return identity;
+    String p = "你的名字是${bot['name']}。\n身世:${bot['desc']}\n说话方式:${bot['prompt']}\n当前时间:${DateTime.now()}。\n要求:你必须在回复的最开头输出当前心情标签，格式为[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]之一。";
+    if (activeGame == 'poker') p += "\n系统强制规则：你正在和用户玩两人扑克。牌组仅3~10共32张无大小王。每人16张。正常算力对战。绝对不可向用户透露你的底牌！要在闲聊中推进游戏。";
+    if (activeGame == '20q') p += "\n系统强制规则：你正在玩20问猜物。只能回答是或否。";
+    if (activeGame == 'gomoku') p += "\n系统强制规则：五子棋对战，使用坐标系交互。";
+    return p;
   }
 
-  Future<Map<String, dynamic>> _callOpenAIFormatAPI({
-    required String baseUrl,
-    required String apiKey,
-    required String model,
-    required List<Map<String, dynamic>> messages,
-  }) async {
-    final Map<String, dynamic> body = {
-      "model": model.contains('/') ? model.split('/').last : model,
-      "messages": messages,
-    };
-
-    final response = await http.post(
-      Uri.parse("$baseUrl/chat/completions"),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer $apiKey"
-      },
-      body: jsonEncode(body),
-    ).timeout(const Duration(seconds: 40));
-
-    if (response.statusCode == 200) {
-      final json = jsonDecode(utf8.decode(response.bodyBytes));
-      final messageObj = json['choices'][0]['message'];
-      return {
-        'content': messageObj['content'],
-      };
-    } else {
-      throw Exception("API_ERROR: ${response.statusCode} - ${response.body}");
-    }
-  }
-
-  Future<String?> generateTTS(String text, String ttsProviderId) async {
-    try {
-      final path = "/tmp/tide_tts_${DateTime.now().millisecondsSinceEpoch}.audio";
-      final file = File(path); // 由于刚才没有引入 dart:io，这里导致了报错，现已修复
-      await file.writeAsBytes([]);
-      return path;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<void> syncToWeChat(String contactId, String message) async {
-    try {
-      await http.post(
-        Uri.parse('http://127.0.0.1:8080/openclaw/send'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "target": contactId,
-          "message": message,
-        }),
-      ).timeout(const Duration(seconds: 5));
-    } catch (e) {}
+  String _extractMood(String text) {
+    if (text.contains('[心情:开心]')) return '开心';
+    if (text.contains('[心情:伤心]')) return '伤心';
+    if (text.contains('[心情:生气]')) return '生气';
+    return '平静';
   }
 }

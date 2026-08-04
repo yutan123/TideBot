@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -19,192 +18,68 @@ class DBManager {
 
   Future<Database> _initDB() async {
     final directory = await getApplicationDocumentsDirectory();
-    final path = join(directory.path, 'tidebot_brain.db');
+    final path = join(directory.path, 'tidebot_core_v3.db');
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 1,
       onCreate: (db, version) async {
+        // 机器人档案
         await db.execute('''
           CREATE TABLE bots(
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            desc TEXT,
-            prompt TEXT,
-            avatar_path TEXT,
-            birthday TEXT,
-            default_model TEXT,
-            image_model TEXT,
-            stt_model TEXT,
-            tts_model TEXT,
-            max_tokens INTEGER,
-            is_system INTEGER DEFAULT 0,
-            created_at INTEGER
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, desc TEXT, prompt TEXT, avatar_path TEXT,
+            default_chat_model TEXT, default_vision_model TEXT, stt_model TEXT, tts_model TEXT,
+            max_tokens INTEGER DEFAULT 10000, created_at INTEGER
           )
         ''');
-
+        // 消息历史 (包含类型区分和心情)
         await db.execute('''
           CREATE TABLE chat_history(
-            id TEXT PRIMARY KEY,
-            bot_id TEXT,
-            role TEXT,
-            content TEXT,
-            image_path TEXT,
-            audio_path TEXT,
-            mood TEXT,
-            timestamp INTEGER,
+            id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT, content TEXT, 
+            file_path TEXT, mood TEXT, timestamp INTEGER,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
-
+        // API 供应商真实表
         await db.execute('''
-          CREATE TABLE memories(
-            id TEXT PRIMARY KEY,
-            bot_id TEXT,
-            memory_type TEXT, 
-            content TEXT,
-            created_at INTEGER,
-            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+          CREATE TABLE api_providers(
+            id TEXT PRIMARY KEY, type TEXT, name TEXT, base_url TEXT, api_key TEXT, created_at INTEGER
           )
         ''');
-
-        await db.execute('''
-          CREATE TABLE schedule_tasks(
-            id TEXT PRIMARY KEY,
-            bot_id TEXT,
-            task_type TEXT, 
-            execute_hour INTEGER,
-            execute_minute INTEGER,
-            execute_date TEXT,
-            description TEXT,
-            is_active INTEGER DEFAULT 1,
-            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE posts(
-            id TEXT PRIMARY KEY,
-            author_id TEXT,
-            author_name TEXT,
-            content TEXT,
-            image_path TEXT,
-            likes_data TEXT,
-            comments_data TEXT,
-            timestamp INTEGER
-          )
-        ''');
-        
-        await db.execute('''
-          CREATE TABLE kv_store(
-            key TEXT PRIMARY KEY,
-            value TEXT
-          )
-        ''');
+        // 记忆与日程
+        await db.execute('CREATE TABLE memories(id TEXT PRIMARY KEY, bot_id TEXT, memory_type TEXT, content TEXT, created_at INTEGER, FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE)');
+        await db.execute('CREATE TABLE schedule_tasks(id TEXT PRIMARY KEY, bot_id TEXT, description TEXT, execute_time INTEGER, FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE)');
+        // 动态与全局 KV 配置 (包含今日一言)
+        await db.execute('CREATE TABLE posts(id TEXT PRIMARY KEY, author_id TEXT, content TEXT, image_path TEXT, timestamp INTEGER)');
+        await db.execute('CREATE TABLE kv_store(key TEXT PRIMARY KEY, value TEXT)');
       },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          try {
-            await db.execute("ALTER TABLE chat_history ADD COLUMN mood TEXT");
-          } catch (_) {}
-          try {
-            await db.execute("ALTER TABLE posts ADD COLUMN comments_data TEXT");
-          } catch (_) {}
-        }
-      },
-      onConfigure: (db) async {
-        await db.execute('PRAGMA foreign_keys = ON');
-      },
+      onConfigure: (db) async { await db.execute('PRAGMA foreign_keys = ON'); },
     );
   }
 
-  Future<void> insertBot(Map<String, dynamic> botData) async {
-    final db = await database;
-    await db.insert('bots', botData, conflictAlgorithm: ConflictAlgorithm.replace);
+  // ==== Bot 操作 ====
+  Future<void> insertBot(Map<String, dynamic> botData) async => await (await database).insert('bots', botData, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> updateBot(String id, Map<String, dynamic> data) async => await (await database).update('bots', data, where: 'id = ?', whereArgs: [id]);
+  Future<List<Map<String, dynamic>>> getAllBots() async => await (await database).query('bots', orderBy: 'created_at DESC');
+  Future<void> deleteBot(String botId) async => await (await database).delete('bots', where: 'id = ?', whereArgs: [botId]);
+
+  // ==== 聊天记录 ====
+  Future<void> insertChatMessage(Map<String, dynamic> msg) async => await (await database).insert('chat_history', msg, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<List<Map<String, dynamic>>> getChatHistory(String botId) async => await (await database).query('chat_history', where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
+  Future<void> clearChatHistory(String botId) async => await (await database).delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
+
+  // ==== API 提供商 ====
+  Future<void> insertProvider(Map<String, dynamic> provider) async => await (await database).insert('api_providers', provider, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<List<Map<String, dynamic>>> getProvidersByType(String type) async => await (await database).query('api_providers', where: 'type = ?', whereArgs: [type]);
+  Future<Map<String, dynamic>?> getProviderById(String id) async {
+    final res = await (await database).query('api_providers', where: 'id = ?', whereArgs: [id]);
+    return res.isNotEmpty ? res.first : null;
   }
 
-  Future<List<Map<String, dynamic>>> getAllBots() async {
-    final db = await database;
-    return await db.query('bots', orderBy: 'created_at DESC');
-  }
-
-  Future<void> deleteBot(String botId) async {
-    final db = await database;
-    await db.delete('bots', where: 'id = ?', whereArgs: [botId]);
-  }
-
-  Future<void> insertChatMessage(Map<String, dynamic> msg) async {
-    final db = await database;
-    await db.insert('chat_history', msg, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<List<Map<String, dynamic>>> getChatHistory(String botId, {int limit = 50, int offset = 0}) async {
-    final db = await database;
-    return await db.query(
-      'chat_history',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'timestamp ASC',
-      limit: limit,
-      offset: offset,
-    );
-  }
-
-  Future<void> clearChatHistory(String botId) async {
-    final db = await database;
-    await db.delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
-  }
-
-  Future<void> insertMemory(String botId, String type, String content) async {
-    final db = await database;
-    await db.insert('memories', {
-      'id': 'mem_${DateTime.now().millisecondsSinceEpoch}',
-      'bot_id': botId,
-      'memory_type': type,
-      'content': content,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-    });
-  }
-
-  Future<List<Map<String, dynamic>>> getMemoryByType(String botId, String type) async {
-    final db = await database;
-    return await db.query(
-      'memories',
-      where: 'bot_id = ? AND memory_type = ?',
-      whereArgs: [botId, type],
-      orderBy: 'created_at DESC',
-    );
-  }
-
-  Future<void> deleteMemoryContent(String memoryId) async {
-    final db = await database;
-    await db.delete('memories', where: 'id = ?', whereArgs: [memoryId]);
-  }
-
-  Future<void> insertPost(Map<String, dynamic> post) async {
-    final db = await database;
-    await db.insert('posts', post, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<List<Map<String, dynamic>>> getPosts({int limit = 20, int offset = 0}) async {
-    final db = await database;
-    return await db.query('posts', orderBy: 'timestamp DESC', limit: limit, offset: offset);
-  }
-
-  Future<void> deletePost(String postId) async {
-    final db = await database;
-    await db.delete('posts', where: 'id = ?', whereArgs: [postId]);
-  }
-
-  Future<void> setKV(String key, String value) async {
-    final db = await database;
-    await db.insert('kv_store', {'key': key, 'value': value}, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
+  // ==== KV 存储 (日言, 背景等) ====
+  Future<void> setKV(String key, String value) async => await (await database).insert('kv_store', {'key': key, 'value': value}, conflictAlgorithm: ConflictAlgorithm.replace);
   Future<String?> getKV(String key) async {
-    final db = await database;
-    final results = await db.query('kv_store', where: 'key = ?', whereArgs: [key]);
-    if (results.isNotEmpty) return results.first['value'] as String?;
-    return null;
+    final res = await (await database).query('kv_store', where: 'key = ?', whereArgs: [key]);
+    return res.isNotEmpty ? res.first['value'] as String? : null;
   }
 }
