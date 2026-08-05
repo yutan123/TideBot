@@ -23,6 +23,17 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
+// AGP 8.x 兼容：为所有缺少 namespace 的 Android 子模块补默认 namespace
+subprojects {
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin("com.android.application") ||
+            project.plugins.hasPlugin("com.android.library")) {
+            if (project.android.namespace == null) {
+                project.android.namespace = "com.yutan123.tidebot.sub"
+            }
+        }
+    }
+}
 
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
