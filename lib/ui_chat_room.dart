@@ -56,8 +56,12 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   }
 
   void _loadMsgs() async {
-    final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
-    if (mounted) setState(() { _msgs = msgs.reversed.toList(); _msgsLoading = false; });
+    try {
+      final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
+      if (mounted) setState(() { _msgs = msgs.reversed.toList(); _msgsLoading = false; });
+    } catch (e) {
+      if (mounted) setState(() => _msgsLoading = false);
+    }
     _scrollDown();
   }
 

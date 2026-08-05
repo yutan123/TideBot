@@ -33,7 +33,12 @@ class ChatListPageState extends State<ChatListPage> {
       }
       enriched.add({...b, 'preview': preview, 'lastTime': lastTime});
     }
-    enriched.sort((a, b) => (b['lastTime'] as int).compareTo(a['lastTime'] as int));
+    enriched.sort((a, b) {
+      final aPin = (a['is_pinned'] as int?) ?? 0;
+      final bPin = (b['is_pinned'] as int?) ?? 0;
+      if (aPin != bPin) return bPin.compareTo(aPin);
+      return (b['lastTime'] as int).compareTo(a['lastTime'] as int);
+    });
     if (mounted) setState(() => _bots = enriched);
   }
 
@@ -58,7 +63,14 @@ class ChatListPageState extends State<ChatListPage> {
       final box = key.currentContext?.findRenderObject() as RenderBox?;
       if (box != null) {
         final pos = box.localToGlobal(Offset.zero);
-        setState(() { _origins.add(Offset(pos.dx + box.size.width / 2, pos.dy + box.size.height / 2)); _showParticles = true; });
+        final w = box.size.width;
+        final h = box.size.height;
+        // 全卡片范围撒点：四角 + 中心 + 随机分布
+        _origins.clear();
+        for (int i = 0; i < 12; i++) {
+          _origins.add(Offset(pos.dx + w * (0.1 + 0.8 * (i / 11)), pos.dy + h * (0.2 + 0.6 * ((i * 7) % 11) / 10)));
+        }
+        setState(() { _showParticles = true; });
       }
       await DBManager().deleteBot(bot['id'] as String);
       load();
@@ -84,7 +96,7 @@ class ChatListPageState extends State<ChatListPage> {
       key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); load(); },
       onLongPress: () => showTideSheet(context: context, height: 160, child: Column(children: [
         const SizedBox(height: 10),
-        ListTile(leading: Icon(Icons.push_pin_rounded, color: TideTheme.of(context).primary), title: const Text('置顶', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
+        ListTile(leading: Icon(Icons.push_pin_rounded, color: TideTheme.of(context).primary), title: Text(((bot['is_pinned'] as int?) ?? 0) == 1 ? '取消置顶' : '置顶', style: const TextStyle(fontFamily: 'TideFont')), onTap: () { Navigator.pop(context); final pin = ((bot['is_pinned'] as int?) ?? 0) == 1 ? 0 : 1; DBManager().toggleBotPin(bot['id'] as String, pin); load(); }),
         ListTile(leading: const Icon(Icons.delete_rounded, color: Color(0xFFE74C3C)), title: const Text('删除机器人', style: TextStyle(fontFamily: 'TideFont', color: Color(0xFFE74C3C))), onTap: () { Navigator.pop(context); _deleteBot(bot, key); }),
       ])),
       child: Padding(padding: const EdgeInsets.only(bottom: 10), child: _card(bot)),
@@ -101,7 +113,13 @@ class ChatListPageState extends State<ChatListPage> {
         ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: TideTheme.of(context).primary, fontFamily: 'TideFont'))))),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(bot['name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            if (((bot['is_pinned'] as int?) ?? 0) == 1) ...[
+              Icon(Icons.push_pin_rounded, size: 14, color: TideTheme.of(context).primary),
+              const SizedBox(width: 2),
+            ],
+            Flexible(child: Text(bot['name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)), overflow: TextOverflow.ellipsis)),
+          ]),
           const SizedBox(height: 3),
           Text(bot['preview'] as String? ?? '点击开始对话', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
         ])),

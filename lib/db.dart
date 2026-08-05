@@ -21,7 +21,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -30,7 +30,8 @@ class DBManager {
           CREATE TABLE bots (
             id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
             avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
-            max_tokens INTEGER, created_at INTEGER, daily_quote TEXT
+            max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
+            last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -70,6 +71,8 @@ class DBManager {
           try { await db.execute('ALTER TABLE schedule_tasks ADD COLUMN note TEXT'); } catch (_) {}
           try { await db.execute('ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0'); } catch (_) {}
           try { await db.execute('ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0'); } catch (_) {}
+          try { await db.execute('ALTER TABLE bots ADD COLUMN last_msg_time INTEGER'); } catch (_) {}
+          try { await db.execute('ALTER TABLE bots ADD COLUMN is_pinned INTEGER DEFAULT 0'); } catch (_) {}
         }
       },
     );
@@ -285,5 +288,22 @@ class DBManager {
   Future<void> updatePostComments(String postId, int comments) async {
     final db = await database;
     await db.update('posts', {'comments': comments}, where: 'id = ?', whereArgs: [postId]);
+  }
+
+  Future<void> deletePost(String postId) async {
+    final db = await database;
+    await db.delete('posts', where: 'id = ?', whereArgs: [postId]);
+  }
+
+  // 更新 bots.last_msg_time
+  Future<void> updateBotLastMsgTime(String botId, int time) async {
+    final db = await database;
+    await db.update('bots', {'last_msg_time': time}, where: 'id = ?', whereArgs: [botId]);
+  }
+
+  // 置顶/取消置顶
+  Future<void> toggleBotPin(String botId, int isPinned) async {
+    final db = await database;
+    await db.update('bots', {'is_pinned': isPinned}, where: 'id = ?', whereArgs: [botId]);
   }
 }

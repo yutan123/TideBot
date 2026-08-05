@@ -1,4 +1,4 @@
-package com.example.tidebot
+package com.yutan123.tidebot
 
 import android.content.Intent
 import android.provider.AlarmClock
@@ -24,7 +24,7 @@ class MainActivity: FlutterActivity() {
                         putExtra(AlarmClock.EXTRA_HOUR, hour)
                         putExtra(AlarmClock.EXTRA_MINUTES, minute)
                         putExtra(AlarmClock.EXTRA_MESSAGE, message)
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, true) // 后台静默设置，不跳到闹钟APP界面
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                     }
                     
                     if (intent.resolveActivity(packageManager) != null) {
@@ -35,7 +35,6 @@ class MainActivity: FlutterActivity() {
                     }
                 }
                 "executeAccessibilityAction" -> {
-                    // TODO: 向无障碍服务发送执行动作广播
                     result.success("Action Received")
                 }
                 else -> {

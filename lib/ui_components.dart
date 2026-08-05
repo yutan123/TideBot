@@ -145,16 +145,17 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
     final colors = [
       theme.primary,
       theme.primaryLight,
-      const Color(0xFFFFB5A7),
-      const Color(0xFFA2D2FF),
-      const Color(0xFFFFD6A5),
-      const Color(0xFFFDFFB6),
+      theme.primary.withOpacity(0.7),
+      theme.primaryLight.withOpacity(0.5),
     ];
     for (var o in widget.origins) {
-      for (int i = 0; i < 8; i++) {
+      for (int i = 0; i < 30; i++) {
         final angle = _r.nextDouble() * 6.2832;
-        final spd = 1.5 + _r.nextDouble() * 5;
-        _ps.add(Particle(o.dx, o.dy, cos(angle) * spd, sin(angle) * spd - 2, 3 + _r.nextDouble() * 4, colors[_r.nextInt(colors.length)]));
+        final spd = 1.0 + _r.nextDouble() * 6;
+        final sx = 1.5 + _r.nextDouble() * 5;
+        final ox = (_r.nextDouble() - 0.5) * 80;
+        final oy = (_r.nextDouble() - 0.5) * 50;
+        _ps.add(Particle(o.dx + ox, o.dy + oy, cos(angle) * spd, sin(angle) * spd - 3, sx, colors[_r.nextInt(colors.length)]));
       }
     }
   }

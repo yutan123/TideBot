@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'theme.dart';
@@ -195,6 +196,7 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
         _feeds.addAll(rows.map((r) => {
           'user': r['author_id'] ?? '匿名',
           'content': r['content'] ?? '',
+          'image': r['image_path'] ?? '',
           'likes': r['likes'] as int? ?? 0,
           'comments': r['comments'] as int? ?? 0,
           'favorited': false,
@@ -235,12 +237,12 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
 
   void publishFeed() {
     Navigator.push(context, PageRouteBuilder(
-      pageBuilder: (c, a, s) => _PublishFeedPage(onPublished: (text) async {
+      pageBuilder: (c, a, s) => _PublishFeedPage(onPublished: (text, imagePath) async {
         final db = DBManager();
         final now = DateTime.now().millisecondsSinceEpoch;
         final postId = 'post_$now';
-        await db.insertPost({'id': postId, 'author_id': '我', 'content': text, 'likes': 0, 'comments': 0, 'timestamp': now});
-        setState(() => _feeds.insert(0, {'user':'我','content':text,'likes':0,'comments':0,'favorited':false,'collected':false,'time':'刚刚','id':postId}));
+        await db.insertPost({'id': postId, 'author_id': '我', 'content': text, 'image_path': imagePath ?? '', 'likes': 0, 'comments': 0, 'timestamp': now});
+        setState(() => _feeds.insert(0, {'user':'我','content':text,'image':imagePath ?? '','likes':0,'comments':0,'favorited':false,'collected':false,'time':'刚刚','id':postId}));
       }),
       transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)),
     ));
@@ -251,6 +253,29 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
       pageBuilder: (c, a, s) => _FeedDetailPage(feed: f, onUpdate: () { if (mounted) setState(() {}); }),
       transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.15), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)),
     ));
+  }
+
+  void _deleteFeed(Map<String, dynamic> f) async {
+    final confirm = await TideDialogs.show<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, children: [
+          const Center(child: Text('删除动态', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
+          const SizedBox(height: 10),
+          const Center(child: Text('确定删除这条动态吗？\n此操作不可恢复。', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Color(0xFF636366), fontFamily: 'TideFont'))),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(child: TideDialogs.glassButton('取消', onTap: () => Navigator.pop(ctx, false), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))),
+            const SizedBox(width: 12),
+            Expanded(child: TideDialogs.glassButton('删除', onTap: () => Navigator.pop(ctx, true), color: const Color(0xFFE74C3C))),
+          ]),
+        ]),
+      ),
+    );
+    if (confirm == true) {
+      await DBManager().deletePost(f['id'] as String? ?? '');
+      if (mounted) setState(() => _feeds.removeWhere((x) => x['id'] == f['id']));
+    }
   }
 
   @override Widget build(BuildContext context) {
@@ -285,9 +310,10 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
     ? ListView(key: const ValueKey('feeds_empty'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), children: [FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('还没有动态\n点击右下角 + 发布第一条', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6))))])
     : ListView.builder(key: const ValueKey('feeds'), controller: _scrollCtrl, padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
     final f = _feeds[i];
-    return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _openFeedDetail(f),
+        onLongPress: () => _deleteFeed(f),
         child: Row(children: [
           CircleAvatar(radius: 18, backgroundColor: theme.primary.withOpacity(0.15), child: Icon(Icons.person_rounded, size: 20, color: theme.primary)),
           const SizedBox(width: 10),
@@ -299,7 +325,14 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
       const SizedBox(height: 12),
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        child: Text(f['content'] ?? '', style: const TextStyle(fontSize: 14, fontFamily: 'TideFont', color: Color(0xFF3C3C43), height: 1.5)),
+        onLongPress: () => _deleteFeed(f),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (f['image'] != null && (f['image'] as String).isNotEmpty)
+            Padding(padding: const EdgeInsets.only(bottom: 10),
+              child: ClipRRect(borderRadius: BorderRadius.circular(12),
+                child: Image.file(File(f['image'] as String), width: double.infinity, fit: BoxFit.cover))),
+          Text(f['content'] ?? '', style: const TextStyle(fontSize: 14, fontFamily: 'TideFont', color: Color(0xFF3C3C43), height: 1.5)),
+        ]),
       ),
       const SizedBox(height: 10),
       Row(children: [
@@ -349,13 +382,24 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
 }
 
 // ==================== 全屏发布页 ====================
-class _PublishFeedPage extends StatelessWidget {
-  final Function(String) onPublished;
+class _PublishFeedPage extends StatefulWidget {
+  final Function(String, String?) onPublished;
   const _PublishFeedPage({required this.onPublished});
+  @override State<_PublishFeedPage> createState() => _PublishFeedPageState();
+}
+class _PublishFeedPageState extends State<_PublishFeedPage> {
+  final ctrl = TextEditingController();
+  String? _imagePath;
+
+  @override void dispose() { ctrl.dispose(); super.dispose(); }
+
+  void _pickImage() async {
+    final p = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1024);
+    if (p != null) setState(() => _imagePath = p.path);
+  }
 
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final ctrl = TextEditingController();
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
       appBar: AppBar(
@@ -365,20 +409,30 @@ class _PublishFeedPage extends StatelessWidget {
         actions: [
           TextButton(onPressed: () {
             final text = ctrl.text.trim();
-            if (text.isNotEmpty) { onPublished(text); Navigator.pop(context); }
+            if (text.isNotEmpty) { widget.onPublished(text, _imagePath); Navigator.pop(context); }
           }, child: Text('发布', style: TextStyle(color: theme.primary, fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'TideFont'))),
         ],
       ),
-      body: Padding(padding: const EdgeInsets.all(20), child: TextField(
-        controller: ctrl, autofocus: true, maxLines: null, expands: true,
-        style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', height: 1.8),
-        textAlignVertical: TextAlignVertical.top,
-        decoration: const InputDecoration(
-          hintText: '分享你的想法...',
-          hintStyle: TextStyle(fontSize: 16, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'),
-          border: InputBorder.none,
-        ),
-      )),
+      body: Column(children: [
+        Expanded(child: Padding(padding: const EdgeInsets.all(20), child: TextField(
+          controller: ctrl, autofocus: true, maxLines: null, expands: true,
+          style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', height: 1.8),
+          textAlignVertical: TextAlignVertical.top,
+          decoration: const InputDecoration(
+            hintText: '分享你的想法...',
+            hintStyle: TextStyle(fontSize: 16, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'),
+            border: InputBorder.none,
+          ),
+        ))),
+        if (_imagePath != null) Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: ClipRRect(borderRadius: BorderRadius.circular(12),
+            child: Stack(children: [
+              Image.file(File(_imagePath!), height: 120, width: double.infinity, fit: BoxFit.cover),
+              Positioned(top: 4, right: 4, child: GestureDetector(onTap: () => setState(() => _imagePath = null), child: Container(padding: const EdgeInsets.all(4), decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.black54), child: const Icon(Icons.close, size: 16, color: Colors.white)))),
+            ]))),
+        Padding(padding: const EdgeInsets.only(bottom: 16),
+          child: BouncyTap(onTap: _pickImage, child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10), decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: theme.primary.withOpacity(0.1)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_rounded, size: 20, color: theme.primary), const SizedBox(width: 8), Text('添加图片', style: TextStyle(color: theme.primary, fontFamily: 'TideFont', fontSize: 14))])))),
+      ]),
     );
   }
 }
@@ -408,6 +462,10 @@ class _FeedDetailPage extends StatelessWidget {
           ]),
         ]),
         const SizedBox(height: 20),
+        if (feed['image'] != null && (feed['image'] as String).isNotEmpty)
+          Padding(padding: const EdgeInsets.only(bottom: 16),
+            child: ClipRRect(borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(feed['image'] as String), width: double.infinity, fit: BoxFit.cover))),
         Text(feed['content'] ?? '', style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF1C1C1E), height: 1.8)),
         const SizedBox(height: 24),
         Row(children: [
