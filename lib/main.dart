@@ -262,6 +262,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override void dispose() { _c.dispose(); super.dispose(); }
 
   @override Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
       child: ClipRRect(
@@ -277,7 +278,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
               border: Border.all(color: Colors.white.withOpacity(0.2), width: 0.5),
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))],
             ),
-          child: LayoutBuilder(builder: (ctx, cs) {
+            child: LayoutBuilder(builder: (ctx, cs) {
             final totalW = cs.maxWidth;
             final slotW = totalW / 4;
             return Stack(children: [
@@ -291,7 +292,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
                     child: Container(
                       width: _w.value, height: 36,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF6B5B95).withOpacity(0.2),
+                        color: theme.primary.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(18),
                       ),
                     ),
@@ -308,7 +309,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
                     child: Center(child: AnimatedScale(
                       duration: const Duration(milliseconds: 200),
                       scale: act ? 1.15 : 0.9,
-                      child: Icon(_icons[i], color: act ? const Color(0xFF6B5B95) : const Color(0xFF9E9E9E), size: 24),
+                      child: Icon(_icons[i], color: act ? theme.primary : const Color(0xFF9E9E9E), size: 24),
                     )),
                   ));
                 }),
@@ -316,6 +317,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
             ]);
           }),
         ),
+      ),
       ),
     );
   }
@@ -346,6 +348,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
 
   @override Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final theme = TideTheme.of(context);
     return FlowGlassBg(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -379,8 +382,8 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                   width: 48, height: 48,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
-                    boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
+                    gradient: LinearGradient(colors: [theme.primary, theme.primaryLight]),
+                    boxShadow: [BoxShadow(color: theme.primary.withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
                   ),
                   child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
                 ),
@@ -397,8 +400,8 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                   width: 48, height: 48,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
-                    boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
+                    gradient: LinearGradient(colors: [theme.primary, theme.primaryLight]),
+                    boxShadow: [BoxShadow(color: theme.primary.withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
                   ),
                   child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
                 ),
