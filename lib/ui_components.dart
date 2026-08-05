@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
+import 'main.dart';
 
 // ========== 全局弹性点击包装器 ==========
 class BouncyTap extends StatefulWidget {
@@ -64,13 +65,16 @@ class TideDialogs {
     );
   }
 
-  static Widget glassButton(String label, {required VoidCallback onTap, Color color = const Color(0xFF6B5B95), Color textColor = Colors.white}) {
+  static Widget glassButton(String label, {required VoidCallback onTap, Color? color, Color textColor = Colors.white}) {
     return BouncyTap(
       onTap: onTap,
-      child: Container(
-        height: 44, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
-        child: Center(child: Text(label, style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont'))),
-      ),
+      child: Builder(builder: (ctx) {
+        final c = color ?? TideTheme.of(ctx).primary;
+        return Container(
+          height: 44, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(14)),
+          child: Center(child: Text(label, style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont'))),
+        );
+      }),
     );
   }
 }
@@ -126,21 +130,39 @@ class ParticleOverlay extends StatefulWidget {
 class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProviderStateMixin {
   final List<Particle> _ps = []; late AnimationController _c;
   final _r = Random();
-  final _colors = [const Color(0xFF6B5B95), const Color(0xFF9B8EC4), const Color(0xFFFFB5A7), const Color(0xFFA2D2FF), const Color(0xFFCDB4DB)];
+  bool _initialized = false;
   @override void initState() {
     super.initState();
     _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
-    for (var o in widget.origins) {
-      for (int i = 0; i < 8; i++) {
-        _ps.add(Particle(o.dx, o.dy, (_r.nextDouble() - 0.5) * 6, (_r.nextDouble() - 0.5) * 6 - 3, 2.5 + _r.nextDouble() * 3.5, _colors[_r.nextInt(_colors.length)]));
-      }
-    }
     _c.addListener(() => setState(() { for (var p in _ps) p.update(); }));
     _c.addStatusListener((s) { if (s == AnimationStatus.completed) widget.onDone?.call(); });
     _c.forward();
   }
+  void _initParticles() {
+    if (_initialized) return;
+    _initialized = true;
+    final theme = TideTheme.of(context);
+    final colors = [
+      theme.primary,
+      theme.primaryLight,
+      const Color(0xFFFFB5A7),
+      const Color(0xFFA2D2FF),
+      const Color(0xFFFFD6A5),
+      const Color(0xFFFDFFB6),
+    ];
+    for (var o in widget.origins) {
+      for (int i = 0; i < 8; i++) {
+        final angle = _r.nextDouble() * 6.2832;
+        final spd = 1.5 + _r.nextDouble() * 5;
+        _ps.add(Particle(o.dx, o.dy, cos(angle) * spd, sin(angle) * spd - 2, 3 + _r.nextDouble() * 4, colors[_r.nextInt(colors.length)]));
+      }
+    }
+  }
   @override void dispose() { _c.dispose(); super.dispose(); }
-  @override Widget build(BuildContext context) => Stack(children: [widget.child, Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: ExplosionPainter(_ps))))]);
+  @override Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initParticles());
+    return Stack(children: [widget.child, Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: ExplosionPainter(_ps))))]);
+  }
 }
 
 // ========== 毛玻璃卡片 ==========

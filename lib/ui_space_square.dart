@@ -143,6 +143,7 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
   bool _showGames = false;
   late AnimationController _switchCtrl;
   late Animation<Offset> _slideAnim;
+  final ScrollController _scrollCtrl = ScrollController();
   final List<Map<String, dynamic>> _feeds = [];
   int _feedPage = 0; static const _pageSize = 10; bool _loadingMore = false; bool _hasMore = true;
   final _games = [
@@ -160,9 +161,16 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
     _switchCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
     _slideAnim = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
     _switchCtrl.forward();
+    _scrollCtrl.addListener(_onScroll);
     _loadFeeds();
   }
-  @override void dispose() { _switchCtrl.dispose(); super.dispose(); }
+  @override void dispose() { _scrollCtrl.dispose(); _switchCtrl.dispose(); super.dispose(); }
+
+  void _onScroll() {
+    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 200 && !_loadingMore && _hasMore) {
+      _loadFeeds();
+    }
+  }
 
   void _toggle() {
     setState(() {
@@ -175,17 +183,29 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
     if (_loadingMore || !_hasMore) return;
     setState(() => _loadingMore = true);
     final db = DBManager();
-    final all = await db.queryBots();
-    if (all.isNotEmpty) {
-      // simulate paginated feeds from local posts table
-      final rows = await db.getProviderById(all.first['id'] as String);
-      // For now, we rely on in-memory feeds; future: load from posts table
+    final rows = await db.queryPosts(offset: _feedPage * _pageSize, limit: _pageSize);
+    if (rows.isEmpty || rows.length < _pageSize) _hasMore = false;
+    if (mounted) {
+      setState(() {
+        _feeds.addAll(rows.map((r) => {
+          'user': r['author_id'] ?? '匿名',
+          'content': r['content'] ?? '',
+          'likes': r['likes'] as int? ?? 0,
+          'comments': r['comments'] as int? ?? 0,
+          'favorited': false,
+          'collected': false,
+          'time': r['timestamp'] != null ? formatTime(r['timestamp']) : '',
+          'id': r['id'],
+        }).toList());
+        _feedPage++;
+        _loadingMore = false;
+      });
     }
-    if (mounted) setState(() => _loadingMore = false);
   }
 
   Future<void> _shareFeed(Map<String, dynamic> f) async {
-    TextEditingController ctrl = TextEditingController(text: '\u5206\u4eab\u4e00\u6761\u52a8\u6001: ${f['content']}');
+    final theme = TideTheme.of(context);
+    TextEditingController ctrl = TextEditingController(text: '分享一条动态: ${f['content']}');
     TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
       content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
         const Text('\u5206\u4eab\u7ed9\u673a\u5668\u4eba', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
@@ -200,7 +220,7 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
             final bid = bots.first['id'] as String;
             final now = DateTime.now().millisecondsSinceEpoch;
             await db.insertMessage(<String, dynamic>{'id': 'm_$now', 'bot_id': bid, 'role': 'user', 'content': ctrl.text, 'timestamp': now});
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('\u5df2\u53d1\u9001\u5230\u804a\u5929', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFF6B5B95)));
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('已发送到聊天', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: theme.primary));
           } else {
             if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('\u8bf7\u5148\u521b\u5efa\u673a\u5668\u4eba', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating));
           }
@@ -210,8 +230,12 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
 
   void publishFeed() {
     Navigator.push(context, PageRouteBuilder(
-      pageBuilder: (c, a, s) => _PublishFeedPage(onPublished: (text) {
-        setState(() => _feeds.insert(0, {'user':'我','content':text,'likes':0,'comments':0,'favorited':false,'collected':false,'time':'刚刚'}));
+      pageBuilder: (c, a, s) => _PublishFeedPage(onPublished: (text) async {
+        final db = DBManager();
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final postId = 'post_$now';
+        await db.insertPost({'id': postId, 'author_id': '我', 'content': text, 'likes': 0, 'comments': 0, 'timestamp': now});
+        setState(() => _feeds.insert(0, {'user':'我','content':text,'likes':0,'comments':0,'favorited':false,'collected':false,'time':'刚刚','id':postId}));
       }),
       transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)),
     ));
@@ -254,7 +278,7 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
 
   Widget _buildFeeds(TideTheme theme) => _feeds.isEmpty
     ? ListView(key: const ValueKey('feeds_empty'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), children: [FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('\u8fd8\u6ca1\u6709\u52a8\u6001\n\u70b9\u51fb\u53f3\u4e0b\u89d2 + \u53d1\u5e03\u7b2c\u4e00\u6761', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6))))])
-    : ListView.builder(key: const ValueKey('feeds'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
+    : ListView.builder(key: const ValueKey('feeds'), controller: _scrollCtrl, padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
     final f = _feeds[i];
     return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
@@ -274,7 +298,11 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
       ),
       const SizedBox(height: 10),
       Row(children: [
-        BouncyTap(onTap: () => setState(() { f['favorited'] = !(f['favorited'] as bool); f['likes'] = f['favorited'] ? (f['likes'] as int) + 1 : (f['likes'] as int) - 1; }), child: Row(children: [
+        BouncyTap(onTap: () => setState(() {
+          f['favorited'] = !(f['favorited'] as bool);
+          f['likes'] = f['favorited'] ? (f['likes'] as int) + 1 : (f['likes'] as int) - 1;
+          DBManager().updatePostLikes(f['id'] as String? ?? '', f['likes'] as int);
+        }), child: Row(children: [
           Icon(f['favorited'] == true ? Icons.favorite_rounded : Icons.favorite_border_rounded, size: 18, color: f['favorited'] == true ? const Color(0xFFE74C3C) : const Color(0xFFC7C7CC)),
           const SizedBox(width: 4), Text('${f['likes']}', style: const TextStyle(fontSize: 13, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')),
         ])),
@@ -297,7 +325,11 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
       Row(children: [
         Expanded(child: TextField(style: const TextStyle(fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '\u5199\u8bc4\u8bba...', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12)))))),
         const SizedBox(width: 8),
-        TideDialogs.glassButton('\u53d1\u9001', onTap: () { Navigator.pop(context); setState(() => f['comments'] = (f['comments'] as int) + 1); }),
+        TideDialogs.glassButton('\u53d1\u9001', onTap: () {
+          Navigator.pop(context);
+          setState(() => f['comments'] = (f['comments'] as int) + 1);
+          DBManager().updatePostComments(f['id'] as String? ?? '', f['comments'] as int);
+        }),
       ]),
     ])));
   }

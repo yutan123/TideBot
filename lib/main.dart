@@ -112,7 +112,7 @@ class FlowProvider extends ChangeNotifier {
   Offset _tg = const Offset(200, 500);
   Timer? _t;
   Offset get pos => _pos;
-  void moveTo(Offset t) { _tg = t; _t?.cancel(); _t = Timer.periodic(const Duration(milliseconds: 16), (tm) { _pos = Offset(_pos.dx + (_tg.dx - _pos.dx) * 0.15, _pos.dy + (_tg.dy - _pos.dy) * 0.15); if ((_pos - _tg).distance < 0.5) { _pos = _tg; tm.cancel(); } notifyListeners(); }); }
+  void moveTo(Offset t) { _tg = t; _t?.cancel(); _t = Timer.periodic(const Duration(milliseconds: 16), (tm) { try { _pos = Offset(_pos.dx + (_tg.dx - _pos.dx) * 0.15, _pos.dy + (_tg.dy - _pos.dy) * 0.15); if ((_pos - _tg).distance < 0.5) { _pos = _tg; tm.cancel(); } notifyListeners(); } catch (_) { tm.cancel(); } }); }
   @override void dispose() { _t?.cancel(); super.dispose(); }
 }
 final FlowProvider flowProvider = FlowProvider();
@@ -178,7 +178,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(_pages.length, (i) =>
         AnimatedContainer(duration: const Duration(milliseconds: 350), width: _cur == i ? 28 : 8, height: 8,
           margin: const EdgeInsets.symmetric(horizontal: 3),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), color: _cur == i ? const Color(0xFF6B5B95) : const Color(0xFFD4D4D8)),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), color: _cur == i ? TideTheme.of(context).primary : const Color(0xFFD4D4D8)),
         )),
       ),
     ),
@@ -190,8 +190,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           width: double.infinity, height: 52,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(26),
-            gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
-            boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
+            gradient: LinearGradient(colors: [TideTheme.of(context).primary, TideTheme.of(context).primaryLight]),
+            boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
           ),
           child: Center(child: Text(_cur == _pages.length - 1 ? '开始体验' : '下一步', style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont'))),
         ),
@@ -205,7 +205,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 48),
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
         Container(width: 100, height: 100,
-          decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]),
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [TideTheme.of(context).primary, TideTheme.of(context).primaryLight]), boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]),
           child: Icon(p["icon"] as IconData, color: Colors.white, size: 44)),
         const SizedBox(height: 36),
         Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
@@ -344,6 +344,12 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
       setState(() => _idx = i);
       _pageCtrl.animateToPage(i, duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic);
     }
+  }
+
+  @override void dispose() {
+    _pageCtrl.dispose();
+    flowProvider.dispose();
+    super.dispose();
   }
 
   @override Widget build(BuildContext context) {

@@ -124,8 +124,8 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   void _pickMedia() async {
     final r = await showTideSheet<String>(context: context, height: 180, child: Column(children: [
       const SizedBox(height: 10),
-      ListTile(leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF6B5B95)), title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context, 'img')),
-      ListTile(leading: const Icon(Icons.insert_drive_file_rounded, color: Color(0xFF6B5B95)), title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context, 'file')),
+      ListTile(leading: Icon(Icons.photo_library_rounded, color: TideTheme.of(context).primary), title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context, 'img')),
+      ListTile(leading: Icon(Icons.insert_drive_file_rounded, color: TideTheme.of(context).primary), title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context, 'file')),
     ]));
     if (r == 'img') {
       final p = await ImagePicker().pickImage(source: ImageSource.gallery);
@@ -229,7 +229,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       onTap: () {
         showTideSheet(context: ctx, height: 350, child: ListView(children: [
           for (var pv in providers)
-            ListTile(title: Text(pv['name'] as String? ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(pv['model'] as String? ?? '', style: const TextStyle(fontSize: 12, fontFamily: 'TideFont')), trailing: cur == pv['id'] ? const Icon(Icons.check, color: Color(0xFF6B5B95)) : null, onTap: () { onPick(pv['id'] as String); Navigator.pop(ctx); }),
+            ListTile(title: Text(pv['name'] as String? ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(pv['model'] as String? ?? '', style: const TextStyle(fontSize: 12, fontFamily: 'TideFont')), trailing: cur == pv['id'] ? Icon(Icons.check, color: TideTheme.of(ctx).primary) : null, onTap: () { onPick(pv['id'] as String); Navigator.pop(ctx); }),
         ]));
       },
       child: Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 14), margin: const EdgeInsets.only(bottom: 10), decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: Align(alignment: Alignment.centerLeft, child: Text(disp, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontFamily: 'TideFont')))));
@@ -261,9 +261,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   void _msgLongPress(Map<String, dynamic> msg) {
     showTideSheet(context: context, height: 220, child: Column(children: [
       const SizedBox(height: 8),
-      ListTile(leading: const Icon(Icons.copy_rounded, color: Color(0xFF6B5B95)), title: const Text('复制', style: TextStyle(fontFamily: 'TideFont')), onTap: () { /* copy */ Navigator.pop(context); }),
-      ListTile(leading: const Icon(Icons.edit_rounded, color: Color(0xFF6B5B95)), title: const Text('编辑', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
-      ListTile(leading: const Icon(Icons.format_quote_rounded, color: Color(0xFF6B5B95)), title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
+      ListTile(leading: Icon(Icons.copy_rounded, color: TideTheme.of(context).primary), title: const Text('复制', style: TextStyle(fontFamily: 'TideFont')), onTap: () { /* copy */ Navigator.pop(context); }),
+      ListTile(leading: Icon(Icons.edit_rounded, color: TideTheme.of(context).primary), title: const Text('编辑', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
+      ListTile(leading: Icon(Icons.format_quote_rounded, color: TideTheme.of(context).primary), title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
       ListTile(leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFE74C3C)), title: const Text('删除', style: TextStyle(fontFamily: 'TideFont', color: Color(0xFFE74C3C))), onTap: () async { await DBManager().deleteMessage(msg['id'] as String); Navigator.pop(context); _loadMsgs(); }),
     ]));
   }
@@ -292,10 +292,10 @@ Widget _chatHeader() {
               GestureDetector(onTap: () => Navigator.pop(context), child: const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.arrow_back_ios_rounded, size: 20, color: Color(0xFF1C1C1E)))),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(_bot['name'] as String? ?? '', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
-                if (_typing) const Text('正在输入中...', style: TextStyle(fontSize: 11, color: Color(0xFF6B5B95), fontFamily: 'TideFont')),
+                if (_typing) Text('正在输入中...', style: TextStyle(fontSize: 11, color: TideTheme.of(context).primary, fontFamily: 'TideFont')),
               ])),
               // 电话按钮
-              IconButton(icon: const Icon(Icons.call_rounded, size: 20, color: Color(0xFF6B5B95)), onPressed: () {
+              IconButton(icon: Icon(Icons.call_rounded, size: 20, color: TideTheme.of(context).primary), onPressed: () {
                 // TODO: 先检查 TTS/STT 配置
               }),
               // 删除按钮
@@ -331,7 +331,7 @@ Widget _chatHeader() {
               // 图片
               if (hasImg) GestureDetector(onTap: () => _previewImg(m['image']), child: ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(margin: const EdgeInsets.only(bottom: 4), child: Image.file(File(m['image']), fit: BoxFit.cover, width: 180)))),
               // 音频卡片
-              if (hasAudio) GestureDetector(onTap: () => _player.play(DeviceFileSource(m['audio'])), child: Container(margin: const EdgeInsets.only(bottom: 4), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: isUser ? const Color(0xFF6B5B95) : const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(16)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(isUser ? Icons.mic : Icons.volume_up, size: 18, color: isUser ? Colors.white : const Color(0xFF6B5B95)), const SizedBox(width: 8), Text(isUser ? '语音消息' : '点击播放', style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 13, fontFamily: 'TideFont'))]))),
+              if (hasAudio) GestureDetector(onTap: () => _player.play(DeviceFileSource(m['audio'])), child: Container(margin: const EdgeInsets.only(bottom: 4), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(16)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(isUser ? Icons.mic : Icons.volume_up, size: 18, color: isUser ? Colors.white : TideTheme.of(context).primary), const SizedBox(width: 8), Text(isUser ? '语音消息' : '点击播放', style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 13, fontFamily: 'TideFont'))]))),
               // 文字气泡
               if (txt.isNotEmpty) _parseText(txt, isUser),
               // 时间尾巴
@@ -356,7 +356,7 @@ Widget _chatHeader() {
       last = m.end;
     }
     if (last < text.length) spans.add(TextSpan(text: text.substring(last), style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 14, fontFamily: 'TideFont')));
-    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isUser ? const Color(0xFF6B5B95) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(16)), child: RichText(text: TextSpan(children: spans)));
+    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(16)), child: RichText(text: TextSpan(children: spans)));
   }
 
   Widget _inputBar() {
@@ -369,7 +369,7 @@ Widget _chatHeader() {
             GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
             Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
             GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-            if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF6B5B95)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
+            if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
           ])),
         ),
       ),

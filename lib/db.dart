@@ -265,4 +265,25 @@ class DBManager {
       return null;
     }
   }
+
+  // ================= Posts 查询（广场分页） =================
+  Future<List<Map<String, dynamic>>> queryPosts({int offset = 0, int limit = 10}) async {
+    final db = await database;
+    return await db.query('posts', orderBy: 'timestamp DESC', limit: limit, offset: offset);
+  }
+
+  Future<void> insertPost(Map<String, dynamic> post) async {
+    final db = await database;
+    await db.insert('posts', post, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updatePostLikes(String postId, int likes) async {
+    final db = await database;
+    await db.update('posts', {'likes': likes}, where: 'id = ?', whereArgs: [postId]);
+  }
+
+  Future<void> updatePostComments(String postId, int comments) async {
+    final db = await database;
+    await db.update('posts', {'comments': comments}, where: 'id = ?', whereArgs: [postId]);
+  }
 }

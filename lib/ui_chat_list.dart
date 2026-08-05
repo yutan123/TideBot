@@ -84,7 +84,7 @@ class ChatListPageState extends State<ChatListPage> {
       key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
       onLongPress: () => showTideSheet(context: context, height: 160, child: Column(children: [
         const SizedBox(height: 10),
-        ListTile(leading: const Icon(Icons.push_pin_rounded, color: Color(0xFF6B5B95)), title: const Text('置顶', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
+        ListTile(leading: Icon(Icons.push_pin_rounded, color: TideTheme.of(context).primary), title: const Text('置顶', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
         ListTile(leading: const Icon(Icons.delete_rounded, color: Color(0xFFE74C3C)), title: const Text('删除机器人', style: TextStyle(fontFamily: 'TideFont', color: Color(0xFFE74C3C))), onTap: () { Navigator.pop(context); _deleteBot(bot, key); }),
       ])),
       child: Padding(padding: const EdgeInsets.only(bottom: 10), child: _card(bot)),
@@ -98,7 +98,7 @@ class ChatListPageState extends State<ChatListPage> {
       padding: const EdgeInsets.all(14), radius: 20,
       onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
       child: Row(children: [
-        ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF6B5B95), fontFamily: 'TideFont'))))),
+        ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: TideTheme.of(context).primary, fontFamily: 'TideFont'))))),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(bot['name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
