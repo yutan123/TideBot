@@ -31,24 +31,17 @@ class _SpacePageState extends State<SpacePage> {
     if (bots.isNotEmpty) {
       final b = bots.first;
       _botId = b['id'] as String? ?? ''; _botName = b['name'] as String? ?? '未命名';
-      _dailyQuote = b['daily_quote'] as String? ?? '每一天都值得被温柔对待';
+      _dailyQuote = b['daily_quote'] as String? ?? '';
       final created = b['created_at'];
       if (created is int) _daysSince = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(created)).inDays;
       else if (created is String && created.isNotEmpty) _daysSince = DateTime.now().difference(DateTime.tryParse(created) ?? DateTime.now()).inDays;
       final sch = await db.querySchedules(_botId, limit: 3);
       final mem = await db.queryMemories(_botId, type: 'medium', limit: 3);
-      if (sch.isEmpty) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        _schedules = [{'title': '陪屿潭散步', 'note': '傍晚6点', 'time': now}, {'title': '晚上一起看星星', 'note': '天气好就去天台', 'time': now + 3600000}];
-      } else { _schedules = sch; }
-      if (mem.isEmpty) {
-        _memories = [{'title': '我们的第一次对话', 'content': '屿潭说你笑起来很好看，这句话一直留在记忆深处。', 'created_at': DateTime.now().millisecondsSinceEpoch - 86400000}, {'title': '下雨天', 'content': '屿潭说喜欢下雨天，因为可以窝在一起聊天。', 'created_at': DateTime.now().millisecondsSinceEpoch - 172800000}];
-      } else { _memories = mem; }
+      _schedules = sch; _memories = mem;
       if (mounted) setState(() { _loading = false; });
     } else {
-      _daysSince = 42; _dailyQuote = '每一天都值得被温柔对待';
-      _schedules = [{'title': '创建你的第一个AI伴侣', 'note': '点击底部聊天Tab开始', 'time': DateTime.now().millisecondsSinceEpoch}];
-      _memories = [{'title': '欢迎来到TideBot', 'content': '在这里，你将拥有一个完全属于你的数字生命。去创建属于你的AI伴侣吧！', 'created_at': DateTime.now().millisecondsSinceEpoch}];
+      _daysSince = 0; _dailyQuote = '';
+      _schedules = []; _memories = [];
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -76,15 +69,22 @@ class _SpacePageState extends State<SpacePage> {
         SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _buildHeader(timeStr, dateStr), const SizedBox(height: 20),
-            BouncyTap(onTap: () { setState(() { final q = ['星光不问赶路人', '你是我见过最美的风景', '每一天都值得被温柔对待', '保持热爱，奔赴山海']; _dailyQuote = q[DateTime.now().millisecond % q.length]; }); }, child: _buildQuoteCard()),
+            if (_botId.isNotEmpty) ...[
+              BouncyTap(onTap: () { setState(() { final q = ['星光不问赶路人', '你是我见过最美的风景', '每一天都值得被温柔对待', '保持热爱，奔赴山海']; _dailyQuote = q[DateTime.now().millisecond % q.length]; }); }, child: _buildQuoteCard()),
+              const SizedBox(height: 16),
+              Row(children: [Expanded(child: _buildDaysCard()), const SizedBox(width: 12), Expanded(child: _buildMoodCard())]),
+            ] else
+              FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('还没有创建机器人\n点击底部聊天 Tab 开始', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6)))),
             const SizedBox(height: 16),
-            Row(children: [Expanded(child: _buildDaysCard()), const SizedBox(width: 12), Expanded(child: _buildMoodCard())]),
-            const SizedBox(height: 16),
-            _buildSectionTitle('最近日程'), const SizedBox(height: 8),
-            ..._schedules.map((s) => BouncyTap(onTap: () => _showScheduleDetail(s), child: _buildScheduleCard(s))),
-            const SizedBox(height: 16),
-            _buildSectionTitle('TA 的日记'), const SizedBox(height: 8),
-            ..._memories.map((m) => BouncyTap(onTap: () => _showMemoryDetail(m), child: _buildMemoryCard(m))),
+            if (_schedules.isNotEmpty) ...[
+              _buildSectionTitle('最近日程'), const SizedBox(height: 8),
+              ..._schedules.map((s) => BouncyTap(onTap: () => _showScheduleDetail(s), child: _buildScheduleCard(s))),
+            ],
+            if (_memories.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildSectionTitle('TA 的日记'), const SizedBox(height: 8),
+              ..._memories.map((m) => BouncyTap(onTap: () => _showMemoryDetail(m), child: _buildMemoryCard(m))),
+            ],
           ])),
       ));
   }
@@ -94,7 +94,7 @@ class _SpacePageState extends State<SpacePage> {
       Text(time, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w300, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
       Text(date, style: const TextStyle(fontSize: 14, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
     ]),
-    BouncyTap(onTap: () async {
+    if (_botId.isNotEmpty) BouncyTap(onTap: () async {
       final db = DBManager(); final bots = await db.queryBots(); if (!mounted) return;
       showTideSheet(context: context, height: 350, child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12), const Text('切换机器人', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, fontFamily: 'TideFont')), const SizedBox(height: 12),
@@ -105,7 +105,7 @@ class _SpacePageState extends State<SpacePage> {
 
   Widget _buildQuoteCard() => FrostCard(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Row(children: [Icon(Icons.format_quote_rounded, color: Color(0xFF6B5B95), size: 20), SizedBox(width: 8), Text('今日一言', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont', color: Color(0xFF6B5B95)))]),
-    const SizedBox(height: 10), Text(_dailyQuote, style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF3C3C43), height: 1.5))]));
+    const SizedBox(height: 10), Text(_dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言', style: TextStyle(fontSize: 16, fontFamily: 'TideFont', color: _dailyQuote.isNotEmpty ? const Color(0xFF3C3C43) : const Color(0xFFC7C7CC), height: 1.5))]));
   Widget _buildDaysCard() => FrostCard(padding: const EdgeInsets.all(16), child: Column(children: [
     Text('$_daysSince', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w300, fontFamily: 'TideFont', color: Color(0xFF6B5B95))), const SizedBox(height: 4),
     const Text('相遇天数', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont'))]));
@@ -135,18 +135,14 @@ class _SpacePageState extends State<SpacePage> {
 
 // ==================== 广场页 ====================
 class SquarePage extends StatefulWidget {
-  const SquarePage({super.key}); @override State<SquarePage> createState() => _SquarePageState();
+  final GlobalKey<SquarePageState>? pageKey;
+  const SquarePage({super.key, this.pageKey}); @override State<SquarePage> createState() => SquarePageState();
 }
-class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateMixin {
+class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMixin {
   bool _showGames = false;
   late AnimationController _switchCtrl;
   late Animation<Offset> _slideAnim;
-  final List<Map<String, dynamic>> _feeds = [
-    {'user':'星野','content':'今天和我的AI聊了好久，感觉它真的懂我。','likes':128,'comments':12,'favorited':false,'collected':false,'time':'2小时前'},
-    {'user':'雨晴','content':'分享一张AI生成的星空图，太美了！','likes':89,'comments':5,'favorited':false,'collected':false,'time':'5小时前'},
-    {'user':'TideBot小伙伴','content':'刚发现了一个超好用的prompt技巧！','likes':256,'comments':34,'favorited':false,'collected':false,'time':'1小时前'},
-    {'user':'数字生命','content':'我的屿潭今天给我画了一幅画，好可爱。','likes':67,'comments':8,'favorited':false,'collected':false,'time':'3小时前'},
-  ];
+  final List<Map<String, dynamic>> _feeds = [];
   final _games = [
     {'name':'五子棋','desc':'经典对弈','icon':'grid'},{'name':'井字棋','desc':'三连获胜','icon':'circle'},
     {'name':'20问猜物','desc':'AI猜你心思','icon':'help'},{'name':'棋牌对战','desc':'多人娱乐','icon':'casino'},
@@ -159,8 +155,8 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
 
   @override void initState() {
     super.initState();
-    _switchCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
-    _slideAnim = Tween<Offset>(begin: const Offset(0, -0.05), end: Offset.zero).animate(CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
+    _switchCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
     _switchCtrl.forward();
   }
   @override void dispose() { _switchCtrl.dispose(); super.dispose(); }
@@ -198,12 +194,16 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
                 backgroundColor: const Color(0xFF6B5B95),
               ));
             }
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先创建机器人', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating));
+            }
           }
         }),
       ])));
   }
 
-  void _publishFeed() {
+  void publishFeed() {
     final ctrl = TextEditingController();
     TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
       content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
@@ -221,47 +221,36 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
       ])));
   }
 
-  @override Widget build(BuildContext context) => Stack(children: [
-    Container(color: const Color(0xFFF2F2F7),
-      child: SafeArea(child: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 4), child: Row(children: [
-          const Spacer(),
-          BouncyTap(onTap: _toggle, child: AnimatedRotation(
-            turns: _showGames ? 0.5 : 0.0,
-            duration: const Duration(milliseconds: 450),
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                color: const Color(0xFF6B5B95).withOpacity(0.12),
+  @override Widget build(BuildContext context) {
+    return Stack(children: [
+      Container(color: const Color(0xFFF2F2F7),
+        child: SafeArea(child: Column(children: [
+          Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 4), child: Row(children: [
+            const Spacer(),
+            BouncyTap(onTap: _toggle, child: AnimatedRotation(
+              turns: _showGames ? 0.5 : 0.0,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOutCubic,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  color: const Color(0xFF6B5B95).withOpacity(0.12),
+                ),
+                child: Icon(_showGames ? Icons.videogame_asset_rounded : Icons.article_rounded, size: 22, color: const Color(0xFF6B5B95)),
               ),
-              child: Icon(_showGames ? Icons.videogame_asset_rounded : Icons.article_rounded, size: 22, color: const Color(0xFF6B5B95)),
-            ),
-          )),
-          const SizedBox(width: 8),
+            )),
+            const SizedBox(width: 8),
+          ])),
+          Expanded(child: SlideTransition(position: _slideAnim, child: _showGames ? _buildGames() : _buildFeeds())),
         ])),
-        Expanded(child: SlideTransition(position: _slideAnim, child: _showGames ? _buildGames() : _buildFeeds())),
-      ])),
-    ),
-    // 右下角悬浮发布按钮
-    Positioned(
-      right: 16, bottom: MediaQuery.of(context).padding.bottom + 120,
-      child: BouncyTap(
-        onTap: _showGames ? () {} : _publishFeed,
-        child: Container(
-          width: 52, height: 52,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
-            boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.4), blurRadius: 16, offset: const Offset(0, 6))],
-          ),
-          child: const Icon(Icons.edit_rounded, color: Colors.white, size: 24),
-        ),
       ),
-    ),
-  ]);
+    ]);
+  }
 
-  Widget _buildFeeds() => ListView.builder(key: const ValueKey('feeds'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
+  Widget _buildFeeds() => _feeds.isEmpty
+    ? ListView(key: const ValueKey('feeds_empty'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), children: [FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('还没有动态\n点击右下角 + 发布第一条', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6))))])
+    : ListView.builder(key: const ValueKey('feeds'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
     final f = _feeds[i];
     return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [

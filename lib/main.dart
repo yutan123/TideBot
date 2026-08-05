@@ -174,8 +174,8 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
       CurvedAnimation(parent: _c, curve: Curves.elasticOut)
     );
     _w = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 48.0, end: 64.0), weight: 25),
-      TweenSequenceItem(tween: Tween(begin: 64.0, end: 48.0), weight: 75),
+      TweenSequenceItem(tween: Tween(begin: 36.0, end: 48.0), weight: 25),
+      TweenSequenceItem(tween: Tween(begin: 48.0, end: 36.0), weight: 75),
     ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
     _c.forward();
   }
@@ -188,8 +188,8 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
         CurvedAnimation(parent: _c, curve: Curves.elasticOut)
       );
       _w = TweenSequence<double>([
-        TweenSequenceItem(tween: Tween(begin: 48.0, end: 64.0), weight: 25),
-        TweenSequenceItem(tween: Tween(begin: 64.0, end: 48.0), weight: 75),
+        TweenSequenceItem(tween: Tween(begin: 36.0, end: 48.0), weight: 25),
+        TweenSequenceItem(tween: Tween(begin: 48.0, end: 36.0), weight: 75),
       ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
       _c.reset(); _c.forward();
     }
@@ -199,15 +199,15 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
 
   @override Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(22),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          height: 60,
+          height: 44,
           margin: const EdgeInsets.symmetric(horizontal: 32),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.45),
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: Colors.white.withOpacity(0.35), width: 0.5),
             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 24, offset: const Offset(0, 6))],
           ),
@@ -221,12 +221,12 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
                   final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
                   return Positioned(
                     left: pillX,
-                    top: 6,
+                    top: 4,
                     child: Container(
-                      width: _w.value, height: 48,
+                      width: _w.value, height: 36,
                       decoration: BoxDecoration(
                         color: const Color(0xFF6B5B95).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(18),
                       ),
                     ),
                   );
@@ -262,7 +262,13 @@ class TideMainScaffold extends StatefulWidget {
 class _TideMainScaffoldState extends State<TideMainScaffold> {
   int _idx = 0;
   final PageController _pageCtrl = PageController();
-  final List<Widget> _pages = const [ChatListPage(), SpacePage(), SquarePage(), ProfilePage()];
+  final GlobalKey<SquarePageState> _squareKey = GlobalKey<SquarePageState>();
+  late final List<Widget> _pages;
+
+  @override void initState() {
+    super.initState();
+    _pages = [const ChatListPage(), const SpacePage(), SquarePage(key: _squareKey), const ProfilePage()];
+  }
 
   void _onDockTap(int i) {
     if (_idx != i) {
@@ -289,9 +295,27 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             ),
           ),
           Positioned(
-            left: 0, right: 0, bottom: bottomPadding + 12,
+            left: 0, right: 0, bottom: bottomPadding + 8,
             child: JellyDock(currentIndex: _idx, onTap: _onDockTap),
           ),
+          // 广场发布悬浮球 — 在 Dock 上方
+          if (_idx == 2)
+            Positioned(
+              right: 16,
+              bottom: bottomPadding + 64,
+              child: BouncyTap(
+                onTap: () => _squareKey.currentState?.publishFeed(),
+                child: Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
+                    boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
+                  ),
+                  child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
+                ),
+              ),
+            ),
         ]),
       ),
     );
