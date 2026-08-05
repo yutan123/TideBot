@@ -8,7 +8,7 @@ import 'package:heif_converter/heif_converter.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
-import 'main.dart';
+import 'theme.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key}); @override State<ProfilePage> createState() => _ProfilePageState();

@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
-import 'main.dart';
+import 'theme.dart';
 
 // ========== 全局弹性点击包装器 ==========
 class BouncyTap extends StatefulWidget {

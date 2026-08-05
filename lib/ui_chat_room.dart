@@ -15,7 +15,7 @@ import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
 import 'ui_create_bot.dart';
-import 'main.dart';
+import 'theme.dart';
 
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;

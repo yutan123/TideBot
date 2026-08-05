@@ -5,7 +5,7 @@ import 'db.dart';
 import 'ui_components.dart';
 import 'ui_chat_room.dart';
 import 'ui_create_bot.dart';
-import 'main.dart';
+import 'theme.dart';
 
 class ChatListPage extends StatefulWidget {
   final GlobalKey<ChatListPageState>? pageKey;
@@ -18,8 +18,8 @@ class ChatListPageState extends State<ChatListPage> {
   bool _showParticles = false;
   final List<Offset> _origins = [];
 
-  @override void initState() { super.initState(); _load(); }
-  void _load() async {
+  @override void initState() { super.initState(); load(); }
+  void load() async {
     final bots = await DBManager().queryBots();
     final enriched = <Map<String, dynamic>>[];
     for (var b in bots) {
@@ -61,7 +61,7 @@ class ChatListPageState extends State<ChatListPage> {
         setState(() { _origins.add(Offset(pos.dx + box.size.width / 2, pos.dy + box.size.height / 2)); _showParticles = true; });
       }
       await DBManager().deleteBot(bot['id'] as String);
-      _load();
+      load();
       Future.delayed(const Duration(milliseconds: 1400), () { if (mounted) setState(() => _showParticles = false); });
     }
   }
@@ -81,7 +81,7 @@ class ChatListPageState extends State<ChatListPage> {
     final bot = _bots[i];
     final key = GlobalKey();
     return GestureDetector(
-      key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
+      key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); load(); },
       onLongPress: () => showTideSheet(context: context, height: 160, child: Column(children: [
         const SizedBox(height: 10),
         ListTile(leading: Icon(Icons.push_pin_rounded, color: TideTheme.of(context).primary), title: const Text('置顶', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context)),
@@ -96,7 +96,7 @@ class ChatListPageState extends State<ChatListPage> {
     final hasAv = av.isNotEmpty;
     return GlassCard(
       padding: const EdgeInsets.all(14), radius: 20,
-      onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); _load(); },
+      onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); load(); },
       child: Row(children: [
         ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: TideTheme.of(context).primary, fontFamily: 'TideFont'))))),
         const SizedBox(width: 12),

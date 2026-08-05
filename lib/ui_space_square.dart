@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ui_components.dart';
 import 'db.dart';
-import 'main.dart';
+import 'theme.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
