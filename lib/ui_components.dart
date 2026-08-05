@@ -18,7 +18,7 @@ class _BouncyTapState extends State<BouncyTap> with SingleTickerProviderStateMix
   late Animation<double> _scale;
   @override void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 120));
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000)); // 延长持续时间
     _scale = Tween<double>(begin: 1.0, end: 1.0 - widget.scaleAmount).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic));
     _c.addStatusListener((s) { if (s == AnimationStatus.completed) _c.reverse(); });
   }
@@ -121,7 +121,6 @@ class ExplosionPainter extends CustomPainter {
     for (var p in ps) { if (p.life > 0) { pt.color = p.color.withOpacity(p.life.clamp(0.0, 1.0)); c.drawCircle(Offset(p.x, p.y), p.size, pt); } }
   }
   @override bool shouldRepaint(covariant ExplosionPainter o) => true;
-}
 class ParticleOverlay extends StatefulWidget {
   final Widget child; final List<Offset> origins; final VoidCallback? onDone;
   const ParticleOverlay({Key? key, required this.child, required this.origins, this.onDone}) : super(key: key);
@@ -133,7 +132,7 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
   bool _initialized = false;
   @override void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000)); // 延长持续时间
     _c.addListener(() => setState(() { for (var p in _ps) p.update(); }));
     _c.addStatusListener((s) { if (s == AnimationStatus.completed) widget.onDone?.call(); });
     _c.forward();
@@ -149,7 +148,7 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
       theme.primaryLight.withOpacity(0.5),
     ];
     for (var o in widget.origins) {
-      for (int i = 0; i < 30; i++) {
+      for (int i = 0; i < 30; i++) { // 保持30个粒子
         final angle = _r.nextDouble() * 6.2832;
         final spd = 1.0 + _r.nextDouble() * 6;
         final sx = 1.5 + _r.nextDouble() * 5;
@@ -164,6 +163,7 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
     WidgetsBinding.instance.addPostFrameCallback((_) => _initParticles());
     return Stack(children: [widget.child, Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: ExplosionPainter(_ps))))]);
   }
+}
 }
 
 // ========== 毛玻璃卡片 ==========

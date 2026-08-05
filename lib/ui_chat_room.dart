@@ -22,7 +22,6 @@ class ChatRoomPage extends StatefulWidget {
   const ChatRoomPage({Key? key, required this.botData}) : super(key: key);
   @override State<ChatRoomPage> createState() => _ChatRoomPageState();
 }
-
 class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderStateMixin {
   final TextEditingController _msgC = TextEditingController();
   final ScrollController _scrollC = ScrollController();
@@ -37,6 +36,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   int _recSecs = 0;
   String? _customBg;
   late Map<String, dynamic> _bot;
+  
+  late AnimationController _bottomBarCtrl;
+  late Animation<double> _bottomBarSlide;
 
   bool _hasText = false;
   void _msgChanged() { if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty); }
@@ -46,8 +48,17 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     _bot = Map.from(widget.botData);
     _msgC.addListener(_msgChanged);
     _loadMsgs(); _loadBg();
+    
+    // 底部栏动画控制器
+    _bottomBarCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 200)); // 减慢动画速度
+    _bottomBarSlide = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic));
   }
-  @override void dispose() { _msgC.removeListener(_msgChanged); _msgC.dispose(); _scrollC.dispose(); _rec.dispose(); _player.dispose(); _recTimer?.cancel(); super.dispose(); }
+  
+  @override void dispose() { 
+    _msgC.removeListener(_msgChanged); _msgC.dispose(); _scrollC.dispose(); _rec.dispose(); _player.dispose(); _recTimer?.cancel();
+    _bottomBarCtrl.dispose(); // 添加动画控制器释放
+    super.dispose(); 
+  }
 
   void _loadBg() async {
     final prefs = await SharedPreferences.getInstance();
@@ -56,10 +67,13 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   }
 
   void _loadMsgs() async {
+    print('_loadMsgs called with bot ID: ${_bot['id']}');
     try {
       final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
+      print('_loadMsgs success: got ${msgs.length} messages');
       if (mounted) setState(() { _msgs = msgs.reversed.toList(); _msgsLoading = false; });
     } catch (e) {
+      print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
     }
     _scrollDown();
@@ -78,7 +92,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     final now = DateTime.now().millisecondsSinceEpoch;
     final msg = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': text, 'image': img, 'timestamp': now};
     await DBManager().insertMessage(msg);
-    setState(() { _msgs.add(msg); _msgC.clear(); });
+    setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
     _scrollDown();
 
     setState(() { _loading = true; _typing = true; });
@@ -205,14 +219,21 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       TideDialogs.glassButton('确定', onTap: () => Navigator.pop(ctx)),
     ])));
   }
-
-  void _pickToken(BuildContext parentCtx, int cur) {
-    final c = TextEditingController();
+void _pickToken(BuildContext parentCtx, int cur) {
+    final c = TextEditingController(text: cur.toString());
     TideDialogs.show(context: parentCtx, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: ctx, children: [
       const Text('最大上下文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
       const SizedBox(height: 12),
-      ListTile(title: const Text('10,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 10000)); Navigator.pop(ctx); }),
-      ListTile(title: const Text('20,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 20000)); Navigator.pop(ctx); }),
+      ListTile(title: const Text('10,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
+        await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 10000)); 
+        if (mounted) setState(() {}); // 重新加载 UI
+        Navigator.pop(ctx); 
+      }),
+      ListTile(title: const Text('20,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
+        await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 20000)); 
+        if (mounted) setState(() {}); // 重新加载 UI
+        Navigator.pop(ctx); 
+      }),
       ListTile(title: const Text('自定义', style: TextStyle(fontFamily: 'TideFont')), onTap: () {
         Navigator.pop(ctx);
         TideDialogs.show(context: parentCtx, builder: (c2) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: c2, children: [
@@ -220,10 +241,18 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
           const SizedBox(height: 10),
           TextField(controller: c, keyboardType: TextInputType.number, decoration: InputDecoration(hintText: '输入token数量', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))))),
           const SizedBox(height: 12),
-          TideDialogs.glassButton('确定', onTap: () async { final v = int.tryParse(c.text); if (v != null && v > 0) { await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', v)); } Navigator.pop(c2); }),
+          TideDialogs.glassButton('确定', onTap: () async { 
+            final v = int.tryParse(c.text); 
+            if (v != null && v > 0) { 
+              await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', v)); 
+              if (mounted) setState(() {}); // 重新加载 UI
+            } 
+            Navigator.pop(c2); 
+          }),
         ])));
       }),
     ])));
+  }
   }
 
   Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
@@ -366,17 +395,20 @@ Widget _chatHeader() {
   }
 
   Widget _inputBar() {
-    return SafeArea(top: false, child: Container(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-      decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
-      child: ClipRRect(
-        child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-          child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
-            GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
-            Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
-            GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-            if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
-          ])),
+    return SafeArea(top: false, child: SlideTransition(
+      position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: _bottomBarSlide, curve: Curves.easeOutCubic)),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+        decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
+        child: ClipRRect(
+          child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+            child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
+              GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
+              Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
+              GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
+              if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
+            ])),
+          ),
         ),
       ),
     ));

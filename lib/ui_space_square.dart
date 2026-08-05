@@ -66,13 +66,25 @@ class _SpacePageState extends State<SpacePage> {
       const SizedBox(height: 12), Text(formatTime(m['created_at']), style: const TextStyle(fontSize: 13, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'))])));
   }
 
-  @override Widget build(BuildContext context) {
+   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final now = DateTime.now();
     final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final dateStr = '${now.year}.${now.month}.${now.day}';
-    return Container(color: const Color(0xFFF2F2F7),
-      child: SafeArea(child: _loading ? Center(child: CircularProgressIndicator(color: theme.primary)) :
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F7),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.push(context, PageRouteBuilder(
+            pageBuilder: (c, a, s) => const CreateBotPage(),
+            transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)),
+          ));
+          if (result == true) _loadData(); // 刷新空间界面
+        },
+        backgroundColor: theme.primary,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      body: SafeArea(child: _loading ? Center(child: CircularProgressIndicator(color: theme.primary)) :
         SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _buildHeader(timeStr, dateStr, theme), const SizedBox(height: 20),
@@ -310,10 +322,15 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
     ? ListView(key: const ValueKey('feeds_empty'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), children: [FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('还没有动态\n点击右下角 + 发布第一条', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6))))])
     : ListView.builder(key: const ValueKey('feeds'), controller: _scrollCtrl, padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
     final f = _feeds[i];
-    return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () => _deleteFeed(f),
+        onLongPress: () {
+          // 只有图文动态才允许长按删除
+          if (f['image'] != null && (f['image'] as String).isNotEmpty) {
+            _deleteFeed(f);
+          }
+        },
         child: Row(children: [
           CircleAvatar(radius: 18, backgroundColor: theme.primary.withOpacity(0.15), child: Icon(Icons.person_rounded, size: 20, color: theme.primary)),
           const SizedBox(width: 10),
@@ -325,7 +342,12 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
       const SizedBox(height: 12),
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () => _deleteFeed(f),
+        onLongPress: () {
+          // 只有图文动态才允许长按删除
+          if (f['image'] != null && (f['image'] as String).isNotEmpty) {
+            _deleteFeed(f);
+          }
+        },
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (f['image'] != null && (f['image'] as String).isNotEmpty)
             Padding(padding: const EdgeInsets.only(bottom: 10),
