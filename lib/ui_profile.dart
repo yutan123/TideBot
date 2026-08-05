@@ -219,7 +219,7 @@ class LocalModelPage extends StatefulWidget {
   const LocalModelPage({super.key}); @override State<LocalModelPage> createState() => _LocalModelPageState();
 }
 class _LocalModelPageState extends State<LocalModelPage> {
-  final _models = [
+  final List<Map<String, dynamic>> _models = [
     {'name':'Qwen2.5-0.5B','desc':'轻量级中文模型，适合简单对话','size':'~400MB','id':'qwen2_5_05b','url':'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf','installed':false,'progress':0.0,'downloading':false},
     {'name':'Gemma-2-2B','desc':'Google轻量模型，英文能力优秀','size':'~1.5GB','id':'gemma2_2b','url':'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf','installed':false,'progress':0.0,'downloading':false},
     {'name':'Phi-3-mini','desc':'微软轻量模型，推理能力强','size':'~2.2GB','id':'phi3_mini','url':'','installed':false,'progress':0.0,'downloading':false},

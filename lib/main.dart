@@ -147,7 +147,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
         const SizedBox(height: 14),
         Text(p["s"] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: Color(0xFF636366))),
-      ]);
+      ]),
+    );
   }
 }
 
