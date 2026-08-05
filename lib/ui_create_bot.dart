@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'db.dart';
 import 'ui_components.dart';
 import 'theme.dart';
@@ -62,6 +63,17 @@ class _CreateBotPageState extends State<CreateBotPage> {
 
   void _pickAvatar() async {
     try {
+      // 主动请求相册权限（弹系统授权框）
+      bool granted = true;
+      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
+        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
+      }
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('需要相册权限才能选择头像', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFFE74C3C)));
+        }
+        return;
+      }
       final picker = ImagePicker();
       final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
       if (img != null) {

@@ -28,6 +28,7 @@ dependencies:
   heif_converter: ^1.0.7
   image_picker: ^1.1.2
   file_picker: ^8.0.5
+  permission_handler: ^11.3.1
 
   # 后台守护与保活
   flutter_background_service: ^5.1.0

@@ -152,24 +152,31 @@ class AIManager {
 
   // 特异化 TTS 处理 (兼容标准协议与阿里云百炼特异 Payload)
   Future<String?> _generateTTS(String text, String providerId) async {
-    final provider = await DBManager().getProviderById(providerId);
+    // TTS provider 独立存放于 tts_provider_list，用 id 前缀 ts_ 标识，含 voice 音色字段
+    final list = await DBManager().queryTtsProviders();
+    Map<String, dynamic>? provider;
+    try { provider = list.firstWhere((p) => p['id'] == providerId); } catch (_) {}
     if (provider == null) return null;
     
+    final String voice = (provider['voice'] as String? ?? '').trim().isEmpty
+        ? 'alloy'
+        : (provider['voice'] as String?).toString();
     try {
       http.Response res;
-      final modelName = provider['name'].toString().split(' / ').last;
+      final modelName = (provider['model'] as String? ?? '').trim();
+      final modelForUrl = modelName.isEmpty ? provider['name'].toString() : modelName;
       
       if (provider['base_url'].toString().contains('dashscope')) {
         res = await http.post(
           Uri.parse("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav"),
           headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
-          body: jsonEncode({"model": modelName, "input": {"text": text}, "parameters": {"format": "wav"}}),
+          body: jsonEncode({"model": modelForUrl, "input": {"text": text}, "parameters": {"format": "wav"}}),
         ).timeout(const Duration(seconds: 20));
       } else {
         res = await http.post(
           Uri.parse("${provider['base_url']}/audio/speech"),
           headers: {"Content-Type": "application/json", "Authorization": "Bearer ${provider['api_key']}"},
-          body: jsonEncode({"model": modelName, "input": text, "voice": "alloy"}),
+          body: jsonEncode({"model": modelName, "input": text, "voice": voice}),
         ).timeout(const Duration(seconds: 20));
       }
       

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
@@ -28,6 +29,17 @@ class _ProfilePageState extends State<ProfilePage> {
   }
   Future<void> _pickAvatar() async {
     try {
+      // 主动请求相册权限
+      bool granted = true;
+      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
+        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
+      }
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('需要相册权限才能更换头像', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFFE74C3C)));
+        }
+        return;
+      }
       final picker = ImagePicker(); final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 256);
       if (img != null) {
         String path = img.path;
@@ -78,40 +90,108 @@ class _ProfilePageState extends State<ProfilePage> {
       default: ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${s['title']}功能开发中...', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating));
     }
   }
-  void _showThemePicker() {
-    final themes = {
-      'rose':      [const Color(0xFFD4A5A5), const Color(0xFFE8C8C8), '玫瑰粉'],
-      'lavender':  [const Color(0xFFB8A9C9), const Color(0xFFD5C6E0), '薰衣草'],
-      'sky':       [const Color(0xFF89B0C8), const Color(0xFFB5D3E7), '雾霾蓝'],
-      'mint':      [const Color(0xFF8FBC8F), const Color(0xFFB8D8B8), '薄荷绿'],
-      'peach':     [const Color(0xFFE8B89D), const Color(0xFFF5D0B8), '蜜桃橙'],
-      'plum':      [const Color(0xFFA593C2), const Color(0xFFC9B8E8), '梅子紫'],
-      'teal':      [const Color(0xFF6FA8A0), const Color(0xFFA3D2C8), '青瓷绿'],
+  // 主题设置的配色圆点（取 theme.dart 的日间主色作为预览）
+  Color _themeDotPrimary(String id) {
+    final map = {
+      'rose':Color(0xFFD98C94),'aurora':Color(0xFF6C8CD5),'lavender':Color(0xFF9B8AC4),
+      'sky':Color(0xFF5D9BC5),'mint':Color(0xFF5FAF8A),'peach':Color(0xFFE39A6B),
+      'plum':Color(0xFF8E74B4),'teal':Color(0xFF4FA79C),'sunset':Color(0xFFE06A5A),
+      'ocean':Color(0xFF3E7CB1),'pinkg':Color(0xFFE07A9A),'night':Color(0xFF6B5FAE),
     };
-    showTideSheet(context: context, height: 500, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('主题设置', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
-      const SizedBox(height: 4),
-      const Text('选择你喜欢的配色方案', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
-      const SizedBox(height: 16),
-      Expanded(child: ListView(children: themes.entries.map((e) {
-        final colors = e.value;
-        final cur = TideTheme.of(context).name;
-        final active = cur == e.key;
-        return BouncyTap(
-          onTap: () { TideTheme.of(context, listen: false).setTheme(e.key); Navigator.pop(context); },
-          child: FrostCard(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            child: Row(children: [
-              Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [colors[0] as Color, colors[1] as Color])), child: active ? const Icon(Icons.check, color: Colors.white, size: 18) : null),
-              const SizedBox(width: 14),
-              Expanded(child: Text(colors[2] as String, style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)))),
-              if (active) Icon(Icons.check_circle, color: TideTheme.of(context).primary, size: 20),
-            ]),
+    return map[id] ?? Color(0xFF6C8CD5);
+  }
+  void _showThemePicker() {
+    showTideSheet(context: context, height: 560, child: StatefulBuilder(builder: (ctx, setSt) {
+      final t = TideTheme.of(ctx, listen: false);
+      String mi = 'auto';
+      if (!t.hasManualMode) mi = 'auto';
+      else if (t.mode == ThemeMode.dark) mi = 'dark';
+      else mi = 'light';
+      final options = TideTheme.themeOptions;
+      return Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // 标题 + 右上角日/夜切换按钮
+        Row(children: [
+          const Expanded(child: Text('主题设置', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
+          // 日/夜/跟随 循环切换（system->light->dark->system）
+          GestureDetector(
+            onTap: () => t.cycleMode().then((_) { if (ctx.mounted) setSt(() {}); }),
+            child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: t.bgColor == const Color(0xFFF2F2F7) ? t.primary.withOpacity(0.12) : Colors.white.withOpacity(0.12)),
+              child: Row(children: [
+                Icon(mi == 'dark' ? Icons.dark_mode_rounded : (mi == 'auto' ? Icons.brightness_auto_rounded : Icons.wb_sunny_rounded), size: 16, color: t.primary),
+                const SizedBox(width: 6),
+                Text(mi == 'dark' ? '夜间' : (mi == 'auto' ? '跟随系统' : '日间'), style: TextStyle(fontSize: 12, fontFamily: 'TideFont', color: t.primary)),
+              ])),
           ),
-        );
-      }).toList())),
-    ])));
+        ]),
+        const SizedBox(height: 4),
+        const Text('选择你喜欢的配色方案，日夜均跟随系统', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
+        const SizedBox(height: 16),
+        Expanded(child: ListView(children: options.map((item) {
+          final id = item['id']!;
+          final name = item['name']!;
+          final active = t.name == id;
+          return BouncyTap(
+            onTap: () { t.setTheme(id); setSt(() {}); },
+            child: FrostCard(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              child: Row(children: [
+                Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: _themeDotPrimary(id)), child: active ? const Icon(Icons.check, color: Colors.white, size: 18) : null),
+                const SizedBox(width: 14),
+                Expanded(child: Text(name, style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)))),
+                if (active) Icon(Icons.check_circle, color: TideTheme.of(ctx).primary, size: 20),
+              ]),
+            ),
+          );
+        }).toList())),
+        const SizedBox(height: 12),
+        // 背景设置入口：上传图片作为聊天背景
+        BouncyTap(
+          onTap: () { _pickChatBg(); },
+          child: Container(width: double.infinity, height: 48, decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: TideTheme.of(ctx).primary)),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.wallpaper_rounded, size: 20, color: TideTheme.of(ctx).primary),
+              const SizedBox(width: 8),
+              Text('聊天背景', style: TextStyle(fontSize: 15, color: TideTheme.of(ctx).primary, fontFamily: 'TideFont')),
+              if (t.chatBg.isNotEmpty) ...[const SizedBox(width: 8), Icon(Icons.check_circle, size: 16, color: Color(0xFF34C759))],
+            ])),
+        ),
+        const SizedBox(height: 8),
+      ]));
+    }));
+  }
+  // 选择聊天背景图片
+  Future<void> _pickChatBg() async {
+    final tide = TideTheme.of(context, listen: false);
+    try {
+      // 先请求图片读取权限
+      bool granted = true;
+      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
+        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
+      }
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('需要相册权限才能设置背景', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFFE74C3C)));
+        }
+        return;
+      }
+      final picker = ImagePicker();
+      final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1600);
+      if (img != null) {
+        String path = img.path;
+        if (path.toLowerCase().endsWith('.heic') || path.toLowerCase().endsWith('.heif')) {
+          try { final converted = await HeifConverter.convert(path); if (converted != null) path = converted; } catch (_) {}
+        }
+        final dir = await getApplicationDocumentsDirectory();
+        final dest = '${dir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}.png';
+        await File(path).copy(dest);
+        await tide.setChatBg(dest);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('聊天背景已更新', style: TextStyle(fontFamily: 'TideFont')), backgroundColor: const Color(0xFF34C759), behavior: SnackBarBehavior.floating));
+        }
+      }
+    } catch (_) {}
   }
   void _showNotificationSettings() {
     bool silent=false, schedule=true;

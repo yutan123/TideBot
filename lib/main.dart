@@ -60,21 +60,73 @@ final FlowProvider flowProvider = FlowProvider();
 class FlowGlassBg extends StatelessWidget {
   final Widget child;
   const FlowGlassBg({Key? key, required this.child}) : super(key: key);
-  @override Widget build(BuildContext context) => Stack(children: [
-    Container(decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFF2F2F7), Color(0xFFE8E8F0), Color(0xFFF0F0F5)]))),
-    ListenableBuilder(listenable: flowProvider, builder: (c, _) => Stack(children: [
-      Positioned(left: flowProvider.pos.dx - 120, top: flowProvider.pos.dy - 80, child: IgnorePointer(child: Container(width: 240, height: 240, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFFFB5A7).withOpacity(0.3), const Color(0xFFFCD5CE).withOpacity(0.1), Colors.transparent]))))),
-      Positioned(left: flowProvider.pos.dx - 160, top: flowProvider.pos.dy - 40, child: IgnorePointer(child: Container(width: 280, height: 280, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFA2D2FF).withOpacity(0.25), const Color(0xFFBDE0FE).withOpacity(0.08), Colors.transparent]))))),
-      Positioned(left: flowProvider.pos.dx - 100, top: flowProvider.pos.dy - 100, child: IgnorePointer(child: Container(width: 180, height: 180, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [const Color(0xFFCDB4DB).withOpacity(0.2), Colors.transparent]))))),
-    ])),
-    child,
-  ]);
+  @override Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    return Stack(children: [
+      // 与主题日夜一致的柔和底色，避免聊天/各页背景与外层割裂
+      Container(decoration: BoxDecoration(color: theme.bgColor)),
+      ListenableBuilder(listenable: flowProvider, builder: (c, _) => Stack(children: [
+        Positioned(left: flowProvider.pos.dx - 120, top: flowProvider.pos.dy - 80, child: IgnorePointer(child: Container(width: 240, height: 240, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primaryLight.withOpacity(0.35), theme.primary.withOpacity(0.12), Colors.transparent]))))),
+        Positioned(left: flowProvider.pos.dx - 160, top: flowProvider.pos.dy - 40, child: IgnorePointer(child: Container(width: 280, height: 280, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(0.2), theme.primaryLight.withOpacity(0.08), Colors.transparent]))))),
+        Positioned(left: flowProvider.pos.dx - 100, top: flowProvider.pos.dy - 100, child: IgnorePointer(child: Container(width: 180, height: 180, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(0.18), Colors.transparent]))))),
+      ])),
+      child,
+    ]);
+  }
 }
 
-class TideBotApp extends StatelessWidget {
+class TideBotApp extends StatefulWidget {
   final bool hasSeenOnboarding;
   const TideBotApp({Key? key, required this.hasSeenOnboarding}) : super(key: key);
-  @override Widget build(BuildContext context) => TideBotThemeProvider(theme: tideTheme, child: MaterialApp(title: 'TideBot', debugShowCheckedModeBanner: false, theme: ThemeData(fontFamily: 'TideFont', scaffoldBackgroundColor: const Color(0xFFF2F2F7), appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0), useMaterial3: true, splashColor: Colors.transparent, highlightColor: Colors.transparent), home: hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen()));
+  @override State<TideBotApp> createState() => _TideBotAppState();
+}
+
+class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
+  @override void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+  @override void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+  // 跟随系统日夜变化：手动覆盖后系统变化也触发重取色(不影响手动模式)
+  @override void didChangePlatformBrightness() {
+    tideTheme.applySystemBrightness();
+  }
+
+  @override Widget build(BuildContext context) {
+    return TideBotThemeProvider(
+      theme: tideTheme,
+      child: ListenableBuilder(
+        listenable: tideTheme,
+        builder: (context, _) => MaterialApp(
+          title: 'TideBot',
+          debugShowCheckedModeBanner: false,
+          themeMode: tideTheme.mode,
+          theme: ThemeData(
+            fontFamily: 'TideFont',
+            brightness: Brightness.light,
+            scaffoldBackgroundColor: tideTheme.bgColor,
+            appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
+            useMaterial3: true,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+          ),
+          darkTheme: ThemeData(
+            fontFamily: 'TideFont',
+            brightness: Brightness.dark,
+            scaffoldBackgroundColor: const Color(0xFF121417),
+            appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
+            useMaterial3: true,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+          ),
+          home: widget.hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen(),
+        ),
+      ),
+    );
+  }
 }
 
 class OnboardingScreen extends StatefulWidget {
@@ -162,8 +214,8 @@ class JellyDock extends StatefulWidget {
   @override State<JellyDock> createState() => _JellyDockState();
 }
 class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMixin {
-  static const double _baseW = 64.0;
-  static const double _growW = 98.0;
+  static const double _baseW = 62.0;
+  static const double _growW = 70.0; // 仅轻微左右放大，主要靠整体缩放体现"鼓起来"
   late AnimationController _c;
   late Animation<double> _pos;
   late Animation<double> _w;
@@ -175,20 +227,20 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override void initState() {
     super.initState();
     _prev = widget.currentIndex;
-    // 加速移动：800ms -> 380ms
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
+    // 加速移动：800ms -> 360ms
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 360));
     _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
       CurvedAnimation(parent: _c, curve: Curves.easeOutQuart)
     );
-    // 移动中放大，落下后极速缩回（前 60% 放大，后 40% 缩回基数）
+    // 宽度仅微扩：移动中从 62 -> 70，落地后缩回
     _w = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 60),
-      TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInBack)), weight: 40),
+      TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 55),
+      TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
     ]).animate(_c);
-    // 整块胶囊轻微上浮再回落，增强"弹到位置"的丝滑感
+    // 整体等比例放大一点再回落(非只左右扩)，营造整体"鼓起来"的丝滑感
     _scale = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.1).chain(CurveTween(curve: Curves.easeOutBack)), weight: 55),
-      TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.12).chain(CurveTween(curve: Curves.easeOutBack)), weight: 60),
+      TweenSequenceItem(tween: Tween(begin: 1.12, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 40),
     ]).animate(_c);
     _c.forward();
   }
@@ -201,12 +253,12 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
         CurvedAnimation(parent: _c, curve: Curves.easeOutQuart)
       );
       _w = TweenSequence<double>([
-        TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 60),
-        TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInBack)), weight: 40),
+        TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 55),
+        TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
       ]).animate(_c);
       _scale = TweenSequence<double>([
-        TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.1).chain(CurveTween(curve: Curves.easeOutBack)), weight: 55),
-        TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
+        TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.12).chain(CurveTween(curve: Curves.easeOutBack)), weight: 60),
+        TweenSequenceItem(tween: Tween(begin: 1.12, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 40),
       ]).animate(_c);
       _c.reset(); _c.forward();
     }

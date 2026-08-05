@@ -292,7 +292,6 @@ class DBManager {
     } catch (_) {}
     return result;
   }
-
   Future<Map<String, dynamic>?> getChatProviderById(String id) async {
     final list = await queryChatProviders();
     try {
@@ -301,6 +300,31 @@ class DBManager {
       return null;
     }
   }
+
+  // ============ 统一 TTS 链路 provider 读取 ============
+  // API 设置页把 TTS 提供商也存在 'tts_provider_list'（字段: name/url/key/model/voice）
+  Future<List<Map<String, dynamic>>> queryTtsProviders() async {
+    final data = await getKV('tts_provider_list');
+    if (data == null || data.isEmpty) return [];
+    List<Map<String, dynamic>> result = [];
+    try {
+      final decoded = jsonDecode(data) as List;
+      for (var e in decoded) {
+        final m = e as Map<String, dynamic>;
+        result.add({
+          'id': 'ts_${m['name']}',
+          'type': 'tts',
+          'name': m['name'] ?? '',
+          'base_url': m['url'] ?? '',
+          'api_key': m['key'] ?? '',
+          'model': m['model'] ?? '',
+          'voice': m['voice'] ?? '',
+        });
+      }
+    } catch (_) {}
+    return result;
+  }
+
 
 
   // ================= Posts 查询（广场分页） =================

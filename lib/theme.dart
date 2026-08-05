@@ -2,41 +2,112 @@ import 'package:flutter/material.dart';
 import 'db.dart';
 
 // ================= 全局主题系统 =================
+// 每个主题含日/夜两套主色，夜间更沉静、更护眼。
 class TideTheme extends ChangeNotifier {
-  String _name = 'lavender';
-  Color _primary = const Color(0xFFB8A9C9);
-  Color _primaryLight = const Color(0xFFD5C6E0);
+  String _name = 'aurora';
+  ThemeMode _mode = ThemeMode.system; // 跟随系统，用户可手动切日/夜
+  bool _manualMode = false;           // 用户是否手动覆盖过（覆盖后跟随系统但记录手动值）
+  Color _primary = const Color(0xFF6C8CD5);
+  Color _primaryLight = const Color(0xFFA7BEE8);
+  String _chatBg = '';                // 全局聊天背景图路径（自定义，可为空）
+
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
   String get name => _name;
-  LinearGradient get primaryGradient => LinearGradient(colors: [_primary, _primaryLight]);
+  ThemeMode get mode => _mode;
+  bool get hasManualMode => _manualMode;
+  String get chatBg => _chatBg;
 
+  bool get isDark {
+    final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    if (_mode == ThemeMode.system) return brightness == Brightness.dark;
+    return _mode == ThemeMode.dark;
+  }
+
+  LinearGradient get primaryGradient => LinearGradient(colors: [_primary, _primaryLight]);
+  // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
+  Color get bgColor => isDark ? const Color(0xFF121417) : const Color(0xFFF2F2F7);
+  // 文字主色
+  Color get textStrong => isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E);
+  Color get textWeak => isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366);
+
+  // 主题配色：主色 + 亮色 + 中文名 + 深色底主色（护眼） + 深色亮色
   static const _themes = {
-    'rose':      [Color(0xFFD4A5A5), Color(0xFFE8C8C8)],
-    'lavender':  [Color(0xFFB8A9C9), Color(0xFFD5C6E0)],
-    'sky':       [Color(0xFF89B0C8), Color(0xFFB5D3E7)],
-    'mint':      [Color(0xFF8FBC8F), Color(0xFFB8D8B8)],
-    'peach':     [Color(0xFFE8B89D), Color(0xFFF5D0B8)],
-    'plum':      [Color(0xFFA593C2), Color(0xFFC9B8E8)],
-    'teal':      [Color(0xFF6FA8A0), Color(0xFFA3D2C8)],
+    'rose':    {'name': '玫瑰粉', 'light': [Color(0xFFD98C94), Color(0xFFE8B8BE)], 'dark': [Color(0xFFD98A92), Color(0xFFB0707A)]},
+    'aurora':  {'name': '极光蓝', 'light': [Color(0xFF6C8CD5), Color(0xFFA7BEE8)], 'dark': [Color(0xFF7D9BE0), Color(0xFF5A7499)]},
+    'lavender':{'name': '薰衣草', 'light': [Color(0xFF9B8AC4), Color(0xFFC5B8E0)], 'dark': [Color(0xFFA79ACD), Color(0xFF7C6FA3)]},
+    'sky':     {'name': '雾霾蓝', 'light': [Color(0xFF5D9BC5), Color(0xFF9CC5E3)], 'dark': [Color(0xFF6FA9D2), Color(0xFF4A7DA0)]},
+    'mint':    {'name': '薄荷绿', 'light': [Color(0xFF5FAF8A), Color(0xFF9CD4BC)], 'dark': [Color(0xFF6BB996), Color(0xFF4A8F72)]},
+    'peach':   {'name': '蜜桃橙', 'light': [Color(0xFFE39A6B), Color(0xFFF0C4A0)], 'dark': [Color(0xFFE8A678), Color(0xFFB97D50)]},
+    'plum':    {'name': '梅子紫', 'light': [Color(0xFF8E74B4), Color(0xFFB7A6D6)], 'dark': [Color(0xFF9A80C0), Color(0xFF6E5895)]},
+    'teal':    {'name': '青瓷绿', 'light': [Color(0xFF4FA79C), Color(0xFF92CFC8)], 'dark': [Color(0xFF59B3A8), Color(0xFF3E857C)]},
+    'sunset':  {'name': '落日橙', 'light': [Color(0xFFE06A5A), Color(0xFFF2A79A)], 'dark': [Color(0xFFE87668), Color(0xFFB4554A)]},
+    'ocean':   {'name': '深海蓝', 'light': [Color(0xFF3E7CB1), Color(0xFF7FAFDB)], 'dark': [Color(0xFF4C8EC4), Color(0xFF33658A)]},
+    'pinkg':   {'name': '樱花粉', 'light': [Color(0xFFE07A9A), Color(0xFFF0B3C6)], 'dark': [Color(0xFFE886A4), Color(0xFFB55A78)]},
+    'night':   {'name': '午夜紫', 'light': [Color(0xFF6B5FAE), Color(0xFF9D92D0)], 'dark': [Color(0xFF786BC0), Color(0xFF524A86)]},
   };
+
+  static List<Map<String, String>> get themeOptions =>
+      _themes.entries.map((e) => {'id': e.key, 'name': (e.value['name']!) as String}).toList();
 
   Future<void> loadFromDB() async {
     final name = await DBManager().getKV('theme_color');
     if (name != null && _themes.containsKey(name)) {
       _name = name;
-      _primary = _themes[name]![0];
-      _primaryLight = _themes[name]![1];
-      notifyListeners();
+      _applyColors();
     }
+    // 读取日夜模式
+    final modeStr = await DBManager().getKV('theme_mode');
+    if (modeStr != null) {
+      if (modeStr == 'system') { _mode = ThemeMode.system; _manualMode = false; }
+      else if (modeStr == 'light') { _mode = ThemeMode.light; _manualMode = true; }
+      else if (modeStr == 'dark') { _mode = ThemeMode.dark; _manualMode = true; }
+    }
+    // 读取全局聊天背景
+    final bg = await DBManager().getKV('chat_bg_global');
+    if (bg != null && bg.isNotEmpty) _chatBg = bg;
+    notifyListeners();
+  }
+
+  void _applyColors() {
+    final t = _themes[_name]!;
+    final dark = isDark;
+    final palette = ((dark ? t['dark'] : t['light'])! as List<Object>).cast<Color>();
+    _primary = palette[0];
+    _primaryLight = palette[1];
   }
 
   Future<void> setTheme(String name) async {
     if (!_themes.containsKey(name)) return;
     _name = name;
-    _primary = _themes[name]![0];
-    _primaryLight = _themes[name]![1];
+    _applyColors();
     await DBManager().insertKV('theme_color', name);
+    notifyListeners();
+  }
+
+  // 切换日夜：system->light->dark->system
+  Future<String> cycleMode() async {
+    if (_mode == ThemeMode.system) {
+      _mode = ThemeMode.light; _manualMode = true;
+    } else if (_mode == ThemeMode.light) {
+      _mode = ThemeMode.dark; _manualMode = true;
+    } else {
+      _mode = ThemeMode.system; _manualMode = false;
+    }
+    _applyColors();
+    await DBManager().insertKV('theme_mode', _mode == ThemeMode.dark ? 'dark' : (_mode == ThemeMode.light ? 'light' : 'system'));
+    notifyListeners();
+    return _mode == ThemeMode.dark ? 'dark' : (_mode == ThemeMode.light ? 'light' : 'system');
+  }
+
+  void applySystemBrightness() {
+    _applyColors();
+    notifyListeners();
+  }
+
+  Future<void> setChatBg(String path) async {
+    _chatBg = path;
+    await DBManager().insertKV('chat_bg_global', path);
     notifyListeners();
   }
 

@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
@@ -89,11 +90,43 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   // ========== 发送消息 ==========
   void _send({String? img}) async {
     final text = _msgC.text.trim();
-    if (text.isEmpty && img == null) return;
+    if (text.isEmpty && img == null) {
+      // 无内容时空点发送不触发
+      return;
+    }
+    if (_loading) return; // 避免连点重复发送
     final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 先保证已选择一个可用模型：若 bot 还没配 chat_model，但存在默认 provider，则自动用第一个
+    try {
+      final bot = _bot;
+      String? cm = bot['chat_model'] as String?;
+      if (cm == null || cm.toString().isEmpty) {
+        final providers = await DBManager().queryChatProviders();
+        if (providers.isNotEmpty) {
+          cm = providers.first['id'] as String;
+          _bot['chat_model'] = cm;
+          await DBManager().updateBot(_bot['id'] as String, {'chat_model': cm});
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('请先在「我的 → API 设置」添加模型，再回来聊天～', style: TextStyle(fontFamily: 'TideFont')),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Color(0xFFE74C3C),
+            ));
+          }
+          return;
+        }
+      }
+    } catch (_) {}
+
     final msg = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': text, 'image': img, 'timestamp': now};
-    await DBManager().insertMessage(msg);
-    setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
+    try {
+      await DBManager().insertMessage(msg);
+      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
+    }
     _scrollDown();
 
     setState(() { _loading = true; _typing = true; });
@@ -104,12 +137,12 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       final resp = await AIManager().chat(botId: _bot['id'] as String, messages: history, imageBase64: imgB64);
       final bm = <String, dynamic>{'id': 'm_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': resp, 'timestamp': DateTime.now().millisecondsSinceEpoch};
       await DBManager().insertMessage(bm);
-      setState(() => _msgs.add(bm));
+      if (mounted) setState(() => _msgs.add(bm));
     } catch (e) {
       final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '[X] 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
-      setState(() => _msgs.add(err));
+      if (mounted) setState(() => _msgs.add(err));
     }
-    setState(() { _loading = false; _typing = false; });
+    if (mounted) setState(() { _loading = false; _typing = false; });
     _scrollDown();
   }
 
@@ -127,12 +160,20 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
         _scrollDown();
       }
     } else {
-      if (await _rec.hasPermission()) {
+      // 主动请求录音权限（弹系统授权框），被拒绝则引导去设置
+      final micStatus = await Permission.microphone.request();
+      if (micStatus.isGranted) {
         final dir = await getApplicationDocumentsDirectory();
         final p = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
         await _rec.start(path: p, encoder: AudioEncoder.aacLc, bitRate: 128000);
         setState(() => _isRecording = true);
         _recTimer = Timer.periodic(const Duration(seconds: 1), (t) { if (mounted) setState(() => _recSecs++); });
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('需要麦克风权限才能录音，请在设置中开启～', style: TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFFE74C3C),
+        ));
       }
     }
   }
@@ -145,9 +186,25 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       ListTile(leading: Icon(Icons.insert_drive_file_rounded, color: TideTheme.of(context).primary), title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')), onTap: () => Navigator.pop(context, 'file')),
     ]));
     if (r == 'img') {
+      // 选择相册前主动请求图片读取权限（Android 13+ photos / 旧版 storage）
+      bool granted = true;
+      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
+        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
+      }
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('需要相册权限才能选择图片，请在设置中开启～', style: TextStyle(fontFamily: 'TideFont')),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Color(0xFFE74C3C),
+          ));
+        }
+        return;
+      }
       final p = await ImagePicker().pickImage(source: ImageSource.gallery);
       if (p != null) _send(img: await _fixHeic(p.path));
     } else if (r == 'file') {
+      try { await Permission.storage.request(); } catch (_) {}
       final fp = await FilePicker.platform.pickFiles();
       if (fp != null && fp.files.single.path != null) _send(img: fp.files.single.path);
     }
@@ -174,103 +231,174 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     final n = TextEditingController(text: _bot['name']);
     final d = TextEditingController(text: _bot['desc']);
     final p = TextEditingController(text: _bot['prompt']);
-    TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: ctx, children: [
-      const Center(child: Text('机器人信息', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
-      const SizedBox(height: 14),
-      _mLabel('名字'), _mField(n),
-      const SizedBox(height: 10), _mLabel('人格设定'), _mField(d, h: 80),
-      const SizedBox(height: 10), _mLabel('说话方式'), _mField(p, h: 100),
-      const SizedBox(height: 16),
-      SizedBox(width: double.infinity, child: TideDialogs.glassButton('保存', onTap: () async {
-        _bot['name'] = n.text; _bot['desc'] = d.text; _bot['prompt'] = p.text;
-        await DBManager().updateBot(_bot['id'] as String, {
-          'name': n.text, 'desc': d.text, 'prompt': p.text,
-        });
-        Navigator.pop(ctx); setState(() {});
-      })),
-    ])));
+    String avatar = _bot['avatar']?.toString() ?? '';
+    TideDialogs.show(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+      // 更换头像：从相册选择并复制到应用目录
+      Future<void> pickNewAvatar() async {
+        try {
+          final picker = ImagePicker();
+          final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
+          if (img != null) {
+            String path = img.path;
+            if (path.toLowerCase().endsWith('.heic') || path.toLowerCase().endsWith('.heif')) {
+              try {
+                final converted = await HeifConverter.convert(path);
+                if (converted != null) path = converted;
+              } catch (_) {}
+            }
+            final dir = await getApplicationDocumentsDirectory();
+            final dest = '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';
+            await File(path).copy(dest);
+            if (mounted) setSt(() => avatar = dest);
+          }
+        } catch (_) {}
+      }
+      return AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, children: [
+          const Center(child: Text('机器人信息', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
+          const SizedBox(height: 14),
+          // 头像更换
+          Center(child: GestureDetector(onTap: pickNewAvatar, child: Stack(children: [
+            Container(width: 72, height: 72, decoration: BoxDecoration(borderRadius: BorderRadius.circular(36), color: const Color(0xFFE8E8F0)), child: avatar.isNotEmpty ? ClipRRect(borderRadius: BorderRadius.circular(36), child: Image.file(File(avatar), fit: BoxFit.cover)) : const Center(child: Icon(Icons.person_rounded, color: Color(0xFF8E8E93), size: 30))),
+            Positioned(right: 0, bottom: 0, child: Container(width: 24, height: 24, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(ctx).primary), child: const Icon(Icons.edit_rounded, size: 14, color: Colors.white))),
+          ]))),
+          const SizedBox(height: 8),
+          const Center(child: Text('点按头像可更换', style: TextStyle(fontSize: 11, color: Color(0xFF8E8E93), fontFamily: 'TideFont'))),
+          const SizedBox(height: 8),
+          _mLabel('名字'), _mField(n),
+          const SizedBox(height: 10), _mLabel('人格设定'), _mField(d, h: 80),
+          const SizedBox(height: 10), _mLabel('说话方式'), _mField(p, h: 100),
+          const SizedBox(height: 16),
+          SizedBox(width: double.infinity, child: TideDialogs.glassButton('保存', onTap: () async {
+            final botId = _bot['id'] as String;
+            _bot['name'] = n.text; _bot['desc'] = d.text; _bot['prompt'] = p.text; _bot['avatar'] = avatar;
+            await DBManager().updateBot(botId, {
+              'name': n.text, 'desc': d.text, 'prompt': p.text, 'avatar': avatar,
+            });
+            Navigator.pop(ctx); setState(() {});
+          })),
+        ]));
+    }));
   }
 
   // ========== 模型设置弹窗 ==========
+  // 需求#5显示模型名 / #6 TTS分开+音色 / #7 token实时反馈：统一改为 StatefulBuilder + 本地状态，点击即刷新
   void _showModelSettings() async {
     final providers = await DBManager().queryChatProviders();
+    final ttsProviders = await DBManager().queryTtsProviders();
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
-    final curChat = prefs.getString('chat_model_${_bot['id']}') ?? ((_bot['chat_model'] as String?)?.isNotEmpty == true ? _bot['chat_model'] as String : (providers.isNotEmpty ? providers.first['id'] : ''));
-    final curBak = prefs.getString('backup_model_${_bot['id']}') ?? '';
-    final curVision = prefs.getString('vision_model_${_bot['id']}') ?? '';
-    final curStt = prefs.getString('stt_model_${_bot['id']}') ?? '';
-    final curTts = prefs.getString('tts_model_${_bot['id']}') ?? '';
-    final curTok = prefs.getInt('max_token_${_bot['id']}') ?? 10000;
+    final botId = _bot['id'] as String;
+    // 当前选择（只读读取 DB，作为初始值；弹窗内实时状态交给 setSt 维护）
+    String curChat = prefs.getString('chat_model_$botId') ?? ((_bot['chat_model'] as String?)?.isNotEmpty == true ? _bot['chat_model'] as String : (providers.isNotEmpty ? providers.first['id'] as String : ''));
+    String curBak = prefs.getString('backup_model_$botId') ?? '';
+    String curVision = prefs.getString('vision_model_$botId') ?? '';
+    String curStt = prefs.getString('stt_model_$botId') ?? '';
+    String curTts = prefs.getString('tts_model_$botId') ?? ((_bot['tts_model'] as String?)?.isNotEmpty == true ? _bot['tts_model'] as String : '');
+    int curTok = prefs.getInt('max_token_$botId') ?? (_bot['max_tokens'] as int? ?? 10000);
 
-    TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
-      const Center(child: Text('模型设置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
-      const SizedBox(height: 14),
-      _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async {
-        await prefs.setString('chat_model_${_bot['id']}', v);
-        _bot['chat_model'] = v;
-        await DBManager().updateBot(_bot['id'] as String, {'chat_model': v});
-      }),
-      _mLabel('备用模型'), _modelPicker(ctx, providers, curBak, (v) async { await prefs.setString('backup_model_${_bot['id']}', v); }),
-      _mLabel('识图模型'), _modelPicker(ctx, providers, curVision, (v) async { await prefs.setString('vision_model_${_bot['id']}', v); }),
-      _mLabel('STT模型'), _modelPicker(ctx, providers, curStt, (v) async { await prefs.setString('stt_model_${_bot['id']}', v); }),
-      _mLabel('TTS模型'), _modelPicker(ctx, providers, curTts, (v) async { await prefs.setString('tts_model_${_bot['id']}', v); }),
-      _mLabel('最大上下文Token'),
-      GestureDetector(onTap: () => _pickToken(ctx, curTok), child: Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: Align(alignment: Alignment.centerLeft, child: Text('$curTok token', style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'))))),
-      const SizedBox(height: 14),
-      TideDialogs.glassButton('确定', onTap: () => Navigator.pop(ctx)),
-    ])));
-  }
-void _pickToken(BuildContext parentCtx, int cur) {
-    final c = TextEditingController(text: cur.toString());
-    TideDialogs.show(context: parentCtx, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: ctx, children: [
-      const Text('最大上下文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
-      const SizedBox(height: 12),
-      ListTile(title: const Text('10,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
-        await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 10000)); 
-        await DBManager().updateBot(_bot['id'] as String, {'max_tokens': 10000});
-        if (mounted) setState(() {}); // 重新加载 UI
-        Navigator.pop(ctx); 
-      }),
-      ListTile(title: const Text('20,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
-        await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 20000)); 
-        await DBManager().updateBot(_bot['id'] as String, {'max_tokens': 20000});
-        if (mounted) setState(() {}); // 重新加载 UI
-        Navigator.pop(ctx); 
-      }),
-      ListTile(title: const Text('自定义', style: TextStyle(fontFamily: 'TideFont')), onTap: () {
-        Navigator.pop(ctx);
-        TideDialogs.show(context: parentCtx, builder: (c2) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: c2, children: [
-          const Text('自定义Token', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
-          const SizedBox(height: 10),
-          TextField(controller: c, keyboardType: TextInputType.number, decoration: InputDecoration(hintText: '输入token数量', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))))),
+    TideDialogs.show(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+      // 选中项实时更新到内存 & 持久化，让界面即时刷新
+      Future<void> pickModel(String key, String val, {bool isTts = false}) async {
+        setSt(() {});
+        await prefs.setString(key, val);
+        if (!isTts && key == 'chat_model_$botId') {
+          _bot['chat_model'] = val;
+          await DBManager().updateBot(botId, {'chat_model': val});
+        }
+        if (isTts && key == 'tts_model_$botId') {
+          _bot['tts_model'] = val;
+          await DBManager().updateBot(botId, {'tts_model': val});
+        }
+        setSt(() {});
+      }
+      return AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
+          const Center(child: Text('模型设置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
           const SizedBox(height: 12),
-          TideDialogs.glassButton('确定', onTap: () async { 
-            final v = int.tryParse(c.text); 
-            if (v != null && v > 0) { 
-              await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', v)); 
-              await DBManager().updateBot(_bot['id'] as String, {'max_tokens': v});
-              if (mounted) setState(() {}); // 重新加载 UI
-            } 
-            Navigator.pop(c2); 
-          }),
-        ])));
-      }),
-    ])));
+          Flexible(child: SingleChildScrollView(child: Column(children: [
+            _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async { curChat = v; await pickModel('chat_model_$botId', v); }),
+            _mLabel('备用模型'), _modelPicker(ctx, providers, curBak, (v) async { curBak = v; await pickModel('backup_model_$botId', v); }),
+            _mLabel('识图模型'), _modelPicker(ctx, providers, curVision, (v) async { curVision = v; await pickModel('vision_model_$botId', v); }),
+            _mLabel('STT模型'), _modelPicker(ctx, providers, curStt, (v) async { curStt = v; await pickModel('stt_model_$botId', v); }),
+            // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段
+            _mLabel('TTS模型（语音）'), _modelPicker(ctx, ttsProviders, curTts, (v) async { curTts = v; await pickModel('tts_model_$botId', v, isTts: true); }),
+            _mLabel('最大上下文Token'),
+            _tokenField(ctx, curTok, (v) async { curTok = v; await prefs.setInt('max_token_$botId', v); await DBManager().updateBot(botId, {'max_tokens': v}); setSt(() {}); }),
+          ]))),
+          const SizedBox(height: 12),
+          TideDialogs.glassButton('确定', onTap: () => Navigator.pop(ctx)),
+        ]));
+    }));
   }
 
-  Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
-    final disp = providers.isNotEmpty
-        ? (providers.firstWhereOrNull((p) => p['id'] == cur)?['name'] ?? '未选择')
-        : '无可用模型';
+  // token 选择字段，点击弹底部选择，选中后立即回调更新
+  Widget _tokenField(BuildContext parentCtx, int cur, Future<void> Function(int) onPick) {
+    Future<void> choose(int v) async { await onPick(v); if (mounted) setState(() {}); }
     return GestureDetector(
       onTap: () {
-        showTideSheet(context: ctx, height: 350, child: ListView(children: [
+        final c = TextEditingController(text: cur.toString());
+        showTideSheet(context: parentCtx, height: 260, child: Column(children: [
+          const SizedBox(height: 10),
+          const Text('最大上下文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+          const SizedBox(height: 8),
+          ListTile(title: const Text('10,000 token', style: TextStyle(fontFamily: 'TideFont')), trailing: cur == 10000 ? Icon(Icons.check, color: TideTheme.of(parentCtx).primary) : null, onTap: () { Navigator.pop(parentCtx); choose(10000); }),
+          ListTile(title: const Text('20,000 token', style: TextStyle(fontFamily: 'TideFont')), trailing: cur == 20000 ? Icon(Icons.check, color: TideTheme.of(parentCtx).primary) : null, onTap: () { Navigator.pop(parentCtx); choose(20000); }),
+          ListTile(title: const Text('自定义...', style: TextStyle(fontFamily: 'TideFont')), onTap: () {
+            Navigator.pop(parentCtx);
+            TideDialogs.show(context: parentCtx, builder: (c2) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: c2, children: [
+              const Text('自定义Token', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+              const SizedBox(height: 10),
+              TextField(controller: c, keyboardType: TextInputType.number, decoration: InputDecoration(hintText: '输入token数量', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))))),
+              const SizedBox(height: 12),
+              TideDialogs.glassButton('确定', onTap: () { final v = int.tryParse(c.text); if (v != null && v > 0) choose(v); Navigator.pop(c2); }),
+            ])));
+          }),
+        ]));
+      },
+      child: Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 14), margin: const EdgeInsets.only(bottom: 10), decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: Align(alignment: Alignment.centerLeft, child: Text(cur >= 1000 ? '${cur.toString().replaceAllMapped(RegExp(r'(?=(\d{3})+(?!\d))'), (m) => ',')} token' : '$cur token', style: const TextStyle(fontSize: 14, fontFamily: 'TideFont')))));
+  }
+
+  // 模型选择器：普通模型显示「名字 · 模型名」，TTS 额外显示「音色」
+  Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
+    final sel = providers.firstWhereOrNull((p) => p['id'] == cur);
+    final String disp;
+    if (sel != null) {
+      final name = sel['name']?.toString() ?? '未选择';
+      final model = sel['model']?.toString().trim() ?? '';
+      final voice = sel['voice']?.toString().trim() ?? '';
+      if (voice.isNotEmpty) {
+        disp = '$name · $model · 音色:$voice';
+      } else {
+        disp = model.isNotEmpty ? '$name · $model' : name;
+      }
+    } else {
+      disp = providers.isEmpty ? '无可用模型' : '未选择';
+    }
+    return GestureDetector(
+      onTap: () {
+        showTideSheet(context: ctx, height: 380, child: ListView(children: [
           for (var pv in providers)
-            ListTile(title: Text(pv['name'] as String? ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(pv['model'] as String? ?? '', style: const TextStyle(fontSize: 12, fontFamily: 'TideFont')), trailing: cur == pv['id'] ? Icon(Icons.check, color: TideTheme.of(ctx).primary) : null, onTap: () { onPick(pv['id'] as String); Navigator.pop(ctx); }),
+            ListTile(
+              title: Text(_providerTitle(pv), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+              subtitle: Text(_providerSub(pv), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontFamily: 'TideFont')),
+              trailing: cur == pv['id'] ? Icon(Icons.check, color: TideTheme.of(ctx).primary) : null,
+              onTap: () { onPick(pv['id'] as String); Navigator.pop(ctx); },
+            ),
         ]));
       },
       child: Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 14), margin: const EdgeInsets.only(bottom: 10), decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: Align(alignment: Alignment.centerLeft, child: Text(disp, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontFamily: 'TideFont')))));
+  }
+
+  String _providerTitle(Map<String, dynamic> p) {
+    final name = p['name']?.toString() ?? '';
+    return name;
+  }
+  String _providerSub(Map<String, dynamic> p) {
+    final model = p['model']?.toString().trim() ?? '';
+    final voice = p['voice']?.toString().trim() ?? '';
+    if (voice.isNotEmpty) return '$model · 音色:$voice';
+    return model;
   }
 
   // ========== 删除选项 ==========
@@ -309,14 +437,24 @@ void _pickToken(BuildContext parentCtx, int cur) {
   // ========== 构建UI ==========
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
+    // 背景优先级：单机器人自定义 > 全局主题背景 > 主题底色
+    final String? effBg = _hasBg ? _customBg : (theme.chatBg.isNotEmpty ? theme.chatBg : null);
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       body: Stack(children: [
-        // 默认背景：无自定义图时用主题色柔光渐变，避免黑屏
-        Positioned.fill(child: _hasBg
-          ? Image.file(File(_customBg!), fit: BoxFit.cover)
-          : DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [theme.primaryLight.withOpacity(0.35), const Color(0xFFF2F2F7), theme.primary.withOpacity(0.15)])))),
+        // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
+        Positioned.fill(
+          child: effBg != null
+            ? Image.file(File(effBg), fit: BoxFit.cover)
+            : DecoratedBox(
+                decoration: BoxDecoration(color: theme.bgColor),
+                child: Stack(children: [
+                  Positioned(left: -80, top: -60, child: IgnorePointer(child: Container(width: 240, height: 240, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primaryLight.withOpacity(0.25), Colors.transparent]))))),
+                  Positioned(right: -60, bottom: 120, child: IgnorePointer(child: Container(width: 260, height: 260, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(0.15), Colors.transparent]))))),
+                ]),
+              ),
+        ),
         Column(children: [_chatHeader(), Expanded(child: _chatBody()), _inputBar()]),
       ]),
     );
@@ -405,7 +543,8 @@ Widget _chatHeader() {
     return SafeArea(top: false, child: SlideTransition(
       position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: _bottomBarSlide, curve: Curves.easeOutCubic)),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+        // 底部留出更大间距（上提），让输入框不紧贴屏幕最底
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 14),
         decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
         child: ClipRRect(
           child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),

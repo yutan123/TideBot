@@ -92,7 +92,7 @@ class ChatListPageState extends State<ChatListPage> {
     final bot = _bots[i];
     final key = GlobalKey();
     return GestureDetector(
-      key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); load(); },
+      key: key, onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionDuration: const Duration(milliseconds: 380), reverseTransitionDuration: const Duration(milliseconds: 240), transitionsBuilder: (c, a, s, child) { final anim = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic); return SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(anim), child: ScaleTransition(scale: Tween<double>(begin: 0.98, end: 1).animate(anim), child: FadeTransition(opacity: anim, child: child))); })); load(); },
       onLongPress: () => showTideSheet(context: context, height: 160, child: Column(children: [
         const SizedBox(height: 10),
         ListTile(leading: Icon(Icons.push_pin_rounded, color: TideTheme.of(context).primary), title: Text(((bot['is_pinned'] as int?) ?? 0) == 1 ? '取消置顶' : '置顶', style: const TextStyle(fontFamily: 'TideFont')), onTap: () { Navigator.pop(context); final pin = ((bot['is_pinned'] as int?) ?? 0) == 1 ? 0 : 1; DBManager().toggleBotPin(bot['id'] as String, pin); load(); }),
@@ -107,7 +107,7 @@ class ChatListPageState extends State<ChatListPage> {
     final hasAv = av.isNotEmpty;
     return GlassCard(
       padding: const EdgeInsets.all(14), radius: 20,
-      onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0.15, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); load(); },
+      onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionDuration: const Duration(milliseconds: 380), reverseTransitionDuration: const Duration(milliseconds: 240), transitionsBuilder: (c, a, s, child) { final anim = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic); return SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(anim), child: ScaleTransition(scale: Tween<double>(begin: 0.98, end: 1).animate(anim), child: FadeTransition(opacity: anim, child: child))); })); load(); },
       child: Row(children: [
         ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: TideTheme.of(context).primary, fontFamily: 'TideFont'))))),
         const SizedBox(width: 12),
