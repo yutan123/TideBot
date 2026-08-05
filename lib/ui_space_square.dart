@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ui_components.dart';
 import 'db.dart';
-import 'ai.dart';
 import 'main.dart';
 
 // ==================== 空间页 ====================
@@ -173,7 +172,7 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
     });
   }
 
-  void _shareFeed(Map<String, dynamic> f) {
+  Future<void> _shareFeed(Map<String, dynamic> f) async {
     TextEditingController ctrl = TextEditingController(text: '分享一条动态: ${f['content']}');
     TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
       content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
@@ -181,7 +180,26 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
         const SizedBox(height: 12),
         TextField(controller: ctrl, maxLines: 3, style: const TextStyle(fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '编辑分享内容', border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))))),
         const SizedBox(height: 16),
-        TideDialogs.glassButton('发送', onTap: () { Navigator.pop(ctx); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('已分享给机器人', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF6B5B95))); }),
+        TideDialogs.glassButton('发送', onTap: () async {
+          Navigator.pop(ctx);
+          final db = DBManager();
+          final bots = await db.queryBots();
+          if (bots.isNotEmpty) {
+            final bid = bots.first['id'] as String;
+            final now = DateTime.now().millisecondsSinceEpoch;
+            await db.insertMessage(<String, dynamic>{
+              'id': 'm_$now', 'bot_id': bid, 'role': 'user',
+              'content': ctrl.text, 'timestamp': now,
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('已发送到聊天', style: TextStyle(fontFamily: 'TideFont')),
+                behavior: SnackBarBehavior.floating,
+                backgroundColor: const Color(0xFF6B5B95),
+              ));
+            }
+          }
+        }),
       ])));
   }
 

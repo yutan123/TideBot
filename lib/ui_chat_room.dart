@@ -37,12 +37,16 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   String? _customBg;
   late Map<String, dynamic> _bot;
 
+  bool _hasText = false;
+  void _msgChanged() { if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty); }
+
   @override void initState() {
     super.initState();
     _bot = Map.from(widget.botData);
+    _msgC.addListener(_msgChanged);
     _loadMsgs(); _loadBg();
   }
-  @override void dispose() { _msgC.dispose(); _scrollC.dispose(); _rec.dispose(); _player.dispose(); _recTimer?.cancel(); super.dispose(); }
+  @override void dispose() { _msgC.removeListener(_msgChanged); _msgC.dispose(); _scrollC.dispose(); _rec.dispose(); _player.dispose(); _recTimer?.cancel(); super.dispose(); }
 
   void _loadBg() async {
     final prefs = await SharedPreferences.getInstance();
@@ -365,7 +369,7 @@ Widget _chatHeader() {
             GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
             Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '发送新消息...', hintStyle: TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: EdgeInsets.symmetric(horizontal: 8)))),
             GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-            if (_msgC.text.isNotEmpty || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF6B5B95)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
+            if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF6B5B95)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
           ])),
         ),
       ),
