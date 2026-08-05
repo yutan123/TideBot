@@ -4,7 +4,6 @@ import 'package:flutter/rendering.dart';
 import 'db.dart';
 import 'ui_components.dart';
 import 'ui_chat_room.dart';
-import 'ui_create_bot.dart';
 import 'theme.dart';
 
 class ChatListPage extends StatefulWidget {

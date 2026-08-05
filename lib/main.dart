@@ -11,7 +11,6 @@ import 'ui_chat_list.dart';
 import 'ui_create_bot.dart';
 import 'ui_space_square.dart';
 import 'ui_profile.dart';
-import 'db.dart';
 import 'ui_components.dart';
 
 final TideTheme tideTheme = TideTheme();
@@ -163,9 +162,12 @@ class JellyDock extends StatefulWidget {
   @override State<JellyDock> createState() => _JellyDockState();
 }
 class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMixin {
+  static const double _baseW = 64.0;
+  static const double _growW = 98.0;
   late AnimationController _c;
   late Animation<double> _pos;
   late Animation<double> _w;
+  late Animation<double> _scale;
   int _prev = 0;
 
   static const _icons = [Icons.chat_bubble_rounded, Icons.space_dashboard_rounded, Icons.explore_rounded, Icons.person_rounded];
@@ -173,13 +175,21 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override void initState() {
     super.initState();
     _prev = widget.currentIndex;
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    // 加速移动：800ms -> 380ms
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
     _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
+      CurvedAnimation(parent: _c, curve: Curves.easeOutQuart)
     );
-    _w = Tween<double>(begin: 64.0, end: 64.0).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
-    );
+    // 移动中放大，落下后极速缩回（前 60% 放大，后 40% 缩回基数）
+    _w = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 60),
+      TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInBack)), weight: 40),
+    ]).animate(_c);
+    // 整块胶囊轻微上浮再回落，增强"弹到位置"的丝滑感
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.1).chain(CurveTween(curve: Curves.easeOutBack)), weight: 55),
+      TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
+    ]).animate(_c);
     _c.forward();
   }
 
@@ -188,11 +198,16 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
     if (old.currentIndex != widget.currentIndex) {
       _prev = old.currentIndex;
       _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
-        CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
+        CurvedAnimation(parent: _c, curve: Curves.easeOutQuart)
       );
-      _w = Tween<double>(begin: 64.0, end: 64.0).animate(
-        CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
-      );
+      _w = TweenSequence<double>([
+        TweenSequenceItem(tween: Tween(begin: _baseW, end: _growW).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 60),
+        TweenSequenceItem(tween: Tween(begin: _growW, end: _baseW).chain(CurveTween(curve: Curves.easeInBack)), weight: 40),
+      ]).animate(_c);
+      _scale = TweenSequence<double>([
+        TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.1).chain(CurveTween(curve: Curves.easeOutBack)), weight: 55),
+        TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeInOutCubic)), weight: 45),
+      ]).animate(_c);
       _c.reset(); _c.forward();
     }
   }
@@ -221,17 +236,21 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
             final slotW = totalW / 4;
             return Stack(children: [
               AnimatedBuilder(
-                animation: Listenable.merge([_pos, _w]),
+                animation: Listenable.merge([_pos, _w, _scale]),
                 builder: (c, child) {
                   final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
                   return Positioned(
                     left: pillX,
                     top: 0,
-                    child: Container(
-                      width: _w.value, height: 44,
-                      decoration: BoxDecoration(
-                        color: theme.primary.withOpacity(0.18),
-                        borderRadius: BorderRadius.circular(22),
+                    child: Transform.scale(
+                      scale: _scale.value,
+                      alignment: Alignment.center,
+                      child: Container(
+                        width: _w.value, height: 44,
+                        decoration: BoxDecoration(
+                          color: theme.primary.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(22),
+                        ),
                       ),
                     ),
                   );

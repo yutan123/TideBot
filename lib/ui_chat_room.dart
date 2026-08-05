@@ -14,7 +14,6 @@ import 'package:path_provider/path_provider.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
-import 'ui_create_bot.dart';
 import 'theme.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -71,7 +70,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     try {
       final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
       print('_loadMsgs success: got ${msgs.length} messages');
-      if (mounted) setState(() { _msgs = msgs.reversed.toList(); _msgsLoading = false; });
+      // queryMessages 按 timestamp ASC（旧→新），ListView 从上往下渲染，
+      // 直接使用即可保证"旧消息在上、新消息在下"，与 _send 追加到末尾一致。
+      if (mounted) setState(() { _msgs = msgs; _msgsLoading = false; });
     } catch (e) {
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
@@ -97,13 +98,10 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
     setState(() { _loading = true; _typing = true; });
     try {
-      final providers = await DBManager().queryProviders();
-      final prefs = await SharedPreferences.getInstance();
-      final cm = prefs.getString('chat_model_${_bot['id']}') ?? (providers.isNotEmpty ? providers.first['id'] : '');
       final history = _msgs.where((m) => (m['content'] as String?)?.isNotEmpty == true).map((m) => {'role': m['role'], 'content': m['content']}).toList();
       var imgB64 = '';
       if (img != null) imgB64 = base64Encode(await File(img).readAsBytes());
-      final resp = await AIManager().chat(messages: history, providerId: cm, botPrompt: _bot['prompt'] as String? ?? '', imageBase64: imgB64);
+      final resp = await AIManager().chat(botId: _bot['id'] as String, messages: history, imageBase64: imgB64);
       final bm = <String, dynamic>{'id': 'm_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': resp, 'timestamp': DateTime.now().millisecondsSinceEpoch};
       await DBManager().insertMessage(bm);
       setState(() => _msgs.add(bm));
@@ -195,10 +193,10 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
   // ========== 模型设置弹窗 ==========
   void _showModelSettings() async {
-    final providers = await DBManager().queryProviders();
+    final providers = await DBManager().queryChatProviders();
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
-    final curChat = prefs.getString('chat_model_${_bot['id']}') ?? (providers.isNotEmpty ? providers.first['id'] : '');
+    final curChat = prefs.getString('chat_model_${_bot['id']}') ?? ((_bot['chat_model'] as String?)?.isNotEmpty == true ? _bot['chat_model'] as String : (providers.isNotEmpty ? providers.first['id'] : ''));
     final curBak = prefs.getString('backup_model_${_bot['id']}') ?? '';
     final curVision = prefs.getString('vision_model_${_bot['id']}') ?? '';
     final curStt = prefs.getString('stt_model_${_bot['id']}') ?? '';
@@ -208,7 +206,11 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
       const Center(child: Text('模型设置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
       const SizedBox(height: 14),
-      _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async { await prefs.setString('chat_model_${_bot['id']}', v); }),
+      _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async {
+        await prefs.setString('chat_model_${_bot['id']}', v);
+        _bot['chat_model'] = v;
+        await DBManager().updateBot(_bot['id'] as String, {'chat_model': v});
+      }),
       _mLabel('备用模型'), _modelPicker(ctx, providers, curBak, (v) async { await prefs.setString('backup_model_${_bot['id']}', v); }),
       _mLabel('识图模型'), _modelPicker(ctx, providers, curVision, (v) async { await prefs.setString('vision_model_${_bot['id']}', v); }),
       _mLabel('STT模型'), _modelPicker(ctx, providers, curStt, (v) async { await prefs.setString('stt_model_${_bot['id']}', v); }),
@@ -226,11 +228,13 @@ void _pickToken(BuildContext parentCtx, int cur) {
       const SizedBox(height: 12),
       ListTile(title: const Text('10,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
         await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 10000)); 
+        await DBManager().updateBot(_bot['id'] as String, {'max_tokens': 10000});
         if (mounted) setState(() {}); // 重新加载 UI
         Navigator.pop(ctx); 
       }),
       ListTile(title: const Text('20,000 token', style: TextStyle(fontFamily: 'TideFont')), onTap: () async { 
         await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', 20000)); 
+        await DBManager().updateBot(_bot['id'] as String, {'max_tokens': 20000});
         if (mounted) setState(() {}); // 重新加载 UI
         Navigator.pop(ctx); 
       }),
@@ -245,6 +249,7 @@ void _pickToken(BuildContext parentCtx, int cur) {
             final v = int.tryParse(c.text); 
             if (v != null && v > 0) { 
               await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', v)); 
+              await DBManager().updateBot(_bot['id'] as String, {'max_tokens': v});
               if (mounted) setState(() {}); // 重新加载 UI
             } 
             Navigator.pop(c2); 
@@ -303,12 +308,15 @@ void _pickToken(BuildContext parentCtx, int cur) {
 
   // ========== 构建UI ==========
   @override Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       body: Stack(children: [
-        // 自定义背景
-        if (_hasBg) Positioned.fill(child: Image.file(File(_customBg!), fit: BoxFit.cover)),
+        // 默认背景：无自定义图时用主题色柔光渐变，避免黑屏
+        Positioned.fill(child: _hasBg
+          ? Image.file(File(_customBg!), fit: BoxFit.cover)
+          : DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [theme.primaryLight.withOpacity(0.35), const Color(0xFFF2F2F7), theme.primary.withOpacity(0.15)])))),
         Column(children: [_chatHeader(), Expanded(child: _chatBody()), _inputBar()]),
       ]),
     );

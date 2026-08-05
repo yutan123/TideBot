@@ -42,7 +42,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
     final basePrompt = _styleC.text.trim();
     final Map<String, dynamic> data = {
       'name': name, 'desc': _promptC.text.trim(),
-      'prompt': basePrompt.isNotEmpty ? '$basePrompt\n\n【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]' : '【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]',
+      'prompt': basePrompt,
       'avatar': _avatar,
     };
     try {

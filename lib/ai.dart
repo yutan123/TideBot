@@ -8,24 +8,15 @@ class AIManager {
   factory AIManager() => _instance;
   AIManager._internal();
 
-  // 新 UI 调用的 chat 包装（兼容 chat_room 的调用方式）
+  // 新 UI 调用的 chat 包装（直接以 botId 为核心，读取该 bot 配置的模型）
   Future<String> chat({
+    required String botId,
     required List<Map<String, dynamic>> messages,
-    required String providerId,
-    required String botPrompt,
     String imageBase64 = '',
   }) async {
     // 用最后一条 user 消息作为文本
     final lastUser = messages.lastWhere((m) => m['role'] == 'user', orElse: () => {'content': ''});
     final text = lastUser['content'] as String? ?? '';
-
-    final db = DBManager();
-    final bots = await db.getAllBots();
-    String botId = '';
-    for (var b in bots) {
-      if (b['chat_model'] == providerId) { botId = b['id']; break; }
-    }
-    if (botId.isEmpty && bots.isNotEmpty) botId = bots.first['id'];
 
     // 如果有 Base64 图片，先写入临时文件再传给 sendMessage
     String? imgPath;
@@ -39,6 +30,7 @@ class AIManager {
 
     final res = await sendMessage(botId: botId, text: text, imagePath: imgPath);
     if (res['success'] == true) {
+      final db = DBManager();
       final history = await db.getChatHistory(botId);
       if (history.isNotEmpty) return history.last['content']?.toString() ?? '';
     }
@@ -55,10 +47,18 @@ class AIManager {
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
 
+    // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     final providerId = bot['chat_model'];
-    if (providerId == null || providerId.isEmpty) return {'error': '未配置引擎中枢，请在设置中配置'};
-    final provider = await db.getProviderById(providerId);
+    if (providerId == null || providerId.toString().isEmpty) return {'error': '未配置引擎中枢，请先在聊天页设置模型'};
+    // 优先用统一的聊天链路读取，兼容 API 设置页的 provider_list
+    final provider = await db.getChatProviderById(providerId.toString());
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
+    // 模型名：优先用 provider['model']（多个逗号分隔取第一个），否则退回 name 最后一段
+    String modelName = (provider['model'] as String? ?? '').trim();
+    if (modelName.isEmpty) {
+      modelName = provider['name'].toString().trim();
+    }
+    if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
 
     List<Map<String, dynamic>> messages = [];
     
@@ -67,9 +67,18 @@ class AIManager {
 
     // 截取最近 20 条对话作为短记忆上下文
     final history = await db.getChatHistory(botId);
+    var lastIsCurrentUser = false;
     for (var msg in history.take(20)) {
       if (msg['type'] == 'text') {
         messages.add({'role': msg['role'], 'content': msg['content']});
+      }
+    }
+    // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
+    // 标记以免下方再次追加造成重复喂给模型
+    if (history.isNotEmpty) {
+      final lastMsg = history.last;
+      if ((lastMsg['role'] == 'user') && (lastMsg['content']?.toString() == text) && history.length < 20) {
+        lastIsCurrentUser = true;
       }
     }
 
@@ -86,9 +95,9 @@ class AIManager {
           ]
         });
       } catch (e) {
-        messages.add({'role': 'user', 'content': text});
+        if (!lastIsCurrentUser) messages.add({'role': 'user', 'content': text});
       }
-    } else {
+    } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
     }
 
@@ -100,7 +109,7 @@ class AIManager {
           "Authorization": "Bearer ${provider['api_key']}"
         },
         body: jsonEncode({
-          "model": provider['name'].toString().split(' / ').last, 
+          "model": modelName, 
           "messages": messages, 
           "max_tokens": bot['max_tokens'] ?? 10000
         }),

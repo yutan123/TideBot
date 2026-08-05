@@ -259,7 +259,6 @@ class DBManager {
     List<dynamic> list = jsonDecode(data);
     return list.map((e) => e as Map<String, dynamic>).toList();
   }
-
   Future<Map<String, dynamic>?> getProviderById(String id) async {
     final chatProviders = await getProvidersByType('chat');
     try {
@@ -268,6 +267,41 @@ class DBManager {
       return null;
     }
   }
+
+  // ============ 统一聊天链路 provider 读取 ============
+  // API设置页把模型提供商存在 'provider_list'（字段: name/url/key/model），
+  // 而聊天/ai.dart 需要 {id,type,name,base_url,api_key,model} 结构。
+  // 这里做转换适配，保证「API设置里配的模型」能被聊天真正用上。
+  Future<List<Map<String, dynamic>>> queryChatProviders() async {
+    final data = await getKV('provider_list');
+    if (data == null || data.isEmpty) return [];
+    List<Map<String, dynamic>> result = [];
+    try {
+      final decoded = jsonDecode(data) as List;
+      for (var e in decoded) {
+        final m = e as Map<String, dynamic>;
+        result.add({
+          'id': 'p_${m['name']}',
+          'type': 'chat',
+          'name': m['name'] ?? '',
+          'base_url': m['url'] ?? '',
+          'api_key': m['key'] ?? '',
+          'model': m['model'] ?? '',
+        });
+      }
+    } catch (_) {}
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> getChatProviderById(String id) async {
+    final list = await queryChatProviders();
+    try {
+      return list.firstWhere((p) => p['id'] == id);
+    } catch (e) {
+      return null;
+    }
+  }
+
 
   // ================= Posts 查询（广场分页） =================
   Future<List<Map<String, dynamic>>> queryPosts({int offset = 0, int limit = 10}) async {

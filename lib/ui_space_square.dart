@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
 import 'dart:io';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'theme.dart';
-import 'ui_create_bot.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -74,17 +71,6 @@ class _SpacePageState extends State<SpacePage> {
     final dateStr = '${now.year}.${now.month}.${now.day}';
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(context, PageRouteBuilder(
-            pageBuilder: (c, a, s) => const CreateBotPage(),
-            transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)),
-          ));
-          if (result == true) _loadData(); // 刷新空间界面
-        },
-        backgroundColor: theme.primary,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
       body: SafeArea(child: _loading ? Center(child: CircularProgressIndicator(color: theme.primary)) :
         SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -326,12 +312,7 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
 return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () {
-          // 只有图文动态才允许长按删除
-          if (f['image'] != null && (f['image'] as String).isNotEmpty) {
-            _deleteFeed(f);
-          }
-        },
+        onLongPress: () => _deleteFeed(f),
         child: Row(children: [
           CircleAvatar(radius: 18, backgroundColor: theme.primary.withOpacity(0.15), child: Icon(Icons.person_rounded, size: 20, color: theme.primary)),
           const SizedBox(width: 10),
@@ -343,12 +324,7 @@ return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeI
       const SizedBox(height: 12),
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () {
-          // 只有图文动态才允许长按删除
-          if (f['image'] != null && (f['image'] as String).isNotEmpty) {
-            _deleteFeed(f);
-          }
-        },
+        onLongPress: () => _deleteFeed(f),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (f['image'] != null && (f['image'] as String).isNotEmpty)
             Padding(padding: const EdgeInsets.only(bottom: 10),
