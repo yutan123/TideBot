@@ -16,23 +16,23 @@ allprojects {
     }
 }
 
+// AGP 8.x 要求所有 Android 子模块必须有 namespace。
+// 第三方 Flutter 插件可能还使用旧 AndroidManifest package 属性，
+// 在此统一为缺少 namespace 的子模块注入默认值。
+gradle.projectsLoaded {
+    rootProject.allprojects { proj ->
+        proj.plugins.withId('com.android.library') {
+            proj.android.namespace = proj.android.namespace ?: 'com.yutan123.tidebot.lib'
+        }
+    }
+}
+
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 subprojects {
     project.evaluationDependsOn(":app")
-}
-// AGP 8.x 兼容：为所有缺少 namespace 的 Android 子模块补默认 namespace
-subprojects {
-    afterEvaluate { project ->
-        if (project.plugins.hasPlugin("com.android.application") ||
-            project.plugins.hasPlugin("com.android.library")) {
-            if (project.android.namespace == null) {
-                project.android.namespace = "com.yutan123.tidebot.sub"
-            }
-        }
-    }
 }
 
 tasks.register("clean", Delete) {
