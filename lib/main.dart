@@ -43,7 +43,6 @@ Future<void> _initPersistentService() async {
 @pragma('vm:entry-point')
 Future<bool> onStart(ServiceInstance service) async => true;
 
-// ========== 全局流光 ==========
 class FlowProvider extends ChangeNotifier {
   Offset _pos = const Offset(200, 500);
   Offset _tg = const Offset(200, 500);
@@ -74,7 +73,6 @@ class TideBotApp extends StatelessWidget {
   @override Widget build(BuildContext context) => MaterialApp(title: 'TideBot', debugShowCheckedModeBanner: false, theme: ThemeData(fontFamily: 'TideFont', scaffoldBackgroundColor: const Color(0xFFF2F2F7), appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0), useMaterial3: true, splashColor: Colors.transparent, highlightColor: Colors.transparent), home: hasSeenOnboarding ? const TideMainScaffold() : const OnboardingScreen());
 }
 
-// ========== 新手引导 ==========
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({Key? key}) : super(key: key);
   @override State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -152,7 +150,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
-// ========== 果冻胶囊 Dock ==========
 class JellyDock extends StatefulWidget {
   final int currentIndex;
   final Function(int) onTap;
@@ -164,18 +161,19 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   late Animation<double> _pos;
   late Animation<double> _w;
   int _prev = 0;
-  final List<double> _stops = [0.0, 0.25, 0.5, 0.75];
+
+  static const _icons = [Icons.chat_bubble_rounded, Icons.space_dashboard_rounded, Icons.explore_rounded, Icons.person_rounded];
 
   @override void initState() {
     super.initState();
     _prev = widget.currentIndex;
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
-    _pos = Tween<double>(begin: _stops[_prev], end: _stops[widget.currentIndex]).animate(
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
       CurvedAnimation(parent: _c, curve: Curves.elasticOut)
     );
     _w = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 56.0, end: 72.0), weight: 30),
-      TweenSequenceItem(tween: Tween(begin: 72.0, end: 56.0), weight: 70),
+      TweenSequenceItem(tween: Tween(begin: 48.0, end: 64.0), weight: 25),
+      TweenSequenceItem(tween: Tween(begin: 64.0, end: 48.0), weight: 75),
     ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
     _c.forward();
   }
@@ -184,12 +182,12 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
     super.didUpdateWidget(old);
     if (old.currentIndex != widget.currentIndex) {
       _prev = old.currentIndex;
-      _pos = Tween<double>(begin: _stops[_prev], end: _stops[widget.currentIndex]).animate(
+      _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
         CurvedAnimation(parent: _c, curve: Curves.elasticOut)
       );
       _w = TweenSequence<double>([
-        TweenSequenceItem(tween: Tween(begin: 56.0, end: 72.0), weight: 30),
-        TweenSequenceItem(tween: Tween(begin: 72.0, end: 56.0), weight: 70),
+        TweenSequenceItem(tween: Tween(begin: 48.0, end: 64.0), weight: 25),
+        TweenSequenceItem(tween: Tween(begin: 64.0, end: 48.0), weight: 75),
       ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
       _c.reset(); _c.forward();
     }
@@ -197,65 +195,64 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
 
   @override void dispose() { _c.dispose(); super.dispose(); }
 
-  static const _icons = [Icons.chat_bubble_rounded, Icons.space_dashboard_rounded, Icons.explore_rounded, Icons.person_rounded];
-
   @override Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            height: 68,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.55),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))],
-            ),
-            child: Stack(children: [
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          height: 60,
+          margin: const EdgeInsets.symmetric(horizontal: 32),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.45),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.35), width: 0.5),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 24, offset: const Offset(0, 6))],
+          ),
+          child: LayoutBuilder(builder: (ctx, cs) {
+            final totalW = cs.maxWidth;
+            final slotW = totalW / 4;
+            return Stack(children: [
               AnimatedBuilder(
-                animation: _c,
+                animation: Listenable.merge([_pos, _w]),
                 builder: (c, child) {
-                  final totalW = MediaQuery.of(context).size.width - 48;
-                  final pillX = _pos.value * totalW + 12;
-                  final pillW = _w.value;
+                  final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
                   return Positioned(
-                    left: pillX + (40 - pillW) / 2,
-                    top: 8,
-                    child: Container(width: pillW, height: 52,
+                    left: pillX,
+                    top: 6,
+                    child: Container(
+                      width: _w.value, height: 48,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF6B5B95).withOpacity(0.18),
-                        borderRadius: BorderRadius.circular(26),
+                        color: const Color(0xFF6B5B95).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                     ),
                   );
                 },
               ),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: List.generate(4, (i) {
-                final act = widget.currentIndex == i;
-                return Expanded(child: GestureDetector(
-                  onTapDown: (_) => HapticFeedback.lightImpact(),
-                  onTap: () => widget.onTap(i),
-                  child: Center(child: AnimatedBuilder(
-                    animation: _c,
-                    builder: (c, child) => Transform.scale(
-                      scale: act ? 1.1 : 0.9,
-                      child: Icon(_icons[i], color: act ? const Color(0xFF6B5B95) : const Color(0xFF8E8E93), size: 26),
-                    ),
-                  )),
-                ));
-              })),
-            ]),
-          ),
+              Row(
+                children: List.generate(4, (i) {
+                  final act = widget.currentIndex == i;
+                  return Expanded(child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (_) => HapticFeedback.lightImpact(),
+                    onTap: () => widget.onTap(i),
+                    child: Center(child: AnimatedScale(
+                      duration: const Duration(milliseconds: 200),
+                      scale: act ? 1.15 : 0.9,
+                      child: Icon(_icons[i], color: act ? const Color(0xFF6B5B95) : const Color(0xFF9E9E9E), size: 24),
+                    )),
+                  ));
+                }),
+              ),
+            ]);
+          }),
         ),
       ),
     );
   }
 }
 
-// ========== 主脚手架 ==========
 class TideMainScaffold extends StatefulWidget {
   const TideMainScaffold({Key? key}) : super(key: key);
   @override State<TideMainScaffold> createState() => _TideMainScaffoldState();
@@ -273,21 +270,27 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
   }
 
   @override Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
     return FlowGlassBg(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         extendBody: true,
-        body: GestureDetector(
-          onTapDown: (d) => flowProvider.moveTo(d.localPosition),
-          behavior: HitTestBehavior.translucent,
-          child: PageView(
-            controller: _pageCtrl,
-            physics: const NeverScrollableScrollPhysics(),
-            onPageChanged: (i) => setState(() => _idx = i),
-            children: _pages,
+        body: Stack(children: [
+          GestureDetector(
+            onTapDown: (d) => flowProvider.moveTo(d.localPosition),
+            behavior: HitTestBehavior.translucent,
+            child: PageView(
+              controller: _pageCtrl,
+              physics: const NeverScrollableScrollPhysics(),
+              onPageChanged: (i) => setState(() => _idx = i),
+              children: _pages,
+            ),
           ),
-        ),
-        bottomNavigationBar: JellyDock(currentIndex: _idx, onTap: _onDockTap),
+          Positioned(
+            left: 0, right: 0, bottom: bottomPadding + 12,
+            child: JellyDock(currentIndex: _idx, onTap: _onDockTap),
+          ),
+        ]),
       ),
     );
   }

@@ -89,7 +89,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
         _label('头像（可选）'), const SizedBox(height: 6),
         GestureDetector(onTap: _pickAvatar, child: Container(width: 72, height: 72, decoration: BoxDecoration(borderRadius: BorderRadius.circular(36), color: const Color(0xFFE8E8F0)), child: _avatar.isNotEmpty ? ClipRRect(borderRadius: BorderRadius.circular(36), child: Image.file(File(_avatar), fit: BoxFit.cover)) : const Center(child: Icon(Icons.add_a_photo_rounded, color: Color(0xFF8E8E93), size: 26)))),
         const SizedBox(height: 28),
-        SizedBox(width: double.infinity, height: 48, child: GestureDetector(onTap: _save, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 14, offset: const Offset(0, 5))]), child: Center(child: Text(_isEdit ? '保存修改' : '创建', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')))))),
+        BouncyTap(onTap: _save, child: SizedBox(width: double.infinity, height: 48, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.3), blurRadius: 14, offset: const Offset(0, 5))]), child: Center(child: Text(_isEdit ? '保存修改' : '创建', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')))))),
       ])),
     );
   }

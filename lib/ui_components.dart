@@ -50,7 +50,7 @@ class TideDialogs {
     );
   }
 
-  static Widget glassContent({required BuildContext context, required List<Widget> children, double maxWidth = 0.85}) {
+  static Widget glassContent({required BuildContext context, required List<Widget> children, double maxWidth = 0.92}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: BackdropFilter(

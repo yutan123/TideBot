@@ -85,7 +85,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       await DBManager().insertMessage(bm);
       setState(() => _msgs.add(bm));
     } catch (e) {
-      final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '❌ 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
+      final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '[X] 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
       setState(() => _msgs.add(err));
     }
     setState(() { _loading = false; _typing = false; });
@@ -145,7 +145,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
   // ========== 图片预览 ==========
   void _previewImg(String path) {
-    Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => Scaffold(backgroundColor: Colors.black, appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.download_rounded, color: Colors.white))], leading: GestureDetector(onTap: () => Navigator.pop(context), child: const Icon(Icons.close, color: Colors.white))), body: Center(child: InteractiveViewer(child: Image.file(File(path), fit: BoxFit.contain)))), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child)));
+    Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => Scaffold(backgroundColor: Colors.black, appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, leading: GestureDetector(onTap: () => Navigator.pop(context), child: const Icon(Icons.close, color: Colors.white))), body: Center(child: InteractiveViewer(child: Image.file(File(path), fit: BoxFit.contain)))), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child)));
   }
 
   // ========== 机器人信息弹窗 ==========
@@ -276,14 +276,14 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
       ]),
     );
   }
-
-  Widget _chatHeader() {
-    return Container(
-      decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.15)) : const BoxDecoration(),
-      child: SafeArea(bottom: false, child: ClipRRect(
-        child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+Widget _chatHeader() {
+    return ClipRRect(
+      child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          color: _hasBg ? Colors.white.withOpacity(0.15) : Colors.white.withOpacity(0.5),
+          child: SafeArea(bottom: false,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: Row(children: [
               GestureDetector(onTap: () => Navigator.pop(context), child: const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.arrow_back_ios_rounded, size: 20, color: Color(0xFF1C1C1E)))),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -31,8 +31,8 @@ class _SpacePageState extends State<SpacePage> {
     final db = DBManager(); final bots = await db.queryBots();
     if (bots.isNotEmpty) {
       final b = bots.first;
-      _botId = b['id'] ?? ''; _botName = b['name'] ?? '未命名';
-      _dailyQuote = b['daily_quote'] ?? '每一天都值得被温柔对待';
+      _botId = b['id'] as String? ?? ''; _botName = b['name'] as String? ?? '未命名';
+      _dailyQuote = b['daily_quote'] as String? ?? '每一天都值得被温柔对待';
       final created = b['created_at'];
       if (created is int) _daysSince = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(created)).inDays;
       else if (created is String && created.isNotEmpty) _daysSince = DateTime.now().difference(DateTime.tryParse(created) ?? DateTime.now()).inDays;
@@ -99,7 +99,7 @@ class _SpacePageState extends State<SpacePage> {
       final db = DBManager(); final bots = await db.queryBots(); if (!mounted) return;
       showTideSheet(context: context, height: 350, child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12), const Text('切换机器人', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, fontFamily: 'TideFont')), const SizedBox(height: 12),
-        ...bots.map((b) => ListTile(title: Text(b['name'] ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(b['desc'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93))), onTap: () { setState(() { _botId = b['id'] ?? ''; _botName = b['name'] ?? ''; }); Navigator.pop(context); _loadData(); })),]));
+        ...bots.map((b) => ListTile(title: Text(b['name'] ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(b['desc'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93))), onTap: () { setState(() { _botId = b['id'] as String? ?? ''; _botName = b['name'] as String? ?? ''; }); Navigator.pop(context); _loadData(); })),]));
     }, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.white.withOpacity(0.8)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [Text(_botName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: 'TideFont', color: Color(0xFF6B5B95))), const SizedBox(width: 4), const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF6B5B95))]))),
   ]);
@@ -138,47 +138,158 @@ class _SpacePageState extends State<SpacePage> {
 class SquarePage extends StatefulWidget {
   const SquarePage({super.key}); @override State<SquarePage> createState() => _SquarePageState();
 }
-class _SquarePageState extends State<SquarePage> {
+class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateMixin {
   bool _showGames = false;
-  final _feeds = [
-    {'user':'星野','content':'今天和我的AI聊了好久，感觉它真的懂我。','likes':'128','time':'2小时前'},
-    {'user':'雨晴','content':'分享一张AI生成的星空图，太美了！','likes':'89','time':'5小时前'},
-    {'user':'TideBot小伙伴','content':'刚发现了一个超好用的prompt技巧！','likes':'256','time':'1小时前'},
-    {'user':'数字生命','content':'我的屿潭今天给我画了一幅画，好可爱。','likes':'67','time':'3小时前'},
+  late AnimationController _switchCtrl;
+  late Animation<Offset> _slideAnim;
+  final List<Map<String, dynamic>> _feeds = [
+    {'user':'星野','content':'今天和我的AI聊了好久，感觉它真的懂我。','likes':128,'comments':12,'favorited':false,'collected':false,'time':'2小时前'},
+    {'user':'雨晴','content':'分享一张AI生成的星空图，太美了！','likes':89,'comments':5,'favorited':false,'collected':false,'time':'5小时前'},
+    {'user':'TideBot小伙伴','content':'刚发现了一个超好用的prompt技巧！','likes':256,'comments':34,'favorited':false,'collected':false,'time':'1小时前'},
+    {'user':'数字生命','content':'我的屿潭今天给我画了一幅画，好可爱。','likes':67,'comments':8,'favorited':false,'collected':false,'time':'3小时前'},
   ];
   final _games = [
-    {'name':'五子棋','desc':'经典对弈','iconKey':'grid'},{'name':'井字棋','desc':'三连获胜','iconKey':'circle'},
-    {'name':'20问猜物','desc':'AI猜你心思','iconKey':'help'},{'name':'棋牌对战','desc':'多人娱乐','iconKey':'casino'},
-    {'name':'文字冒险','desc':'沉浸式故事','iconKey':'book'},{'name':'真心话大冒险','desc':'和AI一起玩','iconKey':'favorite'},
+    {'name':'五子棋','desc':'经典对弈','icon':'grid'},{'name':'井字棋','desc':'三连获胜','icon':'circle'},
+    {'name':'20问猜物','desc':'AI猜你心思','icon':'help'},{'name':'棋牌对战','desc':'多人娱乐','icon':'casino'},
+    {'name':'文字冒险','desc':'沉浸式故事','icon':'book'},{'name':'真心话大冒险','desc':'和AI一起玩','icon':'favorite'},
   ];
   final Map<String, IconData> _gameIcons = {
     'grid':Icons.grid_4x4_rounded,'circle':Icons.circle_outlined,'help':Icons.help_outline_rounded,
     'casino':Icons.casino_rounded,'book':Icons.menu_book_rounded,'favorite':Icons.favorite_rounded,
   };
-  void _launchGame(Map<String,String> g) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${g['name']} 正在开发中...', style: const TextStyle(fontFamily:'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF6B5B95))); }
-  @override Widget build(BuildContext context) => Container(color: const Color(0xFFF2F2F7),
-    child: SafeArea(child: Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(16,12,8,8), child: Row(children: [
-        const Spacer(),
-        BouncyTap(onTap: ()=>setState(()=>_showGames=!_showGames), child: Container(padding: const EdgeInsets.symmetric(horizontal:14,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(20), color: const Color(0xFF6B5B95)), child: Row(mainAxisSize:MainAxisSize.min, children: [
-          Icon(_showGames?Icons.article_rounded:Icons.videogame_asset_rounded, size:18, color:Colors.white),
-          const SizedBox(width:6), Text(_showGames?'动态':'小游戏', style: const TextStyle(fontSize:14, fontWeight:FontWeight.w500, fontFamily:'TideFont', color:Colors.white))]))),
-        const SizedBox(width:8), const Icon(Icons.trending_up_rounded, size:18, color:Color(0xFF6B5B95)),
-        const SizedBox(width:4), const Text('热门', style: TextStyle(fontSize:13, color:Color(0xFF6B5B95), fontFamily:'TideFont')), const SizedBox(width:8),
+
+  @override void initState() {
+    super.initState();
+    _switchCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, -0.05), end: Offset.zero).animate(CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
+    _switchCtrl.forward();
+  }
+  @override void dispose() { _switchCtrl.dispose(); super.dispose(); }
+
+  void _toggle() {
+    setState(() {
+      _showGames = !_showGames;
+      _switchCtrl.reset(); _switchCtrl.forward();
+    });
+  }
+
+  void _shareFeed(Map<String, dynamic> f) {
+    TextEditingController ctrl = TextEditingController(text: '分享一条动态: ${f['content']}');
+    TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+      content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
+        const Text('分享给机器人', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+        const SizedBox(height: 12),
+        TextField(controller: ctrl, maxLines: 3, style: const TextStyle(fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '编辑分享内容', border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))))),
+        const SizedBox(height: 16),
+        TideDialogs.glassButton('发送', onTap: () { Navigator.pop(ctx); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('已分享给机器人', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF6B5B95))); }),
+      ])));
+  }
+
+  void _publishFeed() {
+    final ctrl = TextEditingController();
+    TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero,
+      content: TideDialogs.glassContent(context: ctx, maxWidth: 0.9, children: [
+        const Text('发布动态', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+        const SizedBox(height: 12),
+        TextField(controller: ctrl, maxLines: 4, style: const TextStyle(fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '分享你的想法...', border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))))),
+        const SizedBox(height: 16),
+        TideDialogs.glassButton('发布', onTap: () {
+          final text = ctrl.text.trim();
+          if (text.isNotEmpty) {
+            setState(() => _feeds.insert(0, {'user':'我','content':text,'likes':0,'comments':0,'favorited':false,'collected':false,'time':'刚刚'}));
+          }
+          Navigator.pop(ctx);
+        }),
+      ])));
+  }
+
+  @override Widget build(BuildContext context) => Stack(children: [
+    Container(color: const Color(0xFFF2F2F7),
+      child: SafeArea(child: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 4), child: Row(children: [
+          const Spacer(),
+          BouncyTap(onTap: _toggle, child: AnimatedRotation(
+            turns: _showGames ? 0.5 : 0.0,
+            duration: const Duration(milliseconds: 450),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: const Color(0xFF6B5B95).withOpacity(0.12),
+              ),
+              child: Icon(_showGames ? Icons.videogame_asset_rounded : Icons.article_rounded, size: 22, color: const Color(0xFF6B5B95)),
+            ),
+          )),
+          const SizedBox(width: 8),
+        ])),
+        Expanded(child: SlideTransition(position: _slideAnim, child: _showGames ? _buildGames() : _buildFeeds())),
       ])),
-      Expanded(child: AnimatedSwitcher(duration: const Duration(milliseconds:400), switchInCurve:Curves.easeOutCubic, switchOutCurve:Curves.easeInCubic, transitionBuilder:(c,a)=>FadeTransition(opacity:a, child:c), child: _showGames?_buildGames():_buildFeeds())),
+    ),
+    // 右下角悬浮发布按钮
+    Positioned(
+      right: 16, bottom: MediaQuery.of(context).padding.bottom + 90,
+      child: BouncyTap(
+        onTap: _showGames ? () {} : _publishFeed,
+        child: Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
+            boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.4), blurRadius: 16, offset: const Offset(0, 6))],
+          ),
+          child: const Icon(Icons.edit_rounded, color: Colors.white, size: 24),
+        ),
+      ),
+    ),
+  ]);
+
+  Widget _buildFeeds() => ListView.builder(key: const ValueKey('feeds'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
+    final f = _feeds[i];
+    return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        CircleAvatar(radius: 18, backgroundColor: const Color(0xFF6B5B95).withOpacity(0.15), child: const Icon(Icons.person_rounded, size: 20, color: Color(0xFF6B5B95))),
+        const SizedBox(width: 10),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(f['user'] ?? '', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont')), Text(f['time'] ?? '', style: const TextStyle(fontSize: 11, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'))]),
+        const Spacer(),
+        BouncyTap(onTap: () => _shareFeed(f), child: const Icon(Icons.share_rounded, size: 18, color: Color(0xFFC7C7CC))),
+      ]),
+      const SizedBox(height: 12),
+      Text(f['content'] ?? '', style: const TextStyle(fontSize: 14, fontFamily: 'TideFont', color: Color(0xFF3C3C43), height: 1.5)),
+      const SizedBox(height: 10),
+      Row(children: [
+        BouncyTap(onTap: () => setState(() { f['favorited'] = !(f['favorited'] as bool); f['likes'] = f['favorited'] ? (f['likes'] as int) + 1 : (f['likes'] as int) - 1; }), child: Row(children: [
+          Icon(f['favorited'] == true ? Icons.favorite_rounded : Icons.favorite_border_rounded, size: 18, color: f['favorited'] == true ? const Color(0xFFE74C3C) : const Color(0xFFC7C7CC)),
+          const SizedBox(width: 4), Text('${f['likes']}', style: const TextStyle(fontSize: 13, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')),
+        ])),
+        const SizedBox(width: 20),
+        BouncyTap(onTap: () => _commentFeed(f), child: Row(children: [
+          const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: Color(0xFFC7C7CC)),
+          const SizedBox(width: 4), Text('${f['comments']}', style: const TextStyle(fontSize: 13, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')),
+        ])),
+        const Spacer(),
+        BouncyTap(onTap: () => setState(() => f['collected'] = !(f['collected'] as bool)), child: Icon(f['collected'] == true ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, size: 18, color: f['collected'] == true ? const Color(0xFF6B5B95) : const Color(0xFFC7C7CC))),
+      ]),
+    ]));
+  });
+
+  void _commentFeed(Map<String, dynamic> f) {
+    showTideSheet(context: context, height: 300, child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('评论', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, fontFamily: 'TideFont')),
+      const SizedBox(height: 12),
+      const Expanded(child: Center(child: Text('暂无评论', style: TextStyle(fontSize: 14, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')))),
+      Row(children: [
+        Expanded(child: TextField(style: const TextStyle(fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '写评论...', hintStyle: TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))))))),
+        const SizedBox(width: 8),
+        TideDialogs.glassButton('发送', onTap: () { Navigator.pop(context); setState(() => f['comments'] = (f['comments'] as int) + 1); }),
+      ]),
     ])));
-  Widget _buildFeeds() => ListView.builder(key: const ValueKey('feeds'), padding: const EdgeInsets.fromLTRB(16,0,16,100), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder:(ctx,i){
-    final f=_feeds[i]; return BouncyTap(onTap:()=>ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${f['user']} 的动态', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating)),
-    child: FrostCard(margin: const EdgeInsets.only(bottom:12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-      Row(children:[CircleAvatar(radius:18, backgroundColor: const Color(0xFF6B5B95).withOpacity(0.15), child: const Icon(Icons.person_rounded, size:20, color:Color(0xFF6B5B95))), const SizedBox(width:10),
-        Column(crossAxisAlignment:CrossAxisAlignment.start, children:[Text(f['user']??'', style: const TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont')), Text(f['time']??'', style: const TextStyle(fontSize:11, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))])]),
-      const SizedBox(height:12), Text(f['content']??'', style: const TextStyle(fontSize:14, fontFamily:'TideFont', color:Color(0xFF3C3C43), height:1.5)), const SizedBox(height:10),
-      Row(children:[const Icon(Icons.favorite_border_rounded, size:18, color:Color(0xFFC7C7CC)), const SizedBox(width:4), Text(f['likes']??'0', style: const TextStyle(fontSize:13, color:Color(0xFFC7C7CC), fontFamily:'TideFont')), const Spacer(), const Icon(Icons.chat_bubble_outline_rounded, size:18, color:Color(0xFFC7C7CC))])])));});
-  Widget _buildGames() => GridView.builder(key: const ValueKey('games'), padding: const EdgeInsets.fromLTRB(16,0,16,100), physics: const BouncingScrollPhysics(), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:2, crossAxisSpacing:12, mainAxisSpacing:12, childAspectRatio:1.0), itemCount:_games.length, itemBuilder:(ctx,i){
-    final g=_games[i]; final icon=_gameIcons[g['iconKey']]??Icons.extension_rounded;
-    return BouncyTap(onTap:()=>_launchGame(g), child: FrostCard(padding: const EdgeInsets.all(16), child: Column(mainAxisAlignment:MainAxisAlignment.center, children: [
-      Icon(icon, size:40, color: const Color(0xFF6B5B95)), const SizedBox(height:8),
-      Text(g['name']??'', style: const TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:Color(0xFF1C1C1E))),
-      const SizedBox(height:4), Text(g['desc']??'', textAlign:TextAlign.center, maxLines:2, overflow:TextOverflow.ellipsis, style: const TextStyle(fontSize:11, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))])));});
+  }
+
+  Widget _buildGames() => GridView.builder(key: const ValueKey('games'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.0), itemCount: _games.length, itemBuilder: (ctx, i) {
+    final g = _games[i]; final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
+    return BouncyTap(onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${g['name']} 正在开发中...', style: const TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF6B5B95))), child: FrostCard(padding: const EdgeInsets.all(16), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(icon, size: 40, color: const Color(0xFF6B5B95)), const SizedBox(height: 8),
+      Text(g['name'] ?? '', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+      const SizedBox(height: 4), Text(g['desc'] ?? '', textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'))])));
+  });
 }
