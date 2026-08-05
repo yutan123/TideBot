@@ -75,19 +75,21 @@ class TideDialogs {
   }
 }
 
-// ========== 底部弹窗 ==========
-Future<T?> showTideSheet<T>({required BuildContext context, required Widget child, double height = 300}) {
+// ========== 底部弹窗（半屏） ==========
+Future<T?> showTideSheet<T>({required BuildContext context, required Widget child, double? height}) {
+  final screenH = MediaQuery.of(context).size.height;
+  final sheetH = height ?? screenH * 0.55;
   return showModalBottomSheet<T>(
     context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withOpacity(0.35),
     builder: (ctx) => GestureDetector(
       onTap: () => Navigator.pop(ctx),
-      child: Container(height: MediaQuery.of(ctx).size.height, color: Colors.transparent, alignment: Alignment.bottomCenter,
+      child: Container(height: screenH, color: Colors.transparent, alignment: Alignment.bottomCenter,
         child: GestureDetector(onTap: () {}, child: ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(height: height, decoration: BoxDecoration(color: Colors.white.withOpacity(0.9), borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+            child: Container(height: sheetH, width: double.infinity, decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
               child: Column(children: [
                 const SizedBox(height: 8),
                 Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),

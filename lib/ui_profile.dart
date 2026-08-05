@@ -8,6 +8,7 @@ import 'package:heif_converter/heif_converter.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
+import 'main.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key}); @override State<ProfilePage> createState() => _ProfilePageState();
@@ -78,7 +79,41 @@ class _ProfilePageState extends State<ProfilePage> {
       default: ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${s['title']}功能开发中...', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating));
     }
   }
-  void _showThemePicker() { showTideSheet(context:context, height:280, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [const Text('主题设置', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:16), ListTile(leading: Container(width:24,height:24,decoration: const BoxDecoration(shape:BoxShape.circle, gradient:LinearGradient(colors:[Color(0xFF6B5B95),Color(0xFF9B8EC4)]))), title: const Text('经典紫', style: TextStyle(fontFamily:'TideFont')), trailing: const Icon(Icons.check, color:Color(0xFF6B5B95)), onTap:() { DBManager().insertKV('theme_color', 'purple'); Navigator.pop(context); }), ListTile(leading: Container(width:24,height:24,decoration: const BoxDecoration(shape:BoxShape.circle, gradient:LinearGradient(colors:[Color(0xFF007AFF),Color(0xFF4DA3FF)]))), title: const Text('天空蓝', style: TextStyle(fontFamily:'TideFont')), onTap:() { DBManager().insertKV('theme_color', 'blue'); Navigator.pop(context); }), ListTile(leading: Container(width:24,height:24,decoration: const BoxDecoration(shape:BoxShape.circle, gradient:LinearGradient(colors:[Color(0xFFFF6B6B),Color(0xFFFFA5A5)]))), title: const Text('珊瑚红', style: TextStyle(fontFamily:'TideFont')), onTap:() { DBManager().insertKV('theme_color', 'red'); Navigator.pop(context); })]))); }
+  void _showThemePicker() {
+    final themes = {
+      'purple':   [const Color(0xFF6B5B95), const Color(0xFF9B8EC4), '经典紫'],
+      'blue':     [const Color(0xFF007AFF), const Color(0xFF4DA3FF), '天空蓝'],
+      'red':      [const Color(0xFFFF6B6B), const Color(0xFFFFA5A5), '珊瑚红'],
+      'green':    [const Color(0xFF34C759), const Color(0xFF5EE48B), '苹果绿'],
+      'greenGrad':[const Color(0xFF20B868), const Color(0xFF5EE48B), '翡翠绿'],
+      'sunset':   [const Color(0xFFFF6B6B), const Color(0xFFFFA500), '日落橙'],
+      'ocean':    [const Color(0xFF00748A), const Color(0xFF00B4D8), '深海蓝'],
+    };
+    showTideSheet(context: context, height: 500, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('主题设置', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+      const SizedBox(height: 4),
+      const Text('选择你喜欢的配色方案', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
+      const SizedBox(height: 16),
+      Expanded(child: ListView(children: themes.entries.map((e) {
+        final colors = e.value;
+        final cur = TideTheme.of(context).name;
+        final active = cur == e.key;
+        return BouncyTap(
+          onTap: () { TideTheme.of(context, listen: false).setTheme(e.key); Navigator.pop(context); },
+          child: FrostCard(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [colors[0] as Color, colors[1] as Color])), child: active ? const Icon(Icons.check, color: Colors.white, size: 18) : null),
+              const SizedBox(width: 14),
+              Expanded(child: Text(colors[2] as String, style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)))),
+              if (active) const Icon(Icons.check_circle, color: Color(0xFF6B5B95), size: 20),
+            ]),
+          ),
+        );
+      }).toList())),
+    ])));
+  }
   void _showNotificationSettings() {
     bool silent=false, schedule=true;
     TideDialogs.show(context:context, builder:(ctx)=>StatefulBuilder(builder:(ctx,setSt)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
