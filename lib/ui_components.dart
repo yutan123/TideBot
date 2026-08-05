@@ -180,13 +180,13 @@ class GlassCard extends StatelessWidget {
   }
 }
 class FrostCard extends StatelessWidget {
-  final Widget child; final EdgeInsetsGeometry padding; final EdgeInsetsGeometry margin; final double radius; final VoidCallback? onTap;
-  const FrostCard({Key? key, required this.child, this.padding = const EdgeInsets.all(16), this.margin = EdgeInsets.zero, this.radius = 20, this.onTap}) : super(key: key);
-  @override Widget build(BuildContext context) {
-    return Padding(
-      padding: margin,
-      child: GestureDetector(
-        onTap: onTap,
+final Widget child; final EdgeInsetsGeometry padding; final EdgeInsetsGeometry margin; final double radius; final VoidCallback? onTap; final VoidCallback? onLongPress;
+const FrostCard({Key? key, required this.child, this.padding = const EdgeInsets.all(16), this.margin = EdgeInsets.zero, this.radius = 20, this.onTap, this.onLongPress}) : super(key: key);
+@override Widget build(BuildContext context) {
+return Padding(
+padding: margin,
+child: GestureDetector(
+onTap: onTap, onLongPress: onLongPress,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: BackdropFilter(

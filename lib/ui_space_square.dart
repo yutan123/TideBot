@@ -309,10 +309,9 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
     ? ListView(key: const ValueKey('feeds_empty'), padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), children: [FrostCard(padding: const EdgeInsets.all(24), child: const Center(child: Text('还没有动态\n点击右下角 + 发布第一条', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93), fontFamily: 'TideFont', height: 1.6))))])
     : ListView.builder(key: const ValueKey('feeds'), controller: _scrollCtrl, padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), physics: const BouncingScrollPhysics(), itemCount: _feeds.length, itemBuilder: (ctx, i) {
     final f = _feeds[i];
-return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), onTap: () => _openFeedDetail(f), onLongPress: () => _deleteFeed(f), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () => _deleteFeed(f),
         child: Row(children: [
           CircleAvatar(radius: 18, backgroundColor: theme.primary.withOpacity(0.15), child: Icon(Icons.person_rounded, size: 20, color: theme.primary)),
           const SizedBox(width: 10),
@@ -324,7 +323,6 @@ return FrostCard(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeI
       const SizedBox(height: 12),
       GestureDetector(
         onTap: () => _openFeedDetail(f),
-        onLongPress: () => _deleteFeed(f),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (f['image'] != null && (f['image'] as String).isNotEmpty)
             Padding(padding: const EdgeInsets.only(bottom: 10),
