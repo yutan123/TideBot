@@ -7,6 +7,7 @@ import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'db.dart';
 import 'ui_components.dart';
+import 'main.dart';
 
 class CreateBotPage extends StatefulWidget {
   final Map<String, dynamic>? editBot;
