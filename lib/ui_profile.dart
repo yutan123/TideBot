@@ -164,7 +164,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         }))])]))); }
   Widget _f(String label, TextEditingController c,{bool obscure=false}) => Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
     Text(label, style: const TextStyle(fontSize:13, color:Color(0xFF8E8E93), fontFamily:'TideFont')), const SizedBox(height:4),
-    Container(decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: const Color(0xFFE8E8F0)), child: TextField(controller:c, obscureText:obscure, style: const TextStyle(fontSize:14, fontFamily:'TideFont'), decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal:12, vertical:10), border:InputBorder.none)))]);
+    Container(decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: const Color(0xFFE8E8F0)), child: TextField(controller:c, obscureText:obscure, style: const TextStyle(fontSize:14, fontFamily:'TideFont'), decoration: InputDecoration(contentPadding: const EdgeInsets.symmetric(horizontal:12, vertical:10), border:InputBorder.none)))]);
   void _editProvider(Map<String,dynamic> p) {
     final nCtrl = TextEditingController(text: p['name']); final uCtrl = TextEditingController(text: p['url']);
     final kCtrl = TextEditingController(text: p['key']); final mCtrl = TextEditingController(text: p['model']);

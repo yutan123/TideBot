@@ -377,7 +377,7 @@ Widget _chatHeader() {
   }
 
   Widget _mLabel(String t) => Padding(padding: const EdgeInsets.only(top: 6, bottom: 4), child: Text(t, style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93), fontFamily: 'TideFont')));
-  Widget _mField(TextEditingController c, {double h = 40}) => Container(height: h, decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: TextField(controller: c, maxLines: null, expands: h > 50, style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'), decoration: const InputDecoration(contentPadding: EdgeInsets.all(10), border: InputBorder.none)));
+  Widget _mField(TextEditingController c, {double h = 40}) => Container(height: h, decoration: BoxDecoration(color: const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(10)), child: TextField(controller: c, maxLines: null, expands: h > 50, style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'), decoration: InputDecoration(contentPadding: const EdgeInsets.all(10), border: InputBorder.none)));
 }
 
 extension _ListExt<T> on List<T> {
