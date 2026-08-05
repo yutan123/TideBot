@@ -121,6 +121,7 @@ class ExplosionPainter extends CustomPainter {
     for (var p in ps) { if (p.life > 0) { pt.color = p.color.withOpacity(p.life.clamp(0.0, 1.0)); c.drawCircle(Offset(p.x, p.y), p.size, pt); } }
   }
   @override bool shouldRepaint(covariant ExplosionPainter o) => true;
+}
 class ParticleOverlay extends StatefulWidget {
   final Widget child; final List<Offset> origins; final VoidCallback? onDone;
   const ParticleOverlay({Key? key, required this.child, required this.origins, this.onDone}) : super(key: key);
@@ -163,7 +164,6 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
     WidgetsBinding.instance.addPostFrameCallback((_) => _initParticles());
     return Stack(children: [widget.child, Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: ExplosionPainter(_ps))))]);
   }
-}
 }
 
 // ========== 毛玻璃卡片 ==========
