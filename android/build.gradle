@@ -1,29 +1,7 @@
-buildscript {
-    ext.kotlin_version = '1.9.10'
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-    }
-}
-
 allprojects {
     repositories {
         google()
         mavenCentral()
-    }
-}
-
-// AGP 8.x 要求所有 Android 子模块必须有 namespace。
-// 第三方 Flutter 插件可能还使用旧 AndroidManifest package 属性，
-// 在此统一为缺少 namespace 的子模块注入默认值。
-gradle.projectsLoaded {
-    rootProject.allprojects { proj ->
-        proj.plugins.withId('com.android.library') {
-            proj.android.namespace = proj.android.namespace ?: 'com.yutan123.tidebot.lib'
-        }
     }
 }
 
