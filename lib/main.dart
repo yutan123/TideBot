@@ -198,19 +198,21 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override void dispose() { _c.dispose(); super.dispose(); }
 
   @override Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          height: 44,
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.45),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white.withOpacity(0.35), width: 0.5),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 24, offset: const Offset(0, 6))],
-          ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white.withOpacity(0.2), width: 0.5),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))],
+            ),
           child: LayoutBuilder(builder: (ctx, cs) {
             final totalW = cs.maxWidth;
             final slotW = totalW / 4;
@@ -263,11 +265,12 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
   int _idx = 0;
   final PageController _pageCtrl = PageController();
   final GlobalKey<SquarePageState> _squareKey = GlobalKey<SquarePageState>();
+  final GlobalKey<ChatListPageState> _chatListKey = GlobalKey<ChatListPageState>();
   late final List<Widget> _pages;
 
   @override void initState() {
     super.initState();
-    _pages = [const ChatListPage(), const SpacePage(), SquarePage(key: _squareKey), const ProfilePage()];
+    _pages = [ChatListPage(key: _chatListKey), const SpacePage(), SquarePage(key: _squareKey), const ProfilePage()];
   }
 
   void _onDockTap(int i) {
@@ -295,14 +298,35 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             ),
           ),
           Positioned(
-            left: 0, right: 0, bottom: bottomPadding + 8,
+            left: 0, right: 0, bottom: bottomPadding + 16,
             child: JellyDock(currentIndex: _idx, onTap: _onDockTap),
           ),
-          // 广场发布悬浮球 — 在 Dock 上方
+          // 聊天列表创建机器人悬浮球
+          if (_idx == 0)
+            Positioned(
+              right: 20,
+              bottom: bottomPadding + 76,
+              child: BouncyTap(
+                onTap: () async {
+                  final r = await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => const CreateBotPage(), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child))));
+                  if (r == true) _chatListKey.currentState?.load();
+                },
+                child: Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]),
+                    boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.35), blurRadius: 14, offset: const Offset(0, 4))],
+                  ),
+                  child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
+                ),
+              ),
+            ),
+          // 广场发布悬浮球
           if (_idx == 2)
             Positioned(
-              right: 16,
-              bottom: bottomPadding + 64,
+              right: 20,
+              bottom: bottomPadding + 76,
               child: BouncyTap(
                 onTap: () => _squareKey.currentState?.publishFeed(),
                 child: Container(

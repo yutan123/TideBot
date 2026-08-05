@@ -21,20 +21,18 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, version) async {
-        // 1. 生命体档案表
         await db.execute('''
           CREATE TABLE bots (
             id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
-            chat_model TEXT, stt_model TEXT, tts_model TEXT,
-            max_tokens INTEGER, created_at INTEGER
+            avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
+            max_tokens INTEGER, created_at INTEGER, daily_quote TEXT
           )
         ''');
-        // 2. 聊天历史表
         await db.execute('''
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
@@ -42,32 +40,37 @@ class DBManager {
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
-         // 3. 记忆表 (长/中/短)
-         await db.execute('''
-           CREATE TABLE memories (
-             id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT, content TEXT, timestamp INTEGER,
-             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
-           )
-         ''');
-        // 4. 日程规划表
         await db.execute('''
-          CREATE TABLE schedule_tasks (
-            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, time INTEGER, is_done INTEGER,
+          CREATE TABLE memories (
+            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT, content TEXT, timestamp INTEGER,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
-        // 5. 动态广场表
         await db.execute('''
-          CREATE TABLE posts (
-            id TEXT PRIMARY KEY, author_id TEXT, content TEXT, image_path TEXT, timestamp INTEGER
+          CREATE TABLE schedule_tasks (
+            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
-        // 6. KV 设置表 (用于存 API 提供商配置和背景图等)
+        await db.execute('''
+          CREATE TABLE posts (
+            id TEXT PRIMARY KEY, author_id TEXT, content TEXT, image_path TEXT, likes INTEGER DEFAULT 0, comments INTEGER DEFAULT 0, timestamp INTEGER
+          )
+        ''');
         await db.execute('''
           CREATE TABLE kv_store (
             key TEXT PRIMARY KEY, value TEXT
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          try { await db.execute('ALTER TABLE bots ADD COLUMN avatar TEXT'); } catch (_) {}
+          try { await db.execute('ALTER TABLE bots ADD COLUMN daily_quote TEXT'); } catch (_) {}
+          try { await db.execute('ALTER TABLE schedule_tasks ADD COLUMN note TEXT'); } catch (_) {}
+          try { await db.execute('ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0'); } catch (_) {}
+          try { await db.execute('ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0'); } catch (_) {}
+        }
       },
     );
   }

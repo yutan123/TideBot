@@ -8,11 +8,12 @@ import 'ui_create_bot.dart';
 import 'main.dart';
 
 class ChatListPage extends StatefulWidget {
-  const ChatListPage({Key? key}) : super(key: key);
-  @override State<ChatListPage> createState() => _ChatListPageState();
+  final GlobalKey<ChatListPageState>? pageKey;
+  const ChatListPage({Key? key, this.pageKey}) : super(key: key);
+  @override State<ChatListPage> createState() => ChatListPageState();
 }
 
-class _ChatListPageState extends State<ChatListPage> {
+class ChatListPageState extends State<ChatListPage> {
   List<Map<String, dynamic>> _bots = [];
   bool _showParticles = false;
   final List<Offset> _origins = [];
@@ -69,16 +70,9 @@ class _ChatListPageState extends State<ChatListPage> {
     Widget content = Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(child: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 8), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('TideBot', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
-          GestureDetector(onTap: () async { await DBManager().exportToMarkdown(); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已导出数据', style: TextStyle(fontFamily: 'TideFont')), backgroundColor: Color(0xFF6B5B95))); }, child: const Icon(Icons.ios_share_rounded, color: Color(0xFF6B5B95), size: 22)),
-        ])),
+        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 8), child: const Text('TideBot', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)))),
         Expanded(child: _bots.isEmpty ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.inbox_rounded, size: 50, color: Colors.grey.shade400), const SizedBox(height: 10), const Text('还没有机器人', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 15, fontFamily: 'TideFont')), const Text('点击右下角 + 创建', style: TextStyle(color: Color(0xFFC7C7CC), fontSize: 13, fontFamily: 'TideFont'))])) : _list()),
       ])),
-      floatingActionButton: GestureDetector(
-        onTap: () async { final r = await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => const CreateBotPage(), transitionsBuilder: (c, a, s, child) => SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: FadeTransition(opacity: a, child: child)))); if (r == true) _load(); },
-        child: Container(width: 52, height: 52, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF6B5B95), Color(0xFF9B8EC4)]), boxShadow: [BoxShadow(color: const Color(0xFF6B5B95).withOpacity(0.4), blurRadius: 16, offset: const Offset(0, 5))]), child: const Icon(Icons.add, color: Colors.white, size: 26)),
-      ),
     );
     return _showParticles ? ParticleOverlay(child: content, origins: _origins, onDone: () { if (mounted) setState(() => _showParticles = false); }) : content;
   }
