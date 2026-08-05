@@ -88,7 +88,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _finish() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('seen_onboarding', true);
-    await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '温柔傲娇的数字伴侣', 'prompt': '说话温柔细腻，偶尔害羞。【输出格式】每条回复最前面用方括号标明心情', 'avatar': '', 'created_at': DateTime.now().millisecondsSinceEpoch});
+    try {
+      await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '温柔傲娇的数字伴侣', 'prompt': '说话温柔细腻，偶尔害羞。【输出格式】每条回复最前面用方括号标明心情', 'avatar': '', 'created_at': DateTime.now().millisecondsSinceEpoch});
+    } catch (_) {}
     if (!mounted) return;
     Navigator.pushReplacement(context, PageRouteBuilder(pageBuilder: (c, a, s) => const TideMainScaffold(), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child), transitionDuration: const Duration(milliseconds: 600)));
   }

@@ -25,9 +25,8 @@ class _BouncyTapState extends State<BouncyTap> with SingleTickerProviderStateMix
   @override Widget build(BuildContext context) {
     return GestureDetector(
       onTapDown: (_) { _c.forward(); HapticFeedback.lightImpact(); },
-      onTapUp: (_) => _c.reverse(),
+      onTapUp: (_) { _c.reverse(); widget.onTap?.call(); },
       onTapCancel: () => _c.reverse(),
-      onTap: widget.onTap,
       child: AnimatedBuilder(animation: _scale, builder: (c, child) => Transform.scale(scale: _scale.value, child: child), child: widget.child),
     );
   }

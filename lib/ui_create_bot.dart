@@ -34,22 +34,29 @@ class _CreateBotPageState extends State<CreateBotPage> {
 
   void _save() async {
     final name = _nameC.text.trim();
-    if (name.isEmpty) return;
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('名字不能为空', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating));
+      return;
+    }
     final basePrompt = _styleC.text.trim();
     final Map<String, dynamic> data = {
       'name': name, 'desc': _promptC.text.trim(),
       'prompt': basePrompt.isNotEmpty ? '$basePrompt\n\n【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]' : '【输出格式】每条回复最前面用方括号标明心情，如：[开心] [难过] [生气] [平静] [期待]',
       'avatar': _avatar,
     };
-    if (_isEdit) {
-      data['id'] = widget.editBot!['id'];
-      await DBManager().updateBot(data['id'] as String, data);
-    } else {
-      data['id'] = 'bot_${DateTime.now().millisecondsSinceEpoch}';
-      data['created_at'] = DateTime.now().millisecondsSinceEpoch;
-      await DBManager().insertBot(data);
+    try {
+      if (_isEdit) {
+        data['id'] = widget.editBot!['id'];
+        await DBManager().updateBot(data['id'] as String, data);
+      } else {
+        data['id'] = 'bot_${DateTime.now().millisecondsSinceEpoch}';
+        data['created_at'] = DateTime.now().millisecondsSinceEpoch;
+        await DBManager().insertBot(data);
+      }
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存失败: $e', style: const TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating));
     }
-    if (mounted) Navigator.pop(context, true);
   }
 
   void _pickAvatar() async {

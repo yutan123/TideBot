@@ -245,7 +245,7 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
     ),
     // 右下角悬浮发布按钮
     Positioned(
-      right: 16, bottom: MediaQuery.of(context).padding.bottom + 90,
+      right: 16, bottom: MediaQuery.of(context).padding.bottom + 120,
       child: BouncyTap(
         onTap: _showGames ? () {} : _publishFeed,
         child: Container(
