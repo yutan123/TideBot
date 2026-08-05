@@ -18,7 +18,7 @@ class _BouncyTapState extends State<BouncyTap> with SingleTickerProviderStateMix
   late Animation<double> _scale;
   @override void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000)); // 延长持续时间
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 120));
     _scale = Tween<double>(begin: 1.0, end: 1.0 - widget.scaleAmount).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic));
     _c.addStatusListener((s) { if (s == AnimationStatus.completed) _c.reverse(); });
   }
@@ -132,7 +132,7 @@ class _ParticleOverlayState extends State<ParticleOverlay> with SingleTickerProv
   bool _initialized = false;
   @override void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000)); // 延长持续时间
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 2000));
     _c.addListener(() => setState(() { for (var p in _ps) p.update(); }));
     _c.addStatusListener((s) { if (s == AnimationStatus.completed) widget.onDone?.call(); });
     _c.forward();

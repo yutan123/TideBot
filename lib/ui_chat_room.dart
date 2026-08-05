@@ -253,7 +253,6 @@ void _pickToken(BuildContext parentCtx, int cur) {
       }),
     ])));
   }
-  }
 
   Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers, String cur, Function(String) onPick) {
     final disp = providers.isNotEmpty
