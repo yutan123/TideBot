@@ -296,7 +296,7 @@ class _SquarePageState extends State<SquarePage> with SingleTickerProviderStateM
       const SizedBox(height: 12),
       const Expanded(child: Center(child: Text('暂无评论', style: TextStyle(fontSize: 14, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')))),
       Row(children: [
-        Expanded(child: TextField(style: const TextStyle(fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '写评论...', hintStyle: TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))))))),
+        Expanded(child: TextField(style: const TextStyle(fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '写评论...', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12)))))),
         const SizedBox(width: 8),
         TideDialogs.glassButton('发送', onTap: () { Navigator.pop(context); setState(() => f['comments'] = (f['comments'] as int) + 1); }),
       ]),

@@ -213,7 +213,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
         TideDialogs.show(context: parentCtx, builder: (c2) => AlertDialog(backgroundColor: Colors.transparent, contentPadding: EdgeInsets.zero, content: TideDialogs.glassContent(context: c2, children: [
           const Text('自定义Token', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
           const SizedBox(height: 10),
-          TextField(controller: c, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: '输入token数量', hintStyle: TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))))),
+          TextField(controller: c, keyboardType: TextInputType.number, decoration: InputDecoration(hintText: '输入token数量', hintStyle: const TextStyle(fontFamily: 'TideFont'), border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))))),
           const SizedBox(height: 12),
           TideDialogs.glassButton('确定', onTap: () async { final v = int.tryParse(c.text); if (v != null && v > 0) { await SharedPreferences.getInstance().then((p) => p.setInt('max_token_${_bot['id']}', v)); } Navigator.pop(c2); }),
         ])));
@@ -367,7 +367,7 @@ Widget _chatHeader() {
         child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
           child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
             GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
-            Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: const InputDecoration(hintText: '发送新消息...', hintStyle: TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: EdgeInsets.symmetric(horizontal: 8)))),
+            Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
             GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
             if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF6B5B95)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
           ])),

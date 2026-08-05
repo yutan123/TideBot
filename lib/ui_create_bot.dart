@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'db.dart';
+import 'ui_components.dart';
 
 class CreateBotPage extends StatefulWidget {
   final Map<String, dynamic>? editBot;
