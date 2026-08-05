@@ -86,16 +86,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final PageController _pc = PageController(); int _cur = 0;
   final _pages = [
     {"icon": Icons.shield_rounded, "t": "绝对隐私", "s": "零服务器架构，你的数字伴侣与记忆\n100% 安全留存本地。"},
-    {"icon": Icons.auto_awesome_rounded, "t": "多模态感知", "s": "支持语音、视觉与系统级操作，\n不仅仅是对话工具。"},
-    {"icon": Icons.palette_rounded, "t": "极致美学", "s": "沉浸式 iOS 风格设计，\n流光溢彩的数字陪伴。"},
+    {"icon": Icons.api_rounded, "t": "配置 API", "s": "先去「我的」→「API 设置」添加模型，\n支持 OpenAI 兼容接口。"},
+    {"icon": Icons.person_add_rounded, "t": "创建机器人", "s": "在聊天页点击右下角 +，\n定制专属 AI 伴侣的人设和风格。"},
+    {"icon": Icons.auto_awesome_rounded, "t": "多模态交互", "s": "文字、语音、图片、文件——\n唤起电话式通话，体验超现实连接。"},
+    {"icon": Icons.palette_rounded, "t": "极致美学", "s": "沉浸式 iOS 风格设计，\n莫兰迪配色，流光溢彩的数字陪伴。"},
   ];
 
   Future<void> _finish() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('seen_onboarding', true);
-    try {
-      await DBManager().insertBot({'id': 'bot_1', 'name': '屿潭', 'desc': '温柔傲娇的数字伴侣', 'prompt': '说话温柔细腻，偶尔害羞。【输出格式】每条回复最前面用方括号标明心情', 'avatar': '', 'created_at': DateTime.now().millisecondsSinceEpoch});
-    } catch (_) {}
     if (!mounted) return;
     Navigator.pushReplacement(context, PageRouteBuilder(pageBuilder: (c, a, s) => const TideMainScaffold(), transitionsBuilder: (c, a, s, child) => FadeTransition(opacity: a, child: child), transitionDuration: const Duration(milliseconds: 600)));
   }
@@ -174,14 +173,13 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override void initState() {
     super.initState();
     _prev = widget.currentIndex;
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
     _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
-      CurvedAnimation(parent: _c, curve: Curves.elasticOut)
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
     );
-    _w = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 36.0, end: 48.0), weight: 25),
-      TweenSequenceItem(tween: Tween(begin: 48.0, end: 36.0), weight: 75),
-    ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
+    _w = Tween<double>(begin: 64.0, end: 64.0).animate(
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
+    );
     _c.forward();
   }
 
@@ -190,12 +188,11 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
     if (old.currentIndex != widget.currentIndex) {
       _prev = old.currentIndex;
       _pos = Tween<double>(begin: _prev * 0.25, end: widget.currentIndex * 0.25).animate(
-        CurvedAnimation(parent: _c, curve: Curves.elasticOut)
+        CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
       );
-      _w = TweenSequence<double>([
-        TweenSequenceItem(tween: Tween(begin: 36.0, end: 48.0), weight: 25),
-        TweenSequenceItem(tween: Tween(begin: 48.0, end: 36.0), weight: 75),
-      ]).animate(CurvedAnimation(parent: _c, curve: Curves.elasticOut));
+      _w = Tween<double>(begin: 64.0, end: 64.0).animate(
+        CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)
+      );
       _c.reset(); _c.forward();
     }
   }
@@ -205,18 +202,18 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 40),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(28),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            height: 56,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Colors.white.withOpacity(0.2), width: 0.5),
+              color: Colors.white.withOpacity(0.35),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withOpacity(0.25), width: 0.5),
               boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 4))],
             ),
             child: LayoutBuilder(builder: (ctx, cs) {
@@ -229,12 +226,12 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
                   final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
                   return Positioned(
                     left: pillX,
-                    top: 4,
+                    top: 0,
                     child: Container(
-                      width: _w.value, height: 36,
+                      width: _w.value, height: 44,
                       decoration: BoxDecoration(
-                        color: theme.primary.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(18),
+                        color: theme.primary.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                     ),
                   );
@@ -247,11 +244,7 @@ class _JellyDockState extends State<JellyDock> with SingleTickerProviderStateMix
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (_) => HapticFeedback.lightImpact(),
                     onTap: () => widget.onTap(i),
-                    child: Center(child: AnimatedScale(
-                      duration: const Duration(milliseconds: 200),
-                      scale: act ? 1.15 : 0.9,
-                      child: Icon(_icons[i], color: act ? theme.primary : const Color(0xFF9E9E9E), size: 24),
-                    )),
+                    child: Center(child: Icon(_icons[i], color: act ? theme.primary : const Color(0xFFAEAEB2), size: 22)),
                   ));
                 }),
               ),
@@ -301,18 +294,12 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
         backgroundColor: Colors.transparent,
         extendBody: true,
         body: Stack(children: [
-          GestureDetector(
-            onTapDown: (d) => flowProvider.moveTo(d.localPosition),
-            behavior: HitTestBehavior.translucent,
-            child: PageView(
-              controller: _pageCtrl,
-              physics: const NeverScrollableScrollPhysics(),
-              onPageChanged: (i) => setState(() => _idx = i),
-              children: _pages,
-            ),
+          IndexedStack(
+            index: _idx,
+            children: _pages,
           ),
           Positioned(
-            left: 0, right: 0, bottom: bottomPadding + 16,
+            left: 0, right: 0, bottom: bottomPadding + 24,
             child: JellyDock(currentIndex: _idx, onTap: _onDockTap),
           ),
           // 聊天列表创建机器人悬浮球

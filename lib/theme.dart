@@ -3,22 +3,22 @@ import 'db.dart';
 
 // ================= 全局主题系统 =================
 class TideTheme extends ChangeNotifier {
-  String _name = 'purple';
-  Color _primary = const Color(0xFF6B5B95);
-  Color _primaryLight = const Color(0xFF9B8EC4);
+  String _name = 'lavender';
+  Color _primary = const Color(0xFFB8A9C9);
+  Color _primaryLight = const Color(0xFFD5C6E0);
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
   String get name => _name;
   LinearGradient get primaryGradient => LinearGradient(colors: [_primary, _primaryLight]);
 
   static const _themes = {
-    'purple':   [Color(0xFF6B5B95), Color(0xFF9B8EC4)],
-    'blue':     [Color(0xFF007AFF), Color(0xFF4DA3FF)],
-    'red':      [Color(0xFFFF6B6B), Color(0xFFFFA5A5)],
-    'green':    [Color(0xFF34C759), Color(0xFF5EE48B)],
-    'greenGrad':[Color(0xFF20B868), Color(0xFF5EE48B)],
-    'sunset':   [Color(0xFFFF6B6B), Color(0xFFFFA500)],
-    'ocean':    [Color(0xFF00748A), Color(0xFF00B4D8)],
+    'rose':      [Color(0xFFD4A5A5), Color(0xFFE8C8C8)],
+    'lavender':  [Color(0xFFB8A9C9), Color(0xFFD5C6E0)],
+    'sky':       [Color(0xFF89B0C8), Color(0xFFB5D3E7)],
+    'mint':      [Color(0xFF8FBC8F), Color(0xFFB8D8B8)],
+    'peach':     [Color(0xFFE8B89D), Color(0xFFF5D0B8)],
+    'plum':      [Color(0xFFA593C2), Color(0xFFC9B8E8)],
+    'teal':      [Color(0xFF6FA8A0), Color(0xFFA3D2C8)],
   };
 
   Future<void> loadFromDB() async {

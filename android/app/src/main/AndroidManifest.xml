@@ -12,6 +12,11 @@
     <!-- 设置闹钟与震动权限 -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    
+    <!-- 电池优化白名单 (防系统杀进程) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 开机自启 (可选) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:label="TideBot"
@@ -41,19 +46,6 @@
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="dataSync" />
-
-        <!-- 注册无障碍服务 (用于机器人 Agent 控制) -->
-        <service
-            android:name=".TideAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
 
         <meta-data
             android:name="flutterEmbedding"

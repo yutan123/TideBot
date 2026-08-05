@@ -29,7 +29,12 @@ class _SpacePageState extends State<SpacePage> {
   Future<void> _loadData() async {
     final db = DBManager(); final bots = await db.queryBots();
     if (bots.isNotEmpty) {
-      final b = bots.first;
+      // 如果已有选中的 bot 且在列表中，保持选中；否则选第一个
+      Map<String, dynamic>? b;
+      if (_botId.isNotEmpty) {
+        try { b = bots.firstWhere((x) => x['id'] == _botId); } catch (_) { b = null; }
+      }
+      b ??= bots.first;
       _botId = b['id'] as String? ?? ''; _botName = b['name'] as String? ?? '';
       _dailyQuote = b['daily_quote'] as String? ?? '';
       final created = b['created_at'];
@@ -41,7 +46,7 @@ class _SpacePageState extends State<SpacePage> {
       if (mounted) setState(() { _loading = false; });
     } else {
       _daysSince = 0; _dailyQuote = '';
-      _schedules = []; _memories = [];
+      _schedules = []; _memories = []; _botId = ''; _botName = '';
       if (mounted) setState(() => _loading = false);
     }
   }

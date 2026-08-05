@@ -81,13 +81,13 @@ class _ProfilePageState extends State<ProfilePage> {
   }
   void _showThemePicker() {
     final themes = {
-      'purple':   [const Color(0xFF6B5B95), const Color(0xFF9B8EC4), '经典紫'],
-      'blue':     [const Color(0xFF007AFF), const Color(0xFF4DA3FF), '天空蓝'],
-      'red':      [const Color(0xFFFF6B6B), const Color(0xFFFFA5A5), '珊瑚红'],
-      'green':    [const Color(0xFF34C759), const Color(0xFF5EE48B), '苹果绿'],
-      'greenGrad':[const Color(0xFF20B868), const Color(0xFF5EE48B), '翡翠绿'],
-      'sunset':   [const Color(0xFFFF6B6B), const Color(0xFFFFA500), '日落橙'],
-      'ocean':    [const Color(0xFF00748A), const Color(0xFF00B4D8), '深海蓝'],
+      'rose':      [const Color(0xFFD4A5A5), const Color(0xFFE8C8C8), '玫瑰粉'],
+      'lavender':  [const Color(0xFFB8A9C9), const Color(0xFFD5C6E0), '薰衣草'],
+      'sky':       [const Color(0xFF89B0C8), const Color(0xFFB5D3E7), '雾霾蓝'],
+      'mint':      [const Color(0xFF8FBC8F), const Color(0xFFB8D8B8), '薄荷绿'],
+      'peach':     [const Color(0xFFE8B89D), const Color(0xFFF5D0B8), '蜜桃橙'],
+      'plum':      [const Color(0xFFA593C2), const Color(0xFFC9B8E8), '梅子紫'],
+      'teal':      [const Color(0xFF6FA8A0), const Color(0xFFA3D2C8), '青瓷绿'],
     };
     showTideSheet(context: context, height: 500, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('主题设置', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, fontFamily: 'TideFont')),

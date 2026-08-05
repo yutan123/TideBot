@@ -30,6 +30,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   bool _isRecording = false;
   bool _loading = false;
   bool _typing = false;
+  bool _msgsLoading = true;
   final Record _rec = Record();
   final AudioPlayer _player = AudioPlayer();
   Timer? _recTimer;
@@ -56,7 +57,7 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
   void _loadMsgs() async {
     final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
-    if (mounted) setState(() => _msgs = msgs.reversed.toList());
+    if (mounted) setState(() { _msgs = msgs.reversed.toList(); _msgsLoading = false; });
     _scrollDown();
   }
 
@@ -312,6 +313,7 @@ Widget _chatHeader() {
   }
 
   Widget _chatBody() {
+    if (_msgsLoading) return Center(child: CircularProgressIndicator(color: TideTheme.of(context).primary));
     return ListView.builder(
       controller: _scrollC, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: _msgs.length,
