@@ -90,114 +90,209 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
-  void _send({String? img}) async {
-    try {
-      final text = _msgC.text.trim();
-      if (text.isEmpty && img == null) {
-        if (mounted) setState(() => _hasText = false);
-        return; // 无内容时空点发送不触发
-      }
-      if (_loading) return; // 避免连点重复发送
-      setState(() => _loading = true);
-      final now = DateTime.now().millisecondsSinceEpoch;
+  Future<void> _send({String? img}) async {
+    if (_loading) return;
+    final text = _msgC.text.trim();
+    if (text.isEmpty && img == null) {
+      if (mounted) setState(() => _hasText = false);
+      return;
+    }
 
-      // 先保证已选择一个可用模型：若 bot 还没配 chat_model，但存在默认 provider，则自动用第一个
-      String? cm;
+    final botId = _bot['id']?.toString() ?? '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final msg = <String, dynamic>{
+      'id': 'm_$now',
+      'bot_id': botId,
+      'role': 'user',
+      'content': text,
+      'image': img,
+      'timestamp': now,
+    };
+
+    // 先更新界面，确保点击后立即看到气泡并清空输入框。
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _typing = true;
+        _msgsLoading = false;
+        _msgs.add(msg);
+        _msgC.clear();
+        _hasText = false;
+      });
+      _scrollDown();
+    }
+
+    try {
       try {
-        cm = _bot['chat_model'] as String?;
-        if (cm == null || cm.toString().isEmpty) {
-          final providers = await DBManager().queryChatProviders();
-          if (providers.isNotEmpty) {
-            cm = providers.first['id'] as String;
-            _bot['chat_model'] = cm;
-            await DBManager().updateBot(_bot['id'] as String, {'chat_model': cm});
-          } else {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('请先在「我的 → API 设置」添加模型，再回来聊天～', style: TextStyle(fontFamily: 'TideFont')),
-                behavior: SnackBarBehavior.floating,
-                backgroundColor: Color(0xFFE74C3C),
-              )); 
-            }
-            if (mounted) setState(() => _loading = false);
-            return;
+        await DBManager().insertMessage(msg).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('[send] persist user message failed: $e');
+      }
+
+      String? cm = _bot['chat_model'] as String?;
+      if (cm == null || cm.trim().isEmpty) {
+        final providers = await DBManager()
+            .queryChatProviders()
+            .timeout(const Duration(seconds: 5));
+        if (providers.isEmpty) {
+          throw StateError('请先在「我的 → API 设置」添加模型');
+        }
+        cm = providers.first['id']?.toString();
+        if (cm == null || cm.isEmpty) {
+          throw StateError('模型提供商配置无效');
+        }
+        _bot['chat_model'] = cm;
+        await DBManager()
+            .updateBot(botId, {'chat_model': cm})
+            .timeout(const Duration(seconds: 5));
+      }
+
+      final history = _msgs
+          .where((m) => (m['content'] as String?)?.isNotEmpty == true)
+          .map((m) => {'role': m['role'], 'content': m['content']})
+          .toList();
+      var imgB64 = '';
+      if (img != null) {
+        imgB64 = base64Encode(await File(img).readAsBytes());
+      }
+
+      debugPrint('[send] request start bot=$botId model=$cm');
+      final resp = await AIManager()
+          .chat(
+            botId: botId,
+            messages: history,
+            imageBase64: imgB64,
+          )
+          .timeout(const Duration(seconds: 50));
+      final content = resp.trim().isEmpty
+          ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
+          : resp;
+      final aiMsg = <String, dynamic>{
+        'id': 'm_${DateTime.now().millisecondsSinceEpoch}',
+        'bot_id': botId,
+        'role': 'assistant',
+        'content': content,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+      try {
+        await DBManager()
+            .insertMessage(aiMsg)
+            .timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('[send] persist assistant message failed: $e');
+      }
+      if (mounted) setState(() => _msgs.add(aiMsg));
+    } catch (e, st) {
+      debugPrint('[send] failed: $e');
+      debugPrint(st.toString());
+      final errMsg = <String, dynamic>{
+        'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}',
+        'bot_id': botId,
+        'role': 'assistant',
+        'content': '[X] $e',
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+      if (mounted) setState(() => _msgs.add(errMsg));
+      try {
+        await DBManager()
+            .insertMessage(errMsg)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _typing = false;
+        });
+        _scrollDown();
+      }
+    }
+  }
+  // ========== 录音 ==========
+  Future<void> _toggleRec() async {
+    try {
+      if (_isRecording) {
+        _recTimer?.cancel();
+        final path = await _rec.stop();
+        if (mounted) {
+          setState(() {
+            _isRecording = false;
+            _recSecs = 0;
+          });
+        }
+        if (path != null && path.isNotEmpty) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final m = <String, dynamic>{
+            'id': 'm_$now',
+            'bot_id': _bot['id'],
+            'role': 'user',
+            'content': '',
+            'audio': path,
+            'timestamp': now,
+          };
+          try {
+            await DBManager()
+                .insertMessage(m)
+                .timeout(const Duration(seconds: 5));
+          } catch (e) {
+            debugPrint('[record] persist failed: $e');
+          }
+          if (mounted) {
+            setState(() => _msgs.add(m));
+            _scrollDown();
           }
         }
-      } catch (e) {
-        debugPrint('[send] provider resolve error: $e');
+        return;
+      }
+
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
         if (mounted) {
-          setState(() => _loading = false);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('[X] 模型解析失败: $e', style: const TextStyle(fontFamily: 'TideFont')),
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('需要麦克风权限才能录音，请在设置中开启～',
+                style: TextStyle(fontFamily: 'TideFont')),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFFE74C3C),
+            backgroundColor: Color(0xFFE74C3C),
           ));
         }
         return;
       }
 
-      // 插入并显示用户消息（保证用户自己的发言一定上屏）
-      final msg = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': text, 'image': img, 'timestamp': now};
-      try {
-        await DBManager().insertMessage(msg);
-      } catch (e) { debugPrint('[send] insert user msg error: $e'); }
-      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; _typing = true; });
-      _scrollDown();
-
-      try {
-        final history = _msgs.where((m) => (m['content'] as String?)?.isNotEmpty == true).map((m) => {'role': m['role'], 'content': m['content']}).toList();
-        var imgB64 = '';
-        if (img != null) imgB64 = base64Encode(await File(img).readAsBytes());
-        final resp = await AIManager().chat(botId: _bot['id'] as String, messages: history, imageBase64: imgB64);
-        debugPrint('[send] chat resp: ${resp.substring(0, resp.length > 80 ? 80 : resp.length)}');
-        final isErr = resp.startsWith('[X]') || resp.startsWith('未配置') || resp.startsWith('映射的模型');
-        final bm = <String, dynamic>{'id': 'm_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant',
-          'content': isErr ? resp : (resp.isEmpty ? '[X] 模型返回了空内容，请检查配置' : resp), 'timestamp': DateTime.now().millisecondsSinceEpoch};
-        try { await DBManager().insertMessage(bm); } catch (e) { debugPrint('[send] insert ai msg error: $e'); }
-        if (mounted) setState(() => _msgs.add(bm));
-      } catch (e) {
-        debugPrint('[send] chat exception: $e');
-        final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '[X] 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
-        try { await DBManager().insertMessage(err); } catch (_) {}
-        if (mounted) setState(() => _msgs.add(err));
-      }
-    } finally {
-      if (mounted) setState(() { _loading = false; _typing = false; });
-    }
-    _scrollDown();
-  }
-  // ========== 录音 ==========
-  Future<void> _toggleRec() async {
-    if (_isRecording) {
+      final dir = await getApplicationDocumentsDirectory();
+      final path =
+          '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _rec.start(
+        path: path,
+        encoder: AudioEncoder.aacLc,
+        bitRate: 128000,
+      );
+      if (!mounted) return;
+      setState(() => _isRecording = true);
+      _recTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (mounted && _isRecording) {
+          setState(() => _recSecs++);
+        } else {
+          t.cancel();
+        }
+      });
+    } catch (e, st) {
+      debugPrint('[record] failed: $e');
+      debugPrint(st.toString());
       _recTimer?.cancel();
-      final path = await _rec.stop();
-      setState(() { _isRecording = false; _recSecs = 0; });
-      if (path != null) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final m = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': '', 'audio': path, 'timestamp': now};
-        await DBManager().insertMessage(m);
-        setState(() => _msgs.add(m));
-        _scrollDown();
-      }
-    } else {
-      // 主动请求录音权限（弹系统授权框），被拒绝则引导去设置
-      final micStatus = await Permission.microphone.request();
-      if (micStatus.isGranted) {
-        final dir = await getApplicationDocumentsDirectory();
-        final p = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        await _rec.start(path: p, encoder: AudioEncoder.aacLc, bitRate: 128000);
-        setState(() => _isRecording = true);
-        _recTimer = Timer.periodic(const Duration(seconds: 1), (t) { if (mounted) setState(() => _recSecs++); });
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('需要麦克风权限才能录音，请在设置中开启～', style: TextStyle(fontFamily: 'TideFont')),
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _recSecs = 0;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('[X] 录音不可用：$e',
+              style: const TextStyle(fontFamily: 'TideFont')),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: Color(0xFFE74C3C),
+          backgroundColor: const Color(0xFFE74C3C),
         ));
       }
     }
   }
-
   // ========== 选择图片/文件 ==========
   void _pickMedia() async {
     final r = await showTideSheet<String>(context: context, height: 180, child: Column(children: [
@@ -578,10 +673,36 @@ Widget _chatHeader() {
                   Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
                   GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
                   // 发送按钮：始终显示（不再依赖 _hasText 条件渲染，避免"输入了却看不到/点不动"的情况）
-                  GestureDetector(
-                    onTap: () { _send(); },
-                    behavior: HitTestBehavior.opaque,
-                    child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(_hasText ? 0.5 : 0.2), blurRadius: 8),], color: TideTheme.of(context).primary.withOpacity(_hasText ? 1 : 0.45)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white))),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(26),
+                      onTap: () {
+                        debugPrint('[send] tap text=${_msgC.text.trim().isNotEmpty}');
+                        _send();
+                      },
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Center(
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: TideTheme.of(context).primary.withOpacity(_hasText ? 0.5 : 0.2),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                              color: TideTheme.of(context).primary.withOpacity(_hasText ? 1 : 0.45),
+                            ),
+                            child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ])),
               ),

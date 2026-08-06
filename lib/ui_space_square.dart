@@ -70,7 +70,7 @@ class _SpacePageState extends State<SpacePage> {
     final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final dateStr = '${now.year}.${now.month}.${now.day}';
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
+      backgroundColor: theme.bgColor,
       body: SafeArea(child: _loading ? Center(child: CircularProgressIndicator(color: theme.primary)) :
         SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -29,6 +30,86 @@ class _BouncyTapState extends State<BouncyTap> with SingleTickerProviderStateMix
       onTapUp: (_) { _c.reverse(); widget.onTap?.call(); },
       onTapCancel: () => _c.reverse(),
       child: AnimatedBuilder(animation: _scale, builder: (c, child) => Transform.scale(scale: _scale.value, child: child), child: widget.child),
+    );
+  }
+}
+
+// ========== 机器人默认头像 ==========
+class TideBotAvatar extends StatelessWidget {
+  final String name;
+  final String? path;
+  final double size;
+
+  const TideBotAvatar({
+    super.key,
+    required this.name,
+    this.path,
+    this.size = 52,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    final file = path == null || path!.isEmpty ? null : File(path!);
+    final exists = file != null && file.existsSync();
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.3),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: exists
+            ? Image.file(
+                file,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _fallback(theme),
+              )
+            : _fallback(theme),
+      ),
+    );
+  }
+
+  Widget _fallback(TideTheme theme) {
+    final initial = name.trim().isEmpty ? 'T' : name.trim().characters.first;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [theme.primary, theme.primaryLight],
+        ),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            right: -size * 0.1,
+            top: -size * 0.12,
+            child: Icon(
+              Icons.auto_awesome_rounded,
+              size: size * 0.45,
+              color: Colors.white.withOpacity(0.28),
+            ),
+          ),
+          Icon(
+            Icons.smart_toy_rounded,
+            size: size * 0.52,
+            color: Colors.white.withOpacity(0.94),
+          ),
+          Positioned(
+            bottom: size * 0.06,
+            child: Text(
+              initial,
+              style: TextStyle(
+                fontSize: size * 0.15,
+                fontWeight: FontWeight.w800,
+                color: Colors.white.withOpacity(0.9),
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

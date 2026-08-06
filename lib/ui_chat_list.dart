@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'db.dart';
@@ -104,12 +103,11 @@ class ChatListPageState extends State<ChatListPage> {
 
   Widget _card(Map<String, dynamic> bot) {
     final av = (bot['avatar'] as String?) ?? '';
-    final hasAv = av.isNotEmpty;
     return GlassCard(
       padding: const EdgeInsets.all(14), radius: 20,
       onTap: () async { await Navigator.push(context, PageRouteBuilder(pageBuilder: (c, a, s) => ChatRoomPage(botData: bot), transitionDuration: const Duration(milliseconds: 380), reverseTransitionDuration: const Duration(milliseconds: 240), transitionsBuilder: (c, a, s, child) { final anim = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic); return SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(anim), child: ScaleTransition(scale: Tween<double>(begin: 0.98, end: 1).animate(anim), child: FadeTransition(opacity: anim, child: child))); })); load(); },
       child: Row(children: [
-        ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 50, height: 50, color: const Color(0xFFE8E8F0), child: hasAv ? Image.file(File(av), fit: BoxFit.cover) : Center(child: Text((bot['name'] as String? ?? '?')[0], style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: TideTheme.of(context).primary, fontFamily: 'TideFont'))))),
+        TideBotAvatar(name: bot['name'] as String? ?? '', path: av, size: 56),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(mainAxisSize: MainAxisSize.min, children: [
