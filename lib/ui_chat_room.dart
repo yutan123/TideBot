@@ -117,15 +117,22 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
                 content: Text('请先在「我的 → API 设置」添加模型，再回来聊天～', style: TextStyle(fontFamily: 'TideFont')),
                 behavior: SnackBarBehavior.floating,
                 backgroundColor: Color(0xFFE74C3C),
-              ));
+              )); 
             }
-            setState(() => _loading = false);
+            if (mounted) setState(() => _loading = false);
             return;
           }
         }
       } catch (e) {
         debugPrint('[send] provider resolve error: $e');
-        setState(() => _loading = false);
+        if (mounted) {
+          setState(() => _loading = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('[X] 模型解析失败: $e', style: const TextStyle(fontFamily: 'TideFont')),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFFE74C3C),
+          ));
+        }
         return;
       }
 
@@ -304,6 +311,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     final botId = _bot['id'] as String;
     // 当前选择（只读读取 DB，作为初始值；弹窗内实时状态交给 setSt 维护）
     String curChat = prefs.getString('chat_model_$botId') ?? ((_bot['chat_model'] as String?)?.isNotEmpty == true ? _bot['chat_model'] as String : (providers.isNotEmpty ? providers.first['id'] as String : ''));
+    String curBak = prefs.getString('backup_model_$botId') ?? '';
+    String curVision = prefs.getString('vision_model_$botId') ?? '';
+    String curStt = prefs.getString('stt_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ?? ((_bot['tts_model'] as String?)?.isNotEmpty == true ? _bot['tts_model'] as String : '');
     int curTok = prefs.getInt('max_token_$botId') ?? (_bot['max_tokens'] as int? ?? 10000);
 
@@ -328,6 +338,10 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
           const SizedBox(height: 12),
           Flexible(child: SingleChildScrollView(child: Column(children: [
             _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async { curChat = v; await pickModel('chat_model_$botId', v); }),
+            // 备用/识图/STT 模型：为扩展能力预留的独立模型选择
+            _mLabel('备用模型'), _modelPicker(ctx, providers, curBak, (v) async { curBak = v; await pickModel('backup_model_$botId', v); }),
+            _mLabel('识图模型'), _modelPicker(ctx, providers, curVision, (v) async { curVision = v; await pickModel('vision_model_$botId', v); }),
+            _mLabel('STT模型'), _modelPicker(ctx, providers, curStt, (v) async { curStt = v; await pickModel('stt_model_$botId', v); }),
             // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
             _mLabel('TTS模型（语音，可选）'), _modelPicker(ctx, ttsProviders, curTts, (v) async { curTts = v; await pickModel('tts_model_$botId', v, isTts: true); }),
             _mLabel('最大上下文Token'),

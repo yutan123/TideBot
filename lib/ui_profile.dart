@@ -212,10 +212,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   List<Map<String,dynamic>> _ttsProviders = [];
   bool _loading = true;
   final _presets = [
-    {'name':'DeepSeek','url':'https://api.deepseek.com/v1','models':'deepseek-chat,deepseek-reasoner'},
-    {'name':'SiliconFlow','url':'https://api.siliconflow.cn/v1','models':'Qwen/Qwen2.5-7B-Instruct,deepseek-ai/DeepSeek-V3'},
-    {'name':'阿里云百炼','url':'https://dashscope.aliyuncs.com/compatible-mode/v1','models':'qwen-plus,qwen-max'},
-    {'name':'Kimi','url':'https://api.moonshot.cn/v1','models':'moonshot-v1-8k,moonshot-v1-32k'},
+    {'name':'DeepSeek','url':'https://api.deepseek.com/v1','models':'deepseek-chat'},
+    {'name':'SiliconFlow','url':'https://api.siliconflow.cn/v1','models':'Qwen/Qwen2.5-7B-Instruct'},
+    {'name':'阿里云百炼','url':'https://dashscope.aliyuncs.com/compatible-mode/v1','models':'qwen-plus'},
+    {'name':'Kimi','url':'https://api.moonshot.cn/v1','models':'moonshot-v1-8k'},
   ];
   final _ttsPresets = [
     {'name':'SiliconFlow TTS','url':'https://api.siliconflow.cn/v1','models':'FunAudioLLM/CosyVoice2-0.5B','voice':'default'},
@@ -258,10 +258,17 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
         Text(isTts?'添加 TTS':'添加提供商', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
         _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
-        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名(逗号分隔)', mCtrl), const SizedBox(height:16),
+        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名（仅填一个）', mCtrl), const SizedBox(height:16),
         Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
+          final raw = mCtrl.text.trim();
+          // 只允许一个模型：若含逗号/换行等多值分隔，取第一个并提示
+          String model = raw;
+          if (raw.contains(',') || raw.contains('，')) {
+            final parts = raw.split(RegExp('[，,]')); if (parts.isNotEmpty) model = parts.first.trim();
+            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('只能填一个模型，已按「$model」保存', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: const Color(0xFFE74C3C), duration: const Duration(seconds: 2)));
+          }
           setState(() {
-          final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim()};
+            final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':model};
           final idx = _providers.indexWhere((e) => e['name'] == p['name']);
           if (idx >= 0) { _providers[idx] = p; } else { _providers.add(p); }
         });
@@ -274,10 +281,12 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
         const Text('添加 TTS 提供商', style: TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
         _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
-        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名', mCtrl), const SizedBox(height:8),
+        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名（仅填一个）', mCtrl), const SizedBox(height:8),
         _f('音色', vCtrl), const SizedBox(height:16),
         Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
-          setState(() { final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim(),'voice':vCtrl.text.trim()}; final i = _ttsProviders.indexWhere((e) => e['name'] == p['name']); if (i >= 0) { _ttsProviders[i] = p; } else { _ttsProviders.add(p); } });
+          String model = mCtrl.text.trim();
+          if (model.contains(',') || model.contains('，')) { final parts = model.split(RegExp('[，,]')); if (parts.isNotEmpty) model = parts.first.trim(); ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('只能填一个模型，已按「$model」保存', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: const Color(0xFFE74C3C), duration: const Duration(seconds: 2))); }
+          setState(() { final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':model,'voice':vCtrl.text.trim()}; final i = _ttsProviders.indexWhere((e) => e['name'] == p['name']); if (i >= 0) { _ttsProviders[i] = p; } else { _ttsProviders.add(p); } });
           Navigator.pop(ctx); _saveList();
         }))])]))); }
   Widget _f(String label, TextEditingController c,{bool obscure=false}) => Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
