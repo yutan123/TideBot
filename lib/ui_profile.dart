@@ -4,406 +4,1607 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:http/http.dart' as http;
+import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'theme.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key}); @override State<ProfilePage> createState() => _ProfilePageState();
+  const ProfilePage({super.key});
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
 }
+
 class _ProfilePageState extends State<ProfilePage> {
-  String _userName = '用户'; String _avatarPath = '';
+  String _userName = '用户';
+  String _avatarPath = '';
   final _settings = [
-    {'icon':Icons.api_rounded,'title':'API 设置','page':'api'},{'icon':Icons.cloud_download_rounded,'title':'本地模型','page':'local'},
-    {'icon':Icons.palette_rounded,'title':'主题设置','page':'theme'},{'icon':Icons.notifications_rounded,'title':'通知管理','page':'notify'},
-    {'icon':Icons.security_rounded,'title':'隐私与安全','page':'privacy'},{'icon':Icons.info_rounded,'title':'关于 TideBot','page':'about'},
-    {'icon':Icons.storage_rounded,'title':'数据管理','page':'data'},{'icon':Icons.feedback_rounded,'title':'反馈与建议','page':'feedback'},
+    {'icon': Icons.api_rounded, 'title': 'API 设置', 'page': 'api'},
+    {'icon': Icons.cloud_download_rounded, 'title': '本地模型', 'page': 'local'},
+    {'icon': Icons.palette_rounded, 'title': '主题设置', 'page': 'theme'},
+    {'icon': Icons.tune_rounded, 'title': '普通设置', 'page': 'general'},
+    {
+      'icon': Icons.settings_suggest_rounded,
+      'title': '高级设置',
+      'page': 'advanced'
+    },
+    {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
+    {'icon': Icons.security_rounded, 'title': '隐私与安全', 'page': 'privacy'},
+    {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
+    {'icon': Icons.storage_rounded, 'title': '数据管理', 'page': 'data'},
+    {'icon': Icons.feedback_rounded, 'title': '反馈与建议', 'page': 'feedback'},
   ];
-  @override void initState() { super.initState(); _loadProfile(); }
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
   Future<void> _loadProfile() async {
     final name = await DBManager().getKV('user_name');
     final avatar = await DBManager().getKV('user_avatar');
-    if (mounted) { setState(() { if (name != null && name.isNotEmpty) _userName = name; if (avatar != null && avatar.isNotEmpty) _avatarPath = avatar; }); }
-  }
-  Future<void> _pickAvatar() async {
-    try {
-      // 主动请求相册权限
-      bool granted = true;
-      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
-        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
-      }
-      if (!granted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('需要相册权限才能更换头像', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFFE74C3C)));
-        }
-        return;
-      }
-      final picker = ImagePicker(); final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 256);
-      if (img != null) {
-        String path = img.path;
-        if (path.toLowerCase().endsWith('.heic') || path.toLowerCase().endsWith('.heif')) {
-          try { final converted = await HeifConverter.convert(path); if (converted != null) path = converted; } catch (_) {}
-        }
-        final dir = await getApplicationDocumentsDirectory();
-        final dest = '${dir.path}/user_avatar_${DateTime.now().millisecondsSinceEpoch}.png';
-        await File(path).copy(dest); await DBManager().insertKV('user_avatar', dest);
-        if (mounted) setState(() => _avatarPath = dest);
-      }
-    } catch (_) {}
-  }
-  @override Widget build(BuildContext context) => Container(color: TideTheme.of(context).bgColor,
-    child: SafeArea(child: SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16,20,16,100),
-      child: Column(children: [_buildProfileCard(), const SizedBox(height:24),
-        ..._settings.map((s) => BouncyTap(onTap: ()=>_onSetting(s), child: _buildSettingItem(s))), const SizedBox(height:20)]))));
-  Widget _buildProfileCard() => FrostCard(padding: const EdgeInsets.all(20), child: Row(children: [
-    BouncyTap(onTap: () async {
-      final ctrl = TextEditingController(text:_userName);
-      final r = await TideDialogs.show(context: context, builder: (ctx) => AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-        content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
-          const Text('修改资料', style: TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-          TextField(controller:ctrl, autofocus:true, style: const TextStyle(fontFamily:'TideFont'), decoration: const InputDecoration(hintText:'输入新昵称', border:OutlineInputBorder(borderRadius:BorderRadius.all(Radius.circular(12))))),
-          const SizedBox(height:12),
-          Row(mainAxisAlignment:MainAxisAlignment.end, children: [
-            TideDialogs.glassButton('更换头像', onTap: () => Navigator.pop(ctx, '__avatar__'), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong),
-            const SizedBox(width:10), TideDialogs.glassButton('确定', onTap:()=>Navigator.pop(ctx, ctrl.text))])])));
-      if (r != null) { if (r == '__avatar__') { _pickAvatar(); } else if (r.toString().isNotEmpty) { setState(()=>_userName=r.toString()); await DBManager().insertKV('user_name', r.toString()); } }
-    }, child: CircleAvatar(radius:32, backgroundColor: TideTheme.of(context).primary.withOpacity(0.15),
-      backgroundImage: _avatarPath.isNotEmpty && File(_avatarPath).existsSync() ? FileImage(File(_avatarPath)) : null,
-      child: _avatarPath.isEmpty || !File(_avatarPath).existsSync() ? Icon(Icons.person_rounded, size:36, color: TideTheme.of(context).primary) : null)),
-    const SizedBox(width:16),
-    Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text(_userName, style: TextStyle(fontSize:20, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong)), SizedBox(height:4), Text('点击头像修改信息', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))])),
-    Icon(Icons.arrow_forward_ios_rounded, size:16, color: TideTheme.of(context).textFaint)]));
-  Widget _buildSettingItem(Map<String,dynamic> s) => FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.symmetric(horizontal:16, vertical:14),
-    child: Row(children: [Icon(s['icon'] as IconData, size:22, color: TideTheme.of(context).primary), SizedBox(width:14),
-      Expanded(child: Text(s['title']??'', style: TextStyle(fontSize:16, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))), Icon(Icons.arrow_forward_ios_rounded, size:14, color:TideTheme.of(context).textFaint)]));
-  void _onSetting(Map<String,dynamic> s) {
-    switch(s['page']) {
-      case 'api': Navigator.push(context, PageRouteBuilder(pageBuilder:(_,__,___)=>const ApiSettingsPage(), transitionsBuilder:(_,a,__,c)=>FadeTransition(opacity:a, child:c), transitionDuration: const Duration(milliseconds:300))); break;
-      case 'local': Navigator.push(context, PageRouteBuilder(pageBuilder:(_,__,___)=>const LocalModelPage(), transitionsBuilder:(_,a,__,c)=>FadeTransition(opacity:a, child:c), transitionDuration: const Duration(milliseconds:300))); break;
-      case 'theme': _showThemePicker(); break;
-      case 'notify': _showNotificationSettings(); break;
-      case 'about': showTideSheet(context:context, height:300, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('关于 TideBot', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:12), Text('版本: 1.0.0', style: TextStyle(fontSize:14, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), Text('本地化沉浸式多模态 AI 伴侣', style: TextStyle(fontSize:14, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:8), Text('100% 本地运行，隐私无忧。', style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:16), Text('开发者: yutan123', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))]))); break;
-      case 'data': showTideSheet(context:context, height:220, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('数据管理', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:16), ListTile(leading: Icon(Icons.download_rounded, color: TideTheme.of(context).primary), title: Text('导出聊天记录', style: TextStyle(fontFamily:'TideFont')), onTap:() async { await DBManager().exportToMarkdown(); if(mounted){Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已导出到本地存储', style: TextStyle(fontFamily:'TideFont')), backgroundColor: TideTheme.of(context).primary));}})]))); break;
-      case 'privacy': showTideSheet(context:context, height:350, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('隐私与安全', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:12), Text('TideBot 采用纯本地架构：', style: TextStyle(fontSize:14, fontWeight:FontWeight.w600, fontFamily:'TideFont')), SizedBox(height:8), Text('所有聊天数据存储在本地数据库\nAPI 密钥加密存储在本地\n无任何数据上传\n无统计 SDK, 无广告', style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont', height:1.8))]))); break;
-      default: ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${s['title']}功能开发中...', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating));
+    if (mounted) {
+      setState(() {
+        if (name != null && name.isNotEmpty) _userName = name;
+        if (avatar != null && avatar.isNotEmpty) _avatarPath = avatar;
+      });
     }
   }
+
+  Future<void> _pickAvatar() async {
+    if (!await AppPermissions.photos(context, feature: '更换头像')) return;
+    try {
+      final img = await ImagePicker()
+          .pickImage(source: ImageSource.gallery, maxWidth: 256);
+      if (img == null) return;
+      String path = img.path;
+      if (path.toLowerCase().endsWith('.heic') ||
+          path.toLowerCase().endsWith('.heif')) {
+        final converted = await HeifConverter.convert(path);
+        if (converted != null) path = converted;
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final dest =
+          '${dir.path}/user_avatar_${DateTime.now().millisecondsSinceEpoch}.png';
+      await File(path).copy(dest);
+      await DBManager().insertKV('user_avatar', dest);
+      if (mounted) setState(() => _avatarPath = dest);
+    } catch (_) {}
+  }
+
+  Future<void> _editName() async {
+    final ctrl = TextEditingController(text: _userName);
+    final name = await TideDialogs.show<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(context: ctx, children: [
+              Text('修改昵称',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont',
+                      color: TideTheme.of(ctx).textStrong)),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  style: TextStyle(
+                      fontFamily: 'TideFont',
+                      color: TideTheme.of(ctx).textStrong),
+                  decoration: const InputDecoration(hintText: '输入新昵称')),
+              const SizedBox(height: 12),
+              TideDialogs.glassButton('保存',
+                  onTap: () => Navigator.pop(ctx, ctrl.text.trim())),
+            ])));
+    if (name != null && name.isNotEmpty && mounted) {
+      setState(() => _userName = name);
+      await DBManager().insertKV('user_name', name);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+      color: TideTheme.of(context).bgColor,
+      child: SafeArea(
+          child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+              child: Column(children: [
+                _buildProfileCard(),
+                const SizedBox(height: 24),
+                ..._settings.map((s) => BouncyTap(
+                    onTap: () => _onSetting(s), child: _buildSettingItem(s))),
+                const SizedBox(height: 20)
+              ]))));
+  Widget _buildProfileCard() => FrostCard(
+      padding: const EdgeInsets.all(20),
+      child: Row(children: [
+        BouncyTap(
+            onTap: _pickAvatar,
+            child: CircleAvatar(
+                radius: 32,
+                backgroundColor:
+                    TideTheme.of(context).primary.withOpacity(0.15),
+                backgroundImage:
+                    _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
+                        ? FileImage(File(_avatarPath))
+                        : null,
+                child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
+                    ? Icon(Icons.person_rounded,
+                        size: 36, color: TideTheme.of(context).primary)
+                    : null)),
+        const SizedBox(width: 16),
+        Expanded(
+            child: BouncyTap(
+                onTap: _editName,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_userName,
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont',
+                              color: TideTheme.of(context).textStrong)),
+                      const SizedBox(height: 4),
+                      Text('点击昵称修改名字',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: TideTheme.of(context).textFaint,
+                              fontFamily: 'TideFont')),
+                    ]))),
+        Icon(Icons.edit_rounded,
+            size: 18, color: TideTheme.of(context).textFaint),
+      ]));
+  Widget _buildSettingItem(Map<String, dynamic> s) => FrostCard(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(children: [
+        Icon(s['icon'] as IconData,
+            size: 22, color: TideTheme.of(context).primary),
+        SizedBox(width: 14),
+        Expanded(
+            child: Text(s['title'] ?? '',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontFamily: 'TideFont',
+                    color: TideTheme.of(context).textStrong))),
+        Icon(Icons.arrow_forward_ios_rounded,
+            size: 14, color: TideTheme.of(context).textFaint)
+      ]));
+  void _onSetting(Map<String, dynamic> s) {
+    switch (s['page']) {
+      case 'api':
+        Navigator.push(
+            context,
+            PageRouteBuilder(
+                pageBuilder: (_, __, ___) => const ApiSettingsPage(),
+                transitionsBuilder: (_, a, __, c) =>
+                    FadeTransition(opacity: a, child: c),
+                transitionDuration: const Duration(milliseconds: 300)));
+        break;
+      case 'local':
+        Navigator.push(
+            context,
+            PageRouteBuilder(
+                pageBuilder: (_, __, ___) => const LocalModelPage(),
+                transitionsBuilder: (_, a, __, c) =>
+                    FadeTransition(opacity: a, child: c),
+                transitionDuration: const Duration(milliseconds: 300)));
+        break;
+      case 'theme':
+        _showThemePicker();
+        break;
+      case 'general':
+        _showGeneralSettings();
+        break;
+      case 'advanced':
+        _showAdvancedSettings();
+        break;
+      case 'notify':
+        _showNotificationSettings();
+        break;
+      case 'about':
+        showTideSheet(
+            context: context,
+            height: 300,
+            child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('关于 TideBot',
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 12),
+                      Text('版本: 1.0.0',
+                          style: TextStyle(
+                              fontSize: 14,
+                              color: TideTheme.of(context).textWeak,
+                              fontFamily: 'TideFont')),
+                      Text('本地化沉浸式多模态 AI 伴侣',
+                          style: TextStyle(
+                              fontSize: 14,
+                              color: TideTheme.of(context).textWeak,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 8),
+                      Text('100% 本地运行，隐私无忧。',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: TideTheme.of(context).textWeak,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 16),
+                      Text('开发者: yutan123',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: TideTheme.of(context).textFaint,
+                              fontFamily: 'TideFont'))
+                    ])));
+        break;
+      case 'data':
+        showTideSheet(
+            context: context,
+            height: 220,
+            child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('数据管理',
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 16),
+                      ListTile(
+                          leading: Icon(Icons.download_rounded,
+                              color: TideTheme.of(context).primary),
+                          title: Text('导出聊天记录',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          onTap: () async {
+                            await DBManager().exportToMarkdown();
+                            if (mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content: Text('已导出到本地存储',
+                                          style: TextStyle(
+                                              fontFamily: 'TideFont')),
+                                      backgroundColor:
+                                          TideTheme.of(context).primary));
+                            }
+                          })
+                    ])));
+        break;
+      case 'privacy':
+        showTideSheet(
+            context: context,
+            height: 350,
+            child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('隐私与安全',
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 12),
+                      Text('TideBot 采用纯本地架构：',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont')),
+                      SizedBox(height: 8),
+                      Text(
+                          '所有聊天数据存储在本地数据库\nAPI 密钥加密存储在本地\n无任何数据上传\n无统计 SDK, 无广告',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: TideTheme.of(context).textWeak,
+                              fontFamily: 'TideFont',
+                              height: 1.8))
+                    ])));
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('${s['title']}功能开发中...',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            behavior: SnackBarBehavior.floating));
+    }
+  }
+
   // 主题设置的配色圆点（取 theme.dart 的日间主色作为预览）
   Color _themeDotPrimary(String id) {
     final map = {
-      'rose':Color(0xFFD98C94),'aurora':Color(0xFF6C8CD5),'lavender':Color(0xFF9B8AC4),
-      'sky':Color(0xFF5D9BC5),'mint':Color(0xFF5FAF8A),'peach':Color(0xFFE39A6B),
-      'plum':Color(0xFF8E74B4),'teal':Color(0xFF4FA79C),'sunset':Color(0xFFE06A5A),
-      'ocean':Color(0xFF3E7CB1),'pinkg':Color(0xFFE07A9A),'night':Color(0xFF6B5FAE),
+      'rose': Color(0xFFD98C94),
+      'aurora': Color(0xFF6C8CD5),
+      'lavender': Color(0xFF9B8AC4),
+      'sky': Color(0xFF5D9BC5),
+      'mint': Color(0xFF5FAF8A),
+      'peach': Color(0xFFE39A6B),
+      'plum': Color(0xFF8E74B4),
+      'teal': Color(0xFF4FA79C),
+      'sunset': Color(0xFFE06A5A),
+      'ocean': Color(0xFF3E7CB1),
+      'pinkg': Color(0xFFE07A9A),
+      'night': Color(0xFF6B5FAE),
     };
     return map[id] ?? Color(0xFF6C8CD5);
   }
+
   void _showThemePicker() {
-    showTideSheet(context: context, height: 560, child: StatefulBuilder(builder: (ctx, setSt) {
-      final t = TideTheme.of(ctx, listen: false);
-      String mi = 'auto';
-      if (!t.hasManualMode) mi = 'auto';
-      else if (t.mode == ThemeMode.dark) mi = 'dark';
-      else mi = 'light';
-      final options = TideTheme.themeOptions;
-      return Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 标题 + 右上角日/夜切换按钮
-        Row(children: [
-          const Expanded(child: Text('主题设置', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, fontFamily: 'TideFont'))),
-          // 日/夜/跟随 循环切换（system->light->dark->system）
-          GestureDetector(
-            onTap: () => t.cycleMode().then((_) { if (ctx.mounted) setSt(() {}); }),
-            child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: t.bgColor == const Color(0xFFF2F2F7) ? t.primary.withOpacity(0.12) : Colors.white.withOpacity(0.12)),
-              child: Row(children: [
-                Icon(mi == 'dark' ? Icons.dark_mode_rounded : (mi == 'auto' ? Icons.brightness_auto_rounded : Icons.wb_sunny_rounded), size: 16, color: t.primary),
-                const SizedBox(width: 6),
-                Text(mi == 'dark' ? '夜间' : (mi == 'auto' ? '跟随系统' : '日间'), style: TextStyle(fontSize: 12, fontFamily: 'TideFont', color: t.primary)),
-              ])),
-          ),
-        ]),
-        const SizedBox(height: 4),
-        Text('选择你喜欢的配色方案，日夜均跟随系统', style: TextStyle(fontSize: 13, color: TideTheme.of(context).textWeak, fontFamily: 'TideFont')),
-        const SizedBox(height: 16),
-        Expanded(child: ListView(children: options.map((item) {
-          final id = item['id']!;
-          final name = item['name']!;
-          final active = t.name == id;
-          return BouncyTap(
-            onTap: () { t.setTheme(id); setSt(() {}); },
-            child: FrostCard(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(14),
-              child: Row(children: [
-                Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: _themeDotPrimary(id)), child: active ? const Icon(Icons.check, color: Colors.white, size: 18) : null),
-                const SizedBox(width: 14),
-                Expanded(child: Text(name, style: TextStyle(fontSize: 16, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong))),
-                if (active) Icon(Icons.check_circle, color: TideTheme.of(ctx).primary, size: 20),
-              ]),
-            ),
-          );
-        }).toList())),
-        const SizedBox(height: 12),
-        // 背景设置入口：上传图片作为聊天背景
-        BouncyTap(
-          onTap: () { _pickChatBg(); },
-          child: Container(width: double.infinity, height: 48, decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: TideTheme.of(ctx).primary)),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.wallpaper_rounded, size: 20, color: TideTheme.of(ctx).primary),
-              const SizedBox(width: 8),
-              Text('聊天背景', style: TextStyle(fontSize: 15, color: TideTheme.of(ctx).primary, fontFamily: 'TideFont')),
-              if (t.chatBg.isNotEmpty) ...[const SizedBox(width: 8), Icon(Icons.check_circle, size: 16, color: Color(0xFF34C759))],
-            ])),
-        ),
-        const SizedBox(height: 8),
-      ]));
-    }));
+    showTideSheet(
+        context: context,
+        height: 560,
+        child: StatefulBuilder(builder: (ctx, setSt) {
+          final t = TideTheme.of(ctx, listen: false);
+          String mi = 'auto';
+          if (!t.hasManualMode)
+            mi = 'auto';
+          else if (t.mode == ThemeMode.dark)
+            mi = 'dark';
+          else
+            mi = 'light';
+          final options = TideTheme.themeOptions;
+          return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 标题 + 右上角日/夜切换按钮
+                    Row(children: [
+                      const Expanded(
+                          child: Text('主题设置',
+                              style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  fontFamily: 'TideFont'))),
+                      // 日/夜/跟随 循环切换（system->light->dark->system）
+                      GestureDetector(
+                        onTap: () => t.cycleMode().then((_) {
+                          if (ctx.mounted) setSt(() {});
+                        }),
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                color: t.bgColor == const Color(0xFFF2F2F7)
+                                    ? t.primary.withOpacity(0.12)
+                                    : Colors.white.withOpacity(0.12)),
+                            child: Row(children: [
+                              Icon(
+                                  mi == 'dark'
+                                      ? Icons.dark_mode_rounded
+                                      : (mi == 'auto'
+                                          ? Icons.brightness_auto_rounded
+                                          : Icons.wb_sunny_rounded),
+                                  size: 16,
+                                  color: t.primary),
+                              const SizedBox(width: 6),
+                              Text(
+                                  mi == 'dark'
+                                      ? '夜间'
+                                      : (mi == 'auto' ? '跟随系统' : '日间'),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'TideFont',
+                                      color: t.primary)),
+                            ])),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    Text('选择你喜欢的配色方案，日夜均跟随系统',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: TideTheme.of(context).textWeak,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 16),
+                    Expanded(
+                        child: ListView(
+                            children: options.map((item) {
+                      final id = item['id']!;
+                      final name = item['name']!;
+                      final active = t.name == id;
+                      return BouncyTap(
+                        onTap: () {
+                          t.setTheme(id);
+                          setSt(() {});
+                        },
+                        child: FrostCard(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(14),
+                          child: Row(children: [
+                            Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: _themeDotPrimary(id)),
+                                child: active
+                                    ? const Icon(Icons.check,
+                                        color: Colors.white, size: 18)
+                                    : null),
+                            const SizedBox(width: 14),
+                            Expanded(
+                                child: Text(name,
+                                    style: TextStyle(
+                                        fontSize: 16,
+                                        fontFamily: 'TideFont',
+                                        color:
+                                            TideTheme.of(context).textStrong))),
+                            if (active)
+                              Icon(Icons.check_circle,
+                                  color: TideTheme.of(ctx).primary, size: 20),
+                          ]),
+                        ),
+                      );
+                    }).toList())),
+                    const SizedBox(height: 12),
+                    BouncyTap(
+                      onTap: () async {
+                        await t.restoreDefaults();
+                        if (ctx.mounted) setSt(() {});
+                      },
+                      child: Container(
+                          width: double.infinity,
+                          height: 44,
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              color: t.buttonSecondary),
+                          child: Center(
+                              child: Text('恢复默认主题与背景',
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      color: t.textStrong,
+                                      fontFamily: 'TideFont')))),
+                    ),
+                    const SizedBox(height: 8),
+                    // 背景设置入口：上传图片作为聊天背景
+                    BouncyTap(
+                      onTap: () {
+                        _pickChatBg();
+                      },
+                      child: Container(
+                          width: double.infinity,
+                          height: 48,
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border:
+                                  Border.all(color: TideTheme.of(ctx).primary)),
+                          child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.wallpaper_rounded,
+                                    size: 20, color: TideTheme.of(ctx).primary),
+                                const SizedBox(width: 8),
+                                Text('聊天背景',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        color: TideTheme.of(ctx).primary,
+                                        fontFamily: 'TideFont')),
+                                if (t.chatBg.isNotEmpty) ...[
+                                  const SizedBox(width: 8),
+                                  Icon(Icons.check_circle,
+                                      size: 16, color: Color(0xFF34C759))
+                                ],
+                              ])),
+                    ),
+                    const SizedBox(height: 8),
+                  ]));
+        }));
   }
+
   // 选择聊天背景图片
   Future<void> _pickChatBg() async {
     final tide = TideTheme.of(context, listen: false);
     try {
-      // 先请求图片读取权限
-      bool granted = true;
-      try { granted = await Permission.photos.isGranted || (await Permission.photos.request()).isGranted; } catch (_) {
-        try { granted = (await Permission.storage.request()).isGranted; } catch (_) {}
-      }
-      if (!granted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('需要相册权限才能设置背景', style: TextStyle(fontFamily: 'TideFont')), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFFE74C3C)));
-        }
-        return;
-      }
+      if (!await AppPermissions.photos(context, feature: '设置聊天背景')) return;
       final picker = ImagePicker();
-      final img = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1600);
+      final img =
+          await picker.pickImage(source: ImageSource.gallery, maxWidth: 1600);
       if (img != null) {
         String path = img.path;
-        if (path.toLowerCase().endsWith('.heic') || path.toLowerCase().endsWith('.heif')) {
-          try { final converted = await HeifConverter.convert(path); if (converted != null) path = converted; } catch (_) {}
+        if (path.toLowerCase().endsWith('.heic') ||
+            path.toLowerCase().endsWith('.heif')) {
+          try {
+            final converted = await HeifConverter.convert(path);
+            if (converted != null) path = converted;
+          } catch (_) {}
         }
         final dir = await getApplicationDocumentsDirectory();
-        final dest = '${dir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}.png';
+        final dest =
+            '${dir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}.png';
         await File(path).copy(dest);
         await tide.setChatBg(dest);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('聊天背景已更新', style: TextStyle(fontFamily: 'TideFont')), backgroundColor: const Color(0xFF34C759), behavior: SnackBarBehavior.floating));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: const Text('聊天背景已更新',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              backgroundColor: const Color(0xFF34C759),
+              behavior: SnackBarBehavior.floating));
         }
       }
     } catch (_) {}
   }
-  void _showNotificationSettings() {
-    bool silent=false, schedule=true;
-    TideDialogs.show(context:context, builder:(ctx)=>StatefulBuilder(builder:(ctx,setSt)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-      content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
-        const Text('通知管理', style: TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-        SwitchListTile(title: Text('静默通知', style: TextStyle(fontFamily:'TideFont')), value:silent, onChanged:(v)=>setSt(()=>silent=v), activeColor: TideTheme.of(context).primary),
-        SwitchListTile(title: Text('日程提醒', style: TextStyle(fontFamily:'TideFont')), value:schedule, onChanged:(v)=>setSt(()=>schedule=v), activeColor: TideTheme.of(context).primary),
-        const SizedBox(height:12), TideDialogs.glassButton('确定', onTap:()=>Navigator.pop(ctx))]))));
+
+  void _showGeneralSettings() async {
+    final db = DBManager();
+    bool showTime = (await db.getKV('show_message_time')) != 'false';
+    bool showAvatar = (await db.getKV('show_chat_avatar')) == 'true';
+    if (!mounted) return;
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+            builder: (ctx, setSt) => AlertDialog(
+                backgroundColor: Colors.transparent,
+                contentPadding: EdgeInsets.zero,
+                content: TideDialogs.glassContent(
+                    context: ctx,
+                    maxWidth: 0.9,
+                    children: [
+                      Text('普通设置',
+                          style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont',
+                              color: TideTheme.of(ctx).textStrong)),
+                      SwitchListTile(
+                          title: const Text('显示消息发送时间',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          value: showTime,
+                          onChanged: (v) async {
+                            setSt(() => showTime = v);
+                            await db.insertKV(
+                                'show_message_time', v.toString());
+                          },
+                          activeColor: TideTheme.of(ctx).primary),
+                      SwitchListTile(
+                          title: const Text('聊天界面显示头像',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          value: showAvatar,
+                          onChanged: (v) async {
+                            setSt(() => showAvatar = v);
+                            await db.insertKV('show_chat_avatar', v.toString());
+                          },
+                          activeColor: TideTheme.of(ctx).primary),
+                    ]))));
+  }
+
+  void _showAdvancedSettings() {
+    showTideSheet(
+        context: context,
+        height: 210,
+        child: Padding(
+            padding: const EdgeInsets.all(20),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('高级设置',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont',
+                      color: TideTheme.of(context).textStrong)),
+              const SizedBox(height: 12),
+              Text('高级模型、后台任务与调试选项将逐步在这里提供。',
+                  style: TextStyle(
+                      fontFamily: 'TideFont',
+                      color: TideTheme.of(context).textWeak)),
+            ])));
+  }
+
+  void _showNotificationSettings() async {
+    final db = DBManager();
+    bool unread = (await db.getKV('unread_notifications')) != 'false';
+    bool keepRunning = (await db.getKV('persistent_notification')) == 'true';
+    if (!mounted) return;
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+            builder: (ctx, setSt) => AlertDialog(
+                backgroundColor: Colors.transparent,
+                contentPadding: EdgeInsets.zero,
+                content: TideDialogs
+                    .glassContent(context: ctx, maxWidth: 0.9, children: [
+                  Text('通知管理',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont',
+                          color: TideTheme.of(ctx).textStrong)),
+                  SwitchListTile(
+                      title: const Text('机器人未读消息通知',
+                          style: TextStyle(fontFamily: 'TideFont')),
+                      subtitle: const Text('APP 不在前台时提醒',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      value: unread,
+                      onChanged: (v) async {
+                        if (v && !await AppPermissions.notifications(context))
+                          return;
+                        setSt(() => unread = v);
+                        await db.insertKV('unread_notifications', v.toString());
+                      },
+                      activeColor: TideTheme.of(ctx).primary),
+                  SwitchListTile(
+                      title: const Text('TideBot 正在运行中',
+                          style: TextStyle(fontFamily: 'TideFont')),
+                      subtitle: const Text('开启后显示持久化状态通知',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      value: keepRunning,
+                      onChanged: (v) async {
+                        if (v && !await AppPermissions.notifications(context))
+                          return;
+                        try {
+                          final service = FlutterBackgroundService();
+                          if (v) {
+                            await service.startService();
+                          } else {
+                            service.invoke('stopService');
+                          }
+                          setSt(() => keepRunning = v);
+                          await db.insertKV(
+                              'persistent_notification', v.toString());
+                        } catch (_) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx)
+                                .showSnackBar(const SnackBar(
+                              content: Text('无法切换运行通知，请检查系统通知与后台权限',
+                                  style: TextStyle(fontFamily: 'TideFont')),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        }
+                      },
+                      activeColor: TideTheme.of(ctx).primary),
+                ]))));
   }
 }
 
 class ApiSettingsPage extends StatefulWidget {
-  const ApiSettingsPage({super.key}); @override State<ApiSettingsPage> createState() => _ApiSettingsPageState();
+  const ApiSettingsPage({super.key});
+  @override
+  State<ApiSettingsPage> createState() => _ApiSettingsPageState();
 }
+
 class _ApiSettingsPageState extends State<ApiSettingsPage> {
-  List<Map<String,dynamic>> _providers = [];
-  List<Map<String,dynamic>> _ttsProviders = [];
+  List<Map<String, dynamic>> _providers = [];
+  List<Map<String, dynamic>> _ttsProviders = [];
   bool _loading = true;
   final _presets = [
-    {'name':'DeepSeek','url':'https://api.deepseek.com/v1','models':'deepseek-chat'},
-    {'name':'SiliconFlow','url':'https://api.siliconflow.cn/v1','models':'Qwen/Qwen2.5-7B-Instruct'},
-    {'name':'阿里云百炼','url':'https://dashscope.aliyuncs.com/compatible-mode/v1','models':'qwen-plus'},
-    {'name':'Kimi','url':'https://api.moonshot.cn/v1','models':'moonshot-v1-8k'},
+    {
+      'name': 'DeepSeek',
+      'url': 'https://api.deepseek.com/v1',
+      'models': 'deepseek-chat'
+    },
+    {
+      'name': 'SiliconFlow',
+      'url': 'https://api.siliconflow.cn/v1',
+      'models': 'Qwen/Qwen2.5-7B-Instruct'
+    },
+    {
+      'name': '阿里云百炼',
+      'url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      'models': 'qwen-plus'
+    },
+    {
+      'name': 'Kimi',
+      'url': 'https://api.moonshot.cn/v1',
+      'models': 'moonshot-v1-8k'
+    },
   ];
   final _ttsPresets = [
-    {'name':'SiliconFlow TTS','url':'https://api.siliconflow.cn/v1','models':'FunAudioLLM/CosyVoice2-0.5B','voice':'default'},
-    {'name':'阿里云百炼 TTS','url':'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-to-speech','models':'cosyvoice-v1','voice':'default'},
-    {'name':'MiniMax TTS','url':'https://api.minimax.chat/v1','models':'speech-01','voice':'default'},
+    {
+      'name': 'SiliconFlow TTS',
+      'url': 'https://api.siliconflow.cn/v1',
+      'models': 'FunAudioLLM/CosyVoice2-0.5B',
+      'voice': 'default'
+    },
+    {
+      'name': '阿里云百炼 TTS',
+      'url':
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-to-speech',
+      'models': 'cosyvoice-v1',
+      'voice': 'default'
+    },
+    {
+      'name': 'MiniMax TTS',
+      'url': 'https://api.minimax.chat/v1',
+      'models': 'speech-01',
+      'voice': 'default'
+    },
   ];
-  @override void initState() { super.initState(); _loadAll(); }
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
   Future<void> _loadAll() async {
     final db = DBManager();
     final raw = await db.getKV('provider_list');
     final ttsRaw = await db.getKV('tts_provider_list');
-    List<Map<String,dynamic>> list = [];
-    List<Map<String,dynamic>> ttsList = [];
-    if (raw != null && raw.isNotEmpty) { try { final decoded = jsonDecode(raw) as List; list = decoded.map((e)=>e as Map<String,dynamic>).toList(); } catch(_){} }
-    if (ttsRaw != null && ttsRaw.isNotEmpty) { try { final decoded = jsonDecode(ttsRaw) as List; ttsList = decoded.map((e)=>e as Map<String,dynamic>).toList(); } catch(_){} }
-    if (mounted) setState(() { _providers = list; _ttsProviders = ttsList; _loading = false; });
+    List<Map<String, dynamic>> list = [];
+    List<Map<String, dynamic>> ttsList = [];
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw) as List;
+        list = decoded.map((e) => e as Map<String, dynamic>).toList();
+      } catch (_) {}
+    }
+    if (ttsRaw != null && ttsRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(ttsRaw) as List;
+        ttsList = decoded.map((e) => e as Map<String, dynamic>).toList();
+      } catch (_) {}
+    }
+    if (mounted)
+      setState(() {
+        _providers = list;
+        _ttsProviders = ttsList;
+        _loading = false;
+      });
   }
+
   Future<void> _saveList() async {
     await DBManager().insertKV('provider_list', jsonEncode(_providers));
     await DBManager().insertKV('tts_provider_list', jsonEncode(_ttsProviders));
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已保存', style: TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: TideTheme.of(context).primary));
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已保存', style: TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: TideTheme.of(context).primary));
   }
+
   void _addProvider() {
-    showTideSheet(context: context, height: 520, child: Padding(padding: const EdgeInsets.fromLTRB(16,0,16,20), child: SingleChildScrollView(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const SizedBox(height:8), const Text('新增模型提供商', style: TextStyle(fontSize:18, fontWeight:FontWeight.w600, fontFamily:'TideFont')),
-        const SizedBox(height:12),
-        Wrap(spacing:8, runSpacing:8, children: _presets.map((p) => BouncyTap(onTap:() { Navigator.pop(context); _showAddDialog(p['name']!, p['url']!, '', p['models']!, false); }, child: Container(padding: const EdgeInsets.symmetric(horizontal:12,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(16), color: Colors.white.withOpacity(0.8)), child: Text(p['name']!, style: const TextStyle(fontSize:13, fontFamily:'TideFont'))))).toList()),
-        SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showAddDialog('自定义', '', '', '', false); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
-        const SizedBox(height:24), const Text('文本转语音 (TTS)', style: TextStyle(fontSize:18, fontWeight:FontWeight.w600, fontFamily:'TideFont')), const SizedBox(height:12),
-        Wrap(spacing:8, runSpacing:8, children: _ttsPresets.map((p) => BouncyTap(onTap:() { Navigator.pop(context); _showTtsDialog(p['name']!, p['url']!, '', p['models']!, p['voice']!); }, child: Container(padding: const EdgeInsets.symmetric(horizontal:12,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(16), color: Colors.white.withOpacity(0.8)), child: Text(p['name']!, style: const TextStyle(fontSize:13, fontFamily:'TideFont'))))).toList()),
-        SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showTtsDialog('自定义', '', '', '', ''); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义 TTS', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
-      ]),
-    )));
+    showTideSheet(
+        context: context,
+        height: 520,
+        child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            child: SingleChildScrollView(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 8),
+                    const Text('新增模型提供商',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _presets
+                            .map((p) => BouncyTap(
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  _showAddDialog(p['name']!, p['url']!, '',
+                                      p['models']!, false);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(16),
+                                        color: Colors.white.withOpacity(0.8)),
+                                    child: Text(p['name']!,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontFamily: 'TideFont')))))
+                            .toList()),
+                    SizedBox(height: 12),
+                    BouncyTap(
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showAddDialog('自定义', '', '', '', false);
+                        },
+                        child: Container(
+                            width: double.infinity,
+                            height: 44,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: TideTheme.of(context).primary)),
+                            child: Center(
+                                child: Text('自定义',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        color: TideTheme.of(context).primary,
+                                        fontFamily: 'TideFont'))))),
+                    const SizedBox(height: 24),
+                    const Text('文本转语音 (TTS)',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _ttsPresets
+                            .map((p) => BouncyTap(
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  _showTtsDialog(p['name']!, p['url']!, '',
+                                      p['models']!, p['voice']!);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(16),
+                                        color: Colors.white.withOpacity(0.8)),
+                                    child: Text(p['name']!,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontFamily: 'TideFont')))))
+                            .toList()),
+                    SizedBox(height: 12),
+                    BouncyTap(
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showTtsDialog('自定义', '', '', '', '');
+                        },
+                        child: Container(
+                            width: double.infinity,
+                            height: 44,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: TideTheme.of(context).primary)),
+                            child: Center(
+                                child: Text('自定义 TTS',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        color: TideTheme.of(context).primary,
+                                        fontFamily: 'TideFont'))))),
+                  ]),
+            )));
   }
-  void _showAddDialog(String name, String url, String key, String models, bool isTts) {
-    final nCtrl = TextEditingController(text:name); final uCtrl = TextEditingController(text:url);
-    final kCtrl = TextEditingController(text:key); final mCtrl = TextEditingController(text:models);
-    TideDialogs.show(context:context, builder:(ctx)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-      content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
-        Text(isTts?'添加 TTS':'添加提供商', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-        _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
-        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名（仅填一个）', mCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
-          final raw = mCtrl.text.trim();
-          // 只允许一个模型：若含逗号/换行等多值分隔，取第一个并提示
-          String model = raw;
-          if (raw.contains(',') || raw.contains('，')) {
-            final parts = raw.split(RegExp('[，,]')); if (parts.isNotEmpty) model = parts.first.trim();
-            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('只能填一个模型，已按「$model」保存', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: const Color(0xFFE74C3C), duration: const Duration(seconds: 2)));
-          }
-          setState(() {
-            final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':model};
-          final idx = _providers.indexWhere((e) => e['name'] == p['name']);
-          if (idx >= 0) { _providers[idx] = p; } else { _providers.add(p); }
-        });
-          Navigator.pop(ctx); _saveList();
-        }))])]))); }
-  void _showTtsDialog(String name, String url, String key, String models, String voice) {
-    final nCtrl = TextEditingController(text:name); final uCtrl = TextEditingController(text:url);
-    final kCtrl = TextEditingController(text:key); final mCtrl = TextEditingController(text:models); final vCtrl = TextEditingController(text:voice);
-    TideDialogs.show(context:context, builder:(ctx)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-      content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
-        const Text('添加 TTS 提供商', style: TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-        _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
-        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名（仅填一个）', mCtrl), const SizedBox(height:8),
-        _f('音色', vCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
-          String model = mCtrl.text.trim();
-          if (model.contains(',') || model.contains('，')) { final parts = model.split(RegExp('[，,]')); if (parts.isNotEmpty) model = parts.first.trim(); ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('只能填一个模型，已按「$model」保存', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: const Color(0xFFE74C3C), duration: const Duration(seconds: 2))); }
-          setState(() { final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':model,'voice':vCtrl.text.trim()}; final i = _ttsProviders.indexWhere((e) => e['name'] == p['name']); if (i >= 0) { _ttsProviders[i] = p; } else { _ttsProviders.add(p); } });
-          Navigator.pop(ctx); _saveList();
-        }))])]))); }
-  Widget _f(String label, TextEditingController c,{bool obscure=false}) => Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-    Text(label, style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:4),
-    Container(decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: TideTheme.of(context).surfaceVariant), child: TextField(controller:c, obscureText:obscure, style: const TextStyle(fontSize:14, fontFamily:'TideFont'), decoration: InputDecoration(contentPadding: const EdgeInsets.symmetric(horizontal:12, vertical:10), border:InputBorder.none)))]);
-  void _editProvider(Map<String,dynamic> p) {
-    final nCtrl = TextEditingController(text: p['name']); final uCtrl = TextEditingController(text: p['url']);
-    final kCtrl = TextEditingController(text: p['key']); final mCtrl = TextEditingController(text: p['model']);
+
+  void _showAddDialog(
+      String name, String url, String key, String models, bool isTts) {
+    final nCtrl = TextEditingController(text: name);
+    final uCtrl = TextEditingController(text: url);
+    final kCtrl = TextEditingController(text: key);
+    final mCtrl = TextEditingController(text: models);
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(
+                context: ctx,
+                maxWidth: 0.9,
+                children: [
+                  Text(isTts ? '添加 TTS' : '添加提供商',
+                      style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont')),
+                  const SizedBox(height: 12),
+                  _f('名称', nCtrl),
+                  const SizedBox(height: 8),
+                  _f('API 地址', uCtrl),
+                  const SizedBox(height: 8),
+                  _f('API Key', kCtrl, obscure: true),
+                  const SizedBox(height: 8),
+                  _f('模型名（仅填一个）', mCtrl),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(
+                        child: TideDialogs.glassButton('取消',
+                            onTap: () => Navigator.pop(ctx),
+                            color: TideTheme.of(context).buttonSecondary,
+                            textColor: TideTheme.of(context).textStrong)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: TideDialogs.glassButton('添加', onTap: () {
+                      final raw = mCtrl.text.trim();
+                      // 只允许一个模型：若含逗号/换行等多值分隔，取第一个并提示
+                      String model = raw;
+                      if (raw.contains(',') || raw.contains('，')) {
+                        final parts = raw.split(RegExp('[，,]'));
+                        if (parts.isNotEmpty) model = parts.first.trim();
+                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                            content: Text('只能填一个模型，已按「$model」保存',
+                                style: const TextStyle(fontFamily: 'TideFont')),
+                            behavior: SnackBarBehavior.floating,
+                            backgroundColor: const Color(0xFFE74C3C),
+                            duration: const Duration(seconds: 2)));
+                      }
+                      setState(() {
+                        final p = {
+                          'name': nCtrl.text.trim(),
+                          'url': uCtrl.text.trim(),
+                          'key': kCtrl.text.trim(),
+                          'model': model
+                        };
+                        final idx = _providers
+                            .indexWhere((e) => e['name'] == p['name']);
+                        if (idx >= 0) {
+                          _providers[idx] = p;
+                        } else {
+                          _providers.add(p);
+                        }
+                      });
+                      Navigator.pop(ctx);
+                      _saveList();
+                    }))
+                  ])
+                ])));
+  }
+
+  void _showTtsDialog(
+      String name, String url, String key, String models, String voice) {
+    final nCtrl = TextEditingController(text: name);
+    final uCtrl = TextEditingController(text: url);
+    final kCtrl = TextEditingController(text: key);
+    final mCtrl = TextEditingController(text: models);
+    final vCtrl = TextEditingController(text: voice);
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(
+                context: ctx,
+                maxWidth: 0.9,
+                children: [
+                  const Text('添加 TTS 提供商',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont')),
+                  const SizedBox(height: 12),
+                  _f('名称', nCtrl),
+                  const SizedBox(height: 8),
+                  _f('API 地址', uCtrl),
+                  const SizedBox(height: 8),
+                  _f('API Key', kCtrl, obscure: true),
+                  const SizedBox(height: 8),
+                  _f('模型名（仅填一个）', mCtrl),
+                  const SizedBox(height: 8),
+                  _f('音色', vCtrl),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(
+                        child: TideDialogs.glassButton('取消',
+                            onTap: () => Navigator.pop(ctx),
+                            color: TideTheme.of(context).buttonSecondary,
+                            textColor: TideTheme.of(context).textStrong)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: TideDialogs.glassButton('添加', onTap: () {
+                      String model = mCtrl.text.trim();
+                      if (model.contains(',') || model.contains('，')) {
+                        final parts = model.split(RegExp('[，,]'));
+                        if (parts.isNotEmpty) model = parts.first.trim();
+                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                            content: Text('只能填一个模型，已按「$model」保存',
+                                style: const TextStyle(fontFamily: 'TideFont')),
+                            behavior: SnackBarBehavior.floating,
+                            backgroundColor: const Color(0xFFE74C3C),
+                            duration: const Duration(seconds: 2)));
+                      }
+                      setState(() {
+                        final p = {
+                          'name': nCtrl.text.trim(),
+                          'url': uCtrl.text.trim(),
+                          'key': kCtrl.text.trim(),
+                          'model': model,
+                          'voice': vCtrl.text.trim()
+                        };
+                        final i = _ttsProviders
+                            .indexWhere((e) => e['name'] == p['name']);
+                        if (i >= 0) {
+                          _ttsProviders[i] = p;
+                        } else {
+                          _ttsProviders.add(p);
+                        }
+                      });
+                      Navigator.pop(ctx);
+                      _saveList();
+                    }))
+                  ])
+                ])));
+  }
+
+  Widget _f(String label, TextEditingController c, {bool obscure = false}) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                color: TideTheme.of(context).textWeak,
+                fontFamily: 'TideFont')),
+        SizedBox(height: 4),
+        Container(
+            decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: TideTheme.of(context).surfaceVariant),
+            child: TextField(
+                controller: c,
+                obscureText: obscure,
+                style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
+                decoration: InputDecoration(
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    border: InputBorder.none)))
+      ]);
+  void _editProvider(Map<String, dynamic> p) {
+    final nCtrl = TextEditingController(text: p['name']);
+    final uCtrl = TextEditingController(text: p['url']);
+    final kCtrl = TextEditingController(text: p['key']);
+    final mCtrl = TextEditingController(text: p['model']);
     final hasVoice = p.containsKey('voice');
-    TideDialogs.show(context:context, builder:(ctx)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-      content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
-        Text('编辑${hasVoice?' TTS':'提供商'}', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-        _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
-        _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名', mCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('保存', onTap:(){
-          p['name'] = nCtrl.text.trim(); p['url'] = uCtrl.text.trim(); p['key'] = kCtrl.text.trim(); p['model'] = mCtrl.text.trim();
-          Navigator.pop(ctx); _saveList(); setState(() {});
-        }))])]))); }
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(
+                context: ctx,
+                maxWidth: 0.9,
+                children: [
+                  Text('编辑${hasVoice ? ' TTS' : '提供商'}',
+                      style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont')),
+                  const SizedBox(height: 12),
+                  _f('名称', nCtrl),
+                  const SizedBox(height: 8),
+                  _f('API 地址', uCtrl),
+                  const SizedBox(height: 8),
+                  _f('API Key', kCtrl, obscure: true),
+                  const SizedBox(height: 8),
+                  _f('模型名', mCtrl),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(
+                        child: TideDialogs.glassButton('取消',
+                            onTap: () => Navigator.pop(ctx),
+                            color: TideTheme.of(context).buttonSecondary,
+                            textColor: TideTheme.of(context).textStrong)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: TideDialogs.glassButton('保存', onTap: () {
+                      p['name'] = nCtrl.text.trim();
+                      p['url'] = uCtrl.text.trim();
+                      p['key'] = kCtrl.text.trim();
+                      p['model'] = mCtrl.text.trim();
+                      Navigator.pop(ctx);
+                      _saveList();
+                      setState(() {});
+                    }))
+                  ])
+                ])));
+  }
+
   void _deleteProvider(int idx, {bool isTts = false}) {
     final name = isTts ? _ttsProviders[idx]['name'] : _providers[idx]['name'];
-    TideDialogs.show(context:context, builder:(ctx)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
-      content: TideDialogs.glassContent(context:ctx, maxWidth:0.85, children: [
-        Text('删除${isTts?'TTS':''}提供商', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:10),
-        Text('确定删除「$name」吗？', style: const TextStyle(fontSize:14, fontFamily:'TideFont')), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('删除', onTap:(){ setState(() { if (isTts) { _ttsProviders.removeAt(idx); } else { _providers.removeAt(idx); } }); Navigator.pop(ctx); _saveList(); }, color: const Color(0xFFE74C3C)))]),
-      ])));
+    TideDialogs.show(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs
+                .glassContent(context: ctx, maxWidth: 0.85, children: [
+              Text('删除${isTts ? 'TTS' : ''}提供商',
+                  style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 10),
+              Text('确定删除「$name」吗？',
+                  style: const TextStyle(fontSize: 14, fontFamily: 'TideFont')),
+              const SizedBox(height: 16),
+              Row(children: [
+                Expanded(
+                    child: TideDialogs.glassButton('取消',
+                        onTap: () => Navigator.pop(ctx),
+                        color: TideTheme.of(context).buttonSecondary,
+                        textColor: TideTheme.of(context).textStrong)),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: TideDialogs.glassButton('删除', onTap: () {
+                  setState(() {
+                    if (isTts) {
+                      _ttsProviders.removeAt(idx);
+                    } else {
+                      _providers.removeAt(idx);
+                    }
+                  });
+                  Navigator.pop(ctx);
+                  _saveList();
+                }, color: const Color(0xFFE74C3C)))
+              ]),
+            ])));
   }
-  Future<void> _testProvider(Map<String,dynamic> p) async {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('测试中...', style: TextStyle(fontFamily:'TideFont')), duration: Duration(seconds:1), behavior:SnackBarBehavior.floating));
+
+  Future<void> _testProvider(Map<String, dynamic> p) async {
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('测试中...', style: TextStyle(fontFamily: 'TideFont')),
+          duration: Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating));
     try {
-      final ms = await AIManager().testConnection(p['url']??'', p['key']??'', (p['model'] as String?)?.split(',').first.trim()??'');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('连接成功！${ms}ms', style: const TextStyle(fontFamily:'TideFont')), backgroundColor: const Color(0xFF34C759), behavior:SnackBarBehavior.floating));
-    } catch(e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('连接失败: $e', style: const TextStyle(fontFamily:'TideFont')), backgroundColor: const Color(0xFFE74C3C), behavior:SnackBarBehavior.floating));
+      final ms = await AIManager().testConnection(
+          p['url'] ?? '',
+          p['key'] ?? '',
+          (p['model'] as String?)?.split(',').first.trim() ?? '');
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('连接成功！${ms}ms',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            backgroundColor: const Color(0xFF34C759),
+            behavior: SnackBarBehavior.floating));
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('连接失败: $e',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            backgroundColor: const Color(0xFFE74C3C),
+            behavior: SnackBarBehavior.floating));
     }
   }
-  @override Widget build(BuildContext context) => Scaffold(backgroundColor: TideTheme.of(context).bgColor,
-    appBar: AppBar(title: const Text('API 设置', style: TextStyle(fontWeight:FontWeight.w600, fontFamily:'TideFont')), backgroundColor:Colors.transparent, elevation:0,
-      leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size:20), onPressed:()=>Navigator.pop(context)),
-      actions: [IconButton(icon: Icon(Icons.add_circle_outline_rounded, color: TideTheme.of(context).primary, size:26), onPressed:_addProvider)]),
-    body: _loading ? Center(child: CircularProgressIndicator(color: TideTheme.of(context).primary)) :
-    SingleChildScrollView(padding: const EdgeInsets.fromLTRB(16,8,16,100), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (_providers.isEmpty && _ttsProviders.isEmpty)
-        Center(child: Padding(padding: const EdgeInsets.only(top:80), child: Column(mainAxisSize:MainAxisSize.min, children: [
-          const Icon(Icons.api_rounded, size:60, color:Color(0xFFC7C7CC)), const SizedBox(height:12),
-          Text('还没有添加任何模型提供商', style: TextStyle(fontSize:15, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')),
-          SizedBox(height:6), Text('点击右上角 + 添加', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))]))),
-      if (_providers.isNotEmpty) ...[
-        Padding(padding: EdgeInsets.only(top:8, bottom:8), child: Text('AI 模型', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))),
-        ...List.generate(_providers.length, (i) {
-          final p = _providers[i];
-          return BouncyTap(onTap: () => _editProvider(p), child: FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-            Row(children: [Expanded(child: Text(p['name']??'', style: TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont'))), BouncyTap(onTap:()=>_testProvider(p), child: Container(padding: EdgeInsets.symmetric(horizontal:10,vertical:4), decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: TideTheme.of(context).primary.withOpacity(0.15)), child: Text('测试', style: TextStyle(fontSize:12, color: TideTheme.of(context).primary, fontFamily:'TideFont')))), SizedBox(width:8), BouncyTap(onTap:()=>_deleteProvider(i), child: Icon(Icons.delete_outline_rounded, size:20, color:Color(0xFFE74C3C)))]),
-            SizedBox(height:6), Text(p['url']??'', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
-            if ((p['model']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
-            if ((p['key']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:2), child: Text('Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...', style: TextStyle(fontSize:11, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
-          ])));
-        }),
-      ],
-      if (_ttsProviders.isNotEmpty) ...[
-        Padding(padding: EdgeInsets.only(top:16, bottom:8), child: Text('TTS 语音', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))),
-        ...List.generate(_ttsProviders.length, (i) {
-          final p = _ttsProviders[i];
-          return BouncyTap(onTap: () => _editProvider(p), child: FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-            Row(children: [Expanded(child: Text(p['name']??'', style: const TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont'))), const SizedBox(width:8), BouncyTap(onTap:()=>_deleteProvider(i, isTts:true), child: const Icon(Icons.delete_outline_rounded, size:20, color:Color(0xFFE74C3C)))]),
-            SizedBox(height:6), Text(p['url']??'', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
-            if ((p['model']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
-            if ((p['voice']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:2), child: Text('音色: ${p['voice']}', style: TextStyle(fontSize:11, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
-          ])));
-        }),
-      ],
-    ])));
-}
 
+  @override
+  Widget build(BuildContext context) => Scaffold(
+      backgroundColor: TideTheme.of(context).bgColor,
+      appBar: AppBar(
+          title: const Text('API 设置',
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+              onPressed: () => Navigator.pop(context)),
+          actions: [
+            IconButton(
+                icon: Icon(Icons.add_circle_outline_rounded,
+                    color: TideTheme.of(context).primary, size: 26),
+                onPressed: _addProvider)
+          ]),
+      body: _loading
+          ? Center(
+              child: CircularProgressIndicator(
+                  color: TideTheme.of(context).primary))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_providers.isEmpty && _ttsProviders.isEmpty)
+                      Center(
+                          child: Padding(
+                              padding: const EdgeInsets.only(top: 80),
+                              child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.api_rounded,
+                                        size: 60, color: Color(0xFFC7C7CC)),
+                                    const SizedBox(height: 12),
+                                    Text('还没有添加任何模型提供商',
+                                        style: TextStyle(
+                                            fontSize: 15,
+                                            color:
+                                                TideTheme.of(context).textWeak,
+                                            fontFamily: 'TideFont')),
+                                    SizedBox(height: 6),
+                                    Text('点击右上角 + 添加',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color:
+                                                TideTheme.of(context).textFaint,
+                                            fontFamily: 'TideFont'))
+                                  ]))),
+                    if (_providers.isNotEmpty) ...[
+                      Padding(
+                          padding: EdgeInsets.only(top: 8, bottom: 8),
+                          child: Text('AI 模型',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'TideFont',
+                                  color: TideTheme.of(context).textStrong))),
+                      ...List.generate(_providers.length, (i) {
+                        final p = _providers[i];
+                        return BouncyTap(
+                            onTap: () => _editProvider(p),
+                            child: FrostCard(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        Expanded(
+                                            child: Text(p['name'] ?? '',
+                                                style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w600,
+                                                    fontFamily: 'TideFont'))),
+                                        BouncyTap(
+                                            onTap: () => _testProvider(p),
+                                            child: Container(
+                                                padding: EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 4),
+                                                decoration: BoxDecoration(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
+                                                    color: TideTheme.of(context)
+                                                        .primary
+                                                        .withOpacity(0.15)),
+                                                child: Text('测试',
+                                                    style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: TideTheme.of(
+                                                                context)
+                                                            .primary,
+                                                        fontFamily:
+                                                            'TideFont')))),
+                                        SizedBox(width: 8),
+                                        BouncyTap(
+                                            onTap: () => _deleteProvider(i),
+                                            child: Icon(
+                                                Icons.delete_outline_rounded,
+                                                size: 20,
+                                                color: Color(0xFFE74C3C)))
+                                      ]),
+                                      SizedBox(height: 6),
+                                      Text(p['url'] ?? '',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: TideTheme.of(context)
+                                                  .textWeak,
+                                              fontFamily: 'TideFont'),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                      if ((p['model'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        Padding(
+                                            padding: EdgeInsets.only(top: 4),
+                                            child: Text('模型: ${p['model']}',
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: TideTheme.of(context)
+                                                        .textFaint,
+                                                    fontFamily: 'TideFont'))),
+                                      if ((p['key'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        Padding(
+                                            padding: EdgeInsets.only(top: 2),
+                                            child: Text(
+                                                'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: TideTheme.of(context)
+                                                        .textFaint,
+                                                    fontFamily: 'TideFont'))),
+                                    ])));
+                      }),
+                    ],
+                    if (_ttsProviders.isNotEmpty) ...[
+                      Padding(
+                          padding: EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text('TTS 语音',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'TideFont',
+                                  color: TideTheme.of(context).textStrong))),
+                      ...List.generate(_ttsProviders.length, (i) {
+                        final p = _ttsProviders[i];
+                        return BouncyTap(
+                            onTap: () => _editProvider(p),
+                            child: FrostCard(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        Expanded(
+                                            child: Text(p['name'] ?? '',
+                                                style: const TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w600,
+                                                    fontFamily: 'TideFont'))),
+                                        const SizedBox(width: 8),
+                                        BouncyTap(
+                                            onTap: () =>
+                                                _deleteProvider(i, isTts: true),
+                                            child: const Icon(
+                                                Icons.delete_outline_rounded,
+                                                size: 20,
+                                                color: Color(0xFFE74C3C)))
+                                      ]),
+                                      SizedBox(height: 6),
+                                      Text(p['url'] ?? '',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: TideTheme.of(context)
+                                                  .textWeak,
+                                              fontFamily: 'TideFont'),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                      if ((p['model'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        Padding(
+                                            padding: EdgeInsets.only(top: 4),
+                                            child: Text('模型: ${p['model']}',
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: TideTheme.of(context)
+                                                        .textFaint,
+                                                    fontFamily: 'TideFont'))),
+                                      if ((p['voice'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        Padding(
+                                            padding: EdgeInsets.only(top: 2),
+                                            child: Text('音色: ${p['voice']}',
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: TideTheme.of(context)
+                                                        .textFaint,
+                                                    fontFamily: 'TideFont'))),
+                                    ])));
+                      }),
+                    ],
+                  ])));
+}
 
 class LocalModelPage extends StatefulWidget {
-  const LocalModelPage({super.key}); @override State<LocalModelPage> createState() => _LocalModelPageState();
+  const LocalModelPage({super.key});
+  @override
+  State<LocalModelPage> createState() => _LocalModelPageState();
 }
+
 class _LocalModelPageState extends State<LocalModelPage> {
   final List<Map<String, dynamic>> _models = [
-    {'name':'Qwen2.5-0.5B','desc':'轻量级中文模型，适合简单对话','size':'~400MB','id':'qwen2_5_05b','url':'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf','installed':false,'progress':0.0,'downloading':false},
-    {'name':'Gemma-2-2B','desc':'Google轻量模型，英文能力优秀','size':'~1.5GB','id':'gemma2_2b','url':'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf','installed':false,'progress':0.0,'downloading':false},
-    {'name':'Phi-3-mini','desc':'微软轻量模型，推理能力强','size':'~2.2GB','id':'phi3_mini','url':'','installed':false,'progress':0.0,'downloading':false},
+    {
+      'name': 'Qwen2.5-0.5B',
+      'desc': '轻量级中文模型，适合简单对话',
+      'size': '~400MB',
+      'id': 'qwen2_5_05b',
+      'url':
+          'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf',
+      'installed': false,
+      'progress': 0.0,
+      'downloading': false
+    },
+    {
+      'name': 'Gemma-2-2B',
+      'desc': 'Google轻量模型，英文能力优秀',
+      'size': '~1.5GB',
+      'id': 'gemma2_2b',
+      'url':
+          'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
+      'installed': false,
+      'progress': 0.0,
+      'downloading': false
+    },
+    {
+      'name': 'Phi-3-mini',
+      'desc': '微软轻量模型，推理能力强',
+      'size': '~2.2GB',
+      'id': 'phi3_mini',
+      'url': '',
+      'installed': false,
+      'progress': 0.0,
+      'downloading': false
+    },
+    {
+      'name': 'SmolLM2-1.7B',
+      'desc': '轻量多语言模型，适合离线实验',
+      'size': '~1.1GB',
+      'id': 'smollm2_17b',
+      'url':
+          'https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf',
+      'installed': false,
+      'progress': 0.0,
+      'downloading': false
+    },
   ];
-  @override void initState() { super.initState(); _checkInstalled(); }
+  @override
+  void initState() {
+    super.initState();
+    _checkInstalled();
+  }
+
   Future<void> _checkInstalled() async {
     final dir = await getApplicationDocumentsDirectory();
     if (!mounted) return;
-    setState(() { for (var m in _models) { m['installed'] = File('${dir.path}/${m['id']}.gguf').existsSync(); } });
+    setState(() {
+      for (var m in _models) {
+        final file = File('${dir.path}/${m['id']}.gguf');
+        // Empty files were created by older versions' fake downloader.
+        m['installed'] = file.existsSync() && file.lengthSync() > 1024 * 1024;
+      }
+    });
   }
+
   Future<void> _downloadModel(int idx) async {
     final m = _models[idx];
     if ((m['url'] as String).isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('暂无下载链接', style: TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('暂无下载链接', style: TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating));
       return;
     }
-    setState(() { m['downloading']=true; m['progress']=0.0; });
-    for (int i=0;i<=10;i++) { await Future.delayed(const Duration(milliseconds:300)); if (!mounted) return; setState(()=>m['progress']=i/10); }
-    final dir = await getApplicationDocumentsDirectory(); File('${dir.path}/${m['id']}.gguf').createSync(recursive:true);
-    if (mounted) setState(() { m['installed']=true; m['downloading']=false; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${m['name']} 安装完成', style: const TextStyle(fontFamily:'TideFont')), backgroundColor: const Color(0xFF34C759), behavior:SnackBarBehavior.floating)); });
+    setState(() {
+      m['downloading'] = true;
+      m['progress'] = 0.0;
+    });
+    final dir = await getApplicationDocumentsDirectory();
+    final target = File('${dir.path}/${m['id']}.gguf');
+    final part = File('${target.path}.part');
+    try {
+      if (await part.exists()) await part.delete();
+      final req = http.Request('GET', Uri.parse(m['url'] as String));
+      final response =
+          await http.Client().send(req).timeout(const Duration(minutes: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('下载服务器返回 HTTP ${response.statusCode}');
+      }
+      final total = response.contentLength;
+      var received = 0;
+      final sink = part.openWrite();
+      await for (final bytes in response.stream) {
+        sink.add(bytes);
+        received += bytes.length;
+        if (mounted && total != null && total > 0) {
+          setState(() => m['progress'] = received / total);
+        }
+      }
+      await sink.close();
+      if (!await part.exists() || await part.length() <= 1024 * 1024) {
+        throw const FileSystemException('下载文件过小，已拒绝标记为已安装');
+      }
+      if (await target.exists()) await target.delete();
+      await part.rename(target.path);
+      if (mounted) {
+        setState(() {
+          m['installed'] = true;
+          m['downloading'] = false;
+          m['progress'] = 1.0;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('${m['name']} 已真实下载到本机；尚需本地推理引擎才能用于聊天',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            backgroundColor: const Color(0xFF34C759),
+            behavior: SnackBarBehavior.floating));
+      }
+    } catch (e) {
+      try {
+        if (await part.exists()) await part.delete();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          m['downloading'] = false;
+          m['progress'] = 0.0;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('模型下载失败：$e',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            backgroundColor: const Color(0xFFE74C3C),
+            behavior: SnackBarBehavior.floating));
+      }
+    }
   }
-  @override Widget build(BuildContext context) => Scaffold(backgroundColor: TideTheme.of(context).bgColor,
-    appBar: AppBar(title: const Text('本地模型', style: TextStyle(fontWeight:FontWeight.w600, fontFamily:'TideFont')), backgroundColor:Colors.transparent, elevation:0,
-      leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size:20), onPressed:()=>Navigator.pop(context))),
-    body: ListView.builder(padding: const EdgeInsets.fromLTRB(16,8,16,100), itemCount:_models.length, itemBuilder:(ctx,i){
-      final m=_models[i]; final installed=m['installed']==true; final downloading=m['downloading']==true;
-      return FrostCard(margin: const EdgeInsets.only(bottom:12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-        Row(children:[Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-          Row(children:[Text(m['name'] as String, style: const TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont')), if(installed) const Padding(padding: EdgeInsets.only(left:8), child: Icon(Icons.check_circle, size:18, color:Color(0xFF34C759)))]),
-          SizedBox(height:4), Text('${m['desc']} • ${m['size']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'))])),
-          if (!installed)
-            downloading ? SizedBox(width:24,height:24, child: CircularProgressIndicator(strokeWidth:2, color: TideTheme.of(context).primary))
-            : BouncyTap(onTap:()=>_downloadModel(i), child: Container(padding: EdgeInsets.symmetric(horizontal:14,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), color: TideTheme.of(context).primary), child: Text('下载', style: TextStyle(fontSize:13, color:Colors.white, fontFamily:'TideFont')))),
-        ]),
-        if (downloading) Padding(padding: const EdgeInsets.only(top:10), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-          LinearProgressIndicator(value:m['progress'] as double, backgroundColor: TideTheme.of(context).surfaceVariant, color: TideTheme.of(context).primary, borderRadius:BorderRadius.circular(4)),
-          SizedBox(height:4), Text('${((m['progress']as double)*100).toInt()}%', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'))])),
-      ]));
-    }));
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+      backgroundColor: TideTheme.of(context).bgColor,
+      appBar: AppBar(
+          title: const Text('本地模型',
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+              onPressed: () => Navigator.pop(context))),
+      body: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+        itemCount: _models.length + 1,
+        itemBuilder: (ctx, i) {
+          if (i == 0)
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text('模型文件将真实下载到应用私有目录。当前版本未集成 GGUF 推理引擎，下载完成不等于可用于聊天。',
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: TideTheme.of(context).textWeak,
+                      fontFamily: 'TideFont')),
+            );
+          final modelIndex = i - 1;
+          final m = _models[modelIndex];
+          final installed = m['installed'] == true;
+          final downloading = m['downloading'] == true;
+          return FrostCard(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Row(children: [
+                              Text(m['name'] as String,
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      fontFamily: 'TideFont')),
+                              if (installed)
+                                const Padding(
+                                    padding: EdgeInsets.only(left: 8),
+                                    child: Icon(Icons.check_circle,
+                                        size: 18, color: Color(0xFF34C759)))
+                            ]),
+                            const SizedBox(height: 4),
+                            Text('${m['desc']} • ${m['size']}',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: TideTheme.of(context).textWeak,
+                                    fontFamily: 'TideFont'))
+                          ])),
+                      if (!installed)
+                        downloading
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: TideTheme.of(context).primary))
+                            : BouncyTap(
+                                onTap: () => _downloadModel(modelIndex),
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(14),
+                                        color: TideTheme.of(context).primary),
+                                    child: const Text('下载',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.white,
+                                            fontFamily: 'TideFont')))),
+                    ]),
+                    if (downloading)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: LinearProgressIndicator(
+                              value: m['progress'] as double,
+                              backgroundColor:
+                                  TideTheme.of(context).surfaceVariant,
+                              color: TideTheme.of(context).primary)),
+                  ]));
+        },
+      ));
 }

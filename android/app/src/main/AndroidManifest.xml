@@ -4,6 +4,8 @@
     <!-- 基础网络与录音权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Android 13+ notification runtime permission. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <!-- 相册/文件读取权限（Android 13+ 用 READ_MEDIA_IMAGES，旧版用 READ_EXTERNAL_STORAGE） -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

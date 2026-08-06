@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
@@ -8,25 +9,68 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'app_navigation.dart';
+
 class OpsManager {
   static final OpsManager _instance = OpsManager._internal();
   factory OpsManager() => _instance;
   OpsManager._internal();
 
-  static const MethodChannel _nativeChannel = MethodChannel('tidebot.native.channel');
-  
+  static const MethodChannel _nativeChannel =
+      MethodChannel('tidebot.native.channel');
+
   final Record _audioRecorder = Record();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
+  Future<void>? _notificationInitialization;
 
   Future<void> init() async {
     await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+  }
+
+  /// Initializes the shared notification plugin once for all message alerts.
+  /// The payload is a bot id and is resolved against the database on tap.
+  Future<void> initializeNotifications() {
+    return _notificationInitialization ??= _initializeNotifications();
+  }
+
+  Future<void> _initializeNotifications() async {
+    const channel = AndroidNotificationChannel(
+      'tide_bot_msg',
+      'TideBot 消息通知',
+      description: '机器人回复与未读消息提醒',
+      importance: Importance.high,
+    );
+    const settings = InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    );
+    await _notifications.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (response) {
+        openChatFromNotificationPayload(response.payload);
+      },
+    );
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
+    final launch = await _notifications.getNotificationAppLaunchDetails();
+    final response = launch?.notificationResponse;
+    if (launch?.didNotificationLaunchApp == true && response != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        openChatFromNotificationPayload(response.payload);
+      });
+    }
   }
 
   Future<bool> startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
-        final filePath = '${directory.path}/tide_audio_record_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        final filePath =
+            '${directory.path}/tide_audio_record_${DateTime.now().millisecondsSinceEpoch}.m4a';
         await _audioRecorder.start(
           path: filePath,
           encoder: AudioEncoder.aacLc,
@@ -67,8 +111,9 @@ class OpsManager {
 
   Future<File?> pickAndProcessImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-    
+    final XFile? image =
+        await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+
     if (image == null) return null;
 
     String finalPath = image.path;
@@ -96,21 +141,30 @@ class OpsManager {
     return null;
   }
 
-  Future<void> showSystemNotification({required int id, required String title, required String body}) async {
-    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
-      'tide_bot_msg', 'TideBot 消息通知',
-      importance: Importance.max,
-      priority: Priority.high,
-      ticker: 'ticker',
+  Future<void> showSystemNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? botId,
+  }) async {
+    await initializeNotifications();
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'tide_bot_msg',
+        'TideBot 消息通知',
+        channelDescription: '机器人回复与未读消息提醒',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
     );
-    const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
-    await flutterLocalNotificationsPlugin.show(id, title, body, platformChannelSpecifics);
+    await _notifications.show(id, title, body, details, payload: botId);
   }
 
-  Future<String> executeAccessibilityCommand(String action, Map<String, dynamic> payload) async {
+  Future<String> executeAccessibilityCommand(
+      String action, Map<String, dynamic> payload) async {
     try {
-      final String result = await _nativeChannel.invokeMethod('executeAccessibilityAction', {
+      final String result =
+          await _nativeChannel.invokeMethod('executeAccessibilityAction', {
         'action': action,
         'payload': payload,
       });
