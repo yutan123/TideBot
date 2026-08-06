@@ -21,7 +21,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 5,
+      version: 7,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -37,7 +37,9 @@ class DBManager {
         await db.execute('''
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
-            content TEXT, file_path TEXT, mood TEXT, duration INTEGER, timestamp INTEGER,
+            content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
+            error_log TEXT, error_code TEXT, error_message TEXT, timestamp INTEGER,
+
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
@@ -125,6 +127,22 @@ class DBManager {
             )
           ''');
         }
+        if (oldVersion < 6) {
+          try {
+            await db
+                .execute('ALTER TABLE chat_history ADD COLUMN error_log TEXT');
+          } catch (_) {}
+          try {
+            await db
+                .execute('ALTER TABLE chat_history ADD COLUMN error_code TEXT');
+          } catch (_) {}
+        }
+        if (oldVersion < 7) {
+          try {
+            await db.execute(
+                'ALTER TABLE chat_history ADD COLUMN error_message TEXT');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -165,6 +183,25 @@ class DBManager {
     await db.update(
       'chat_history',
       {'content': content},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateMessageError(
+    String id, {
+    required String errorLog,
+    String? errorCode,
+    String? errorMessage,
+  }) async {
+    final db = await database;
+    await db.update(
+      'chat_history',
+      {
+        'error_log': errorLog,
+        'error_code': errorCode,
+        'error_message': errorMessage,
+      },
       where: 'id = ?',
       whereArgs: [id],
     );

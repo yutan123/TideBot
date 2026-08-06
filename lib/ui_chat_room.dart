@@ -19,6 +19,7 @@ import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'global_notice.dart';
+import 'media_preprocessor.dart';
 import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -174,10 +175,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
-  Future<void> _send({String? img, String? document}) async {
+  Future<void> _send({
+    String? img,
+    String? document,
+    String? mediaContext,
+  }) async {
     if (_loading) return;
     final text = _msgC.text.trim();
-    if (text.isEmpty && img == null && document == null) {
+    if (text.isEmpty &&
+        img == null &&
+        document == null &&
+        mediaContext == null) {
       if (mounted) setState(() => _hasText = false);
       return;
     }
@@ -228,30 +236,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       } catch (e) {
         debugPrint('[send] persist user message failed: $e');
       }
-
-      String? cm = _bot['chat_model'] as String?;
-      if (cm == null || cm.trim().isEmpty) {
-        final providers = await DBManager()
-            .queryChatProviders()
-            .timeout(const Duration(seconds: 5));
-        if (providers.isEmpty) {
-          throw StateError('请先在「我的 → API 设置」添加模型');
-        }
-        cm = providers.first['id']?.toString();
-        if (cm == null || cm.isEmpty) {
-          throw StateError('模型提供商配置无效');
-        }
-        _bot['chat_model'] = cm;
-        await DBManager().updateBot(
-            botId, {'chat_model': cm}).timeout(const Duration(seconds: 5));
+      final cm = _bot['chat_model']?.toString().trim() ?? '';
+      if (cm.isEmpty) {
+        throw StateError('未选择聊天模型，请在聊天设置中选择模型后再发送');
       }
 
       final documentNotice = document == null
           ? null
-          : '[已附加本地文档：${msg['document_name']}。当前模型尚未读取文档内容。]';
-      final modelText = documentNotice == null
+          : await MediaPreprocessor().documentText(document);
+      final preparedContext = mediaContext ?? documentNotice;
+      final modelText = preparedContext == null
           ? text
-          : (text.isEmpty ? documentNotice : '$text\n$documentNotice');
+          : (text.isEmpty ? preparedContext : '$text\n$preparedContext');
+
       final history = _msgs
           .where((m) => (m['content'] as String?)?.isNotEmpty == true)
           .map((m) => {
@@ -259,26 +256,47 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 'content': m['id'] == msg['id'] ? modelText : m['content'],
               })
           .toList();
-      if (documentNotice != null && text.isEmpty) {
+      if (preparedContext != null && text.isEmpty) {
         history.add({'role': 'user', 'content': modelText});
       }
+
       var imgB64 = '';
       if (img != null) {
         imgB64 = base64Encode(await File(img).readAsBytes());
       }
 
       debugPrint('[send] request start bot=$botId model=$cm');
-      final resp = await AIManager()
-          .chat(
+      final result = await AIManager()
+          .chatResult(
             botId: botId,
             messages: history,
             imageBase64: imgB64,
           )
-          // 让失败在可接受时间内回到 finally，解除发送锁并显示错误气泡。
           .timeout(const Duration(seconds: 30));
 
-      final content =
-          resp.trim().isEmpty ? '[X] 模型返回了空内容，请检查模型名称和 API 配置' : resp;
+      if (result['success'] != true) {
+        final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
+        final errorLog = result['error_log']?.toString() ?? errorText;
+        msg['error_log'] = errorLog;
+        msg['error_code'] = result['error_code']?.toString();
+        msg['error_text'] = errorText;
+        if (mounted) setState(() {});
+        try {
+          await DBManager()
+              .updateMessageError(
+                msg['id'].toString(),
+                errorLog: errorLog,
+                errorCode: result['error_code']?.toString(),
+                errorMessage: errorText,
+              )
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {}
+        return;
+      }
+
+      final content = (result['reply']?.toString() ?? '').trim().isEmpty
+          ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
+          : result['reply'].toString();
       final aiMsg = <String, dynamic>{
         'id': 'm_${DateTime.now().millisecondsSinceEpoch}',
         'bot_id': botId,
@@ -292,17 +310,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
-      final errMsg = <String, dynamic>{
-        'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}',
-        'bot_id': botId,
-        'role': 'assistant',
-        'content': '[X] $e',
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      };
-      if (mounted) setState(() => _msgs.add(errMsg));
+      final errorText = '请求处理失败：${e.toString()}';
+      final errorLog = '${e.toString()}\n${st.toString()}';
+      msg['error_log'] = errorLog;
+      msg['error_code'] = 'local';
+      msg['error_text'] = errorText;
+      if (mounted) setState(() {});
       try {
         await DBManager()
-            .insertMessage(errMsg)
+            .updateMessageError(
+              msg['id'].toString(),
+              errorLog: errorLog,
+              errorCode: 'local',
+              errorMessage: errorText,
+            )
             .timeout(const Duration(seconds: 5));
       } catch (_) {}
     } finally {
@@ -435,6 +456,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
+  Future<void> _sendVideo(String path) async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    try {
+      final prepared = await MediaPreprocessor().prepareVideo(path);
+      if (prepared['error'] != null) {
+        throw StateError(prepared['error'].toString());
+      }
+      final frames = (prepared['frames'] as List? ?? [])
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final visual = await AIManager().describeImagesForBot(
+        botId: botId,
+        imagePaths: frames,
+        userText: _msgC.text.trim(),
+      );
+      final audioPath = prepared['audioPath']?.toString() ?? '';
+      final transcript = audioPath.isEmpty
+          ? '[视频未检测到可转写音轨]'
+          : (await AIManager().transcribeAudio(
+                botId: botId,
+                audioPath: audioPath,
+              ) ??
+              '[未配置 STT 模型或转写失败；已保留视频音轨但无法转换为文字]');
+      final context = '$visual\\n\\n[视频音频转写]\\n$transcript';
+      await _send(document: path, mediaContext: context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('视频预处理失败：$e'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
   // ========== 选择图片/文件 ==========
   void _pickMedia() async {
     final r = await showTideSheet<String>(
@@ -466,8 +523,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (path == null || path.isEmpty) return;
       final extension = path.split('.').last.toLowerCase();
       const imageExtensions = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'};
+      const videoExtensions = {'mp4', 'm4v', 'mov', 'webm', '3gp'};
+      const audioExtensions = {'m4a', 'mp3', 'wav', 'aac', 'ogg', 'opus'};
       if (imageExtensions.contains(extension)) {
         await _send(img: path);
+      } else if (videoExtensions.contains(extension)) {
+        await _sendVideo(path);
+      } else if (audioExtensions.contains(extension)) {
+        final transcript = await AIManager().transcribeAudio(
+          botId: _bot['id']?.toString() ?? '',
+          audioPath: path,
+        );
+        await _send(
+          document: path,
+          mediaContext: transcript == null || transcript.isEmpty
+              ? '[已附加音频：${path.split(Platform.pathSeparator).last}。未配置 STT 模型或转写失败，无法向文本模型提供语音内容。]'
+              : '[音频转写]\\n$transcript',
+        );
       } else {
         await _send(document: path);
       }
@@ -842,6 +914,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               context: ctx,
               height: 380,
               child: ListView(children: [
+                ListTile(
+                  leading: const Icon(Icons.block_rounded),
+                  title: const Text('不选择',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+                  subtitle: const Text('清除当前模型配置',
+                      style: TextStyle(fontSize: 12, fontFamily: 'TideFont')),
+                  trailing: cur.isEmpty
+                      ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                      : null,
+                  onTap: () {
+                    onPick('');
+                    Navigator.pop(ctx);
+                  },
+                ),
                 for (var pv in providers)
                   ListTile(
                     title: Text(_providerTitle(pv),
@@ -1270,6 +1356,65 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     ));
   }
 
+  String _errorSolution(dynamic code) {
+    switch (code?.toString()) {
+      case '402':
+        return '服务余额不足：请到模型提供商后台充值或更换有可用余额的 API Key。';
+      case '401':
+      case '403':
+        return '鉴权失败：检查 API Key、授权范围，以及 Base URL 是否属于该密钥对应的服务。';
+      case '404':
+        return '接口或模型不存在：检查 Base URL 是否包含多余路径，并确认所填模型名称可用。';
+      case '408':
+      case '429':
+        return '请求超时或限流：稍后重试，降低发送频率，或换用备用模型。';
+      case 'network':
+        return '网络连接失败：检查设备网络、Base URL、DNS/代理和模型服务状态。';
+      default:
+        return '请检查聊天模型、Base URL、API Key、模型名称和网络。若持续失败，可复制日志联系模型提供商。';
+    }
+  }
+
+  void _showErrorDetails(Map<String, dynamic> message) {
+    final log = message['error_log']?.toString().trim();
+    final content = message['error_text']?.toString() ??
+        message['error_message']?.toString() ??
+        message['content']?.toString() ??
+        '请求失败';
+
+    TideDialogs.show(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('请求错误详情', style: TextStyle(fontFamily: 'TideFont')),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(content, style: const TextStyle(fontFamily: 'TideFont')),
+              const SizedBox(height: 14),
+              const Text('完整报错日志',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              SelectableText(log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
+                  style:
+                      const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+              const SizedBox(height: 14),
+              const Text('解决方法', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text(_errorSolution(message['error_code']),
+                  style: const TextStyle(fontFamily: 'TideFont')),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
   Widget _chatBody() {
     if (_msgsLoading)
       return Center(
@@ -1304,102 +1449,123 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           onLongPress: () => _msgLongPress(m),
           child: Align(
               alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.75),
-                child: Column(
-                    crossAxisAlignment: isUser
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      if (_showChatAvatar)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: isUser
-                              ? CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: TideTheme.of(context)
-                                      .primary
-                                      .withOpacity(0.15),
-                                  child: Icon(Icons.person_rounded,
-                                      size: 16,
-                                      color: TideTheme.of(context).primary),
-                                )
-                              : TideBotAvatar(
-                                  name: _bot['name']?.toString() ?? 'TideBot',
-                                  path: _bot['avatar']?.toString(),
-                                  size: 28,
-                                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (isUser && m['error_log']?.toString().isNotEmpty == true)
+                    GestureDetector(
+                      onTap: () => _showErrorDetails(m),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 8, right: 6),
+                        child: Icon(
+                          Icons.error_outline_rounded,
+                          color: Colors.red.shade400,
+                          size: 22,
                         ),
-                      if (hasDocument)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 4),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: isUser
-                                ? TideTheme.of(context).primary
-                                : TideTheme.of(context).buttonSecondary,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.insert_drive_file_rounded,
-                                  color: isUser
-                                      ? Colors.white
-                                      : TideTheme.of(context).primary),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  documentName,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isUser
-                                        ? Colors.white
-                                        : TideTheme.of(context).textStrong,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
+                      ),
+                    ),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width * 0.75),
+                    child: Column(
+                        crossAxisAlignment: isUser
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        children: [
+                          if (_showChatAvatar)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: isUser
+                                  ? CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: TideTheme.of(context)
+                                          .primary
+                                          .withOpacity(0.15),
+                                      child: Icon(Icons.person_rounded,
+                                          size: 16,
+                                          color: TideTheme.of(context).primary),
+                                    )
+                                  : TideBotAvatar(
+                                      name:
+                                          _bot['name']?.toString() ?? 'TideBot',
+                                      path: _bot['avatar']?.toString(),
+                                      size: 28,
+                                    ),
+                            ),
+                          if (hasDocument)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isUser
+                                    ? TideTheme.of(context).primary
+                                    : TideTheme.of(context).buttonSecondary,
+                                borderRadius: BorderRadius.circular(14),
                               ),
-                            ],
-                          ),
-                        ),
-                      // 图片
-                      if (hasImg)
-                        GestureDetector(
-                            onTap: () => _previewImg(imagePath),
-                            child: ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: Container(
-                                    margin: const EdgeInsets.only(bottom: 4),
-                                    child: Image.file(File(imagePath!),
-                                        fit: BoxFit.cover, width: 180)))),
-                      // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
-                      if (hasAudio)
-                        _audioBubble(
-                          path: audioPath!,
-                          isUser: isUser,
-                          fallbackSeconds: m['duration'] as int? ?? 0,
-                        ),
-                      // STT 结果放在语音卡片下；无转写时不渲染空白文字。
-                      if (hasAudio && txt.isNotEmpty)
-                        Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: _parseText(txt, isUser)),
-                      // 普通文字气泡
-                      if (!hasAudio && txt.isNotEmpty) _parseText(txt, isUser),
-                      if (_showMessageTime)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(fmtTime(ts),
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont'))),
-                    ]),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.insert_drive_file_rounded,
+                                      color: isUser
+                                          ? Colors.white
+                                          : TideTheme.of(context).primary),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      documentName,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: isUser
+                                            ? Colors.white
+                                            : TideTheme.of(context).textStrong,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          // 图片
+                          if (hasImg)
+                            GestureDetector(
+                                onTap: () => _previewImg(imagePath),
+                                child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Container(
+                                        margin:
+                                            const EdgeInsets.only(bottom: 4),
+                                        child: Image.file(File(imagePath!),
+                                            fit: BoxFit.cover, width: 180)))),
+                          // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
+                          if (hasAudio)
+                            _audioBubble(
+                              path: audioPath!,
+                              isUser: isUser,
+                              fallbackSeconds: m['duration'] as int? ?? 0,
+                            ),
+                          // STT 结果放在语音卡片下；无转写时不渲染空白文字。
+                          if (hasAudio && txt.isNotEmpty)
+                            Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: _parseText(txt, isUser)),
+                          // 普通文字气泡
+                          if (!hasAudio && txt.isNotEmpty)
+                            _parseText(txt, isUser),
+                          if (_showMessageTime)
+                            Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(fmtTime(ts),
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        color: TideTheme.of(context).textFaint,
+                                        fontFamily: 'TideFont'))),
+                        ]),
+                  ),
+                ],
               )),
         );
       },

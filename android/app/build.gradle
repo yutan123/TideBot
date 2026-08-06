@@ -35,7 +35,9 @@ android {
 
     defaultConfig {
         applicationId = "com.yutan123.tidebot"
-        minSdk = flutter.minSdkVersion
+        // ML Kit Text Recognition requires Android API 23 or higher.
+        minSdk = 23
+
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
@@ -75,6 +77,9 @@ android {
             }
         }
     }
+}
+dependencies {
+    implementation "com.google.mlkit:text-recognition-chinese:16.0.1"
 }
 
 flutter {

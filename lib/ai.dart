@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
+import 'media_preprocessor.dart';
+
 import 'ops.dart';
 import 'app_state.dart';
 
@@ -13,34 +15,42 @@ class AIManager {
   factory AIManager() => _instance;
   AIManager._internal();
 
-  // 新 UI 调用的 chat 包装（直接以 botId 为核心，读取该 bot 配置的模型）
+  // 结构化聊天结果供聊天室展示完整错误日志；旧 chat 接口继续返回纯文本。
+  Future<Map<String, dynamic>> chatResult({
+    required String botId,
+    required List<Map<String, dynamic>> messages,
+    String imageBase64 = '',
+  }) async {
+    final lastUser = messages.lastWhere((m) => m['role'] == 'user',
+        orElse: () => {'content': ''});
+    final text = lastUser['content'] as String? ?? '';
+
+    String? imgPath;
+    if (imageBase64.isNotEmpty) {
+      try {
+        final directory = await getTemporaryDirectory();
+        final tmpFile = File(
+            '${directory.path}/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await tmpFile.writeAsBytes(base64Decode(imageBase64));
+        imgPath = tmpFile.path;
+      } catch (_) {}
+    }
+    return sendMessage(botId: botId, text: text, imagePath: imgPath);
+  }
+
   Future<String> chat({
     required String botId,
     required List<Map<String, dynamic>> messages,
     String imageBase64 = '',
   }) async {
-    // 用最后一条 user 消息作为文本
-    final lastUser = messages.lastWhere((m) => m['role'] == 'user',
-        orElse: () => {'content': ''});
-    final text = lastUser['content'] as String? ?? '';
-
-    // 如果有 Base64 图片，先写入临时文件再传给 sendMessage
-    String? imgPath;
-    if (imageBase64.isNotEmpty) {
-      try {
-        final tmpFile =
-            File('/tmp/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await tmpFile.writeAsBytes(base64Decode(imageBase64));
-        imgPath = tmpFile.path;
-      } catch (_) {}
-    }
-    final res = await sendMessage(botId: botId, text: text, imagePath: imgPath);
-    if (res['success'] == true) {
-      // 直接返回本次 HTTP 响应，不能重新读取数据库“最后一条”消息；
-      // 后者可能因写入时序返回旧消息或空消息。
-      return res['reply']?.toString() ?? '';
-    }
-    return res['error']?.toString() ?? '';
+    final result = await chatResult(
+      botId: botId,
+      messages: messages,
+      imageBase64: imageBase64,
+    );
+    return result['success'] == true
+        ? result['reply']?.toString() ?? ''
+        : result['error']?.toString() ?? '';
   }
 
   Future<Map<String, dynamic>> sendMessage(
@@ -95,28 +105,48 @@ class AIManager {
         lastIsCurrentUser = true;
       }
     }
-
-    // 视觉模态处理 (图片 Base64 注入)
+    // 图片先交给明确配置的视觉模型转述，再将转述交给聊天模型；
+    // 未配置视觉模型时仅使用本地 OCR/元数据，绝不把普通聊天模型当作视觉模型。
     if (imagePath != null && imagePath.isNotEmpty) {
+      String mediaContext;
       try {
-        final bytes = await File(imagePath).readAsBytes();
-        final b64 = base64Encode(bytes);
+        final prefs = await SharedPreferences.getInstance();
+        final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
+        if (visionId.isNotEmpty) {
+          final visionProvider = await db.getChatProviderById(visionId);
+          if (visionProvider != null) {
+            mediaContext = await _describeImage(
+              provider: visionProvider,
+              imagePath: imagePath,
+              userText: text,
+            );
+          } else {
+            mediaContext =
+                await MediaPreprocessor().imageFallbackText(imagePath);
+          }
+        } else {
+          mediaContext = await MediaPreprocessor().imageFallbackText(imagePath);
+        }
+      } catch (e) {
+        mediaContext = '[图片预处理失败：$e]';
+      }
+      final contentWithMedia = '$text\n\n$mediaContext';
+      if (lastIsCurrentUser && messages.isNotEmpty) {
+        // 当前用户消息已从数据库进入上下文时，替换其内容而非重复追加。
+        messages[messages.length - 1] = {
+          'role': 'user',
+          'content': contentWithMedia,
+        };
+      } else {
         messages.add({
           'role': 'user',
-          'content': [
-            {'type': 'text', 'text': text == "[语音/图片]" ? "请看这张图片。" : text},
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:image/jpeg;base64,$b64'}
-            }
-          ]
+          'content': contentWithMedia,
         });
-      } catch (e) {
-        if (!lastIsCurrentUser) messages.add({'role': 'user', 'content': text});
       }
     } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
     }
+
     try {
       final baseUrl = provider['base_url']
               ?.toString()
@@ -212,15 +242,136 @@ class AIManager {
         final detail = body.replaceAll(RegExp(r'\s+'), ' ').trim();
         print(
             '[ai] response error=${detail.length > 300 ? detail.substring(0, 300) : detail}');
-        return {'error': '大模型节点拥堵或拒绝访问: ${response.statusCode}'};
+        return {
+          'error': _friendlyHttpError(response.statusCode, detail),
+          'error_log': 'HTTP ${response.statusCode}\n$detail',
+          'error_code': response.statusCode,
+        };
       }
     } catch (e) {
       print('[ai] request failed: $e');
-      return {'error': '本地网络异常或网关超时'};
+      return {
+        'error': '网络连接失败：请检查网络、Base URL 和服务端状态',
+        'error_log': e.toString(),
+        'error_code': 'network',
+      };
     }
   }
 
+  String _friendlyHttpError(int status, String detail) {
+    final suffix = detail.isEmpty ? '' : '（服务端信息：$detail）';
+    if (status == 402) {
+      return '服务余额不足：请充值或更换有余额的 API Key。$suffix';
+    }
+    if (status == 401 || status == 403) {
+      return '鉴权失败：请检查 API Key、权限和 Base URL。$suffix';
+    }
+    if (status == 404) {
+      return '接口或模型不存在：请检查 Base URL 与模型名称。$suffix';
+    }
+    if (status == 408 || status == 429) {
+      return '服务繁忙、超时或触发限流：请稍后重试。$suffix';
+    }
+    if (status >= 500) {
+      return '模型服务端异常：请稍后重试或更换服务商。$suffix';
+    }
+    return '模型请求失败（HTTP $status）。$suffix';
+  }
+
+  Future<String> describeImagesForBot({
+    required String botId,
+    required List<String> imagePaths,
+    String userText = '',
+  }) async {
+    if (imagePaths.isEmpty) return '[未提取到可用视频帧]';
+    final prefs = await SharedPreferences.getInstance();
+    final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
+    final provider = visionId.isEmpty
+        ? null
+        : await DBManager().getChatProviderById(visionId);
+    final descriptions = <String>[];
+    for (var i = 0; i < imagePaths.length; i++) {
+      final path = imagePaths[i];
+      final detail = provider == null
+          ? await MediaPreprocessor().imageFallbackText(path)
+          : await _describeImage(
+              provider: provider,
+              imagePath: path,
+              userText: '$userText（视频第 ${i + 1} 帧）',
+            );
+      descriptions.add('第 ${i + 1} 帧：$detail');
+    }
+    return '[视频画面分析]\\n${descriptions.join('\\n\\n')}';
+  }
+
+  Future<String> _describeImage({
+    required Map<String, dynamic> provider,
+    required String imagePath,
+    required String userText,
+  }) async {
+    try {
+      final bytes = await File(imagePath).readAsBytes();
+      final baseUrl = provider['base_url']
+              ?.toString()
+              .trim()
+              .replaceFirst(RegExp(r'/+$'), '') ??
+          '';
+      var model = provider['model']?.toString().trim() ?? '';
+      if (model.contains(',')) model = model.split(',').first.trim();
+      if (baseUrl.isEmpty || model.isEmpty) {
+        return await MediaPreprocessor().imageFallbackText(imagePath);
+      }
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {
+                  'role': 'system',
+                  'content':
+                      '你是图片转述器。准确描述画面、可读文字、对象和关键信息；不要编造。输出供另一个文本模型理解的简洁中文。',
+                },
+                {
+                  'role': 'user',
+                  'content': [
+                    {
+                      'type': 'text',
+                      'text': userText.isEmpty ? '请转述这张图片。' : userText,
+                    },
+                    {
+                      'type': 'image_url',
+                      'image_url': {
+                        'url': 'data:image/jpeg;base64,${base64Encode(bytes)}',
+                      },
+                    },
+                  ],
+                },
+              ],
+              'max_tokens': 1200,
+            }),
+          )
+          .timeout(const Duration(seconds: 40));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        final text =
+            decoded['choices']?[0]?['message']?['content']?.toString().trim();
+        if (text != null && text.isNotEmpty) {
+          return '[视觉模型转述]\\n$text';
+        }
+      }
+    } catch (e) {
+      print('[vision] description failed: $e');
+    }
+    return await MediaPreprocessor().imageFallbackText(imagePath);
+  }
+
   /// Transcribes an audio file through an OpenAI-compatible provider selected
+
   /// in the bot's STT setting. Returns null for missing configuration, unsupported
   /// providers, or request failures so callers can preserve the original recording.
   Future<String?> transcribeAudio({
