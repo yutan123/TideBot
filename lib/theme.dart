@@ -26,13 +26,14 @@ class TideTheme extends ChangeNotifier {
 
   LinearGradient get primaryGradient => LinearGradient(colors: [_primary, _primaryLight]);
   // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
-  Color get bgColor => isDark ? const Color(0xFF121417) : const Color(0xFFF2F2F7);
-  // 卡片 / 输入框 / 弹窗浮层底色（日间白、夜间深灰）
-  Color get surface => isDark ? const Color(0xFF1D2025) : const Color(0xFFFFFFFF);
-  // 次级表面（输入框内部、芯片、弱浮层）
-  Color get surfaceVariant => isDark ? const Color(0xFF262A31) : const Color(0xFFE8E8F0);
-  // 毛玻璃半透明层（日间偏白、夜间偏黑）
-  Color get glass => isDark ? const Color(0xCCFFFFFF) : const Color(0xB3FFFFFF);
+Color get bgColor => isDark ? const Color(0xFF10151D) : const Color(0xFFF3F5FA);
+    // 卡片 / 输入框 / 弹窗浮层：夜间采用带蓝灰倾向的深表面，避免纯黑割裂。
+    Color get surface => isDark ? const Color(0xFF1A222D) : const Color(0xFFFFFFFF);
+    // 次级表面（输入框内部、芯片、弱浮层）
+    Color get surfaceVariant => isDark ? const Color(0xFF263241) : const Color(0xFFE9EDF5);
+    // 毛玻璃层：夜间必须是低亮度深色玻璃，不能使用半透明白色。
+    Color get glass => isDark ? const Color(0xD91B2633) : const Color(0xC9FFFFFF);
+
   // 文字主色
   Color get textStrong => isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E);
   Color get textWeak => isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366);

@@ -105,13 +105,15 @@ class _SpacePageState extends State<SpacePage> {
       showTideSheet(context: context, child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12), const Text('切换机器人', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, fontFamily: 'TideFont')), const SizedBox(height: 12),
         ...bots.map((b) => ListTile(title: Text(b['name'] ?? '', style: const TextStyle(fontFamily: 'TideFont')), subtitle: Text(b['desc'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93))), onTap: () { setState(() { _botId = b['id'] as String? ?? ''; _botName = b['name'] as String? ?? ''; }); Navigator.pop(context); _loadData(); })),]));
-    }, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.white.withOpacity(0.8)),
+    }, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: theme.surface.withOpacity(theme.isDark ? 0.82 : 0.80), border: Border.all(color: theme.border)),
+
       child: Row(mainAxisSize: MainAxisSize.min, children: [Text(_botName, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, fontFamily: 'TideFont', color: theme.primary)), const SizedBox(width: 4), Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: theme.primary)]))),
   ]);
 
   Widget _buildQuoteCard(TideTheme theme) => FrostCard(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Row(children: [Icon(Icons.format_quote_rounded, color: theme.primary, size: 20), const SizedBox(width: 8), Text('今日一言', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, fontFamily: 'TideFont', color: theme.primary))]),
-    const SizedBox(height: 10), Text(_dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言', style: TextStyle(fontSize: 16, fontFamily: 'TideFont', color: _dailyQuote.isNotEmpty ? const Color(0xFF3C3C43) : const Color(0xFFC7C7CC), height: 1.5))]));
+    const SizedBox(height: 10), Text(_dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言', style: TextStyle(fontSize: 16, fontFamily: 'TideFont', color: _dailyQuote.isNotEmpty ? theme.textStrong : theme.textFaint, height: 1.5))]));
+
   Widget _buildDaysCard(TideTheme theme) => FrostCard(padding: const EdgeInsets.all(16), child: Column(children: [
     Text('$_daysSince', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w300, fontFamily: 'TideFont', color: theme.primary)), const SizedBox(height: 4),
     const Text('相遇天数', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont'))]));
@@ -126,7 +128,8 @@ class _SpacePageState extends State<SpacePage> {
       })),
     ]));
   }
-  Widget _buildSectionTitle(String title) => Padding(padding: const EdgeInsets.only(left: 4), child: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))));
+  Widget _buildSectionTitle(String title) => Padding(padding: const EdgeInsets.only(left: 4), child: Text(title, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong)));
+
   Widget _buildScheduleCard(Map<String, dynamic> s, TideTheme theme) => FrostCard(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(14), child: Row(children: [
     Container(width: 4, height: 40, decoration: BoxDecoration(borderRadius: BorderRadius.circular(2), color: theme.primary)), const SizedBox(width: 12),
     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -280,7 +283,8 @@ class SquarePageState extends State<SquarePage> with SingleTickerProviderStateMi
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Stack(children: [
-      Container(color: const Color(0xFFF2F2F7),
+      Container(color: theme.bgColor,
+
         child: SafeArea(child: Column(children: [
           Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 4), child: Row(children: [
             const Spacer(),
@@ -398,9 +402,10 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
+      backgroundColor: theme.bgColor,
       appBar: AppBar(
-        title: const Text('发布动态', style: TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+        title: Text('发布动态', style: TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: theme.textStrong)),
+
         backgroundColor: Colors.transparent, elevation: 0,
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size: 20), onPressed: () => Navigator.pop(context)),
         actions: [
@@ -443,9 +448,10 @@ class _FeedDetailPage extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
+      backgroundColor: theme.bgColor,
       appBar: AppBar(
-        title: const Text('动态详情', style: TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont')),
+        title: Text('动态详情', style: TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: theme.textStrong)),
+
         backgroundColor: Colors.transparent, elevation: 0,
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size: 20), onPressed: () => Navigator.pop(context)),
       ),

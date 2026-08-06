@@ -63,13 +63,22 @@ class FlowGlassBg extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Stack(children: [
-      // 与主题日夜一致的柔和底色，避免聊天/各页背景与外层割裂
-      Container(decoration: BoxDecoration(color: theme.bgColor)),
+      // 日间是柔和蓝白纸感，夜间是深蓝灰空间感；两者使用不同亮度层级。
+      Container(decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: theme.isDark
+              ? [const Color(0xFF10151D), const Color(0xFF16212D), const Color(0xFF111923)]
+              : [const Color(0xFFF8FAFF), const Color(0xFFF0F4FB), const Color(0xFFF7F3FA)],
+        ),
+      )),
       ListenableBuilder(listenable: flowProvider, builder: (c, _) => Stack(children: [
-        Positioned(left: flowProvider.pos.dx - 120, top: flowProvider.pos.dy - 80, child: IgnorePointer(child: Container(width: 240, height: 240, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primaryLight.withOpacity(0.35), theme.primary.withOpacity(0.12), Colors.transparent]))))),
-        Positioned(left: flowProvider.pos.dx - 160, top: flowProvider.pos.dy - 40, child: IgnorePointer(child: Container(width: 280, height: 280, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(0.2), theme.primaryLight.withOpacity(0.08), Colors.transparent]))))),
-        Positioned(left: flowProvider.pos.dx - 100, top: flowProvider.pos.dy - 100, child: IgnorePointer(child: Container(width: 180, height: 180, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(0.18), Colors.transparent]))))),
+        Positioned(left: flowProvider.pos.dx - 150, top: flowProvider.pos.dy - 110, child: IgnorePointer(child: Container(width: 300, height: 300, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primaryLight.withOpacity(theme.isDark ? 0.13 : 0.26), theme.primary.withOpacity(theme.isDark ? 0.05 : 0.10), Colors.transparent]))))),
+        Positioned(right: -120, top: 80, child: IgnorePointer(child: Container(width: 280, height: 280, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primary.withOpacity(theme.isDark ? 0.07 : 0.12), Colors.transparent]))))),
+        Positioned(left: -100, bottom: -100, child: IgnorePointer(child: Container(width: 260, height: 260, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [theme.primaryLight.withOpacity(theme.isDark ? 0.05 : 0.10), Colors.transparent]))))),
       ])),
+
       child,
     ]);
   }

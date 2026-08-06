@@ -47,68 +47,56 @@ class TideBotAvatar extends StatelessWidget {
     this.size = 52,
   });
 
+  Color _colorForName() {
+    const colors = [
+      Color(0xFF5578D8),
+      Color(0xFFB05E91),
+      Color(0xFF2D9A88),
+      Color(0xFFB7773E),
+      Color(0xFF7B6AC8),
+      Color(0xFF3C91B2),
+      Color(0xFFC05B67),
+      Color(0xFF5B8E63),
+    ];
+    var hash = 0;
+    for (final code in name.trim().codeUnits) {
+      hash = ((hash * 31) + code) & 0x7fffffff;
+    }
+    return colors[hash % colors.length];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = TideTheme.of(context);
     final file = path == null || path!.isEmpty ? null : File(path!);
     final exists = file != null && file.existsSync();
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(size * 0.3),
-      child: SizedBox(
-        width: size,
-        height: size,
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ClipOval(
         child: exists
-            ? Image.file(
-                file,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _fallback(theme),
-              )
-            : _fallback(theme),
+            ? Image.file(file, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _fallback())
+            : _fallback(),
       ),
     );
   }
 
-  Widget _fallback(TideTheme theme) {
-    final initial = name.trim().isEmpty ? 'T' : name.trim().characters.first;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [theme.primary, theme.primaryLight],
+  Widget _fallback() {
+    final trimmed = name.trim();
+    final initial = trimmed.isEmpty ? 'T' : String.fromCharCode(trimmed.runes.first);
+    return ColoredBox(
+      color: _colorForName(),
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: size * 0.42,
+            height: 1,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+            fontFamily: 'TideFont',
+          ),
         ),
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned(
-            right: -size * 0.1,
-            top: -size * 0.12,
-            child: Icon(
-              Icons.auto_awesome_rounded,
-              size: size * 0.45,
-              color: Colors.white.withOpacity(0.28),
-            ),
-          ),
-          Icon(
-            Icons.smart_toy_rounded,
-            size: size * 0.52,
-            color: Colors.white.withOpacity(0.94),
-          ),
-          Positioned(
-            bottom: size * 0.06,
-            child: Text(
-              initial,
-              style: TextStyle(
-                fontSize: size * 0.15,
-                fontWeight: FontWeight.w800,
-                color: Colors.white.withOpacity(0.9),
-                fontFamily: 'TideFont',
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

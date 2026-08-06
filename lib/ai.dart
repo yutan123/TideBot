@@ -28,14 +28,14 @@ class AIManager {
         imgPath = tmpFile.path;
       } catch (_) {}
     }
-
     final res = await sendMessage(botId: botId, text: text, imagePath: imgPath);
     if (res['success'] == true) {
-      final db = DBManager();
-      final history = await db.getChatHistory(botId);
-      if (history.isNotEmpty) return history.last['content']?.toString() ?? '';
+      // 直接返回本次 HTTP 响应，不能重新读取数据库“最后一条”消息；
+      // 后者可能因写入时序返回旧消息或空消息。
+      return res['reply']?.toString() ?? '';
     }
     return res['error']?.toString() ?? '';
+
   }
   Future<Map<String, dynamic>> sendMessage({
     required String botId, 
@@ -101,10 +101,13 @@ class AIManager {
     } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
     }
-
     try {
+      final baseUrl = provider['base_url']?.toString().trim().replaceFirst(RegExp(r'/+$'), '') ?? '';
+      if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
+      print('[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
       final response = await http.post(
-        Uri.parse("${provider['base_url']}/chat/completions"),
+        Uri.parse("$baseUrl/chat/completions"),
+
         headers: {
           "Content-Type": "application/json", 
           "Authorization": "Bearer ${provider['api_key']}"
@@ -115,9 +118,10 @@ class AIManager {
           "max_tokens": bot['max_tokens'] ?? 10000
         }),
       ).timeout(const Duration(seconds: 40));
-
+      print('[ai] response status=${response.statusCode}');
       if (response.statusCode == 200) {
         final json = jsonDecode(utf8.decode(response.bodyBytes));
+
         String replyText = json['choices'][0]['message']['content'] ?? '';
         
         // 情绪提取器：解析并剔除底层情绪标签
@@ -159,13 +163,17 @@ class AIManager {
             }
           }());
         }
-        
-        return {'success': true};
+        return {'success': true, 'reply': replyText};
       } else {
+        final body = utf8.decode(response.bodyBytes);
+        final detail = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+        print('[ai] response error=${detail.length > 300 ? detail.substring(0, 300) : detail}');
         return {'error': '大模型节点拥堵或拒绝访问: ${response.statusCode}'};
       }
     } catch (e) {
+      print('[ai] request failed: $e');
       return {'error': '本地网络异常或网关超时'};
+
     }
   }
 

@@ -174,14 +174,10 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
         'content': content,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
-      try {
-        await DBManager()
-            .insertMessage(aiMsg)
-            .timeout(const Duration(seconds: 5));
-      } catch (e) {
-        debugPrint('[send] persist assistant message failed: $e');
-      }
+      // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
+      // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
       if (mounted) setState(() => _msgs.add(aiMsg));
+
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
@@ -670,40 +666,17 @@ Widget _chatHeader() {
               child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
                 child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? TideTheme.of(context).glass.withOpacity(0.6) : TideTheme.of(context).surface.withOpacity(0.85), borderRadius: BorderRadius.circular(22)), child: Row(children: [
                   GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
-                  Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
+                  Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, textInputAction: TextInputAction.send, onSubmitted: (_) { debugPrint('[send] submitted text=${_msgC.text.trim().isNotEmpty}'); _send(); }, style: TextStyle(fontSize: 15, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: TextStyle(color: TideTheme.of(context).textFaint, fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
+
                   GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-                  // 发送按钮：始终显示（不再依赖 _hasText 条件渲染，避免"输入了却看不到/点不动"的情况）
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(26),
-                      onTap: () {
-                        debugPrint('[send] tap text=${_msgC.text.trim().isNotEmpty}');
-                        _send();
-                      },
-                      child: SizedBox(
-                        width: 48,
-                        height: 48,
-                        child: Center(
-                          child: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: TideTheme.of(context).primary.withOpacity(_hasText ? 0.5 : 0.2),
-                                  blurRadius: 8,
-                                ),
-                              ],
-                              color: TideTheme.of(context).primary.withOpacity(_hasText ? 1 : 0.45),
-                            ),
-                            child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  // 原生 IconButton 有独立命中区域和 Material 按压反馈。
+                  SizedBox(width: 48, height: 48, child: IconButton(
+                    tooltip: '发送',
+                    splashRadius: 24,
+                    onPressed: _loading ? null : () { debugPrint('[send] pressed text=${_msgC.text.trim().isNotEmpty}'); _send(); },
+                    icon: AnimatedContainer(duration: const Duration(milliseconds: 160), width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary.withOpacity(_hasText ? 1 : 0.48), boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(_hasText ? 0.38 : 0.12), blurRadius: 8)]), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)),
+                  )),
+
                 ])),
               ),
             ),
