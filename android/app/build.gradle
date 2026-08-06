@@ -41,18 +41,29 @@ android {
         versionName = flutterVersionName
     }
 
+    def releaseKeystore = project.file('tidebot.keystore')
+    def releaseStorePassword = project.findProperty('TIDEBOT_STORE_PASSWORD')
+    def releaseKeyAlias = project.findProperty('TIDEBOT_KEY_ALIAS')
+    def releaseKeyPassword = project.findProperty('TIDEBOT_KEY_PASSWORD')
+
     signingConfigs {
-        release {
-            storeFile project.file('tidebot.keystore')
-            storePassword 'tidebot123'
-            keyAlias 'tidebot'
-            keyPassword 'tidebot123'
+        if (releaseKeystore.exists() && releaseStorePassword &&
+                releaseKeyAlias && releaseKeyPassword) {
+            release {
+                storeFile releaseKeystore
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (releaseKeystore.exists() && releaseStorePassword &&
+                    releaseKeyAlias && releaseKeyPassword) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
