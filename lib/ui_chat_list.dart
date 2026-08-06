@@ -81,7 +81,7 @@ class ChatListPageState extends State<ChatListPage> {
     Widget content = Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(child: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 8), child: Align(alignment: Alignment.centerLeft, child: const Text('TideBot', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))))),
+        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 8), child: Align(alignment: Alignment.centerLeft, child: Text('TideBot', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong)))),
         Expanded(child: _bots.isEmpty ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.inbox_rounded, size: 50, color: Colors.grey.shade400), const SizedBox(height: 10), const Text('还没有机器人', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 15, fontFamily: 'TideFont')), const Text('点击右下角 + 创建', style: TextStyle(color: Color(0xFFC7C7CC), fontSize: 13, fontFamily: 'TideFont'))])) : _list()),
       ])),
     );
@@ -117,15 +117,15 @@ class ChatListPageState extends State<ChatListPage> {
               Icon(Icons.push_pin_rounded, size: 14, color: TideTheme.of(context).primary),
               const SizedBox(width: 2),
             ],
-            Flexible(child: Text(bot['name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)), overflow: TextOverflow.ellipsis)),
+            Flexible(child: Text(bot['name'] as String? ?? '', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong), overflow: TextOverflow.ellipsis)),
           ]),
           const SizedBox(height: 3),
-          Text(bot['preview'] as String? ?? '点击开始对话', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
+          Text(bot['preview'] as String? ?? '点击开始对话', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: TideTheme.of(context).textWeak, fontFamily: 'TideFont')),
         ])),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(fmtTime(bot['lastTime'] as int? ?? 0), style: const TextStyle(fontSize: 11, color: Color(0xFFC7C7CC), fontFamily: 'TideFont')),
+          Text(fmtTime(bot['lastTime'] as int? ?? 0), style: TextStyle(fontSize: 11, color: TideTheme.of(context).textFaint, fontFamily: 'TideFont')),
           const SizedBox(height: 4),
-          const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFC7C7CC)),
+          Icon(Icons.chevron_right_rounded, size: 16, color: TideTheme.of(context).textFaint),
         ]),
       ]),
     );

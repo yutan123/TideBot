@@ -27,9 +27,27 @@ class TideTheme extends ChangeNotifier {
   LinearGradient get primaryGradient => LinearGradient(colors: [_primary, _primaryLight]);
   // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
   Color get bgColor => isDark ? const Color(0xFF121417) : const Color(0xFFF2F2F7);
+  // 卡片 / 输入框 / 弹窗浮层底色（日间白、夜间深灰）
+  Color get surface => isDark ? const Color(0xFF1D2025) : const Color(0xFFFFFFFF);
+  // 次级表面（输入框内部、芯片、弱浮层）
+  Color get surfaceVariant => isDark ? const Color(0xFF262A31) : const Color(0xFFE8E8F0);
+  // 毛玻璃半透明层（日间偏白、夜间偏黑）
+  Color get glass => isDark ? const Color(0xCCFFFFFF) : const Color(0xB3FFFFFF);
   // 文字主色
   Color get textStrong => isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E);
   Color get textWeak => isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366);
+  // 更弱的文字/图标色
+  Color get textFaint => isDark ? const Color(0xFF5A5F68) : const Color(0xFFC7C7CC);
+  // 分割线
+  Color get divider => isDark ? const Color(0x22FFFFFF) : const Color(0x14000000);
+  // 边框
+  Color get border => isDark ? const Color(0x33FFFFFF) : const Color(0x1A000000);
+  // 图标弱色
+  Color get iconMuted => isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93);
+  // AI/次要气泡底色（日间浅白、夜间深灰）
+  Color get bubbleAi => isDark ? const Color(0xFF262A31) : const Color(0xFFFFFFFF);
+  // 次要按钮底色（取消、次级操作）
+  Color get buttonSecondary => isDark ? const Color(0xFF33363E) : const Color(0xFFE8E8F0);
 
   // 主题配色：主色 + 亮色 + 中文名 + 深色底主色（护眼） + 深色亮色
   static const _themes = {

@@ -58,7 +58,7 @@ class TideDialogs {
         child: Container(
           width: MediaQuery.of(context).size.width * maxWidth,
           padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.white.withOpacity(0.6), width: 0.5)),
+          decoration: BoxDecoration(color: TideTheme.of(context).surface.withOpacity(0.94), borderRadius: BorderRadius.circular(22), border: Border.all(color: TideTheme.of(context).border, width: 0.5)),
           child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: children)),
         ),
       ),
@@ -93,7 +93,7 @@ Future<T?> showTideSheet<T>({required BuildContext context, required Widget chil
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(height: sheetH, width: double.infinity, decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+            child: Container(height: sheetH, width: double.infinity, decoration: BoxDecoration(color: TideTheme.of(context).surface.withOpacity(0.96), borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
               child: Column(children: [
                 const SizedBox(height: 8),
                 Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
@@ -174,7 +174,7 @@ class GlassCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap, onLongPress: onLongPress,
       child: ClipRRect(borderRadius: BorderRadius.circular(radius), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Container(padding: padding, decoration: BoxDecoration(color: Colors.white.withOpacity(0.6), borderRadius: BorderRadius.circular(radius), border: Border.all(color: Colors.white.withOpacity(0.4), width: 0.5), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 2))]), child: child),
+        child: Container(padding: padding, decoration: BoxDecoration(color: TideTheme.of(context).glass.withOpacity(0.7), borderRadius: BorderRadius.circular(radius), border: Border.all(color: TideTheme.of(context).border, width: 0.5), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 2))]), child: child),
       )),
     );
   }
@@ -194,9 +194,9 @@ onTap: onTap, onLongPress: onLongPress,
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.7),
+                color: TideTheme.of(context).glass.withOpacity(0.7),
                 borderRadius: BorderRadius.circular(radius),
-                border: Border.all(color: Colors.white.withOpacity(0.5), width: 0.5),
+                border: Border.all(color: TideTheme.of(context).border, width: 0.5),
                 boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 3))],
               ),
               child: child,

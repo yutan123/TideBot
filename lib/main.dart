@@ -199,9 +199,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [TideTheme.of(context).primary, TideTheme.of(context).primaryLight]), boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))]),
           child: Icon(p["icon"] as IconData, color: Colors.white, size: 44)),
         const SizedBox(height: 36),
-        Text(p["t"] as String, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: Color(0xFF1C1C1E))),
+        Text(p["t"] as String, style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong)),
         const SizedBox(height: 14),
-        Text(p["s"] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: Color(0xFF636366))),
+        Text(p["s"] as String, textAlign: TextAlign.center, style: TextStyle(fontSize: 15, height: 1.5, fontFamily: 'TideFont', color: TideTheme.of(context).textWeak)),
       ]),
     );
   }

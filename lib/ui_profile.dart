@@ -53,7 +53,7 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     } catch (_) {}
   }
-  @override Widget build(BuildContext context) => Container(color: const Color(0xFFF2F2F7),
+  @override Widget build(BuildContext context) => Container(color: TideTheme.of(context).bgColor,
     child: SafeArea(child: SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: const EdgeInsets.fromLTRB(16,20,16,100),
       child: Column(children: [_buildProfileCard(), const SizedBox(height:24),
         ..._settings.map((s) => BouncyTap(onTap: ()=>_onSetting(s), child: _buildSettingItem(s))), const SizedBox(height:20)]))));
@@ -66,27 +66,27 @@ class _ProfilePageState extends State<ProfilePage> {
           TextField(controller:ctrl, autofocus:true, style: const TextStyle(fontFamily:'TideFont'), decoration: const InputDecoration(hintText:'输入新昵称', border:OutlineInputBorder(borderRadius:BorderRadius.all(Radius.circular(12))))),
           const SizedBox(height:12),
           Row(mainAxisAlignment:MainAxisAlignment.end, children: [
-            TideDialogs.glassButton('更换头像', onTap: () => Navigator.pop(ctx, '__avatar__'), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E)),
+            TideDialogs.glassButton('更换头像', onTap: () => Navigator.pop(ctx, '__avatar__'), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong),
             const SizedBox(width:10), TideDialogs.glassButton('确定', onTap:()=>Navigator.pop(ctx, ctrl.text))])])));
       if (r != null) { if (r == '__avatar__') { _pickAvatar(); } else if (r.toString().isNotEmpty) { setState(()=>_userName=r.toString()); await DBManager().insertKV('user_name', r.toString()); } }
     }, child: CircleAvatar(radius:32, backgroundColor: TideTheme.of(context).primary.withOpacity(0.15),
       backgroundImage: _avatarPath.isNotEmpty && File(_avatarPath).existsSync() ? FileImage(File(_avatarPath)) : null,
       child: _avatarPath.isEmpty || !File(_avatarPath).existsSync() ? Icon(Icons.person_rounded, size:36, color: TideTheme.of(context).primary) : null)),
     const SizedBox(width:16),
-    Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text(_userName, style: const TextStyle(fontSize:20, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:Color(0xFF1C1C1E))), const SizedBox(height:4), const Text('点击头像修改信息', style: TextStyle(fontSize:13, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))])),
-    const Icon(Icons.arrow_forward_ios_rounded, size:16, color:Color(0xFFC7C7CC))]));
+    Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text(_userName, style: TextStyle(fontSize:20, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong)), SizedBox(height:4), Text('点击头像修改信息', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))])),
+    Icon(Icons.arrow_forward_ios_rounded, size:16, color: TideTheme.of(context).textFaint)]));
   Widget _buildSettingItem(Map<String,dynamic> s) => FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.symmetric(horizontal:16, vertical:14),
-    child: Row(children: [Icon(s['icon'] as IconData, size:22, color: TideTheme.of(context).primary), const SizedBox(width:14),
-      Expanded(child: Text(s['title']??'', style: const TextStyle(fontSize:16, fontFamily:'TideFont', color:Color(0xFF1C1C1E)))), const Icon(Icons.arrow_forward_ios_rounded, size:14, color:Color(0xFFC7C7CC))]));
+    child: Row(children: [Icon(s['icon'] as IconData, size:22, color: TideTheme.of(context).primary), SizedBox(width:14),
+      Expanded(child: Text(s['title']??'', style: TextStyle(fontSize:16, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))), Icon(Icons.arrow_forward_ios_rounded, size:14, color:TideTheme.of(context).textFaint)]));
   void _onSetting(Map<String,dynamic> s) {
     switch(s['page']) {
       case 'api': Navigator.push(context, PageRouteBuilder(pageBuilder:(_,__,___)=>const ApiSettingsPage(), transitionsBuilder:(_,a,__,c)=>FadeTransition(opacity:a, child:c), transitionDuration: const Duration(milliseconds:300))); break;
       case 'local': Navigator.push(context, PageRouteBuilder(pageBuilder:(_,__,___)=>const LocalModelPage(), transitionsBuilder:(_,a,__,c)=>FadeTransition(opacity:a, child:c), transitionDuration: const Duration(milliseconds:300))); break;
       case 'theme': _showThemePicker(); break;
       case 'notify': _showNotificationSettings(); break;
-      case 'about': showTideSheet(context:context, height:300, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [const Text('关于 TideBot', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12), const Text('版本: 1.0.0', style: TextStyle(fontSize:14, color:Color(0xFF636366), fontFamily:'TideFont')), const Text('本地化沉浸式多模态 AI 伴侣', style: TextStyle(fontSize:14, color:Color(0xFF636366), fontFamily:'TideFont')), const SizedBox(height:8), const Text('100% 本地运行，隐私无忧。', style: TextStyle(fontSize:13, color:Color(0xFF8E8E93), fontFamily:'TideFont')), const SizedBox(height:16), const Text('开发者: yutan123', style: TextStyle(fontSize:13, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))]))); break;
-      case 'data': showTideSheet(context:context, height:220, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [const Text('数据管理', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:16), ListTile(leading: Icon(Icons.download_rounded, color: TideTheme.of(context).primary), title: const Text('导出聊天记录', style: TextStyle(fontFamily:'TideFont')), onTap:() async { await DBManager().exportToMarkdown(); if(mounted){Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已导出到本地存储', style: TextStyle(fontFamily:'TideFont')), backgroundColor: TideTheme.of(context).primary));}})]))); break;
-      case 'privacy': showTideSheet(context:context, height:350, child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [const Text('隐私与安全', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12), const Text('TideBot 采用纯本地架构：', style: TextStyle(fontSize:14, fontWeight:FontWeight.w600, fontFamily:'TideFont')), const SizedBox(height:8), const Text('所有聊天数据存储在本地数据库\nAPI 密钥加密存储在本地\n无任何数据上传\n无统计 SDK, 无广告', style: TextStyle(fontSize:13, color:Color(0xFF636366), fontFamily:'TideFont', height:1.8))]))); break;
+      case 'about': showTideSheet(context:context, height:300, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('关于 TideBot', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:12), Text('版本: 1.0.0', style: TextStyle(fontSize:14, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), Text('本地化沉浸式多模态 AI 伴侣', style: TextStyle(fontSize:14, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:8), Text('100% 本地运行，隐私无忧。', style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:16), Text('开发者: yutan123', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))]))); break;
+      case 'data': showTideSheet(context:context, height:220, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('数据管理', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:16), ListTile(leading: Icon(Icons.download_rounded, color: TideTheme.of(context).primary), title: Text('导出聊天记录', style: TextStyle(fontFamily:'TideFont')), onTap:() async { await DBManager().exportToMarkdown(); if(mounted){Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已导出到本地存储', style: TextStyle(fontFamily:'TideFont')), backgroundColor: TideTheme.of(context).primary));}})]))); break;
+      case 'privacy': showTideSheet(context:context, height:350, child: Padding(padding: EdgeInsets.all(20), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [Text('隐私与安全', style: TextStyle(fontSize:20, fontWeight:FontWeight.w700, fontFamily:'TideFont')), SizedBox(height:12), Text('TideBot 采用纯本地架构：', style: TextStyle(fontSize:14, fontWeight:FontWeight.w600, fontFamily:'TideFont')), SizedBox(height:8), Text('所有聊天数据存储在本地数据库\nAPI 密钥加密存储在本地\n无任何数据上传\n无统计 SDK, 无广告', style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont', height:1.8))]))); break;
       default: ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${s['title']}功能开发中...', style: const TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating));
     }
   }
@@ -125,7 +125,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ]),
         const SizedBox(height: 4),
-        const Text('选择你喜欢的配色方案，日夜均跟随系统', style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont')),
+        Text('选择你喜欢的配色方案，日夜均跟随系统', style: TextStyle(fontSize: 13, color: TideTheme.of(context).textWeak, fontFamily: 'TideFont')),
         const SizedBox(height: 16),
         Expanded(child: ListView(children: options.map((item) {
           final id = item['id']!;
@@ -139,7 +139,7 @@ class _ProfilePageState extends State<ProfilePage> {
               child: Row(children: [
                 Container(width: 32, height: 32, decoration: BoxDecoration(shape: BoxShape.circle, color: _themeDotPrimary(id)), child: active ? const Icon(Icons.check, color: Colors.white, size: 18) : null),
                 const SizedBox(width: 14),
-                Expanded(child: Text(name, style: const TextStyle(fontSize: 16, fontFamily: 'TideFont', color: Color(0xFF1C1C1E)))),
+                Expanded(child: Text(name, style: TextStyle(fontSize: 16, fontFamily: 'TideFont', color: TideTheme.of(context).textStrong))),
                 if (active) Icon(Icons.check_circle, color: TideTheme.of(ctx).primary, size: 20),
               ]),
             ),
@@ -198,8 +198,8 @@ class _ProfilePageState extends State<ProfilePage> {
     TideDialogs.show(context:context, builder:(ctx)=>StatefulBuilder(builder:(ctx,setSt)=>AlertDialog(backgroundColor:Colors.transparent, contentPadding:EdgeInsets.zero,
       content: TideDialogs.glassContent(context:ctx, maxWidth:0.9, children: [
         const Text('通知管理', style: TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
-        SwitchListTile(title: const Text('静默通知', style: TextStyle(fontFamily:'TideFont')), value:silent, onChanged:(v)=>setSt(()=>silent=v), activeColor: TideTheme.of(context).primary),
-        SwitchListTile(title: const Text('日程提醒', style: TextStyle(fontFamily:'TideFont')), value:schedule, onChanged:(v)=>setSt(()=>schedule=v), activeColor: TideTheme.of(context).primary),
+        SwitchListTile(title: Text('静默通知', style: TextStyle(fontFamily:'TideFont')), value:silent, onChanged:(v)=>setSt(()=>silent=v), activeColor: TideTheme.of(context).primary),
+        SwitchListTile(title: Text('日程提醒', style: TextStyle(fontFamily:'TideFont')), value:schedule, onChanged:(v)=>setSt(()=>schedule=v), activeColor: TideTheme.of(context).primary),
         const SizedBox(height:12), TideDialogs.glassButton('确定', onTap:()=>Navigator.pop(ctx))]))));
   }
 }
@@ -236,7 +236,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   Future<void> _saveList() async {
     await DBManager().insertKV('provider_list', jsonEncode(_providers));
     await DBManager().insertKV('tts_provider_list', jsonEncode(_ttsProviders));
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('已保存', style: TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: TideTheme.of(context).primary));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已保存', style: TextStyle(fontFamily:'TideFont')), behavior:SnackBarBehavior.floating, backgroundColor: TideTheme.of(context).primary));
   }
   void _addProvider() {
     showTideSheet(context: context, height: 520, child: Padding(padding: const EdgeInsets.fromLTRB(16,0,16,20), child: SingleChildScrollView(
@@ -244,10 +244,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         const SizedBox(height:8), const Text('新增模型提供商', style: TextStyle(fontSize:18, fontWeight:FontWeight.w600, fontFamily:'TideFont')),
         const SizedBox(height:12),
         Wrap(spacing:8, runSpacing:8, children: _presets.map((p) => BouncyTap(onTap:() { Navigator.pop(context); _showAddDialog(p['name']!, p['url']!, '', p['models']!, false); }, child: Container(padding: const EdgeInsets.symmetric(horizontal:12,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(16), color: Colors.white.withOpacity(0.8)), child: Text(p['name']!, style: const TextStyle(fontSize:13, fontFamily:'TideFont'))))).toList()),
-        const SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showAddDialog('自定义', '', '', '', false); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
+        SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showAddDialog('自定义', '', '', '', false); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
         const SizedBox(height:24), const Text('文本转语音 (TTS)', style: TextStyle(fontSize:18, fontWeight:FontWeight.w600, fontFamily:'TideFont')), const SizedBox(height:12),
         Wrap(spacing:8, runSpacing:8, children: _ttsPresets.map((p) => BouncyTap(onTap:() { Navigator.pop(context); _showTtsDialog(p['name']!, p['url']!, '', p['models']!, p['voice']!); }, child: Container(padding: const EdgeInsets.symmetric(horizontal:12,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(16), color: Colors.white.withOpacity(0.8)), child: Text(p['name']!, style: const TextStyle(fontSize:13, fontFamily:'TideFont'))))).toList()),
-        const SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showTtsDialog('自定义', '', '', '', ''); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义 TTS', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
+        SizedBox(height:12), BouncyTap(onTap:() { Navigator.pop(context); _showTtsDialog('自定义', '', '', '', ''); }, child: Container(width: double.infinity, height:44, decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), border: Border.all(color: TideTheme.of(context).primary)), child: Center(child: Text('自定义 TTS', style: TextStyle(fontSize:15, color: TideTheme.of(context).primary, fontFamily:'TideFont'))))),
       ]),
     )));
   }
@@ -259,8 +259,12 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         Text(isTts?'添加 TTS':'添加提供商', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
         _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
         _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名(逗号分隔)', mCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
-          setState(() { if (isTts) { _ttsProviders.add({'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim(),'voice':'default'}); } else { _providers.add({'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim()}); } });
+        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
+          setState(() {
+          final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim()};
+          final idx = _providers.indexWhere((e) => e['name'] == p['name']);
+          if (idx >= 0) { _providers[idx] = p; } else { _providers.add(p); }
+        });
           Navigator.pop(ctx); _saveList();
         }))])]))); }
   void _showTtsDialog(String name, String url, String key, String models, String voice) {
@@ -272,13 +276,13 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
         _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名', mCtrl), const SizedBox(height:8),
         _f('音色', vCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
-          setState(()=>_ttsProviders.add({'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim(),'voice':vCtrl.text.trim()}));
+        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('添加', onTap:(){
+          setState(() { final p = {'name':nCtrl.text.trim(),'url':uCtrl.text.trim(),'key':kCtrl.text.trim(),'model':mCtrl.text.trim(),'voice':vCtrl.text.trim()}; final i = _ttsProviders.indexWhere((e) => e['name'] == p['name']); if (i >= 0) { _ttsProviders[i] = p; } else { _ttsProviders.add(p); } });
           Navigator.pop(ctx); _saveList();
         }))])]))); }
   Widget _f(String label, TextEditingController c,{bool obscure=false}) => Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-    Text(label, style: const TextStyle(fontSize:13, color:Color(0xFF8E8E93), fontFamily:'TideFont')), const SizedBox(height:4),
-    Container(decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: const Color(0xFFE8E8F0)), child: TextField(controller:c, obscureText:obscure, style: const TextStyle(fontSize:14, fontFamily:'TideFont'), decoration: InputDecoration(contentPadding: const EdgeInsets.symmetric(horizontal:12, vertical:10), border:InputBorder.none)))]);
+    Text(label, style: TextStyle(fontSize:13, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')), SizedBox(height:4),
+    Container(decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: TideTheme.of(context).surfaceVariant), child: TextField(controller:c, obscureText:obscure, style: const TextStyle(fontSize:14, fontFamily:'TideFont'), decoration: InputDecoration(contentPadding: const EdgeInsets.symmetric(horizontal:12, vertical:10), border:InputBorder.none)))]);
   void _editProvider(Map<String,dynamic> p) {
     final nCtrl = TextEditingController(text: p['name']); final uCtrl = TextEditingController(text: p['url']);
     final kCtrl = TextEditingController(text: p['key']); final mCtrl = TextEditingController(text: p['model']);
@@ -288,7 +292,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         Text('编辑${hasVoice?' TTS':'提供商'}', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:12),
         _f('名称', nCtrl), const SizedBox(height:8), _f('API 地址', uCtrl), const SizedBox(height:8),
         _f('API Key', kCtrl, obscure:true), const SizedBox(height:8), _f('模型名', mCtrl), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('保存', onTap:(){
+        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('保存', onTap:(){
           p['name'] = nCtrl.text.trim(); p['url'] = uCtrl.text.trim(); p['key'] = kCtrl.text.trim(); p['model'] = mCtrl.text.trim();
           Navigator.pop(ctx); _saveList(); setState(() {});
         }))])]))); }
@@ -298,7 +302,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       content: TideDialogs.glassContent(context:ctx, maxWidth:0.85, children: [
         Text('删除${isTts?'TTS':''}提供商', style: const TextStyle(fontSize:17, fontWeight:FontWeight.w700, fontFamily:'TideFont')), const SizedBox(height:10),
         Text('确定删除「$name」吗？', style: const TextStyle(fontSize:14, fontFamily:'TideFont')), const SizedBox(height:16),
-        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: const Color(0xFFE8E8F0), textColor: const Color(0xFF1C1C1E))), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('删除', onTap:(){ setState(() { if (isTts) { _ttsProviders.removeAt(idx); } else { _providers.removeAt(idx); } }); Navigator.pop(ctx); _saveList(); }, color: const Color(0xFFE74C3C)))]),
+        Row(children:[Expanded(child: TideDialogs.glassButton('取消', onTap:()=>Navigator.pop(ctx), color: TideTheme.of(context).buttonSecondary, textColor: TideTheme.of(context).textStrong)), const SizedBox(width:10), Expanded(child: TideDialogs.glassButton('删除', onTap:(){ setState(() { if (isTts) { _ttsProviders.removeAt(idx); } else { _providers.removeAt(idx); } }); Navigator.pop(ctx); _saveList(); }, color: const Color(0xFFE74C3C)))]),
       ])));
   }
   Future<void> _testProvider(Map<String,dynamic> p) async {
@@ -310,7 +314,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('连接失败: $e', style: const TextStyle(fontFamily:'TideFont')), backgroundColor: const Color(0xFFE74C3C), behavior:SnackBarBehavior.floating));
     }
   }
-  @override Widget build(BuildContext context) => Scaffold(backgroundColor: const Color(0xFFF2F2F7),
+  @override Widget build(BuildContext context) => Scaffold(backgroundColor: TideTheme.of(context).bgColor,
     appBar: AppBar(title: const Text('API 设置', style: TextStyle(fontWeight:FontWeight.w600, fontFamily:'TideFont')), backgroundColor:Colors.transparent, elevation:0,
       leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size:20), onPressed:()=>Navigator.pop(context)),
       actions: [IconButton(icon: Icon(Icons.add_circle_outline_rounded, color: TideTheme.of(context).primary, size:26), onPressed:_addProvider)]),
@@ -319,29 +323,29 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       if (_providers.isEmpty && _ttsProviders.isEmpty)
         Center(child: Padding(padding: const EdgeInsets.only(top:80), child: Column(mainAxisSize:MainAxisSize.min, children: [
           const Icon(Icons.api_rounded, size:60, color:Color(0xFFC7C7CC)), const SizedBox(height:12),
-          const Text('还没有添加任何模型提供商', style: TextStyle(fontSize:15, color:Color(0xFF8E8E93), fontFamily:'TideFont')),
-          const SizedBox(height:6), const Text('点击右上角 + 添加', style: TextStyle(fontSize:13, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))]))),
+          Text('还没有添加任何模型提供商', style: TextStyle(fontSize:15, color:TideTheme.of(context).textWeak, fontFamily:'TideFont')),
+          SizedBox(height:6), Text('点击右上角 + 添加', style: TextStyle(fontSize:13, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))]))),
       if (_providers.isNotEmpty) ...[
-        const Padding(padding: EdgeInsets.only(top:8, bottom:8), child: Text('AI 模型', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:Color(0xFF1C1C1E)))),
+        Padding(padding: EdgeInsets.only(top:8, bottom:8), child: Text('AI 模型', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))),
         ...List.generate(_providers.length, (i) {
           final p = _providers[i];
           return BouncyTap(onTap: () => _editProvider(p), child: FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-            Row(children: [Expanded(child: Text(p['name']??'', style: const TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont'))), BouncyTap(onTap:()=>_testProvider(p), child: Container(padding: const EdgeInsets.symmetric(horizontal:10,vertical:4), decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: TideTheme.of(context).primary.withOpacity(0.15)), child: Text('测试', style: TextStyle(fontSize:12, color: TideTheme.of(context).primary, fontFamily:'TideFont')))), const SizedBox(width:8), BouncyTap(onTap:()=>_deleteProvider(i), child: const Icon(Icons.delete_outline_rounded, size:20, color:Color(0xFFE74C3C)))]),
-            const SizedBox(height:6), Text(p['url']??'', style: const TextStyle(fontSize:12, color:Color(0xFF8E8E93), fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
-            if ((p['model']??'').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: const TextStyle(fontSize:12, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))),
-            if ((p['key']??'').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top:2), child: Text('Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...', style: const TextStyle(fontSize:11, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))),
+            Row(children: [Expanded(child: Text(p['name']??'', style: TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont'))), BouncyTap(onTap:()=>_testProvider(p), child: Container(padding: EdgeInsets.symmetric(horizontal:10,vertical:4), decoration: BoxDecoration(borderRadius:BorderRadius.circular(10), color: TideTheme.of(context).primary.withOpacity(0.15)), child: Text('测试', style: TextStyle(fontSize:12, color: TideTheme.of(context).primary, fontFamily:'TideFont')))), SizedBox(width:8), BouncyTap(onTap:()=>_deleteProvider(i), child: Icon(Icons.delete_outline_rounded, size:20, color:Color(0xFFE74C3C)))]),
+            SizedBox(height:6), Text(p['url']??'', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
+            if ((p['model']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
+            if ((p['key']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:2), child: Text('Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...', style: TextStyle(fontSize:11, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
           ])));
         }),
       ],
       if (_ttsProviders.isNotEmpty) ...[
-        const Padding(padding: EdgeInsets.only(top:16, bottom:8), child: Text('TTS 语音', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:Color(0xFF1C1C1E)))),
+        Padding(padding: EdgeInsets.only(top:16, bottom:8), child: Text('TTS 语音', style: TextStyle(fontSize:15, fontWeight:FontWeight.w600, fontFamily:'TideFont', color:TideTheme.of(context).textStrong))),
         ...List.generate(_ttsProviders.length, (i) {
           final p = _ttsProviders[i];
           return BouncyTap(onTap: () => _editProvider(p), child: FrostCard(margin: const EdgeInsets.only(bottom:10), padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
             Row(children: [Expanded(child: Text(p['name']??'', style: const TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont'))), const SizedBox(width:8), BouncyTap(onTap:()=>_deleteProvider(i, isTts:true), child: const Icon(Icons.delete_outline_rounded, size:20, color:Color(0xFFE74C3C)))]),
-            const SizedBox(height:6), Text(p['url']??'', style: const TextStyle(fontSize:12, color:Color(0xFF8E8E93), fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
-            if ((p['model']??'').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: const TextStyle(fontSize:12, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))),
-            if ((p['voice']??'').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top:2), child: Text('音色: ${p['voice']}', style: const TextStyle(fontSize:11, color:Color(0xFFC7C7CC), fontFamily:'TideFont'))),
+            SizedBox(height:6), Text(p['url']??'', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'), maxLines:1, overflow:TextOverflow.ellipsis),
+            if ((p['model']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:4), child: Text('模型: ${p['model']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
+            if ((p['voice']??'').toString().isNotEmpty) Padding(padding: EdgeInsets.only(top:2), child: Text('音色: ${p['voice']}', style: TextStyle(fontSize:11, color:TideTheme.of(context).textFaint, fontFamily:'TideFont'))),
           ])));
         }),
       ],
@@ -375,7 +379,7 @@ class _LocalModelPageState extends State<LocalModelPage> {
     final dir = await getApplicationDocumentsDirectory(); File('${dir.path}/${m['id']}.gguf').createSync(recursive:true);
     if (mounted) setState(() { m['installed']=true; m['downloading']=false; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${m['name']} 安装完成', style: const TextStyle(fontFamily:'TideFont')), backgroundColor: const Color(0xFF34C759), behavior:SnackBarBehavior.floating)); });
   }
-  @override Widget build(BuildContext context) => Scaffold(backgroundColor: const Color(0xFFF2F2F7),
+  @override Widget build(BuildContext context) => Scaffold(backgroundColor: TideTheme.of(context).bgColor,
     appBar: AppBar(title: const Text('本地模型', style: TextStyle(fontWeight:FontWeight.w600, fontFamily:'TideFont')), backgroundColor:Colors.transparent, elevation:0,
       leading: IconButton(icon: const Icon(Icons.arrow_back_ios_rounded, size:20), onPressed:()=>Navigator.pop(context))),
     body: ListView.builder(padding: const EdgeInsets.fromLTRB(16,8,16,100), itemCount:_models.length, itemBuilder:(ctx,i){
@@ -383,14 +387,14 @@ class _LocalModelPageState extends State<LocalModelPage> {
       return FrostCard(margin: const EdgeInsets.only(bottom:12), padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
         Row(children:[Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
           Row(children:[Text(m['name'] as String, style: const TextStyle(fontSize:16, fontWeight:FontWeight.w600, fontFamily:'TideFont')), if(installed) const Padding(padding: EdgeInsets.only(left:8), child: Icon(Icons.check_circle, size:18, color:Color(0xFF34C759)))]),
-          const SizedBox(height:4), Text('${m['desc']} • ${m['size']}', style: const TextStyle(fontSize:12, color:Color(0xFF8E8E93), fontFamily:'TideFont'))])),
+          SizedBox(height:4), Text('${m['desc']} • ${m['size']}', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'))])),
           if (!installed)
             downloading ? SizedBox(width:24,height:24, child: CircularProgressIndicator(strokeWidth:2, color: TideTheme.of(context).primary))
-            : BouncyTap(onTap:()=>_downloadModel(i), child: Container(padding: const EdgeInsets.symmetric(horizontal:14,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), color: TideTheme.of(context).primary), child: Text('下载', style: TextStyle(fontSize:13, color:Colors.white, fontFamily:'TideFont')))),
+            : BouncyTap(onTap:()=>_downloadModel(i), child: Container(padding: EdgeInsets.symmetric(horizontal:14,vertical:8), decoration: BoxDecoration(borderRadius:BorderRadius.circular(14), color: TideTheme.of(context).primary), child: Text('下载', style: TextStyle(fontSize:13, color:Colors.white, fontFamily:'TideFont')))),
         ]),
         if (downloading) Padding(padding: const EdgeInsets.only(top:10), child: Column(crossAxisAlignment:CrossAxisAlignment.start, children: [
-          LinearProgressIndicator(value:m['progress'] as double, backgroundColor: const Color(0xFFE8E8F0), color: TideTheme.of(context).primary, borderRadius:BorderRadius.circular(4)),
-          const SizedBox(height:4), Text('${((m['progress']as double)*100).toInt()}%', style: const TextStyle(fontSize:12, color:Color(0xFF8E8E93), fontFamily:'TideFont'))])),
+          LinearProgressIndicator(value:m['progress'] as double, backgroundColor: TideTheme.of(context).surfaceVariant, color: TideTheme.of(context).primary, borderRadius:BorderRadius.circular(4)),
+          SizedBox(height:4), Text('${((m['progress']as double)*100).toInt()}%', style: TextStyle(fontSize:12, color:TideTheme.of(context).textWeak, fontFamily:'TideFont'))])),
       ]));
     }));
 }

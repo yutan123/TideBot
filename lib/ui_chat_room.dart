@@ -91,63 +91,74 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
   // ========== 发送消息 ==========
   void _send({String? img}) async {
-    final text = _msgC.text.trim();
-    if (text.isEmpty && img == null) {
-      // 无内容时空点发送不触发
-      return;
-    }
-    if (_loading) return; // 避免连点重复发送
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // 先保证已选择一个可用模型：若 bot 还没配 chat_model，但存在默认 provider，则自动用第一个
     try {
-      final bot = _bot;
-      String? cm = bot['chat_model'] as String?;
-      if (cm == null || cm.toString().isEmpty) {
-        final providers = await DBManager().queryChatProviders();
-        if (providers.isNotEmpty) {
-          cm = providers.first['id'] as String;
-          _bot['chat_model'] = cm;
-          await DBManager().updateBot(_bot['id'] as String, {'chat_model': cm});
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('请先在「我的 → API 设置」添加模型，再回来聊天～', style: TextStyle(fontFamily: 'TideFont')),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Color(0xFFE74C3C),
-            ));
-          }
-          return;
-        }
+      final text = _msgC.text.trim();
+      if (text.isEmpty && img == null) {
+        if (mounted) setState(() => _hasText = false);
+        return; // 无内容时空点发送不触发
       }
-    } catch (_) {}
+      if (_loading) return; // 避免连点重复发送
+      setState(() => _loading = true);
+      final now = DateTime.now().millisecondsSinceEpoch;
 
-    final msg = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': text, 'image': img, 'timestamp': now};
-    try {
-      await DBManager().insertMessage(msg);
-      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
-    } catch (_) {
-      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; });
-    }
-    _scrollDown();
+      // 先保证已选择一个可用模型：若 bot 还没配 chat_model，但存在默认 provider，则自动用第一个
+      String? cm;
+      try {
+        cm = _bot['chat_model'] as String?;
+        if (cm == null || cm.toString().isEmpty) {
+          final providers = await DBManager().queryChatProviders();
+          if (providers.isNotEmpty) {
+            cm = providers.first['id'] as String;
+            _bot['chat_model'] = cm;
+            await DBManager().updateBot(_bot['id'] as String, {'chat_model': cm});
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('请先在「我的 → API 设置」添加模型，再回来聊天～', style: TextStyle(fontFamily: 'TideFont')),
+                behavior: SnackBarBehavior.floating,
+                backgroundColor: Color(0xFFE74C3C),
+              ));
+            }
+            setState(() => _loading = false);
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[send] provider resolve error: $e');
+        setState(() => _loading = false);
+        return;
+      }
 
-    setState(() { _loading = true; _typing = true; });
-    try {
-      final history = _msgs.where((m) => (m['content'] as String?)?.isNotEmpty == true).map((m) => {'role': m['role'], 'content': m['content']}).toList();
-      var imgB64 = '';
-      if (img != null) imgB64 = base64Encode(await File(img).readAsBytes());
-      final resp = await AIManager().chat(botId: _bot['id'] as String, messages: history, imageBase64: imgB64);
-      final bm = <String, dynamic>{'id': 'm_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': resp, 'timestamp': DateTime.now().millisecondsSinceEpoch};
-      await DBManager().insertMessage(bm);
-      if (mounted) setState(() => _msgs.add(bm));
-    } catch (e) {
-      final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '[X] 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
-      if (mounted) setState(() => _msgs.add(err));
+      // 插入并显示用户消息（保证用户自己的发言一定上屏）
+      final msg = <String, dynamic>{'id': 'm_$now', 'bot_id': _bot['id'], 'role': 'user', 'content': text, 'image': img, 'timestamp': now};
+      try {
+        await DBManager().insertMessage(msg);
+      } catch (e) { debugPrint('[send] insert user msg error: $e'); }
+      if (mounted) setState(() { _msgs.add(msg); _msgC.clear(); _msgsLoading = false; _typing = true; });
+      _scrollDown();
+
+      try {
+        final history = _msgs.where((m) => (m['content'] as String?)?.isNotEmpty == true).map((m) => {'role': m['role'], 'content': m['content']}).toList();
+        var imgB64 = '';
+        if (img != null) imgB64 = base64Encode(await File(img).readAsBytes());
+        final resp = await AIManager().chat(botId: _bot['id'] as String, messages: history, imageBase64: imgB64);
+        debugPrint('[send] chat resp: ${resp.substring(0, resp.length > 80 ? 80 : resp.length)}');
+        final isErr = resp.startsWith('[X]') || resp.startsWith('未配置') || resp.startsWith('映射的模型');
+        final bm = <String, dynamic>{'id': 'm_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant',
+          'content': isErr ? resp : (resp.isEmpty ? '[X] 模型返回了空内容，请检查配置' : resp), 'timestamp': DateTime.now().millisecondsSinceEpoch};
+        try { await DBManager().insertMessage(bm); } catch (e) { debugPrint('[send] insert ai msg error: $e'); }
+        if (mounted) setState(() => _msgs.add(bm));
+      } catch (e) {
+        debugPrint('[send] chat exception: $e');
+        final err = <String, dynamic>{'id': 'm_err_${DateTime.now().millisecondsSinceEpoch}', 'bot_id': _bot['id'], 'role': 'assistant', 'content': '[X] 连接失败: $e', 'timestamp': DateTime.now().millisecondsSinceEpoch};
+        try { await DBManager().insertMessage(err); } catch (_) {}
+        if (mounted) setState(() => _msgs.add(err));
+      }
+    } finally {
+      if (mounted) setState(() { _loading = false; _typing = false; });
     }
-    if (mounted) setState(() { _loading = false; _typing = false; });
     _scrollDown();
   }
-
   // ========== 录音 ==========
   Future<void> _toggleRec() async {
     if (_isRecording) {
@@ -293,9 +304,6 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     final botId = _bot['id'] as String;
     // 当前选择（只读读取 DB，作为初始值；弹窗内实时状态交给 setSt 维护）
     String curChat = prefs.getString('chat_model_$botId') ?? ((_bot['chat_model'] as String?)?.isNotEmpty == true ? _bot['chat_model'] as String : (providers.isNotEmpty ? providers.first['id'] as String : ''));
-    String curBak = prefs.getString('backup_model_$botId') ?? '';
-    String curVision = prefs.getString('vision_model_$botId') ?? '';
-    String curStt = prefs.getString('stt_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ?? ((_bot['tts_model'] as String?)?.isNotEmpty == true ? _bot['tts_model'] as String : '');
     int curTok = prefs.getInt('max_token_$botId') ?? (_bot['max_tokens'] as int? ?? 10000);
 
@@ -320,11 +328,8 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
           const SizedBox(height: 12),
           Flexible(child: SingleChildScrollView(child: Column(children: [
             _mLabel('聊天模型'), _modelPicker(ctx, providers, curChat, (v) async { curChat = v; await pickModel('chat_model_$botId', v); }),
-            _mLabel('备用模型'), _modelPicker(ctx, providers, curBak, (v) async { curBak = v; await pickModel('backup_model_$botId', v); }),
-            _mLabel('识图模型'), _modelPicker(ctx, providers, curVision, (v) async { curVision = v; await pickModel('vision_model_$botId', v); }),
-            _mLabel('STT模型'), _modelPicker(ctx, providers, curStt, (v) async { curStt = v; await pickModel('stt_model_$botId', v); }),
-            // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段
-            _mLabel('TTS模型（语音）'), _modelPicker(ctx, ttsProviders, curTts, (v) async { curTts = v; await pickModel('tts_model_$botId', v, isTts: true); }),
+            // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
+            _mLabel('TTS模型（语音，可选）'), _modelPicker(ctx, ttsProviders, curTts, (v) async { curTts = v; await pickModel('tts_model_$botId', v, isTts: true); }),
             _mLabel('最大上下文Token'),
             _tokenField(ctx, curTok, (v) async { curTok = v; await prefs.setInt('max_token_$botId', v); await DBManager().updateBot(botId, {'max_tokens': v}); setSt(() {}); }),
           ]))),
@@ -465,7 +470,7 @@ Widget _chatHeader() {
     return ClipRRect(
       child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          color: _hasBg ? Colors.white.withOpacity(0.15) : Colors.white.withOpacity(0.5),
+          color: _hasBg ? TideTheme.of(context).glass.withOpacity(0.15) : TideTheme.of(context).glass.withOpacity(0.55),
           child: SafeArea(bottom: false,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -532,13 +537,13 @@ Widget _chatHeader() {
     int last = 0;
     for (var m in reg.allMatches(text)) {
       if (m.start > last) {
-        spans.add(TextSpan(text: text.substring(last, m.start), style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 14, fontFamily: 'TideFont')));
+        spans.add(TextSpan(text: text.substring(last, m.start), style: TextStyle(color: isUser ? Colors.white : TideTheme.of(context).textStrong, fontSize: 14, fontFamily: 'TideFont')));
       }
-      spans.add(TextSpan(text: text.substring(m.start, m.end), style: TextStyle(color: isUser ? Colors.white.withOpacity(0.6) : const Color(0xFF8E8E93), fontSize: 12, fontFamily: 'TideFont', fontStyle: FontStyle.italic)));
+      spans.add(TextSpan(text: text.substring(m.start, m.end), style: TextStyle(color: isUser ? Colors.white.withOpacity(0.6) : TideTheme.of(context).textWeak, fontSize: 12, fontFamily: 'TideFont', fontStyle: FontStyle.italic)));
       last = m.end;
     }
-    if (last < text.length) spans.add(TextSpan(text: text.substring(last), style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 14, fontFamily: 'TideFont')));
-    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(16)), child: RichText(text: TextSpan(children: spans)));
+    if (last < text.length) spans.add(TextSpan(text: text.substring(last), style: TextStyle(color: isUser ? Colors.white : TideTheme.of(context).textStrong, fontSize: 14, fontFamily: 'TideFont')));
+    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : TideTheme.of(context).bubbleAi, borderRadius: BorderRadius.circular(16)), child: RichText(text: TextSpan(children: spans)));
   }
 
   Widget _inputBar() {
@@ -548,17 +553,22 @@ Widget _chatHeader() {
         // 直接用 controller 驱动位移，消除此前"从未 forward + 嵌套 CurvedAnimation"导致停在下偏30%的问题
         position: Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero).animate(CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
         child: Padding(
-          // 底部大胆上移：固定留出较大空白，让输入框明显悬浮不贴屏幕底
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 42),
+          // 轻微上浮：此前"被截断一半"是动画停在下偏的 bug（已修），现在动画归零；这里仅留适度间距避免紧贴屏幕底
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
           child: Container(
-            decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
+            decoration: _hasBg ? BoxDecoration(color: TideTheme.of(context).glass.withOpacity(0.1)) : null,
             child: ClipRRect(
               child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-                child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
+                child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? TideTheme.of(context).glass.withOpacity(0.6) : TideTheme.of(context).surface.withOpacity(0.85), borderRadius: BorderRadius.circular(22)), child: Row(children: [
                   GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
                   Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
                   GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-                  if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
+                  // 发送按钮：始终显示（不再依赖 _hasText 条件渲染，避免"输入了却看不到/点不动"的情况）
+                  GestureDetector(
+                    onTap: () { _send(); },
+                    behavior: HitTestBehavior.opaque,
+                    child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(_hasText ? 0.5 : 0.2), blurRadius: 8),], color: TideTheme.of(context).primary.withOpacity(_hasText ? 1 : 0.45)), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white))),
+                  ),
                 ])),
               ),
             ),
