@@ -10,6 +10,7 @@ import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
+import 'global_notice.dart';
 import 'theme.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -536,47 +537,10 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (_) {}
   }
 
-  void _showGeneralSettings() async {
-    final db = DBManager();
-    bool showTime = (await db.getKV('show_message_time')) != 'false';
-    bool showAvatar = (await db.getKV('show_chat_avatar')) == 'true';
-    if (!mounted) return;
-    TideDialogs.show(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setSt) => AlertDialog(
-                backgroundColor: Colors.transparent,
-                contentPadding: EdgeInsets.zero,
-                content: TideDialogs.glassContent(
-                    context: ctx,
-                    maxWidth: 0.9,
-                    children: [
-                      Text('普通设置',
-                          style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'TideFont',
-                              color: TideTheme.of(ctx).textStrong)),
-                      SwitchListTile(
-                          title: const Text('显示消息发送时间',
-                              style: TextStyle(fontFamily: 'TideFont')),
-                          value: showTime,
-                          onChanged: (v) async {
-                            setSt(() => showTime = v);
-                            await db.insertKV(
-                                'show_message_time', v.toString());
-                          },
-                          activeColor: TideTheme.of(ctx).primary),
-                      SwitchListTile(
-                          title: const Text('聊天界面显示头像',
-                              style: TextStyle(fontFamily: 'TideFont')),
-                          value: showAvatar,
-                          onChanged: (v) async {
-                            setSt(() => showAvatar = v);
-                            await db.insertKV('show_chat_avatar', v.toString());
-                          },
-                          activeColor: TideTheme.of(ctx).primary),
-                    ]))));
+  void _showGeneralSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const GeneralSettingsPage()),
+    );
   }
 
   void _showAdvancedSettings() {
@@ -603,70 +567,267 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _showNotificationSettings() async {
     final db = DBManager();
-    bool unread = (await db.getKV('unread_notifications')) != 'false';
-    bool keepRunning = (await db.getKV('persistent_notification')) == 'true';
+    final unread = (await db.getKV('unread_notifications')) != 'false';
+    final keepRunning = (await db.getKV('persistent_notification')) == 'true';
     if (!mounted) return;
-    TideDialogs.show(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setSt) => AlertDialog(
-                backgroundColor: Colors.transparent,
-                contentPadding: EdgeInsets.zero,
-                content: TideDialogs
-                    .glassContent(context: ctx, maxWidth: 0.9, children: [
-                  Text('通知管理',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'TideFont',
-                          color: TideTheme.of(ctx).textStrong)),
-                  SwitchListTile(
-                      title: const Text('机器人未读消息通知',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      subtitle: const Text('APP 不在前台时提醒',
-                          style:
-                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                      value: unread,
-                      onChanged: (v) async {
-                        if (v && !await AppPermissions.notifications(context))
-                          return;
-                        setSt(() => unread = v);
-                        await db.insertKV('unread_notifications', v.toString());
-                      },
-                      activeColor: TideTheme.of(ctx).primary),
-                  SwitchListTile(
-                      title: const Text('TideBot 正在运行中',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      subtitle: const Text('开启后显示持久化状态通知',
-                          style:
-                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                      value: keepRunning,
-                      onChanged: (v) async {
-                        if (v && !await AppPermissions.notifications(context))
-                          return;
-                        try {
-                          final service = FlutterBackgroundService();
-                          if (v) {
-                            await service.startService();
-                          } else {
-                            service.invoke('stopService');
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => NotificationSettingsPage(
+        initialUnread: unread,
+        initialKeepRunning: keepRunning,
+      ),
+    ));
+  }
+}
+
+class GeneralSettingsPage extends StatefulWidget {
+  const GeneralSettingsPage({super.key});
+
+  @override
+  State<GeneralSettingsPage> createState() => _GeneralSettingsPageState();
+}
+
+class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
+  bool _showTime = true;
+  bool _showAvatar = false;
+  bool _streaming = true;
+  double _speed = 50;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final db = DBManager();
+    final speed = int.tryParse(await db.getKV('streaming_speed') ?? '');
+    if (!mounted) return;
+    setState(() {
+      _showTime = true;
+      _showAvatar = false;
+      _streaming = true;
+      _speed = (speed ?? 50).clamp(1, 100).toDouble();
+    });
+    final time = await db.getKV('show_message_time');
+    final avatar = await db.getKV('show_chat_avatar');
+    final stream = await db.getKV('streaming_input');
+    if (!mounted) return;
+    setState(() {
+      _showTime = time != 'false';
+      _showAvatar = avatar == 'true';
+      _streaming = stream != 'false';
+    });
+  }
+
+  Future<void> _save(String key, String value) async {
+    await DBManager().insertKV(key, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.bgColor,
+      appBar: AppBar(
+        title: const Text('普通设置', style: TextStyle(fontFamily: 'TideFont')),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
+        children: [
+          FrostCard(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('显示消息发送时间',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  value: _showTime,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _showTime = value);
+                    _save('show_message_time', value.toString());
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('聊天界面显示头像',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  value: _showAvatar,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _showAvatar = value);
+                    _save('show_chat_avatar', value.toString());
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('流式输入',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('模型支持时逐步显示回复',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _streaming,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _streaming = value);
+                    _save('streaming_input', value.toString());
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          FrostCard(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('流式输入速度：${_speed.round()}',
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        color: theme.textStrong,
+                        fontWeight: FontWeight.w600)),
+                Slider(
+                  min: 1,
+                  max: 100,
+                  divisions: 99,
+                  value: _speed,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _speed = value);
+                  },
+                  onChangeEnd: (value) =>
+                      _save('streaming_speed', value.round().toString()),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('1', style: TextStyle(color: theme.textWeak)),
+                    Text('100', style: TextStyle(color: theme.textWeak)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class NotificationSettingsPage extends StatefulWidget {
+  final bool initialUnread;
+  final bool initialKeepRunning;
+
+  const NotificationSettingsPage({
+    super.key,
+    required this.initialUnread,
+    required this.initialKeepRunning,
+  });
+
+  @override
+  State<NotificationSettingsPage> createState() =>
+      _NotificationSettingsPageState();
+}
+
+class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
+  late bool _unread;
+  late bool _keepRunning;
+  bool _switchingPersistentNotification = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _unread = widget.initialUnread;
+    _keepRunning = widget.initialKeepRunning;
+  }
+
+  Future<void> _setValue(String key, bool value) async {
+    await DBManager().insertKV(key, value.toString());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.bgColor,
+      appBar: AppBar(
+        title: const Text('通知管理', style: TextStyle(fontFamily: 'TideFont')),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
+        children: [
+          FrostCard(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('机器人未读消息通知',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('APP 不在前台时提醒',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _unread,
+                  activeColor: theme.primary,
+                  onChanged: (value) async {
+                    if (value && !await AppPermissions.notifications(context)) {
+                      return;
+                    }
+                    setState(() => _unread = value);
+                    await _setValue('unread_notifications', value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('TideBot 正在运行中',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('开启后显示持久化状态通知',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _keepRunning,
+                  activeColor: theme.primary,
+                  onChanged: _switchingPersistentNotification
+                      ? null
+                      : (value) async {
+                          if (value &&
+                              !await AppPermissions.notifications(context)) {
+                            return;
                           }
-                          setSt(() => keepRunning = v);
-                          await db.insertKV(
-                              'persistent_notification', v.toString());
-                        } catch (_) {
-                          if (ctx.mounted) {
-                            ScaffoldMessenger.of(ctx)
-                                .showSnackBar(const SnackBar(
-                              content: Text('无法切换运行通知，请检查系统通知与后台权限',
-                                  style: TextStyle(fontFamily: 'TideFont')),
-                              behavior: SnackBarBehavior.floating,
-                            ));
+                          if (!mounted) return;
+                          setState(
+                              () => _switchingPersistentNotification = true);
+                          try {
+                            final service = FlutterBackgroundService();
+                            if (value) {
+                              await service.startService();
+                            } else {
+                              service.invoke('stopService');
+                            }
+                            await _setValue('persistent_notification', value);
+                            if (!mounted) return;
+                            setState(() => _keepRunning = value);
+                          } catch (e) {
+                            if (!mounted) return;
+                            GlobalNotice.show(
+                              '无法切换运行通知：$e',
+                              color: Theme.of(context).colorScheme.error,
+                            );
+                          } finally {
+                            if (mounted) {
+                              setState(() =>
+                                  _switchingPersistentNotification = false);
+                            }
                           }
-                        }
-                      },
-                      activeColor: TideTheme.of(ctx).primary),
-                ]))));
+                        },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

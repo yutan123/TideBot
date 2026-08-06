@@ -14,6 +14,8 @@ import 'ui_profile.dart';
 import 'ui_components.dart';
 import 'app_state.dart';
 import 'app_navigation.dart';
+import 'db.dart';
+import 'global_notice.dart';
 import 'ops.dart';
 
 final TideTheme tideTheme = TideTheme();
@@ -32,9 +34,10 @@ void main() async {
     debugPrint('[notification] init skipped: $e');
   }));
 
+  // 与通知设置页共用 DB KV，避免 SharedPreferences 与数据库的状态分叉。
   // 只恢复用户此前主动开启过的运行中服务；首次启动和关闭开关后绝不自启。
   final restorePersistentService =
-      prefs.getBool('persistent_notification') ?? false;
+      (await DBManager().getKV('persistent_notification')) == 'true';
   unawaited(_initPersistentService(
     restoreAfterUserOptIn: restorePersistentService,
   ).catchError((e, st) {
@@ -266,6 +269,14 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
             useMaterial3: true,
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
+          ),
+          builder: (context, child) => Overlay(
+            key: globalNoticeOverlayKey,
+            initialEntries: [
+              OverlayEntry(
+                builder: (context) => child ?? const SizedBox.shrink(),
+              ),
+            ],
           ),
           home: widget.hasSeenOnboarding
               ? const TideMainScaffold()

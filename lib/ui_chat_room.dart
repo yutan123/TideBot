@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
@@ -17,6 +18,7 @@ import 'ai.dart';
 import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
+import 'global_notice.dart';
 import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -37,6 +39,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _msgsLoading = true;
   final Record _rec = Record();
   final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _audioPositionSub;
+  StreamSubscription<Duration>? _audioDurationSub;
+  StreamSubscription<PlayerState>? _audioStateSub;
+  Duration _audioPosition = Duration.zero;
+  Duration _audioDuration = Duration.zero;
+  String? _playingAudioPath;
+  bool _audioPlaying = false;
   Timer? _recTimer;
   int _recSecs = 0;
   String? _customBg;
@@ -55,6 +64,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     super.initState();
     _bot = Map.from(widget.botData);
     _msgC.addListener(_msgChanged);
+    _audioPositionSub = _player.onPositionChanged.listen((v) {
+      if (!mounted) return;
+      setState(() => _audioPosition = v);
+    });
+    _audioDurationSub = _player.onDurationChanged.listen((v) {
+      if (!mounted) return;
+      setState(() => _audioDuration = v);
+    });
+    _audioStateSub = _player.onPlayerStateChanged.listen((v) {
+      if (!mounted) return;
+      setState(() {
+        _audioPlaying = v == PlayerState.playing;
+        if (v == PlayerState.completed) {
+          _audioPlaying = false;
+          _playingAudioPath = null;
+          _audioPosition = Duration.zero;
+          _audioDuration = Duration.zero;
+        }
+      });
+    });
     _loadMsgs();
     _loadBg();
     _loadChatPreferences();
@@ -75,6 +104,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _msgC.dispose();
     _scrollC.dispose();
     _rec.dispose();
+    _audioPositionSub?.cancel();
+    _audioDurationSub?.cancel();
+    _audioStateSub?.cancel();
     _player.dispose();
     _recTimer?.cancel();
     _bottomBarCtrl.dispose(); // 添加动画控制器释放
@@ -142,10 +174,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
-  Future<void> _send({String? img}) async {
+  Future<void> _send({String? img, String? document}) async {
     if (_loading) return;
     final text = _msgC.text.trim();
-    if (text.isEmpty && img == null) {
+    if (text.isEmpty && img == null && document == null) {
       if (mounted) setState(() => _hasText = false);
       return;
     }
@@ -156,11 +188,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'id': 'm_$now',
       'bot_id': botId,
       'role': 'user',
-      // AIManager 仅将 type=text 的历史传给模型；缺少该字段会丢失上下文。
-      'type': 'text',
+      'type': document != null ? 'document' : (img != null ? 'image' : 'text'),
       'content': text,
       'image': img,
-
+      'file_path': document ?? img,
+      'document_name':
+          document == null ? null : document.split(Platform.pathSeparator).last,
       'timestamp': now,
     };
 
@@ -185,9 +218,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'id': msg['id'],
           'bot_id': botId,
           'role': 'user',
-          'type': img == null ? 'text' : 'image',
+          'type':
+              document != null ? 'document' : (img == null ? 'text' : 'image'),
           'content': text,
-          'file_path': img,
+          'file_path': document ?? img,
           'mood': null,
           'timestamp': now,
         }).timeout(const Duration(seconds: 5));
@@ -212,10 +246,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             botId, {'chat_model': cm}).timeout(const Duration(seconds: 5));
       }
 
+      final documentNotice = document == null
+          ? null
+          : '[已附加本地文档：${msg['document_name']}。当前模型尚未读取文档内容。]';
+      final modelText = documentNotice == null
+          ? text
+          : (text.isEmpty ? documentNotice : '$text\n$documentNotice');
       final history = _msgs
           .where((m) => (m['content'] as String?)?.isNotEmpty == true)
-          .map((m) => {'role': m['role'], 'content': m['content']})
+          .map((m) => {
+                'role': m['role'],
+                'content': m['id'] == msg['id'] ? modelText : m['content'],
+              })
           .toList();
+      if (documentNotice != null && text.isEmpty) {
+        history.add({'role': 'user', 'content': modelText});
+      }
       var imgB64 = '';
       if (img != null) {
         imgB64 = base64Encode(await File(img).readAsBytes());
@@ -416,8 +462,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         await Permission.storage.request();
       } catch (_) {}
       final fp = await FilePicker.platform.pickFiles();
-      if (fp != null && fp.files.single.path != null)
-        _send(img: fp.files.single.path);
+      final path = fp?.files.single.path;
+      if (path == null || path.isEmpty) return;
+      final extension = path.split('.').last.toLowerCase();
+      const imageExtensions = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'};
+      if (imageExtensions.contains(extension)) {
+        await _send(img: path);
+      } else {
+        await _send(document: path);
+      }
     }
   }
 
@@ -889,42 +942,183 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 ]))));
   }
 
+  Future<void> _toggleAudio(String path) async {
+    try {
+      if (_playingAudioPath != path) {
+        setState(() {
+          _playingAudioPath = path;
+          _audioPosition = Duration.zero;
+          _audioDuration = Duration.zero;
+        });
+        await _player.play(DeviceFileSource(path));
+        return;
+      }
+      if (_audioPlaying) {
+        await _player.pause();
+      } else {
+        await _player.resume();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _playingAudioPath = null;
+        _audioPlaying = false;
+        _audioPosition = Duration.zero;
+        _audioDuration = Duration.zero;
+      });
+      GlobalNotice.show(
+        '无法播放这条语音：$e',
+        color: Theme.of(context).colorScheme.error,
+      );
+    }
+  }
+
+  String _formatAudioTime(Duration value) {
+    final seconds = value.inSeconds;
+    return '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  Widget _audioBubble({
+    required String path,
+    required bool isUser,
+    required int fallbackSeconds,
+  }) {
+    final active = _playingAudioPath == path;
+    final position = active ? _audioPosition : Duration.zero;
+    final duration = active && _audioDuration > Duration.zero
+        ? _audioDuration
+        : Duration(seconds: fallbackSeconds);
+    final max =
+        duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0;
+    final value = position.inMilliseconds.clamp(0, max.toInt()).toDouble();
+    final foreground = isUser ? Colors.white : TideTheme.of(context).textStrong;
+    final muted = isUser
+        ? Colors.white.withOpacity(0.78)
+        : TideTheme.of(context).textWeak;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+      decoration: BoxDecoration(
+        color: isUser
+            ? TideTheme.of(context).primary
+            : TideTheme.of(context).buttonSecondary,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _toggleAudio(path),
+            icon: Icon(
+              active && _audioPlaying
+                  ? Icons.pause_circle_filled_rounded
+                  : Icons.play_circle_filled_rounded,
+              color: foreground,
+              size: 28,
+            ),
+          ),
+          SizedBox(
+            width: 150,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Slider(
+                  min: 0,
+                  max: max,
+                  value: value,
+                  onChanged: !active || duration.inMilliseconds <= 0
+                      ? null
+                      : (v) => _player.seek(Duration(milliseconds: v.round())),
+                  activeColor: foreground,
+                  inactiveColor: muted,
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(_formatAudioTime(position),
+                        style: TextStyle(
+                            color: muted,
+                            fontSize: 11,
+                            fontFamily: 'TideFont')),
+                    Text(_formatAudioTime(duration),
+                        style: TextStyle(
+                            color: muted,
+                            fontSize: 11,
+                            fontFamily: 'TideFont')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ========== 长按消息 ==========
   void _msgLongPress(Map<String, dynamic> msg) {
-    showTideSheet(
-        context: context,
-        height: 220,
-        child: Column(children: [
-          const SizedBox(height: 8),
-          ListTile(
+    final text = msg['content']?.toString() ?? '';
+    TideDialogs.show(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.transparent,
+        contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(
+          context: dialogContext,
+          children: [
+            const Text('消息操作',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 8),
+            ListTile(
               leading: Icon(Icons.copy_rounded,
-                  color: TideTheme.of(context).primary),
+                  color: TideTheme.of(dialogContext).primary),
               title: const Text('复制', style: TextStyle(fontFamily: 'TideFont')),
               onTap: () {
-                /* copy */ Navigator.pop(context);
-              }),
-          ListTile(
-              leading: Icon(Icons.edit_rounded,
-                  color: TideTheme.of(context).primary),
-              title: const Text('编辑', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () => Navigator.pop(context)),
-          ListTile(
+                Clipboard.setData(ClipboardData(text: text));
+                Navigator.pop(dialogContext);
+              },
+            ),
+            ListTile(
               leading: Icon(Icons.format_quote_rounded,
-                  color: TideTheme.of(context).primary),
+                  color: TideTheme.of(dialogContext).primary),
               title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () => Navigator.pop(context)),
-          ListTile(
+              onTap: () {
+                _msgC.text = text.isEmpty ? '' : '> $text\n';
+                _msgC.selection =
+                    TextSelection.collapsed(offset: _msgC.text.length);
+                Navigator.pop(dialogContext);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),
               title: const Text('删除',
                   style: TextStyle(
                       fontFamily: 'TideFont', color: Color(0xFFE74C3C))),
               onTap: () async {
-                await DBManager().deleteMessage(msg['id'] as String);
-                Navigator.pop(context);
-                _loadMsgs();
-              }),
-        ]));
+                try {
+                  await DBManager().deleteMessage(msg['id'].toString());
+                  if (mounted) {
+                    setState(() => _msgs.removeWhere((item) =>
+                        item['id'].toString() == msg['id'].toString()));
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(content: Text('删除失败：$e')));
+                  }
+                }
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ========== 构建UI ==========
@@ -1094,8 +1288,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             m['image']?.toString() ?? (m['type'] == 'image' ? filePath : null);
         final audioPath =
             m['audio']?.toString() ?? (m['type'] == 'audio' ? filePath : null);
+        final documentPath = m['type'] == 'document' ? filePath : null;
         final hasImg = imagePath?.isNotEmpty == true;
         final hasAudio = audioPath?.isNotEmpty == true;
+        final hasDocument = documentPath?.isNotEmpty == true;
+        final documentName =
+            m['document_name']?.toString().trim().isNotEmpty == true
+                ? m['document_name'].toString()
+                : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
         final txt = (m['content'] as String?) ?? '';
 
         final ts = m['timestamp'] as int? ?? 0;
@@ -1116,26 +1316,55 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       if (_showChatAvatar)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: CircleAvatar(
-                            radius: 14,
-                            backgroundColor:
-                                TideTheme.of(context).primary.withOpacity(0.15),
-                            backgroundImage: !isUser &&
-                                    (_bot['avatar']?.toString().isNotEmpty ==
-                                        true) &&
-                                    File(_bot['avatar'].toString()).existsSync()
-                                ? FileImage(File(_bot['avatar'].toString()))
-                                : null,
-                            child: isUser ||
-                                    !File(_bot['avatar']?.toString() ?? '')
-                                        .existsSync()
-                                ? Icon(
-                                    isUser
-                                        ? Icons.person_rounded
-                                        : Icons.smart_toy_rounded,
-                                    size: 16,
-                                    color: TideTheme.of(context).primary)
-                                : null,
+                          child: isUser
+                              ? CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: TideTheme.of(context)
+                                      .primary
+                                      .withOpacity(0.15),
+                                  child: Icon(Icons.person_rounded,
+                                      size: 16,
+                                      color: TideTheme.of(context).primary),
+                                )
+                              : TideBotAvatar(
+                                  name: _bot['name']?.toString() ?? 'TideBot',
+                                  path: _bot['avatar']?.toString(),
+                                  size: 28,
+                                ),
+                        ),
+                      if (hasDocument)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: isUser
+                                ? TideTheme.of(context).primary
+                                : TideTheme.of(context).buttonSecondary,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.insert_drive_file_rounded,
+                                  color: isUser
+                                      ? Colors.white
+                                      : TideTheme.of(context).primary),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  documentName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: isUser
+                                        ? Colors.white
+                                        : TideTheme.of(context).textStrong,
+                                    fontFamily: 'TideFont',
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       // 图片
@@ -1150,51 +1379,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         fit: BoxFit.cover, width: 180)))),
                       // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
                       if (hasAudio)
-                        GestureDetector(
-                            onTap: () =>
-                                _player.play(DeviceFileSource(audioPath!)),
-                            child: Container(
-                                margin: const EdgeInsets.only(bottom: 4),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 10),
-                                decoration: BoxDecoration(
-                                    color: isUser
-                                        ? TideTheme.of(context).primary
-                                        : TideTheme.of(context).buttonSecondary,
-                                    borderRadius: BorderRadius.circular(16)),
-                                child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                          isUser
-                                              ? Icons.mic_rounded
-                                              : Icons.volume_up_rounded,
-                                          size: 18,
-                                          color: isUser
-                                              ? Colors.white
-                                              : TideTheme.of(context).primary),
-                                      const SizedBox(width: 8),
-                                      Text('点击播放',
-                                          style: TextStyle(
-                                              color: isUser
-                                                  ? Colors.white
-                                                  : TideTheme.of(context)
-                                                      .textStrong,
-                                              fontSize: 13,
-                                              fontFamily: 'TideFont')),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                          _fmtAudioDuration(
-                                              m['duration'] as int? ?? 0),
-                                          style: TextStyle(
-                                              color: isUser
-                                                  ? Colors.white
-                                                      .withOpacity(0.78)
-                                                  : TideTheme.of(context)
-                                                      .textWeak,
-                                              fontSize: 12,
-                                              fontFamily: 'TideFont')),
-                                    ]))),
+                        _audioBubble(
+                          path: audioPath!,
+                          isUser: isUser,
+                          fallbackSeconds: m['duration'] as int? ?? 0,
+                        ),
                       // STT 结果放在语音卡片下；无转写时不渲染空白文字。
                       if (hasAudio && txt.isNotEmpty)
                         Padding(
@@ -1217,10 +1406,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
-  String _fmtAudioDuration(int seconds) {
-    final safe = seconds < 0 ? 0 : seconds;
-    return '${safe ~/ 60}:${(safe % 60).toString().padLeft(2, '0')}';
-  }
+// 音频时长由播放器进度组件统一显示。
 
   // 富文本解析：旁白括号灰化
   Widget _parseText(String text, bool isUser) {
