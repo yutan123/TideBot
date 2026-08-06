@@ -38,8 +38,6 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
   late Map<String, dynamic> _bot;
   
   late AnimationController _bottomBarCtrl;
-  late Animation<double> _bottomBarSlide;
-
   bool _hasText = false;
   void _msgChanged() { if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty); }
 
@@ -51,7 +49,11 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     
     // 底部栏动画控制器
     _bottomBarCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 200)); // 减慢动画速度
-    _bottomBarSlide = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic));
+    // 首帧后启动进场动画，否则 SlideTransition 会一直停在向下偏移 25% 的位置，
+    // 这就是输入框一直偏下、"怎么调 padding 都不动"的根因。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _bottomBarCtrl.forward();
+    });
   }
   
   @override void dispose() { 
@@ -540,24 +542,30 @@ Widget _chatHeader() {
   }
 
   Widget _inputBar() {
-    return SafeArea(top: false, child: SlideTransition(
-      position: Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(CurvedAnimation(parent: _bottomBarSlide, curve: Curves.easeOutCubic)),
-      child: Container(
-        // 底部留出更大间距（上提），让输入框不紧贴屏幕最底
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 14),
-        decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
-        child: ClipRRect(
-          child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-            child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
-              GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
-              Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
-              GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
-              if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
-            ])),
+    return SafeArea(
+      top: false,
+      child: SlideTransition(
+        // 直接用 controller 驱动位移，消除此前"从未 forward + 嵌套 CurvedAnimation"导致停在下偏30%的问题
+        position: Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero).animate(CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
+        child: Padding(
+          // 底部大胆上移：固定留出较大空白，让输入框明显悬浮不贴屏幕底
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 42),
+          child: Container(
+            decoration: _hasBg ? BoxDecoration(color: Colors.white.withOpacity(0.1)) : null,
+            child: ClipRRect(
+              child: BackdropFilter(filter: _hasBg ? ImageFilter.blur(sigmaX: 20, sigmaY: 20) : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+                child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _hasBg ? Colors.white.withOpacity(0.6) : Colors.white.withOpacity(0.7), borderRadius: BorderRadius.circular(22)), child: Row(children: [
+                  GestureDetector(onTap: _pickMedia, child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.add_rounded, size: 24, color: Color(0xFF8E8E93)))),
+                  Expanded(child: TextField(controller: _msgC, minLines: 1, maxLines: 4, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: '发送新消息...', hintStyle: const TextStyle(color: Color(0xFFC7C7CC), fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 8)))),
+                  GestureDetector(onTap: _toggleRec, child: Padding(padding: const EdgeInsets.all(6), child: Icon(Icons.mic_rounded, size: 24, color: _isRecording ? Colors.red : const Color(0xFF8E8E93)))),
+                  if (_hasText || _loading) GestureDetector(onTap: () => _send(), child: Padding(padding: const EdgeInsets.all(6), child: Container(width: 28, height: 28, decoration: BoxDecoration(shape: BoxShape.circle, color: TideTheme.of(context).primary), child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)))),
+                ])),
+              ),
+            ),
           ),
         ),
       ),
-    ));
+    );
   }
 
   Widget _mLabel(String t) => Padding(padding: const EdgeInsets.only(top: 6, bottom: 4), child: Text(t, style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93), fontFamily: 'TideFont')));

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -123,23 +124,41 @@ class AIManager {
         String mood = _extractMood(replyText);
         replyText = replyText.replaceAll(RegExp(r'\[心情:.*?\]'), '').trim();
 
-        // 语音模态处理：如果配置了 TTS，则生成语音文件
-        String? audioPath;
-        if (bot['tts_model'] != null && bot['tts_model'].toString().isNotEmpty) {
-          audioPath = await _generateTTS(replyText, bot['tts_model']);
-        }
-
+        // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
+        // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
+        final msgId = 'msg_a_${ts+1}';
         await db.insertChatMessage({
-          'id': 'msg_a_${ts+1}', 
-          'bot_id': botId, 
-          'role': 'assistant', 
-          'type': audioPath != null ? 'audio' : 'text', 
-          'content': replyText, 
-          'file_path': audioPath, 
-          'mood': mood, 
+          'id': msgId,
+          'bot_id': botId,
+          'role': 'assistant',
+          'type': 'text',
+          'content': replyText,
+          'file_path': null,
+          'mood': mood,
           'timestamp': ts + 1
         });
+        final ttsModel = bot['tts_model'];
+        if (ttsModel != null && ttsModel.toString().isNotEmpty) {
+          // fire-and-forget：后台生成语音，成功后单独把该气泡升级为 audio 类型（replace 覆盖同 id）
+          unawaited(() async {
+            final audioPath = await _generateTTS(replyText, ttsModel.toString());
+            if (audioPath != null && audioPath.isNotEmpty) {
+              try {
+                await db.insertChatMessage({
+                  'id': msgId,
+                  'bot_id': botId,
+                  'role': 'assistant',
+                  'type': 'audio',
+                  'content': replyText,
+                  'file_path': audioPath,
+                  'mood': mood,
+                  'timestamp': ts + 1,
+                });
+              } catch (_) {}
+            }
+          }());
+        }
         
         return {'success': true};
       } else {
