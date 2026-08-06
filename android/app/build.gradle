@@ -41,10 +41,19 @@ android {
         versionName = flutterVersionName
     }
 
-    def releaseKeystore = project.file('tidebot.keystore')
-    def releaseStorePassword = project.findProperty('TIDEBOT_STORE_PASSWORD')
-    def releaseKeyAlias = project.findProperty('TIDEBOT_KEY_ALIAS')
-    def releaseKeyPassword = project.findProperty('TIDEBOT_KEY_PASSWORD')
+    def signingProperties = new Properties()
+    def signingPropertiesFile = rootProject.file('key.properties')
+    if (signingPropertiesFile.exists()) {
+        signingPropertiesFile.withReader('UTF-8') { reader ->
+            signingProperties.load(reader)
+        }
+    }
+
+    def releaseKeystore = project.file(
+            signingProperties.getProperty('storeFile', 'tidebot.keystore'))
+    def releaseStorePassword = signingProperties.getProperty('storePassword')
+    def releaseKeyAlias = signingProperties.getProperty('keyAlias')
+    def releaseKeyPassword = signingProperties.getProperty('keyPassword')
 
     signingConfigs {
         if (releaseKeystore.exists() && releaseStorePassword &&
