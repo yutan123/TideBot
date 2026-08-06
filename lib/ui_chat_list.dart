@@ -14,6 +14,7 @@ class ChatListPage extends StatefulWidget {
 class ChatListPageState extends State<ChatListPage> {
   List<Map<String, dynamic>> _bots = [];
   bool _showParticles = false;
+  int _particleRun = 0;
   final List<Offset> _origins = [];
 
   @override void initState() { super.initState(); load(); }
@@ -68,7 +69,12 @@ class ChatListPageState extends State<ChatListPage> {
         for (int i = 0; i < 12; i++) {
           _origins.add(Offset(pos.dx + w * (0.1 + 0.8 * (i / 11)), pos.dy + h * (0.2 + 0.6 * ((i * 7) % 11) / 10)));
         }
-        setState(() { _showParticles = true; });
+        setState(() {
+          // 每次删除都递增 Key，强制 ParticleOverlay 创建新的动画状态。
+          _particleRun++;
+          _showParticles = true;
+        });
+
       }
       await DBManager().deleteBot(bot['id'] as String);
       load();
@@ -84,7 +90,8 @@ class ChatListPageState extends State<ChatListPage> {
         Expanded(child: _bots.isEmpty ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.inbox_rounded, size: 50, color: Colors.grey.shade400), const SizedBox(height: 10), const Text('还没有机器人', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 15, fontFamily: 'TideFont')), const Text('点击右下角 + 创建', style: TextStyle(color: Color(0xFFC7C7CC), fontSize: 13, fontFamily: 'TideFont'))])) : _list()),
       ])),
     );
-    return _showParticles ? ParticleOverlay(child: content, origins: _origins, onDone: () { if (mounted) setState(() => _showParticles = false); }) : content;
+    return _showParticles ? ParticleOverlay(key: ValueKey(_particleRun), child: content, origins: _origins, onDone: () { if (mounted) setState(() => _showParticles = false); }) : content;
+
   }
 
   Widget _list() => ListView.builder(padding: const EdgeInsets.fromLTRB(16, 4, 16, 100), itemCount: _bots.length, itemBuilder: (ctx, i) {

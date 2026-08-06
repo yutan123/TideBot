@@ -23,26 +23,36 @@ void main() async {
   await tideTheme.loadFromDB();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
   runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
-  await _initPersistentService();
+  // 后台常驻并非聊天 UI 的必要前置条件。部分设备会限制前台服务或通知权限，
+  // 不能让其插件异常影响已经启动的主应用。
+  unawaited(_initPersistentService().catchError((e, st) {
+    debugPrint('[service] init skipped: $e');
+  }));
+
+}
+Future<void> _initPersistentService() async {
+  try {
+    final service = FlutterBackgroundService();
+    const channel = AndroidNotificationChannel('tide_bot_alive', 'TideBot Core', importance: Importance.low);
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
+    await service.configure(
+      androidConfiguration: AndroidConfiguration(
+        onStart: onStart, autoStart: false, isForegroundMode: true,
+        notificationChannelId: 'tide_bot_alive',
+        initialNotificationTitle: 'TideBot',
+        initialNotificationContent: '数字生命引擎已连接',
+        foregroundServiceNotificationId: 888,
+      ),
+      iosConfiguration: IosConfiguration(),
+    );
+    // 不在每次启动时强行拉起前台服务，避免受厂商后台/通知限制后反复被杀。
+    // 需要定时任务时再由对应功能显式启动。
+  } catch (e) {
+    debugPrint('[service] configure failed: $e');
+  }
 }
 
-Future<void> _initPersistentService() async {
-  final service = FlutterBackgroundService();
-  const channel = AndroidNotificationChannel('tide_bot_alive', 'TideBot Core', importance: Importance.low);
-  final plugin = FlutterLocalNotificationsPlugin();
-  await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
-  await service.configure(
-    androidConfiguration: AndroidConfiguration(
-      onStart: onStart, autoStart: true, isForegroundMode: true,
-      notificationChannelId: 'tide_bot_alive',
-      initialNotificationTitle: 'TideBot',
-      initialNotificationContent: '数字生命引擎已连接',
-      foregroundServiceNotificationId: 888,
-    ),
-    iosConfiguration: IosConfiguration(),
-  );
-  service.startService();
-}
 
 @pragma('vm:entry-point')
 Future<bool> onStart(ServiceInstance service) async => true;

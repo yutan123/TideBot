@@ -73,19 +73,34 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     try {
       final msgs = await DBManager().queryMessages(_bot['id'] as String, limit: 100);
       print('_loadMsgs success: got ${msgs.length} messages');
-      // queryMessages 按 timestamp ASC（旧→新），ListView 从上往下渲染，
-      // 直接使用即可保证"旧消息在上、新消息在下"，与 _send 追加到末尾一致。
-      if (mounted) setState(() { _msgs = msgs; _msgsLoading = false; });
+      // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，
+      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
+      if (mounted) setState(() {
+        final byId = <String, Map<String, dynamic>>{
+          for (final m in msgs) m['id']?.toString() ?? 'db_${m['timestamp']}': m,
+        };
+        for (final m in _msgs) {
+          byId.putIfAbsent(m['id']?.toString() ?? 'local_${m['timestamp']}', () => m);
+        }
+        _msgs = byId.values.toList()
+          ..sort((a, b) => ((a['timestamp'] as int?) ?? 0).compareTo((b['timestamp'] as int?) ?? 0));
+        _msgsLoading = false;
+      });
+
     } catch (e) {
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
     }
     _scrollDown();
   }
-
   void _scrollDown() {
-    Future.delayed(const Duration(milliseconds: 80), () { if (_scrollC.hasClients) _scrollC.animateTo(_scrollC.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic); });
+    Future.delayed(const Duration(milliseconds: 80), () {
+      // 页面已经销毁时访问 ScrollController 会触发异常，属于潜在闪退点。
+      if (!mounted || !_scrollC.hasClients) return;
+      _scrollC.animateTo(_scrollC.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
+    });
   }
+
 
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
@@ -103,9 +118,12 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
     final msg = <String, dynamic>{
       'id': 'm_$now',
       'bot_id': botId,
-      'role': 'user',
-      'content': text,
-      'image': img,
+        'role': 'user',
+        // AIManager 仅将 type=text 的历史传给模型；缺少该字段会丢失上下文。
+        'type': 'text',
+        'content': text,
+        'image': img,
+
       'timestamp': now,
     };
 
@@ -124,7 +142,18 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
 
     try {
       try {
-        await DBManager().insertMessage(msg).timeout(const Duration(seconds: 5));
+        // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
+        // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
+        await DBManager().insertMessage({
+          'id': msg['id'],
+          'bot_id': botId,
+          'role': 'user',
+          'type': img == null ? 'text' : 'image',
+          'content': text,
+          'file_path': img,
+          'mood': null,
+          'timestamp': now,
+        }).timeout(const Duration(seconds: 5));
       } catch (e) {
         debugPrint('[send] persist user message failed: $e');
       }
@@ -163,7 +192,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with SingleTickerProviderSt
             messages: history,
             imageBase64: imgB64,
           )
-          .timeout(const Duration(seconds: 50));
+          // 让失败在可接受时间内回到 finally，解除发送锁并显示错误气泡。
+          .timeout(const Duration(seconds: 30));
+
       final content = resp.trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : resp;
@@ -610,9 +641,14 @@ Widget _chatHeader() {
       itemBuilder: (ctx, i) {
         final m = _msgs[i];
         final isUser = m['role'] == 'user';
-        final hasImg = (m['image'] as String?)?.isNotEmpty == true;
-        final hasAudio = (m['audio'] as String?)?.isNotEmpty == true;
+        // 内存消息使用 image/audio；数据库历史使用 type/file_path，统一兼容两种来源。
+        final filePath = m['file_path']?.toString();
+        final imagePath = m['image']?.toString() ?? (m['type'] == 'image' ? filePath : null);
+        final audioPath = m['audio']?.toString() ?? (m['type'] == 'audio' ? filePath : null);
+        final hasImg = imagePath?.isNotEmpty == true;
+        final hasAudio = audioPath?.isNotEmpty == true;
         final txt = (m['content'] as String?) ?? '';
+
         final ts = m['timestamp'] as int? ?? 0;
 
         return GestureDetector(
@@ -621,9 +657,10 @@ Widget _chatHeader() {
             margin: const EdgeInsets.only(bottom: 8), constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
             child: Column(crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
               // 图片
-              if (hasImg) GestureDetector(onTap: () => _previewImg(m['image']), child: ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(margin: const EdgeInsets.only(bottom: 4), child: Image.file(File(m['image']), fit: BoxFit.cover, width: 180)))),
+              if (hasImg) GestureDetector(onTap: () => _previewImg(imagePath!), child: ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(margin: const EdgeInsets.only(bottom: 4), child: Image.file(File(imagePath!), fit: BoxFit.cover, width: 180)))),
               // 音频卡片
-              if (hasAudio) GestureDetector(onTap: () => _player.play(DeviceFileSource(m['audio'])), child: Container(margin: const EdgeInsets.only(bottom: 4), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : const Color(0xFFE8E8F0), borderRadius: BorderRadius.circular(16)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(isUser ? Icons.mic : Icons.volume_up, size: 18, color: isUser ? Colors.white : TideTheme.of(context).primary), const SizedBox(width: 8), Text(isUser ? '语音消息' : '点击播放', style: TextStyle(color: isUser ? Colors.white : const Color(0xFF1C1C1E), fontSize: 13, fontFamily: 'TideFont'))]))),
+              if (hasAudio) GestureDetector(onTap: () => _player.play(DeviceFileSource(audioPath!)), child: Container(margin: const EdgeInsets.only(bottom: 4), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: BoxDecoration(color: isUser ? TideTheme.of(context).primary : TideTheme.of(context).buttonSecondary, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(isUser ? Icons.mic : Icons.volume_up, size: 18, color: isUser ? Colors.white : TideTheme.of(context).primary), const SizedBox(width: 8), Text(isUser ? '语音消息' : '点击播放', style: TextStyle(color: isUser ? Colors.white : TideTheme.of(context).textStrong, fontSize: 13, fontFamily: 'TideFont'))]))),
+
               // 文字气泡
               if (txt.isNotEmpty) _parseText(txt, isUser),
               // 时间尾巴

@@ -91,15 +91,17 @@ class _CreateBotPageState extends State<CreateBotPage> {
       }
     } catch (_) {}
   }
-
   Widget _field(TextEditingController ctrl, String hint, {int maxLines = 1}) {
-    return ClipRRect(borderRadius: BorderRadius.circular(14), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6), child: Container(decoration: BoxDecoration(color: Colors.white.withOpacity(0.65), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withOpacity(0.5), width: 0.5)), child: TextField(controller: ctrl, maxLines: maxLines, style: const TextStyle(fontSize: 15, fontFamily: 'TideFont'), decoration: InputDecoration(hintText: hint, hintStyle: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14, fontFamily: 'TideFont'), contentPadding: const EdgeInsets.all(16), border: InputBorder.none)))));
+    final theme = TideTheme.of(context);
+    return ClipRRect(borderRadius: BorderRadius.circular(14), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6), child: Container(decoration: BoxDecoration(color: theme.surface.withOpacity(theme.isDark ? 0.88 : 0.72), borderRadius: BorderRadius.circular(14), border: Border.all(color: theme.border, width: 0.5)), child: TextField(controller: ctrl, maxLines: maxLines, style: TextStyle(fontSize: 15, fontFamily: 'TideFont', color: theme.textStrong), decoration: InputDecoration(hintText: hint, hintStyle: TextStyle(color: theme.textFaint, fontSize: 14, fontFamily: 'TideFont'), contentPadding: const EdgeInsets.all(16), border: InputBorder.none)))));
   }
 
   @override Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(title: Text(_isEdit ? '编辑机器人' : '创建机器人', style: const TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont', fontSize: 18)), centerTitle: true, leading: GestureDetector(onTap: () => Navigator.pop(context), child: const Icon(Icons.arrow_back_ios_rounded, size: 20))),
+      backgroundColor: theme.bgColor,
+      appBar: AppBar(title: Text(_isEdit ? '编辑机器人' : '创建机器人', style: TextStyle(fontWeight: FontWeight.w700, fontFamily: 'TideFont', fontSize: 18, color: theme.textStrong)), centerTitle: true, leading: GestureDetector(onTap: () => Navigator.pop(context), child: Icon(Icons.arrow_back_ios_rounded, size: 20, color: theme.textStrong))),
+
       body: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _label('名字'), const SizedBox(height: 6), _field(_nameC, '给机器人取个名字'),
         const SizedBox(height: 20),
@@ -108,12 +110,13 @@ class _CreateBotPageState extends State<CreateBotPage> {
         _label('说话方式'), const SizedBox(height: 6), _field(_styleC, '详细描述说话风格、用词习惯等', maxLines: 4),
         const SizedBox(height: 20),
         _label('头像（可选）'), const SizedBox(height: 6),
-        GestureDetector(onTap: _pickAvatar, child: Container(width: 72, height: 72, decoration: BoxDecoration(borderRadius: BorderRadius.circular(36), color: const Color(0xFFE8E8F0)), child: _avatar.isNotEmpty ? ClipRRect(borderRadius: BorderRadius.circular(36), child: Image.file(File(_avatar), fit: BoxFit.cover)) : const Center(child: Icon(Icons.add_a_photo_rounded, color: Color(0xFF8E8E93), size: 26)))),
+        GestureDetector(onTap: _pickAvatar, child: Container(width: 72, height: 72, decoration: BoxDecoration(borderRadius: BorderRadius.circular(36), color: theme.surfaceVariant, border: Border.all(color: theme.border)), child: _avatar.isNotEmpty ? ClipRRect(borderRadius: BorderRadius.circular(36), child: Image.file(File(_avatar), fit: BoxFit.cover)) : Center(child: Icon(Icons.add_a_photo_rounded, color: theme.iconMuted, size: 26)))),
+
         const SizedBox(height: 28),
         BouncyTap(onTap: _save, child: SizedBox(width: double.infinity, height: 48, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), gradient: LinearGradient(colors: [TideTheme.of(context).primary, TideTheme.of(context).primaryLight]), boxShadow: [BoxShadow(color: TideTheme.of(context).primary.withOpacity(0.3), blurRadius: 14, offset: const Offset(0, 5))]), child: Center(child: Text(_isEdit ? '保存修改' : '创建', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'TideFont')))))),
       ])),
     );
   }
+  Widget _label(String t) => Text(t, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: TideTheme.of(context).textWeak, fontFamily: 'TideFont'));
 
-  Widget _label(String t) => Text(t, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF3C3C43), fontFamily: 'TideFont'));
 }

@@ -44,7 +44,9 @@ class AIManager {
     String? activeGame // 支持动态注入游戏规则
   }) async {
     final db = DBManager();
-    final bots = await db.getAllBots();
+    // 数据库初始化异常/卡住时必须尽快回到聊天室 finally，不能无限显示“正在输入中”。
+    final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
+
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
 
@@ -65,9 +67,9 @@ class AIManager {
     
     // 注入底层角色设定与游戏规则
     messages.add({'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)});
+    // 截取最近 20 条对话作为短记忆上下文；数据库异常不可无限阻塞发送状态。
+    final history = await db.getChatHistory(botId).timeout(const Duration(seconds: 8));
 
-    // 截取最近 20 条对话作为短记忆上下文
-    final history = await db.getChatHistory(botId);
     var lastIsCurrentUser = false;
     for (var msg in history.take(20)) {
       if (msg['type'] == 'text') {
