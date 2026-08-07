@@ -31,21 +31,18 @@ jobs:
         touch assets/icons/.gitkeep
         touch assets/images/.gitkeep
 
-    - name: 🔐 5. 从 GitHub Secrets 恢复并验证 Release 签名
+    - name: 🔐 5. 配置并验证 Release 签名
       env:
-        TIDEBOT_KEYSTORE_BASE64: ${{ secrets.TIDEBOT_KEYSTORE_BASE64 }}
         TIDEBOT_STORE_PASSWORD: ${{ secrets.TIDEBOT_STORE_PASSWORD }}
         TIDEBOT_KEY_PASSWORD: ${{ secrets.TIDEBOT_KEY_PASSWORD }}
         TIDEBOT_KEY_ALIAS: ${{ secrets.TIDEBOT_KEY_ALIAS }}
       run: |
-        test -n "$TIDEBOT_KEYSTORE_BASE64" || { echo "::error::Missing secret TIDEBOT_KEYSTORE_BASE64"; exit 1; }
+        # tidebot.keystore 已被仓库跟踪，checkout 后直接可用；绝不回退到未签名 Release。
+        test -s android/app/tidebot.keystore || { echo "::error::Missing android/app/tidebot.keystore"; exit 1; }
         test -n "$TIDEBOT_STORE_PASSWORD" || { echo "::error::Missing secret TIDEBOT_STORE_PASSWORD"; exit 1; }
         test -n "$TIDEBOT_KEY_PASSWORD" || { echo "::error::Missing secret TIDEBOT_KEY_PASSWORD"; exit 1; }
         test -n "$TIDEBOT_KEY_ALIAS" || { echo "::error::Missing secret TIDEBOT_KEY_ALIAS"; exit 1; }
 
-        # 签名材料只在本次 CI 工作区生成，且 android/.gitignore 已忽略它们。
-        printf '%s' "$TIDEBOT_KEYSTORE_BASE64" | base64 --decode > android/app/tidebot.keystore
-        test -s android/app/tidebot.keystore || { echo "::error::Decoded keystore is empty"; exit 1; }
         cat > android/key.properties <<EOF
         storePassword=$TIDEBOT_STORE_PASSWORD
         keyPassword=$TIDEBOT_KEY_PASSWORD
