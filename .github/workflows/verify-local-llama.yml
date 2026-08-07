@@ -1,23 +1,14 @@
-name: Build TideBot Release APK
+name: Verify TideBot Local Llama Release
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'lib/**'
-      - 'android/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/build.yml'
-      - '.github/workflows/verify-local-llama.yml'
 
 permissions:
   contents: read
 
 jobs:
-  build-release:
-    name: Android Release (llama.cpp)
+  verify-local-llama:
+    name: Build and verify llama.cpp APK
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -38,7 +29,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install Android SDK components and NDK
+      - name: Install Android native build tools
         run: |
           yes | sdkmanager --licenses
           sdkmanager \
@@ -48,25 +39,24 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.0.12077973"
 
-      - name: Resolve Flutter packages
+      - name: Resolve packages
         run: flutter pub get
 
-      - name: Verify Dart compilation
-        run: dart analyze --no-fatal-infos --no-fatal-warnings
-
-      - name: Build signed release APK
+      - name: Build release APK with llama.cpp
         run: flutter build apk --release --no-pub
 
-      - name: Verify APK signature
+      - name: Verify signing and ARM64 llama native library
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK" || { echo "::error::Release APK was not created"; exit 1; }
           APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose "$APK"
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/lib.*(llama|ggml).*\.so' \
+            || { echo "::error::llama.cpp ARM64 library is missing from APK"; exit 1; }
 
-      - name: Upload verified release APK
+      - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: TideBot-Release-APK
+          name: TideBot-Local-Llama-Release-APK
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

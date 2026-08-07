@@ -94,6 +94,7 @@ class _SpacePageState extends State<SpacePage> {
   }
 
   void _showScheduleDetail(Map<String, dynamic> s) {
+    final theme = TideTheme.of(context);
     showTideSheet(
         context: context,
         child: Padding(
@@ -101,26 +102,28 @@ class _SpacePageState extends State<SpacePage> {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(s['title'] ?? '',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
                       fontFamily: 'TideFont')),
               const SizedBox(height: 8),
               Text(s['note'] ?? '',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 15,
-                      color: Color(0xFF636366),
+                      color: theme.textWeak,
                       fontFamily: 'TideFont')),
               const SizedBox(height: 12),
               Text(formatTime(s['time']),
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF8E8E93),
+                      color: theme.textFaint,
                       fontFamily: 'TideFont'))
             ])));
   }
 
   void _showMemoryDetail(Map<String, dynamic> m) {
+    final theme = TideTheme.of(context);
     showTideSheet(
         context: context,
         child: Padding(
@@ -128,22 +131,23 @@ class _SpacePageState extends State<SpacePage> {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(m['title'] ?? '',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
                       fontFamily: 'TideFont')),
               const SizedBox(height: 8),
               Text(m['content'] ?? '',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 15,
-                      color: Color(0xFF3C3C43),
+                      color: theme.textStrong,
                       fontFamily: 'TideFont',
                       height: 1.5)),
               const SizedBox(height: 12),
               Text(formatTime(m['created_at']),
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFFC7C7CC),
+                      color: theme.textFaint,
                       fontFamily: 'TideFont'))
             ])));
   }
@@ -224,16 +228,14 @@ class _SpacePageState extends State<SpacePage> {
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(time,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.w300,
                   fontFamily: 'TideFont',
-                  color: Color(0xFF1C1C1E))),
+                  color: theme.textStrong)),
           Text(date,
-              style: const TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF8E8E93),
-                  fontFamily: 'TideFont')),
+              style: TextStyle(
+                  fontSize: 14, color: theme.textWeak, fontFamily: 'TideFont')),
         ]),
         if (_botId.isNotEmpty)
           BouncyTap(
@@ -389,36 +391,41 @@ class _SpacePageState extends State<SpacePage> {
                           fontFamily: 'TideFont')),
                   if ((s['note'] ?? '').toString().isNotEmpty)
                     Text(s['note'] ?? '',
-                        style: const TextStyle(
-                            fontSize: 13, color: Color(0xFF8E8E93)),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis),
+                      style: TextStyle(fontSize: 13, color: theme.textWeak),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
                 ])),
             Text(formatTime(s['time']),
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 13,
-                    color: Color(0xFF8E8E93),
+                    color: theme.textWeak,
                     fontFamily: 'TideFont'))
           ]));
-  Widget _buildMemoryCard(Map<String, dynamic> m) => FrostCard(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(m['title'] ?? '',
-            style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                fontFamily: 'TideFont')),
-        const SizedBox(height: 4),
-        Text(m['content'] ?? '',
-            style: const TextStyle(fontSize: 13, color: Color(0xFF3C3C43)),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis),
-        const SizedBox(height: 6),
-        Text(formatTime(m['created_at']),
-            style: const TextStyle(
-                fontSize: 11, color: Color(0xFFC7C7CC), fontFamily: 'TideFont'))
-      ]));
+  Widget _buildMemoryCard(Map<String, dynamic> m) {
+    final theme = TideTheme.of(context);
+    return FrostCard(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(m['title'] ?? '',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: theme.textStrong,
+                  fontFamily: 'TideFont')),
+          const SizedBox(height: 4),
+          Text(m['content'] ?? '',
+              style: TextStyle(fontSize: 13, color: theme.textStrong),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 6),
+          Text(formatTime(m['created_at']),
+              style: TextStyle(
+                  fontSize: 11,
+                  color: theme.textFaint,
+                  fontFamily: 'TideFont'))
+        ]));
+  }
 }
 
 // ==================== 广场页 ====================

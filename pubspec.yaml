@@ -19,12 +19,14 @@ dependencies:
 
   # 网络与底层通信
   http: ^1.2.1
+  # Office Open XML（docx/xlsx/pptx）离线正文提取
+  archive: ^4.0.9
 
   # UI 特效与多模态交互
   flutter_svg: ^2.0.10
   rive: ^0.13.0
   record: ^4.4.4
-  audioplayers: ^5.2.1
+  audioplayers: ^6.5.0
   heif_converter: ^1.0.7
   image_picker: ^1.1.2
   file_picker: ^8.0.5
@@ -33,6 +35,7 @@ dependencies:
   # 后台守护与保活
   flutter_background_service: ^5.1.0
   flutter_local_notifications: ^17.1.2
+  llama_flutter_android: ^0.2.6
 
 dev_dependencies:
   flutter_test:

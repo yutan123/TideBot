@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
@@ -1588,6 +1589,33 @@ class _LocalModelPageState extends State<LocalModelPage> {
       'downloading': false
     },
   ];
+  String _mb(int bytes) => '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+  String _progressLabel(Map<String, dynamic> model) {
+    final received = model['receivedBytes'] as int? ?? 0;
+    final total = model['totalBytes'] as int? ?? 0;
+    if (total > 0) {
+      return '${_mb(received)} / ${_mb(total)} · '
+          '${(received * 100 / total).clamp(0, 100).toStringAsFixed(1)}%';
+    }
+    return received > 0 ? '${_mb(received)} 已下载（服务器未提供总大小）' : '正在连接下载服务器…';
+  }
+
+  Future<void> _saveDownloadState(Map<String, dynamic> model) async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = model['id'] as String;
+    await prefs.setInt(
+        'local_model_received_$id', model['receivedBytes'] as int? ?? 0);
+    await prefs.setInt(
+        'local_model_total_$id', model['totalBytes'] as int? ?? 0);
+  }
+
+  Future<void> _clearDownloadState(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('local_model_received_$id');
+    await prefs.remove('local_model_total_$id');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1596,82 +1624,151 @@ class _LocalModelPageState extends State<LocalModelPage> {
 
   Future<void> _checkInstalled() async {
     final dir = await getApplicationDocumentsDirectory();
-    if (!mounted) return;
-    setState(() {
-      for (var m in _models) {
-        final file = File('${dir.path}/${m['id']}.gguf');
-        // Empty files were created by older versions' fake downloader.
-        m['installed'] = file.existsSync() && file.lengthSync() > 1024 * 1024;
-      }
-    });
+    final prefs = await SharedPreferences.getInstance();
+    for (final m in _models) {
+      final id = m['id'] as String;
+      final target = File('${dir.path}/$id.gguf');
+      final part = File('${target.path}.part');
+      final installed =
+          await target.exists() && await target.length() > 1024 * 1024;
+      final received = installed
+          ? await target.length()
+          : (await part.exists() ? await part.length() : 0);
+      final savedTotal = prefs.getInt('local_model_total_$id') ?? 0;
+      m['installed'] = installed;
+      m['downloading'] = false;
+      // Local-chat selection is scoped to each bot in the chat settings.
+      // Do not expose a stale global selection state on the download page.
+      m['localSelected'] = false;
+
+      m['receivedBytes'] = received;
+      m['totalBytes'] = installed ? received : savedTotal;
+      m['progress'] =
+          savedTotal > 0 ? (received / savedTotal).clamp(0.0, 1.0) : 0.0;
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _downloadModel(int idx) async {
     final m = _models[idx];
-    if ((m['url'] as String).isEmpty) {
+    final url = (m['url'] as String).trim();
+    if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('暂无下载链接', style: TextStyle(fontFamily: 'TideFont')),
+          content: Text('暂无可用下载链接', style: TextStyle(fontFamily: 'TideFont')),
           behavior: SnackBarBehavior.floating));
       return;
     }
-    setState(() {
-      m['downloading'] = true;
-      m['progress'] = 0.0;
-    });
     final dir = await getApplicationDocumentsDirectory();
-    final target = File('${dir.path}/${m['id']}.gguf');
+    final id = m['id'] as String;
+    final target = File('${dir.path}/$id.gguf');
     final part = File('${target.path}.part');
+    var existing = await part.exists() ? await part.length() : 0;
+    if (mounted) {
+      setState(() {
+        m['downloading'] = true;
+        m['receivedBytes'] = existing;
+      });
+    }
+
+    final client = http.Client();
+    IOSink? sink;
     try {
-      if (await part.exists()) await part.delete();
-      final req = http.Request('GET', Uri.parse(m['url'] as String));
-      final response =
-          await http.Client().send(req).timeout(const Duration(minutes: 20));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      var request = http.Request('GET', Uri.parse(url));
+      if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
+      var response =
+          await client.send(request).timeout(const Duration(minutes: 20));
+
+      // A server that ignores Range returns 200. Restart safely instead of
+      // appending a duplicate file.
+      if (existing > 0 && response.statusCode == 200) {
+        await part.delete();
+        existing = 0;
+        request = http.Request('GET', Uri.parse(url));
+        response =
+            await client.send(request).timeout(const Duration(minutes: 20));
+      }
+      if (response.statusCode != 200 && response.statusCode != 206) {
         throw HttpException('下载服务器返回 HTTP ${response.statusCode}');
       }
-      final total = response.contentLength;
-      var received = 0;
-      final sink = part.openWrite();
+
+      final total = response.contentLength == null
+          ? 0
+          : existing + response.contentLength!;
+      sink =
+          part.openWrite(mode: existing > 0 ? FileMode.append : FileMode.write);
+      var received = existing;
+      var lastPersisted = existing;
+      if (mounted) {
+        setState(() {
+          m['receivedBytes'] = received;
+          m['totalBytes'] = total;
+          m['progress'] = total > 0 ? received / total : 0.0;
+        });
+      }
+
       await for (final bytes in response.stream) {
         sink.add(bytes);
         received += bytes.length;
-        if (mounted && total != null && total > 0) {
-          setState(() => m['progress'] = received / total);
+        if (received - lastPersisted >= 256 * 1024) {
+          lastPersisted = received;
+          m['receivedBytes'] = received;
+          m['totalBytes'] = total;
+          await _saveDownloadState(m);
+          if (mounted) {
+            setState(() => m['progress'] = total > 0 ? received / total : 0.0);
+          }
         }
       }
+      await sink.flush();
       await sink.close();
+      sink = null;
+      m['receivedBytes'] = received;
+      m['totalBytes'] = total;
+      await _saveDownloadState(m);
+
       if (!await part.exists() || await part.length() <= 1024 * 1024) {
         throw const FileSystemException('下载文件过小，已拒绝标记为已安装');
       }
+      if (total > 0 && received != total) {
+        throw const FileSystemException('下载不完整，将保留进度以便下次继续');
+      }
       if (await target.exists()) await target.delete();
       await part.rename(target.path);
+      await _clearDownloadState(id);
       if (mounted) {
         setState(() {
           m['installed'] = true;
           m['downloading'] = false;
           m['progress'] = 1.0;
+          m['receivedBytes'] = received;
+          m['totalBytes'] = received;
         });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${m['name']} 已真实下载到本机；尚需本地推理引擎才能用于聊天',
+            content: Text('${m['name']} 已真实下载到本机',
                 style: const TextStyle(fontFamily: 'TideFont')),
             backgroundColor: const Color(0xFF34C759),
             behavior: SnackBarBehavior.floating));
       }
     } catch (e) {
-      try {
-        if (await part.exists()) await part.delete();
-      } catch (_) {}
+      await sink?.flush();
+      await sink?.close();
+      final received = await part.exists() ? await part.length() : 0;
+      m['receivedBytes'] = received;
+      await _saveDownloadState(m);
       if (mounted) {
         setState(() {
           m['downloading'] = false;
-          m['progress'] = 0.0;
+          final total = m['totalBytes'] as int? ?? 0;
+          m['progress'] = total > 0 ? received / total : 0.0;
         });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('模型下载失败：$e',
+            content: Text('下载暂停/失败：$e；已保留 ${_mb(received)}，可稍后继续',
                 style: const TextStyle(fontFamily: 'TideFont')),
             backgroundColor: const Color(0xFFE74C3C),
             behavior: SnackBarBehavior.floating));
       }
+    } finally {
+      client.close();
     }
   }
 
@@ -1694,7 +1791,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
           if (i == 0)
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Text('模型文件将真实下载到应用私有目录。当前版本未集成 GGUF 推理引擎，下载完成不等于可用于聊天。',
+              child: Text(
+                  '模型文件通过真实 HTTP 流下载到应用私有目录，支持保留 .part 进度并在下次进入时续传。下载完成后仍需本地 GGUF 推理引擎才能参与离线聊天。',
                   style: TextStyle(
                       fontSize: 12,
                       height: 1.5,
@@ -1757,14 +1855,30 @@ class _LocalModelPageState extends State<LocalModelPage> {
                                             color: Colors.white,
                                             fontFamily: 'TideFont')))),
                     ]),
-                    if (downloading)
+                    if (downloading ||
+                        (!installed && (m['receivedBytes'] as int? ?? 0) > 0))
                       Padding(
                           padding: const EdgeInsets.only(top: 10),
-                          child: LinearProgressIndicator(
-                              value: m['progress'] as double,
-                              backgroundColor:
-                                  TideTheme.of(context).surfaceVariant,
-                              color: TideTheme.of(context).primary)),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                LinearProgressIndicator(
+                                    value: (m['totalBytes'] as int? ?? 0) > 0
+                                        ? m['progress'] as double
+                                        : null,
+                                    backgroundColor:
+                                        TideTheme.of(context).surfaceVariant,
+                                    color: TideTheme.of(context).primary),
+                                const SizedBox(height: 6),
+                                Text(
+                                    downloading
+                                        ? _progressLabel(m)
+                                        : '${_progressLabel(m)} · 已暂停，点击下载继续',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: TideTheme.of(context).textWeak,
+                                        fontFamily: 'TideFont')),
+                              ])),
                   ]));
         },
       ));

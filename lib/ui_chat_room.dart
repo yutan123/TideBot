@@ -237,8 +237,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         debugPrint('[send] persist user message failed: $e');
       }
       final cm = _bot['chat_model']?.toString().trim() ?? '';
-      if (cm.isEmpty) {
-        throw StateError('未选择聊天模型，请在聊天设置中选择模型后再发送');
+      final localModelId = (await SharedPreferences.getInstance().then(
+                  (prefs) => prefs.getString('local_chat_model_$botId')) ??
+              '')
+          .trim();
+      if (cm.isEmpty && localModelId.isEmpty) {
+        throw StateError('未选择聊天模型，请在聊天设置中选择远程模型或本地 GGUF 后再发送');
       }
 
       final documentNotice = document == null
@@ -266,13 +270,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       debugPrint('[send] request start bot=$botId model=$cm');
+      // First local GGUF load and CPU generation can legitimately take longer
+      // than a remote HTTP request. Keep the short timeout for providers while
+      // allowing local inference enough time to finish.
+      final requestTimeout = localModelId.isEmpty
+          ? const Duration(seconds: 30)
+          : const Duration(minutes: 5);
       final result = await AIManager()
           .chatResult(
             botId: botId,
             messages: history,
             imageBase64: imgB64,
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(requestTimeout);
 
       if (result['success'] != true) {
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
@@ -698,12 +708,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final prefs = await SharedPreferences.getInstance();
     final botId = _bot['id'] as String;
     // 当前选择（只读读取 DB，作为初始值；弹窗内实时状态交给 setSt 维护）
+    // 聊天模型必须由用户明确选择；不能因为列表有 provider 就静默选中第一个。
     String curChat = prefs.getString('chat_model_$botId') ??
-        ((_bot['chat_model'] as String?)?.isNotEmpty == true
-            ? _bot['chat_model'] as String
-            : (providers.isNotEmpty ? providers.first['id'] as String : ''));
+        ((_bot['chat_model'] as String?)?.trim() ?? '');
     String curBak = prefs.getString('backup_model_$botId') ?? '';
     String curVision = prefs.getString('vision_model_$botId') ?? '';
+    String curImageGen = prefs.getString('image_gen_model_$botId') ?? '';
     String curStt = prefs.getString('stt_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ??
         ((_bot['tts_model'] as String?)?.isNotEmpty == true
@@ -711,6 +721,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : '');
     int curTok = prefs.getInt('max_token_$botId') ??
         (_bot['max_tokens'] as int? ?? 10000);
+
+    final localDir = await getApplicationDocumentsDirectory();
+    final localFiles = (await localDir
+            .list()
+            .where((entity) => entity is File && entity.path.endsWith('.gguf'))
+            .toList())
+        .whereType<File>()
+        .toList();
+    String localChatId =
+        (prefs.getString('local_chat_model_$botId') ?? '').trim();
 
     TideDialogs.show(
         context: context,
@@ -734,60 +754,148 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               return AlertDialog(
                   backgroundColor: Colors.transparent,
                   contentPadding: EdgeInsets.zero,
-                  content: TideDialogs.glassContent(
-                      context: ctx,
-                      maxWidth: 0.9,
-                      children: [
-                        const Center(
-                            child: Text('模型设置',
-                                style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                    fontFamily: 'TideFont'))),
-                        const SizedBox(height: 12),
-                        Flexible(
-                            child: SingleChildScrollView(
-                                child: Column(children: [
-                          _mLabel('聊天模型'),
-                          _modelPicker(ctx, providers, curChat, (v) async {
-                            curChat = v;
-                            await pickModel('chat_model_$botId', v);
-                          }),
-                          // 备用/识图/STT 模型：为扩展能力预留的独立模型选择
-                          _mLabel('备用模型'),
-                          _modelPicker(ctx, providers, curBak, (v) async {
-                            curBak = v;
-                            await pickModel('backup_model_$botId', v);
-                          }),
-                          _mLabel('识图模型'),
-                          _modelPicker(ctx, providers, curVision, (v) async {
-                            curVision = v;
-                            await pickModel('vision_model_$botId', v);
-                          }),
-                          _mLabel('STT模型'),
-                          _modelPicker(ctx, providers, curStt, (v) async {
-                            curStt = v;
-                            await pickModel('stt_model_$botId', v);
-                          }),
-                          // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
-                          _mLabel('TTS模型（语音，可选）'),
-                          _modelPicker(ctx, ttsProviders, curTts, (v) async {
-                            curTts = v;
-                            await pickModel('tts_model_$botId', v, isTts: true);
-                          }),
-                          _mLabel('最大上下文Token'),
-                          _tokenField(ctx, curTok, (v) async {
-                            curTok = v;
-                            await prefs.setInt('max_token_$botId', v);
-                            await DBManager()
-                                .updateBot(botId, {'max_tokens': v});
-                            setSt(() {});
-                          }),
-                        ]))),
-                        const SizedBox(height: 12),
-                        TideDialogs.glassButton('确定',
-                            onTap: () => Navigator.pop(ctx)),
-                      ]));
+                  content: TideDialogs
+                      .glassContent(context: ctx, maxWidth: 0.9, children: [
+                    const Center(
+                        child: Text('模型设置',
+                            style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'TideFont'))),
+                    const SizedBox(height: 12),
+                    Flexible(
+                        child: SingleChildScrollView(
+                            child: Column(children: [
+                      _mLabel('本地 GGUF 聊天模型'),
+                      GestureDetector(
+                        onTap: () {
+                          showTideSheet(
+                            context: ctx,
+                            height: 360,
+                            child: ListView(
+                              children: [
+                                ListTile(
+                                  leading: const Icon(Icons.block_rounded),
+                                  title: const Text('不使用本地模型',
+                                      style: TextStyle(
+                                          fontFamily: 'TideFont',
+                                          fontSize: 14)),
+                                  trailing: localChatId.isEmpty
+                                      ? Icon(Icons.check,
+                                          color: TideTheme.of(ctx).primary)
+                                      : null,
+                                  onTap: () async {
+                                    localChatId = '';
+                                    await prefs
+                                        .remove('local_chat_model_$botId');
+                                    setSt(() {});
+                                    Navigator.pop(ctx);
+                                  },
+                                ),
+                                ...localFiles.map((file) {
+                                  final id = file.path
+                                      .split(Platform.pathSeparator)
+                                      .last
+                                      .replaceFirst(RegExp(r'\.gguf$'), '');
+                                  return ListTile(
+                                    leading: const Icon(Icons.memory_rounded),
+                                    title: Text(id,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontFamily: 'TideFont',
+                                            fontSize: 14)),
+                                    subtitle: Text(
+                                        '已下载 · ${(file.lengthSync() / 1024 / 1024).toStringAsFixed(1)} MB',
+                                        style: const TextStyle(
+                                            fontFamily: 'TideFont',
+                                            fontSize: 12)),
+                                    trailing: localChatId == id
+                                        ? Icon(Icons.check,
+                                            color: TideTheme.of(ctx).primary)
+                                        : null,
+                                    onTap: () async {
+                                      localChatId = id;
+                                      await prefs.setString(
+                                          'local_chat_model_$botId', id);
+                                      setSt(() {});
+                                      Navigator.pop(ctx);
+                                    },
+                                  );
+                                }),
+                              ],
+                            ),
+                          );
+                        },
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 13),
+                          decoration: BoxDecoration(
+                            color: TideTheme.of(ctx).surfaceVariant,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  localChatId.isEmpty ? '未选择' : localChatId,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontFamily: 'TideFont', fontSize: 14),
+                                ),
+                              ),
+                              Icon(Icons.chevron_right_rounded,
+                                  color: TideTheme.of(ctx).textWeak),
+                            ],
+                          ),
+                        ),
+                      ),
+                      _mLabel('聊天模型'),
+                      _modelPicker(ctx, providers, curChat, (v) async {
+                        curChat = v;
+                        await pickModel('chat_model_$botId', v);
+                      }),
+                      // 备用/识图/STT 模型：为扩展能力预留的独立模型选择
+                      _mLabel('备用模型'),
+                      _modelPicker(ctx, providers, curBak, (v) async {
+                        curBak = v;
+                        await pickModel('backup_model_$botId', v);
+                      }),
+                      _mLabel('识图模型'),
+                      _modelPicker(ctx, providers, curVision, (v) async {
+                        curVision = v;
+                        await pickModel('vision_model_$botId', v);
+                      }),
+                      _mLabel('生图模型（可选）'),
+                      _modelPicker(ctx, providers, curImageGen, (v) async {
+                        curImageGen = v;
+                        await pickModel('image_gen_model_$botId', v);
+                      }),
+                      _mLabel('STT模型'),
+                      _modelPicker(ctx, providers, curStt, (v) async {
+                        curStt = v;
+                        await pickModel('stt_model_$botId', v);
+                      }),
+                      // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
+                      _mLabel('TTS模型（语音，可选）'),
+                      _modelPicker(ctx, ttsProviders, curTts, (v) async {
+                        curTts = v;
+                        await pickModel('tts_model_$botId', v, isTts: true);
+                      }),
+                      _mLabel('最大上下文Token'),
+                      _tokenField(ctx, curTok, (v) async {
+                        curTok = v;
+                        await prefs.setInt('max_token_$botId', v);
+                        await DBManager().updateBot(botId, {'max_tokens': v});
+                        setSt(() {});
+                      }),
+                    ]))),
+                    const SizedBox(height: 12),
+                    TideDialogs.glassButton('确定',
+                        onTap: () => Navigator.pop(ctx)),
+                  ]));
             }));
   }
 
@@ -1357,22 +1465,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   String _errorSolution(dynamic code) {
-    switch (code?.toString()) {
-      case '402':
-        return '服务余额不足：请到模型提供商后台充值或更换有可用余额的 API Key。';
-      case '401':
-      case '403':
-        return '鉴权失败：检查 API Key、授权范围，以及 Base URL 是否属于该密钥对应的服务。';
-      case '404':
-        return '接口或模型不存在：检查 Base URL 是否包含多余路径，并确认所填模型名称可用。';
-      case '408':
-      case '429':
-        return '请求超时或限流：稍后重试，降低发送频率，或换用备用模型。';
-      case 'network':
-        return '网络连接失败：检查设备网络、Base URL、DNS/代理和模型服务状态。';
-      default:
-        return '请检查聊天模型、Base URL、API Key、模型名称和网络。若持续失败，可复制日志联系模型提供商。';
-    }
+    final detail = switch (code?.toString().toLowerCase()) {
+      '400' => '请求参数错误：检查模型名称、消息格式、附件类型和请求体限制。',
+      '401' || '403' => '鉴权或权限失败：检查 API Key、授权范围，以及 Base URL 是否属于该密钥对应的服务。',
+      '402' => '服务余额不足：请到模型提供商后台充值或更换有可用余额的 API Key。',
+      '404' => '接口或模型不存在：检查 Base URL 是否包含多余路径，并确认所填模型名称可用。',
+      '408' || 'timeout' => '请求超时：检查网络和服务端状态，降低附件大小或生成长度后重试。',
+      '409' => '请求冲突：检查是否重复提交，等待上一请求结束后再试。',
+      '429' => '请求过于频繁或触发限流：稍后重试，降低发送频率，或换用备用模型。',
+      '500' || '502' || '503' || '504' => '模型服务暂时不可用：稍后重试，检查服务商状态页，或切换备用模型。',
+      'network' ||
+      'dns' ||
+      'connection refused' =>
+        '网络连接失败：检查设备网络、Base URL、DNS、代理、防火墙和模型服务状态。',
+      'ssl' ||
+      'tls' ||
+      'certificate' =>
+        '安全连接失败：检查 Base URL 的 HTTPS 证书、系统时间和代理证书配置。',
+      'empty response' ||
+      'invalid response' =>
+        '服务端返回为空或格式异常：检查接口兼容性、模型名称和服务端日志。',
+      _ => '请检查聊天模型、Base URL、API Key、模型名称、附件和网络配置。',
+    };
+    return '$detail\\n\\n如果按照提示检查后仍然持续失败，可以复制完整日志联系作者。';
   }
 
   void _showErrorDetails(Map<String, dynamic> message) {
@@ -1408,6 +1523,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ),
         ),
         actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.copy_rounded, size: 18),
+            label: const Text('复制日志'),
+            onPressed: () {
+              final copyText = log?.isNotEmpty == true
+                  ? log!
+                  : '$content\n\n${_errorSolution(message['error_code'])}';
+              Clipboard.setData(ClipboardData(text: copyText));
+              GlobalNotice.show('完整错误日志已复制');
+            },
+          ),
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],

@@ -7,6 +7,8 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.graphics.pdf.PdfRenderer
 import android.provider.AlarmClock
 import androidx.annotation.NonNull
 import com.google.mlkit.vision.common.InputImage
@@ -71,7 +73,16 @@ class MainActivity: FlutterActivity() {
                             }
                             runOnUiThread { result.success(output) }
                         }.start()
-
+                    }
+                }
+                "extractPdfText" -> {
+                    val path = call.argument<String>("path")
+                    val maxPages = (call.argument<Int>("maxPages") ?: 3).coerceIn(1, 6)
+                    val maxChars = (call.argument<Int>("maxChars") ?: 120000).coerceIn(1000, 200000)
+                    if (path.isNullOrBlank()) {
+                        result.error("invalid_path", "Missing PDF path", null)
+                    } else {
+                        extractPdfText(path, maxPages, maxChars, result)
                     }
                 }
                 else -> {
@@ -91,6 +102,93 @@ class MainActivity: FlutterActivity() {
         } catch (e: Exception) {
             result.error("ocr_failed", e.message, null)
         }
+    }
+
+    private fun extractPdfText(
+        path: String,
+        maxPages: Int,
+        maxChars: Int,
+        result: MethodChannel.Result
+    ) {
+        Thread {
+            val source = File(path)
+            if (!source.exists()) {
+                runOnUiThread { result.success(mapOf("error" to "PDF 文件不存在")) }
+                return@Thread
+            }
+
+            var descriptor: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            try {
+                val openedDescriptor =
+                    ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY)
+                descriptor = openedDescriptor
+                val openedRenderer = PdfRenderer(openedDescriptor)
+                renderer = openedRenderer
+                val pages = minOf(openedRenderer.pageCount, maxPages)
+                val allText = StringBuilder()
+                var index = 0
+
+                fun processNextPage() {
+                    if (index >= pages || allText.length >= maxChars) {
+                        runOnUiThread {
+                            result.success(
+                                mapOf(
+                                    "text" to allText.take(maxChars).toString(),
+                                    "pagesProcessed" to index,
+                                    "pageCount" to openedRenderer.pageCount
+                                )
+                            )
+                        }
+                        try { openedRenderer.close() } catch (_: Exception) {}
+                        try { openedDescriptor.close() } catch (_: Exception) {}
+                        return
+                    }
+
+                    val page = openedRenderer.openPage(index)
+                    val scale = 2
+                    val bitmap = Bitmap.createBitmap(
+                        (page.width * scale).coerceAtLeast(1),
+                        (page.height * scale).coerceAtLeast(1),
+                        Bitmap.Config.ARGB_8888
+                    )
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+                    val image = InputImage.fromBitmap(bitmap, 0)
+                    TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+                        .process(image)
+                        .addOnSuccessListener { recognized ->
+                            if (recognized.text.isNotBlank()) {
+                                allText.append("\n[第 ${index + 1} 页]\n")
+                                allText.append(recognized.text)
+                                allText.append('\n')
+                            }
+                            bitmap.recycle()
+                            index += 1
+                            processNextPage()
+                        }
+                        .addOnFailureListener { error ->
+                            bitmap.recycle()
+                            index += 1
+                            allText.append("\n[第 $index 页 OCR 失败：${error.message ?: "未知错误"}]\n")
+                            processNextPage()
+                        }
+                }
+
+                if (pages == 0) {
+                    runOnUiThread { result.success(mapOf("text" to "", "pagesProcessed" to 0, "pageCount" to 0)) }
+                    openedRenderer.close()
+                    openedDescriptor.close()
+                } else {
+                    processNextPage()
+                }
+            } catch (e: Exception) {
+                try { renderer?.close() } catch (_: Exception) {}
+                try { descriptor?.close() } catch (_: Exception) {}
+                runOnUiThread { result.success(mapOf("error" to (e.message ?: "PDF OCR 失败"))) }
+            }
+        }.start()
     }
 
     private fun prepareVideo(path: String, intervalMs: Int): Map<String, Any> {

@@ -26,17 +26,22 @@ if (flutterVersionName == null) {
 android {
     namespace = "com.yutan123.tidebot"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Pin to the complete local NDK. The llama.cpp plugin uses CMake and
+    // does not require Flutter's newer default NDK revision.
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
+    kotlinOptions {
+        jvmTarget = '17'
+    }
     defaultConfig {
         applicationId = "com.yutan123.tidebot"
-        // ML Kit Text Recognition requires Android API 23 or higher.
-        minSdk = 23
+        // llama_flutter_android uses SharedMemory and requires Android 8.0/API 26.
+        minSdkVersion = 26
 
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()

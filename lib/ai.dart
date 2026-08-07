@@ -9,6 +9,7 @@ import 'media_preprocessor.dart';
 
 import 'ops.dart';
 import 'app_state.dart';
+import 'local_llama.dart';
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -65,6 +66,42 @@ class AIManager {
 
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
+
+    // 已选择本地 GGUF 时，绕过远程 provider，执行真实 llama.cpp 推理。
+    final prefs = await SharedPreferences.getInstance();
+    final localId = (prefs.getString('local_chat_model_$botId') ?? '').trim();
+    if (localId.isNotEmpty) {
+      try {
+        final history =
+            await db.getChatHistory(botId).timeout(const Duration(seconds: 8));
+        final localMessages = <Map<String, dynamic>>[
+          {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)},
+        ];
+        for (final msg in history.take(20)) {
+          if (msg['type'] == 'text') {
+            localMessages.add({
+              'role': msg['role'],
+              'content': msg['content'],
+            });
+          }
+        }
+        if (history.isEmpty || history.last['content']?.toString() != text) {
+          localMessages.add({'role': 'user', 'content': text});
+        }
+        final path = await LocalLlama.instance.pathFor(localId);
+        final reply = await LocalLlama.instance.generate(
+          path: path,
+          messages: localMessages,
+        );
+        return {'success': true, 'reply': reply, 'local': true};
+      } catch (e, st) {
+        return {
+          'error': '本地模型推理失败：$e',
+          'error_code': 'local_inference',
+          'error_log': '$e\n$st',
+        };
+      }
+    }
 
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     final providerId = bot['chat_model'];
