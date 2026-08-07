@@ -18,6 +18,7 @@ import 'db.dart';
 import 'global_notice.dart';
 import 'ops.dart';
 import 'ota_update.dart';
+import 'daily_launch_animation.dart';
 
 final TideTheme tideTheme = TideTheme();
 
@@ -82,15 +83,14 @@ Future<void> _initPersistentService({
 }
 
 @pragma('vm:entry-point')
-Future<bool> onStart(ServiceInstance service) async {
-  // Only the explicit user switch may start this service.  It can be stopped
-  // from notification settings; no boot/startup code restarts it implicitly.
+void onStart(ServiceInstance service) {
+  // This callback runs in the background isolate. Its signature must remain
+  // compatible with flutter_background_service or Android can terminate it.
   service.on('stopService').listen((_) async {
     if (service is AndroidServiceInstance) {
       await service.stopSelf();
     }
   });
-  return true;
 }
 
 class FlowProvider extends ChangeNotifier {
@@ -151,54 +151,25 @@ class FlowGlassBg extends StatelessWidget {
                 ],
         ),
       )),
-      ListenableBuilder(
-          listenable: flowProvider,
-          builder: (c, _) => Stack(children: [
-                Positioned(
-                    left: flowProvider.pos.dx - 150,
-                    top: flowProvider.pos.dy - 110,
-                    child: IgnorePointer(
-                        child: Container(
-                            width: 300,
-                            height: 300,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(colors: [
-                                  theme.primaryLight
-                                      .withOpacity(theme.isDark ? 0.13 : 0.26),
-                                  theme.primary
-                                      .withOpacity(theme.isDark ? 0.05 : 0.10),
-                                  Colors.transparent
-                                ]))))),
-                Positioned(
-                    right: -120,
-                    top: 80,
-                    child: IgnorePointer(
-                        child: Container(
-                            width: 280,
-                            height: 280,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(colors: [
-                                  theme.primary
-                                      .withOpacity(theme.isDark ? 0.07 : 0.12),
-                                  Colors.transparent
-                                ]))))),
-                Positioned(
-                    left: -100,
-                    bottom: -100,
-                    child: IgnorePointer(
-                        child: Container(
-                            width: 260,
-                            height: 260,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(colors: [
-                                  theme.primaryLight
-                                      .withOpacity(theme.isDark ? 0.05 : 0.10),
-                                  Colors.transparent
-                                ]))))),
-              ])),
+      // Static background layers keep the page GPU-friendly. The previous
+      // 16ms FlowProvider rebuild repainted the whole app continuously.
+      Positioned(
+        left: -80,
+        top: 70,
+        child: IgnorePointer(
+          child: Container(
+            width: 260,
+            height: 260,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(colors: [
+                theme.primaryLight.withOpacity(theme.isDark ? 0.08 : 0.16),
+                Colors.transparent,
+              ]),
+            ),
+          ),
+        ),
+      ),
 
       child,
     ]);
@@ -263,25 +234,61 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
           darkTheme: ThemeData(
             fontFamily: 'TideFont',
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: const Color(0xFF121417),
-            appBarTheme: const AppBarTheme(
+            scaffoldBackgroundColor: tideTheme.bgColor,
+            colorScheme: ColorScheme.dark(
+              primary: tideTheme.primary,
+              surface: tideTheme.surface,
+              onSurface: tideTheme.textStrong,
+              surfaceContainerHighest: tideTheme.surfaceVariant,
+              onSurfaceVariant: tideTheme.textWeak,
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: tideTheme.surfaceVariant,
+              labelStyle: TextStyle(color: tideTheme.textStrong),
+              hintStyle: TextStyle(color: tideTheme.textWeak),
+              prefixIconColor: tideTheme.iconMuted,
+              suffixIconColor: tideTheme.iconMuted,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: tideTheme.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: tideTheme.primary, width: 1.5),
+              ),
+            ),
+            appBarTheme: AppBarTheme(
                 backgroundColor: Colors.transparent,
+                foregroundColor: tideTheme.textStrong,
                 elevation: 0,
                 scrolledUnderElevation: 0),
+            dialogTheme: DialogThemeData(
+              backgroundColor: tideTheme.surface,
+              titleTextStyle: TextStyle(
+                  color: tideTheme.textStrong,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'TideFont'),
+              contentTextStyle: TextStyle(
+                  color: tideTheme.textStrong, fontFamily: 'TideFont'),
+            ),
             useMaterial3: true,
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
           ),
-          builder: (context, child) => Overlay(
-            key: globalNoticeOverlayKey,
-            initialEntries: [
-              OverlayEntry(
-                builder: (context) => child ?? const SizedBox.shrink(),
-              ),
-            ],
+          builder: (context, child) => TideEdgeBackGesture(
+            child: Overlay(
+              key: globalNoticeOverlayKey,
+              initialEntries: [
+                OverlayEntry(
+                  builder: (context) => child ?? const SizedBox.shrink(),
+                ),
+              ],
+            ),
           ),
           home: widget.hasSeenOnboarding
-              ? const TideMainScaffold()
+              ? const DailyLaunchAnimation(child: TideMainScaffold())
               : const OnboardingScreen(),
         ),
       ),

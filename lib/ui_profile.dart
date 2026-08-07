@@ -819,13 +819,19 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                           setState(
                               () => _switchingPersistentNotification = true);
                           try {
+                            // The service is configured during app startup. On a
+                            // fast first visit it may still be initializing, so
+                            // persist the opt-in before requesting its start.
+                            await _setValue('persistent_notification', value);
                             final service = FlutterBackgroundService();
                             if (value) {
+                              await Future<void>.delayed(
+                                const Duration(milliseconds: 250),
+                              );
                               await service.startService();
                             } else {
                               service.invoke('stopService');
                             }
-                            await _setValue('persistent_notification', value);
                             if (!mounted) return;
                             setState(() => _keepRunning = value);
                           } catch (e) {
@@ -1661,8 +1667,12 @@ class _LocalModelPageState extends State<LocalModelPage> {
     );
     if (confirmed != true) return;
 
-    await target.delete().catchError((_) {});
-    await part.delete().catchError((_) {});
+    try {
+      if (await target.exists()) await target.delete();
+      if (await part.exists()) await part.delete();
+    } catch (_) {
+      // Keep cleanup best-effort; state references must still be removed.
+    }
     await _clearDownloadState(id);
 
     final prefs = await SharedPreferences.getInstance();
