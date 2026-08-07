@@ -17,6 +17,7 @@ import 'app_navigation.dart';
 import 'db.dart';
 import 'global_notice.dart';
 import 'ops.dart';
+import 'ota_update.dart';
 
 final TideTheme tideTheme = TideTheme();
 
@@ -28,6 +29,7 @@ void main() async {
   await tideTheme.loadFromDB();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
   runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
+  Future<void>.delayed(const Duration(seconds: 2), OtaUpdate.checkOncePerDay);
 
   // 通知回调需要在根导航器建立后才能打开对应聊天室。
   unawaited(OpsManager().initializeNotifications().catchError((e, st) {

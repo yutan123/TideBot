@@ -591,7 +591,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _showTime = true;
   bool _showAvatar = false;
   bool _streaming = true;
-  double _speed = 50;
+  int _speed = 50;
+  final TextEditingController _streamSpeedController =
+      TextEditingController(text: '50');
 
   @override
   void initState() {
@@ -607,17 +609,26 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _showTime = true;
       _showAvatar = false;
       _streaming = true;
-      _speed = (speed ?? 50).clamp(1, 100).toDouble();
+      _speed = (speed ?? 50).clamp(1, 100);
+      _streamSpeedController.text = _speed.toString();
     });
     final time = await db.getKV('show_message_time');
     final avatar = await db.getKV('show_chat_avatar');
-    final stream = await db.getKV('streaming_input');
+    final stream =
+        await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
     if (!mounted) return;
     setState(() {
       _showTime = time != 'false';
       _showAvatar = avatar == 'true';
       _streaming = stream != 'false';
+      _streamSpeedController.text = _speed.toString();
     });
+  }
+
+  @override
+  void dispose() {
+    _streamSpeedController.dispose();
+    super.dispose();
   }
 
   Future<void> _save(String key, String value) async {
@@ -666,7 +677,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   },
                 ),
                 SwitchListTile(
-                  title: const Text('流式输入',
+                  title: const Text('流式输出',
                       style: TextStyle(fontFamily: 'TideFont')),
                   subtitle: const Text('模型支持时逐步显示回复',
                       style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
@@ -674,45 +685,53 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   activeColor: theme.primary,
                   onChanged: (value) {
                     setState(() => _streaming = value);
-                    _save('streaming_input', value.toString());
+                    _save('streaming_output', value.toString());
                   },
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          FrostCard(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('流式输入速度：${_speed.round()}',
+          if (_streaming) ...[
+            const SizedBox(height: 16),
+            FrostCard(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('流式输出速度（1-100）',
+                      style: TextStyle(
+                          fontFamily: 'TideFont',
+                          color: theme.textStrong,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _streamSpeedController,
+                    keyboardType: TextInputType.number,
                     style: TextStyle(
-                        fontFamily: 'TideFont',
-                        color: theme.textStrong,
-                        fontWeight: FontWeight.w600)),
-                Slider(
-                  min: 1,
-                  max: 100,
-                  divisions: 99,
-                  value: _speed,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _speed = value);
-                  },
-                  onChangeEnd: (value) =>
-                      _save('streaming_speed', value.round().toString()),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('1', style: TextStyle(color: theme.textWeak)),
-                    Text('100', style: TextStyle(color: theme.textWeak)),
-                  ],
-                ),
-              ],
+                        color: theme.textStrong, fontFamily: 'TideFont'),
+                    decoration: InputDecoration(
+                      hintText: '默认 50',
+                      hintStyle: TextStyle(
+                          color: theme.textWeak, fontFamily: 'TideFont'),
+                      filled: true,
+                      fillColor: theme.surfaceVariant,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value);
+                      if (parsed != null && parsed >= 1 && parsed <= 100) {
+                        _speed = parsed;
+                        _save('streaming_speed', parsed.toString());
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1616,6 +1635,58 @@ class _LocalModelPageState extends State<LocalModelPage> {
     await prefs.remove('local_model_total_$id');
   }
 
+  Future<void> _deleteModel(int index) async {
+    final model = _models[index];
+    final id = model['id'] as String;
+    final dir = await getApplicationDocumentsDirectory();
+    final target = File('${dir.path}/$id.gguf');
+    final part = File('${target.path}.part');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除本地模型'),
+        content: Text('确定删除“${model['name']}”及其下载进度吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await target.delete().catchError((_) {});
+    await part.delete().catchError((_) {});
+    await _clearDownloadState(id);
+
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys().where(
+          (key) => key.startsWith('local_chat_model_'),
+        )) {
+      if (prefs.getString(key) == id) {
+        await prefs.remove(key);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      model['installed'] = false;
+      model['downloading'] = false;
+      model['receivedBytes'] = 0;
+      model['totalBytes'] = 0;
+      model['progress'] = 0.0;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('本地模型已删除')),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1673,17 +1744,42 @@ class _LocalModelPageState extends State<LocalModelPage> {
     final client = http.Client();
     IOSink? sink;
     try {
-      var request = http.Request('GET', Uri.parse(url));
-      if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
-      var response =
-          await client.send(request).timeout(const Duration(minutes: 20));
+      final routes = <String>[
+        url,
+        url.replaceFirst('https://huggingface.co/', 'https://hf-mirror.com/'),
+        url.replaceFirst('https://huggingface.co/', 'https://hf.co/'),
+      ];
+      http.StreamedResponse? response;
+      final errors = <String>[];
+      for (final route in routes.take(3)) {
+        for (var attempt = 1; attempt <= 3 && response == null; attempt++) {
+          try {
+            final request = http.Request('GET', Uri.parse(route));
+            if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
+            final candidate =
+                await client.send(request).timeout(const Duration(minutes: 20));
+            if (candidate.statusCode == 200 || candidate.statusCode == 206) {
+              response = candidate;
+            } else {
+              errors.add('$route 第$attempt次 HTTP ${candidate.statusCode}');
+              await candidate.stream.drain();
+            }
+          } catch (e) {
+            errors.add('$route 第$attempt次 $e');
+          }
+        }
+        if (response != null) break;
+      }
+      if (response == null) {
+        throw HttpException('三条下载线路均失败（每条已重试三次）：${errors.join('；')}');
+      }
 
       // A server that ignores Range returns 200. Restart safely instead of
       // appending a duplicate file.
       if (existing > 0 && response.statusCode == 200) {
         await part.delete();
         existing = 0;
-        request = http.Request('GET', Uri.parse(url));
+        final request = http.Request('GET', Uri.parse(url));
         response =
             await client.send(request).timeout(const Duration(minutes: 20));
       }
@@ -1833,7 +1929,22 @@ class _LocalModelPageState extends State<LocalModelPage> {
                                     color: TideTheme.of(context).textWeak,
                                     fontFamily: 'TideFont'))
                           ])),
-                      if (!installed)
+                      if (installed)
+                        BouncyTap(
+                            onTap: () => _deleteModel(modelIndex),
+                            child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(14),
+                                    color:
+                                        TideTheme.of(context).surfaceVariant),
+                                child: Text('删除',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        color: TideTheme.of(context).textStrong,
+                                        fontFamily: 'TideFont'))))
+                      else
                         downloading
                             ? SizedBox(
                                 width: 24,

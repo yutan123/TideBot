@@ -768,97 +768,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     Flexible(
                         child: SingleChildScrollView(
                             child: Column(children: [
-                      _mLabel('本地 GGUF 聊天模型'),
-                      GestureDetector(
-                        onTap: () {
-                          showTideSheet(
-                            context: ctx,
-                            height: 360,
-                            child: ListView(
-                              children: [
-                                ListTile(
-                                  leading: const Icon(Icons.block_rounded),
-                                  title: const Text('不使用本地模型',
-                                      style: TextStyle(
-                                          fontFamily: 'TideFont',
-                                          fontSize: 14)),
-                                  trailing: localChatId.isEmpty
-                                      ? Icon(Icons.check,
-                                          color: TideTheme.of(ctx).primary)
-                                      : null,
-                                  onTap: () async {
-                                    localChatId = '';
-                                    await prefs
-                                        .remove('local_chat_model_$botId');
-                                    setSt(() {});
-                                    Navigator.pop(ctx);
-                                  },
-                                ),
-                                ...localFiles.map((file) {
-                                  final id = file.path
-                                      .split(Platform.pathSeparator)
-                                      .last
-                                      .replaceFirst(RegExp(r'\.gguf$'), '');
-                                  return ListTile(
-                                    leading: const Icon(Icons.memory_rounded),
-                                    title: Text(id,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontFamily: 'TideFont',
-                                            fontSize: 14)),
-                                    subtitle: Text(
-                                        '已下载 · ${(file.lengthSync() / 1024 / 1024).toStringAsFixed(1)} MB',
-                                        style: const TextStyle(
-                                            fontFamily: 'TideFont',
-                                            fontSize: 12)),
-                                    trailing: localChatId == id
-                                        ? Icon(Icons.check,
-                                            color: TideTheme.of(ctx).primary)
-                                        : null,
-                                    onTap: () async {
-                                      localChatId = id;
-                                      await prefs.setString(
-                                          'local_chat_model_$botId', id);
-                                      setSt(() {});
-                                      Navigator.pop(ctx);
-                                    },
-                                  );
-                                }),
-                              ],
-                            ),
-                          );
-                        },
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 13),
-                          decoration: BoxDecoration(
-                            color: TideTheme.of(ctx).surfaceVariant,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  localChatId.isEmpty ? '未选择' : localChatId,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontFamily: 'TideFont', fontSize: 14),
-                                ),
-                              ),
-                              Icon(Icons.chevron_right_rounded,
-                                  color: TideTheme.of(ctx).textWeak),
-                            ],
-                          ),
-                        ),
-                      ),
                       _mLabel('聊天模型'),
-                      _modelPicker(ctx, providers, curChat, (v) async {
-                        curChat = v;
-                        await pickModel('chat_model_$botId', v);
-                      }),
+                      _chatModelPicker(
+                        ctx,
+                        providers,
+                        localFiles,
+                        curChat,
+                        localChatId,
+                        onRemotePick: (v) async {
+                          curChat = v;
+                          localChatId = '';
+                          await prefs.remove('local_chat_model_$botId');
+                          await pickModel('chat_model_$botId', v);
+                        },
+                        onLocalPick: (id) async {
+                          localChatId = id;
+                          curChat = '';
+                          await prefs.setString('local_chat_model_$botId', id);
+                          await pickModel('chat_model_$botId', '');
+                        },
+                      ),
                       // 备用/识图/STT 模型：为扩展能力预留的独立模型选择
                       _mLabel('备用模型'),
                       _modelPicker(ctx, providers, curBak, (v) async {
@@ -1065,15 +994,153 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             padding: const EdgeInsets.symmetric(horizontal: 14),
             margin: const EdgeInsets.only(bottom: 10),
             decoration: BoxDecoration(
-                color: const Color(0xFFE8E8F0),
+                color: TideTheme.of(ctx).surfaceVariant,
                 borderRadius: BorderRadius.circular(10)),
             child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(disp,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 13, fontFamily: 'TideFont')))));
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: TideTheme.of(ctx).textStrong,
+                        fontFamily: 'TideFont')))));
+  }
+
+  Widget _chatModelPicker(
+    BuildContext ctx,
+    List<Map<String, dynamic>> providers,
+    List<File> localFiles,
+    String remoteId,
+    String localId, {
+    required Future<void> Function(String value) onRemotePick,
+    required Future<void> Function(String id) onLocalPick,
+  }) {
+    final remote = providers.firstWhereOrNull((p) => p['id'] == remoteId);
+    final localFile = localFiles.firstWhereOrNull(
+      (file) =>
+          file.path
+              .split(Platform.pathSeparator)
+              .last
+              .replaceFirst(RegExp(r'\\.gguf$'), '') ==
+          localId,
+    );
+    final display = localFile != null
+        ? '本地 · $localId'
+        : remote != null
+            ? _providerTitle(remote)
+            : providers.isEmpty && localFiles.isEmpty
+                ? '无可用模型'
+                : '未选择';
+
+    return GestureDetector(
+      onTap: () {
+        showTideSheet(
+          context: ctx,
+          height: 420,
+          child: ListView(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.block_rounded),
+                title: const Text('不选择',
+                    style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+                subtitle: const Text('清除当前聊天模型配置',
+                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                trailing: remoteId.isEmpty && localId.isEmpty
+                    ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                    : null,
+                onTap: () async {
+                  await onLocalPick('');
+                  Navigator.pop(ctx);
+                },
+              ),
+              if (localFiles.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text('已下载的本地模型',
+                      style: TextStyle(
+                          fontFamily: 'TideFont', fontWeight: FontWeight.w600)),
+                ),
+                for (final file in localFiles)
+                  Builder(builder: (context) {
+                    final id = file.path
+                        .split(Platform.pathSeparator)
+                        .last
+                        .replaceFirst(RegExp(r'\\.gguf$'), '');
+                    return ListTile(
+                      leading: const Icon(Icons.memory_rounded),
+                      title: Text(id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontFamily: 'TideFont', fontSize: 14)),
+                      subtitle: Text(
+                        '本地 GGUF · ${(file.lengthSync() / 1024 / 1024).toStringAsFixed(1)} MB',
+                        style: const TextStyle(
+                            fontFamily: 'TideFont', fontSize: 12),
+                      ),
+                      trailing: localId == id
+                          ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                          : null,
+                      onTap: () async {
+                        await onLocalPick(id);
+                        Navigator.pop(ctx);
+                      },
+                    );
+                  }),
+              ],
+              if (providers.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text('API 模型',
+                      style: TextStyle(
+                          fontFamily: 'TideFont', fontWeight: FontWeight.w600)),
+                ),
+                for (final provider in providers)
+                  ListTile(
+                    title: Text(_providerTitle(provider),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontFamily: 'TideFont', fontSize: 14)),
+                    subtitle: Text(_providerSub(provider),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontFamily: 'TideFont', fontSize: 12)),
+                    trailing: localId.isEmpty && remoteId == provider['id']
+                        ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                        : null,
+                    onTap: () async {
+                      await onRemotePick(provider['id'] as String);
+                      Navigator.pop(ctx);
+                    },
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: TideTheme.of(ctx).surfaceVariant,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(display,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 13,
+                  color: TideTheme.of(ctx).textStrong,
+                  fontFamily: 'TideFont')),
+        ),
+      ),
+    );
   }
 
   String _providerTitle(Map<String, dynamic> p) {
