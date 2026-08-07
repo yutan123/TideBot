@@ -31,22 +31,59 @@ jobs:
         touch assets/icons/.gitkeep
         touch assets/images/.gitkeep
 
-    - name: 📦 5. 注入 NDK 并拉取依赖
+    - name: 🔐 5. 从 GitHub Secrets 恢复并验证 Release 签名
+      env:
+        TIDEBOT_KEYSTORE_BASE64: ${{ secrets.TIDEBOT_KEYSTORE_BASE64 }}
+        TIDEBOT_STORE_PASSWORD: ${{ secrets.TIDEBOT_STORE_PASSWORD }}
+        TIDEBOT_KEY_PASSWORD: ${{ secrets.TIDEBOT_KEY_PASSWORD }}
+        TIDEBOT_KEY_ALIAS: ${{ secrets.TIDEBOT_KEY_ALIAS }}
+      run: |
+        test -n "$TIDEBOT_KEYSTORE_BASE64" || { echo "::error::Missing secret TIDEBOT_KEYSTORE_BASE64"; exit 1; }
+        test -n "$TIDEBOT_STORE_PASSWORD" || { echo "::error::Missing secret TIDEBOT_STORE_PASSWORD"; exit 1; }
+        test -n "$TIDEBOT_KEY_PASSWORD" || { echo "::error::Missing secret TIDEBOT_KEY_PASSWORD"; exit 1; }
+        test -n "$TIDEBOT_KEY_ALIAS" || { echo "::error::Missing secret TIDEBOT_KEY_ALIAS"; exit 1; }
+
+        # 签名材料只在本次 CI 工作区生成，且 android/.gitignore 已忽略它们。
+        printf '%s' "$TIDEBOT_KEYSTORE_BASE64" | base64 --decode > android/app/tidebot.keystore
+        test -s android/app/tidebot.keystore || { echo "::error::Decoded keystore is empty"; exit 1; }
+        cat > android/key.properties <<EOF
+        storePassword=$TIDEBOT_STORE_PASSWORD
+        keyPassword=$TIDEBOT_KEY_PASSWORD
+        keyAlias=$TIDEBOT_KEY_ALIAS
+        storeFile=tidebot.keystore
+        EOF
+
+        # 在构建前确认该文件确实是可用的私钥签名条目。
+        keytool -list -keystore android/app/tidebot.keystore \
+          -storepass "$TIDEBOT_STORE_PASSWORD" \
+          -keypass "$TIDEBOT_KEY_PASSWORD" \
+          -alias "$TIDEBOT_KEY_ALIAS" | grep -q 'PrivateKeyEntry'
+
+    - name: 📦 6. 注入 NDK 并拉取依赖
       run: |
         mkdir -p android
         echo "flutter.ndkVersion=25.1.8937393" >> android/local.properties
         sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "25.1.8937393"/g' android/app/build.gradle || true
         flutter pub get
 
-    - name: 🚀 6. 编译打包 APK
+    - name: 🚀 7. 编译打包已签名 APK
       run: |
         flutter clean
         flutter pub get
         dart run flutter_launcher_icons
         flutter build apk --release
 
-    - name: 📤 7. 提取并上传安装包
+    - name: ✅ 8. 验证 APK 签名
+      run: |
+        APK=build/app/outputs/flutter-apk/app-release.apk
+        test -s "$APK" || { echo "::error::Release APK was not created"; exit 1; }
+        APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
+        test -n "$APKSIGNER" || { echo "::error::apksigner was not found"; exit 1; }
+        "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+    - name: 📤 9. 提取并上传已验证安装包
       uses: actions/upload-artifact@v4
       with:
         name: TideBot-Release-APK
         path: build/app/outputs/flutter-apk/app-release.apk
+        if-no-files-found: error
