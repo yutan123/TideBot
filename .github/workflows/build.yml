@@ -31,32 +31,7 @@ jobs:
         touch assets/icons/.gitkeep
         touch assets/images/.gitkeep
 
-    - name: 🔐 5. 配置并验证 Release 签名
-      env:
-        TIDEBOT_STORE_PASSWORD: ${{ secrets.TIDEBOT_STORE_PASSWORD }}
-        TIDEBOT_KEY_PASSWORD: ${{ secrets.TIDEBOT_KEY_PASSWORD }}
-        TIDEBOT_KEY_ALIAS: ${{ secrets.TIDEBOT_KEY_ALIAS }}
-      run: |
-        # tidebot.keystore 已被仓库跟踪，checkout 后直接可用；绝不回退到未签名 Release。
-        test -s android/app/tidebot.keystore || { echo "::error::Missing android/app/tidebot.keystore"; exit 1; }
-        test -n "$TIDEBOT_STORE_PASSWORD" || { echo "::error::Missing secret TIDEBOT_STORE_PASSWORD"; exit 1; }
-        test -n "$TIDEBOT_KEY_PASSWORD" || { echo "::error::Missing secret TIDEBOT_KEY_PASSWORD"; exit 1; }
-        test -n "$TIDEBOT_KEY_ALIAS" || { echo "::error::Missing secret TIDEBOT_KEY_ALIAS"; exit 1; }
-
-        cat > android/key.properties <<EOF
-        storePassword=$TIDEBOT_STORE_PASSWORD
-        keyPassword=$TIDEBOT_KEY_PASSWORD
-        keyAlias=$TIDEBOT_KEY_ALIAS
-        storeFile=tidebot.keystore
-        EOF
-
-        # 在构建前确认该文件确实是可用的私钥签名条目。
-        keytool -list -keystore android/app/tidebot.keystore \
-          -storepass "$TIDEBOT_STORE_PASSWORD" \
-          -keypass "$TIDEBOT_KEY_PASSWORD" \
-          -alias "$TIDEBOT_KEY_ALIAS" | grep -q 'PrivateKeyEntry'
-
-    - name: 📦 6. 注入 NDK 并拉取依赖
+    - name: 📦 5. 注入 NDK 并拉取依赖
       run: |
         mkdir -p android
         echo "flutter.ndkVersion=25.1.8937393" >> android/local.properties
