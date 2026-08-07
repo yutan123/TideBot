@@ -50,17 +50,28 @@ android {
             signingProperties.load(reader)
         }
     }
-
-    def releaseKeystore = project.file(
-            signingProperties.getProperty('storeFile', 'tidebot.keystore'))
+    def configuredStoreFile = signingProperties.getProperty(
+            'storeFile', 'tidebot.keystore')
+    def releaseKeystore = new File(configuredStoreFile)
+    if (!releaseKeystore.isAbsolute()) {
+        // 兼容 key.properties 中的两种写法：
+        // 1. tidebot.keystore（相对 android/app）
+        // 2. app/tidebot.keystore（相对 android 根目录）
+        def appRelative = project.file(configuredStoreFile)
+        def rootRelative = rootProject.file(configuredStoreFile)
+        releaseKeystore = appRelative.isFile() ? appRelative : rootRelative
+    }
     def releaseStorePassword = signingProperties.getProperty('storePassword')
     def releaseKeyAlias = signingProperties.getProperty('keyAlias')
     def releaseKeyPassword = signingProperties.getProperty('keyPassword')
+    def hasReleaseSigning = releaseKeystore.isFile() &&
+            releaseStorePassword?.trim() &&
+            releaseKeyAlias?.trim() &&
+            releaseKeyPassword?.trim()
 
     signingConfigs {
-        if (releaseKeystore.exists() && releaseStorePassword &&
-                releaseKeyAlias && releaseKeyPassword) {
-            release {
+        release {
+            if (hasReleaseSigning) {
                 storeFile releaseKeystore
                 storePassword releaseStorePassword
                 keyAlias releaseKeyAlias
@@ -71,11 +82,19 @@ android {
 
     buildTypes {
         release {
-            if (releaseKeystore.exists() && releaseStorePassword &&
-                    releaseKeyAlias && releaseKeyPassword) {
-                signingConfig signingConfigs.release
-            }
+            // Release 永远使用签名配置；签名材料缺失时由下方校验直接失败。
+            signingConfig signingConfigs.release
         }
+    }
+
+    // Debug 可以在没有发布密钥时构建；任何 Release 任务都必须具备签名材料。
+    def requestedReleaseTask = gradle.startParameter.taskNames.any {
+        it.toLowerCase().contains('release')
+    }
+    if (requestedReleaseTask && !hasReleaseSigning) {
+        throw new GradleException(
+                'Release signing is not configured. Restore android/key.properties '
+                + 'and android/app/tidebot.keystore before building a release APK.')
     }
 }
 dependencies {
