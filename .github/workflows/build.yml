@@ -10,7 +10,6 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/build.yml'
-      - '.github/workflows/verify-local-llama.yml'
 
 permissions:
   contents: read
@@ -38,8 +37,13 @@ jobs:
           channel: stable
           cache: true
 
+      # GitHub runners do not guarantee sdkmanager is preinstalled or on PATH.
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+
       - name: Install Android SDK components and NDK
         run: |
+          sdkmanager --version
           yes | sdkmanager --licenses
           sdkmanager \
             "platform-tools" \

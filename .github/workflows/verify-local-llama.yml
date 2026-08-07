@@ -29,8 +29,14 @@ jobs:
           channel: stable
           cache: true
 
+      # Explicitly install command-line tools: ubuntu runners may not expose
+      # sdkmanager until this action configures ANDROID_HOME/PATH.
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+
       - name: Install Android native build tools
         run: |
+          sdkmanager --version
           yes | sdkmanager --licenses
           sdkmanager \
             "platform-tools" \
