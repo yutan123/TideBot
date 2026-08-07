@@ -1,9 +1,0 @@
-{
-  "version": "1.0.1",
-  "release_notes": "示例：修复通知、优化本地模型下载和界面流畅度。",
-  "download_urls": [
-    "https://example.com/tidebot-1.0.1-line-1.apk",
-    "https://example.com/tidebot-1.0.1-line-2.apk",
-    "https://example.com/tidebot-1.0.1-line-3.apk"
-  ]
-}
