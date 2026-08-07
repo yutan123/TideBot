@@ -25,7 +25,8 @@ dependencies:
   # UI 特效与多模态交互
   flutter_svg: ^2.0.10
   rive: ^0.13.0
-  record: ^4.4.4
+  # 6.x 的 Android 插件已声明 namespace，兼容 AGP 8+。
+  record: ^6.1.1
   audioplayers: ^6.5.0
   heif_converter: ^1.0.7
   image_picker: ^1.1.2

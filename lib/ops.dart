@@ -19,7 +19,7 @@ class OpsManager {
   static const MethodChannel _nativeChannel =
       MethodChannel('tidebot.native.channel');
 
-  final Record _audioRecorder = Record();
+  final AudioRecorder _audioRecorder = AudioRecorder();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -72,9 +72,11 @@ class OpsManager {
         final filePath =
             '${directory.path}/tide_audio_record_${DateTime.now().millisecondsSinceEpoch}.m4a';
         await _audioRecorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.aacLc,
+            bitRate: 128000,
+          ),
           path: filePath,
-          encoder: AudioEncoder.aacLc,
-          bitRate: 128000,
         );
         return true;
       }

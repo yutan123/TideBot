@@ -1,4 +1,4 @@
-name: Build TideBot Release APK
+name: 编译 TideBot 正式版 APK
 
 on:
   workflow_dispatch:
@@ -16,32 +16,32 @@ permissions:
 
 jobs:
   build-release:
-    name: Android Release (llama.cpp)
+    name: 常规 Android 正式版编译
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: 获取源码
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: 配置 Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter 3.44.8
+      - name: 配置 Flutter 3.44.8
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.8'
           channel: stable
           cache: true
 
-      # GitHub runners do not guarantee sdkmanager is preinstalled or on PATH.
-      - name: Set up Android command-line tools
+      # 显式配置 Android 命令行工具，避免 Runner 找不到 sdkmanager。
+      - name: 配置 Android 命令行工具
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK components and NDK
+      - name: 安装 Android SDK 组件和 NDK
         run: |
           sdkmanager --version
           yes | sdkmanager --licenses
@@ -52,23 +52,23 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.0.12077973"
 
-      - name: Resolve Flutter packages
+      - name: 获取 Flutter 依赖
         run: flutter pub get
 
-      - name: Verify Dart compilation
-        run: dart analyze --no-fatal-infos --no-fatal-warnings
+      - name: 检查 Dart 代码
+        run: dart analyze --no-fatal-warnings
 
-      - name: Build signed release APK
+      - name: 编译已签名正式版 APK
         run: flutter build apk --release --no-pub
 
-      - name: Verify APK signature
+      - name: 验证 APK 签名
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
-          test -s "$APK" || { echo "::error::Release APK was not created"; exit 1; }
+          test -s "$APK" || { echo "::error::未生成正式版 APK"; exit 1; }
           APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose "$APK"
 
-      - name: Upload verified release APK
+      - name: 上传已验证的正式版 APK
         uses: actions/upload-artifact@v4
         with:
           name: TideBot-Release-APK

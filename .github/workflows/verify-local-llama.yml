@@ -1,4 +1,4 @@
-name: Verify TideBot Local Llama Release
+name: 验证 TideBot 本地模型正式版
 
 on:
   workflow_dispatch:
@@ -8,33 +8,32 @@ permissions:
 
 jobs:
   verify-local-llama:
-    name: Build and verify llama.cpp APK
+    name: 编译并验证本地模型 APK
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: 获取源码
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: 配置 Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter 3.44.8
+      - name: 配置 Flutter 3.44.8
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.8'
           channel: stable
           cache: true
 
-      # Explicitly install command-line tools: ubuntu runners may not expose
-      # sdkmanager until this action configures ANDROID_HOME/PATH.
-      - name: Set up Android command-line tools
+      # 显式配置 Android 命令行工具，避免 Runner 找不到 sdkmanager。
+      - name: 配置 Android 命令行工具
         uses: android-actions/setup-android@v3
 
-      - name: Install Android native build tools
+      - name: 安装 Android 原生构建工具
         run: |
           sdkmanager --version
           yes | sdkmanager --licenses
@@ -45,22 +44,22 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.0.12077973"
 
-      - name: Resolve packages
+      - name: 获取 Flutter 依赖
         run: flutter pub get
 
-      - name: Build release APK with llama.cpp
+      - name: 编译包含本地模型的正式版 APK
         run: flutter build apk --release --no-pub
 
-      - name: Verify signing and ARM64 llama native library
+      - name: 验证签名和 ARM64 本地模型原生库
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
-          test -s "$APK" || { echo "::error::Release APK was not created"; exit 1; }
+          test -s "$APK" || { echo "::error::未生成正式版 APK"; exit 1; }
           APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose "$APK"
           unzip -l "$APK" | grep -E 'lib/arm64-v8a/lib.*(llama|ggml).*\.so' \
-            || { echo "::error::llama.cpp ARM64 library is missing from APK"; exit 1; }
+            || { echo "::error::APK 中缺少 ARM64 本地模型原生库"; exit 1; }
 
-      - name: Upload verified APK
+      - name: 上传已验证的本地模型 APK
         uses: actions/upload-artifact@v4
         with:
           name: TideBot-Local-Llama-Release-APK

@@ -38,7 +38,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _loading = false;
   bool _typing = false;
   bool _msgsLoading = true;
-  final Record _rec = Record();
+  final AudioRecorder _rec = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   StreamSubscription<Duration>? _audioPositionSub;
   StreamSubscription<Duration>? _audioDurationSub;
@@ -434,9 +434,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final path =
           '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _rec.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+        ),
         path: path,
-        encoder: AudioEncoder.aacLc,
-        bitRate: 128000,
       );
       if (!mounted) return;
       setState(() => _isRecording = true);
