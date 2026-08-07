@@ -26,13 +26,14 @@ if (flutterVersionName == null) {
 android {
     namespace = "com.yutan123.tidebot"
     compileSdk = flutter.compileSdkVersion
-    // Pin to the complete local NDK. The llama.cpp plugin uses CMake and
-    // does not require Flutter's newer default NDK revision.
-    ndkVersion = "27.0.12077973"
+    // jni requires NDK 28; Android NDK revisions are backward compatible.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // flutter_local_notifications requires Java 8+ library API backports.
+        coreLibraryDesugaringEnabled true
     }
 
     kotlinOptions {
@@ -66,6 +67,8 @@ android {
     }
 }
 dependencies {
+    // Required when coreLibraryDesugaringEnabled is true.
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     implementation "com.google.mlkit:text-recognition-chinese:16.0.1"
 }
 
