@@ -79,21 +79,28 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(28),
-                              child: Image.asset(
-                                'assets/images/logo.png',
-                                width: 112,
-                                height: 112,
-                                fit: BoxFit.cover,
+                            Container(
+                              width: 88,
+                              height: 88,
+                              decoration: BoxDecoration(
+                                color: theme.surfaceVariant,
+                                borderRadius: BorderRadius.circular(30),
                               ),
+                              child: Icon(Icons.auto_awesome_rounded,
+                                  size: 40, color: theme.primary),
                             ),
                             const SizedBox(height: 18),
-                            Text('TideBot',
+                            Text('正在整理今天的陪伴',
                                 style: TextStyle(
                                     color: theme.textStrong,
-                                    fontSize: 22,
+                                    fontSize: 19,
                                     fontWeight: FontWeight.w700,
+                                    fontFamily: 'TideFont')),
+                            const SizedBox(height: 8),
+                            Text('愿你今天也被温柔对待',
+                                style: TextStyle(
+                                    color: theme.textWeak,
+                                    fontSize: 13,
                                     fontFamily: 'TideFont')),
                           ],
                         ),

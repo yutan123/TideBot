@@ -918,7 +918,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             padding: const EdgeInsets.symmetric(horizontal: 14),
             margin: const EdgeInsets.only(bottom: 10),
             decoration: BoxDecoration(
-                color: const Color(0xFFE8E8F0),
+                color: TideTheme.of(parentCtx).surfaceVariant,
                 borderRadius: BorderRadius.circular(10)),
             child: Align(
                 alignment: Alignment.centerLeft,
@@ -926,8 +926,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     cur >= 1000
                         ? '${cur.toString().replaceAllMapped(RegExp(r'(?=(\d{3})+(?!\d))'), (m) => ',')} token'
                         : '$cur token',
-                    style: const TextStyle(
-                        fontSize: 14, fontFamily: 'TideFont')))));
+                    style: TextStyle(
+                        fontSize: 14,
+                        color: TideTheme.of(parentCtx).textStrong,
+                        fontFamily: 'TideFont')))));
   }
 
   // 模型选择器：普通模型显示「名字 · 模型名」，TTS 额外显示「音色」
@@ -1022,7 +1024,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           file.path
               .split(Platform.pathSeparator)
               .last
-              .replaceFirst(RegExp(r'\\.gguf$'), '') ==
+              .replaceFirst(RegExp(r'\.gguf$'), '') ==
           localId,
     );
     final display = localFile != null
@@ -1322,40 +1324,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // ========== 长按消息 ==========
   void _msgLongPress(Map<String, dynamic> msg) {
     final text = msg['content']?.toString() ?? '';
-    TideDialogs.show(
+    showTideSheet(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: Colors.transparent,
-        contentPadding: EdgeInsets.zero,
-        content: TideDialogs.glassContent(
-          context: dialogContext,
+      height: msg['type'] == 'text' ? 300 : 230,
+      child: Builder(
+        builder: (sheetContext) => ListView(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           children: [
-            const Text('消息操作',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'TideFont')),
-            const SizedBox(height: 8),
+            const Center(
+              child: Text('消息操作',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont')),
+            ),
             ListTile(
               leading: Icon(Icons.copy_rounded,
-                  color: TideTheme.of(dialogContext).primary),
+                  color: TideTheme.of(sheetContext).primary),
               title: const Text('复制', style: TextStyle(fontFamily: 'TideFont')),
               onTap: () {
                 Clipboard.setData(ClipboardData(text: text));
-                Navigator.pop(dialogContext);
+                Navigator.pop(sheetContext);
               },
             ),
-            ListTile(
-              leading: Icon(Icons.format_quote_rounded,
-                  color: TideTheme.of(dialogContext).primary),
-              title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () {
-                _msgC.text = text.isEmpty ? '' : '> $text\n';
-                _msgC.selection =
-                    TextSelection.collapsed(offset: _msgC.text.length);
-                Navigator.pop(dialogContext);
-              },
-            ),
+            if (msg['type'] == 'text')
+              ListTile(
+                leading: Icon(Icons.format_quote_rounded,
+                    color: TideTheme.of(sheetContext).primary),
+                title:
+                    const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
+                onTap: () {
+                  _msgC.text = text.isEmpty ? '' : '> $text\n';
+                  _msgC.selection =
+                      TextSelection.collapsed(offset: _msgC.text.length);
+                  Navigator.pop(sheetContext);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),
@@ -1363,19 +1367,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   style: TextStyle(
                       fontFamily: 'TideFont', color: Color(0xFFE74C3C))),
               onTap: () async {
-                try {
-                  await DBManager().deleteMessage(msg['id'].toString());
-                  if (mounted) {
-                    setState(() => _msgs.removeWhere((item) =>
-                        item['id'].toString() == msg['id'].toString()));
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(SnackBar(content: Text('删除失败：$e')));
-                  }
+                await DBManager().deleteMessage(msg['id'].toString());
+                if (mounted) {
+                  setState(() => _msgs.removeWhere(
+                      (item) => item['id'].toString() == msg['id'].toString()));
                 }
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
               },
             ),
           ],

@@ -116,22 +116,34 @@ class AIManager {
       modelName = provider['name'].toString().trim();
     }
     if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
-
-    List<Map<String, dynamic>> messages = [];
-
-    // 注入底层角色设定与游戏规则
-    messages.add(
-        {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)});
-    // 截取最近 20 条对话作为短记忆上下文；数据库异常不可无限阻塞发送状态。
+    final maxContext =
+        (prefs.getInt('max_token_$botId') ?? bot['max_tokens'] as int? ?? 10000)
+            .clamp(1000, 128000);
+    final timeAware = (await db.getKV('time_awareness')) != 'false';
     final history =
         await db.getChatHistory(botId).timeout(const Duration(seconds: 8));
 
-    var lastIsCurrentUser = false;
-    for (var msg in history.take(20)) {
-      if (msg['type'] == 'text') {
-        messages.add({'role': msg['role'], 'content': msg['content']});
+    // Keep stable instructions first for provider prefix caches. Dynamic time is
+    // appended last, and history is packed newest-first within the user budget.
+    final messages = <Map<String, dynamic>>[
+      {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)},
+    ];
+    final historyMessages = <Map<String, dynamic>>[];
+    var usedChars = 0;
+    final charBudget = (maxContext * 3.2).floor();
+    for (final msg in history.reversed) {
+      if (msg['type'] != 'text') continue;
+      final content = msg['content']?.toString() ?? '';
+      if (content.isEmpty) continue;
+      if (usedChars + content.length > charBudget &&
+          historyMessages.isNotEmpty) {
+        break;
       }
+      historyMessages.add({'role': msg['role'], 'content': content});
+      usedChars += content.length;
     }
+    messages.addAll(historyMessages.reversed);
+    var lastIsCurrentUser = false;
     // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
     // 标记以免下方再次追加造成重复喂给模型
     if (history.isNotEmpty) {
@@ -183,7 +195,14 @@ class AIManager {
     } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
     }
-
+    if (timeAware) {
+      final now = DateTime.now();
+      messages.add({
+        'role': 'system',
+        'content':
+            '现实时间附注：${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。仅在用户问题与时间有关时使用。',
+      });
+    }
     try {
       final baseUrl = provider['base_url']
               ?.toString()
@@ -539,15 +558,17 @@ class AIManager {
         botId: botId,
         text: "请结合你的人设，生成一句今天的早安问候或感悟，字数严格在10到15字，不要废话，不要包含[心情]标签。");
     if (res['success'] == true) {
+      final quote = res['reply']?.toString().trim() ?? '';
+      // sendMessage persists its assistant reply. Remove only that generated
+      // reply; never delete a real user message from the conversation.
       final history = await db.getChatHistory(botId);
-      final lastMsg = history.last['content'].toString();
-      // 阅后即焚，防止污染日常对话
-      await db.deleteMessage(history.last['id']);
-      await db.deleteMessage(history[history.length - 2]['id']);
-
+      if (history.isNotEmpty && history.last['role'] == 'assistant') {
+        await db.deleteMessage(history.last['id']);
+      }
+      final normalized = quote.isEmpty ? '今天也要开心度过哦。' : quote;
       await db.setKV('quote_date_$botId', todayStr);
-      await db.setKV('quote_text_$botId', lastMsg);
-      return lastMsg;
+      await db.setKV('quote_text_$botId', normalized);
+      return normalized;
     }
     return "今天也要开心度过哦。";
   }
@@ -598,7 +619,6 @@ class AIManager {
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "当前现实时间:${DateTime.now()}。\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。";
 
     if (activeGame == 'poker') {

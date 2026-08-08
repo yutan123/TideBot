@@ -591,9 +591,17 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _showTime = true;
   bool _showAvatar = false;
   bool _streaming = true;
+  bool _timeAwareness = true;
+  bool _proactiveReply = true;
+  int _proactiveMin = 60;
+  int _proactiveMax = 90;
   int _speed = 50;
   final TextEditingController _streamSpeedController =
       TextEditingController(text: '50');
+  final TextEditingController _proactiveMinController =
+      TextEditingController(text: '60');
+  final TextEditingController _proactiveMaxController =
+      TextEditingController(text: '90');
 
   @override
   void initState() {
@@ -616,11 +624,23 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final avatar = await db.getKV('show_chat_avatar');
     final stream =
         await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
+    final timeAwareness = await db.getKV('time_awareness');
+    final proactiveReply = await db.getKV('proactive_reply');
+    final proactiveMin =
+        int.tryParse(await db.getKV('proactive_min_minutes') ?? '');
+    final proactiveMax =
+        int.tryParse(await db.getKV('proactive_max_minutes') ?? '');
     if (!mounted) return;
     setState(() {
       _showTime = time != 'false';
       _showAvatar = avatar == 'true';
       _streaming = stream != 'false';
+      _timeAwareness = timeAwareness != 'false';
+      _proactiveReply = proactiveReply != 'false';
+      _proactiveMin = (proactiveMin ?? 60).clamp(1, 1440);
+      _proactiveMax = (proactiveMax ?? 90).clamp(_proactiveMin, 1440);
+      _proactiveMinController.text = _proactiveMin.toString();
+      _proactiveMaxController.text = _proactiveMax.toString();
       _streamSpeedController.text = _speed.toString();
     });
   }
@@ -628,6 +648,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   @override
   void dispose() {
     _streamSpeedController.dispose();
+    _proactiveMinController.dispose();
+    _proactiveMaxController.dispose();
     super.dispose();
   }
 
@@ -677,6 +699,30 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   },
                 ),
                 SwitchListTile(
+                  title: const Text('现实时间感知',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('发送时在请求末尾附注当前时间，不影响稳定提示词缓存',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _timeAwareness,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _timeAwareness = value);
+                    _save('time_awareness', value.toString());
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('主动回复',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('应用运行时，在沉默一段时间后随机发起一次自然对话',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _proactiveReply,
+                  activeColor: theme.primary,
+                  onChanged: (value) {
+                    setState(() => _proactiveReply = value);
+                    _save('proactive_reply', value.toString());
+                  },
+                ),
+                SwitchListTile(
                   title: const Text('流式输出',
                       style: TextStyle(fontFamily: 'TideFont')),
                   subtitle: const Text('模型支持时逐步显示回复',
@@ -691,6 +737,73 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               ],
             ),
           ),
+          if (_proactiveReply) ...[
+            const SizedBox(height: 16),
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('触发主动回复的沉默时间',
+                        style: TextStyle(
+                            color: theme.textStrong,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 4),
+                    Text('用户与机器人未发送消息后，在这个随机区间内触发。',
+                        style: TextStyle(
+                            color: theme.textWeak,
+                            fontSize: 12,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(
+                          child: TextField(
+                              controller: _proactiveMinController,
+                              keyboardType: TextInputType.number,
+                              style: TextStyle(
+                                  color: theme.textStrong,
+                                  fontFamily: 'TideFont'),
+                              decoration: InputDecoration(
+                                  labelText: '最短（分钟）',
+                                  filled: true,
+                                  fillColor: theme.surfaceVariant,
+                                  border: InputBorder.none),
+                              onChanged: (v) {
+                                final n = int.tryParse(v);
+                                if (n != null && n >= 1 && n <= _proactiveMax) {
+                                  _proactiveMin = n;
+                                  _save('proactive_min_minutes', '$n');
+                                }
+                              })),
+                      const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8),
+                          child: Text('至')),
+                      Expanded(
+                          child: TextField(
+                              controller: _proactiveMaxController,
+                              keyboardType: TextInputType.number,
+                              style: TextStyle(
+                                  color: theme.textStrong,
+                                  fontFamily: 'TideFont'),
+                              decoration: InputDecoration(
+                                  labelText: '最长（分钟）',
+                                  filled: true,
+                                  fillColor: theme.surfaceVariant,
+                                  border: InputBorder.none),
+                              onChanged: (v) {
+                                final n = int.tryParse(v);
+                                if (n != null &&
+                                    n >= _proactiveMin &&
+                                    n <= 1440) {
+                                  _proactiveMax = n;
+                                  _save('proactive_max_minutes', '$n');
+                                }
+                              })),
+                    ]),
+                  ]),
+            ),
+          ],
           if (_streaming) ...[
             const SizedBox(height: 16),
             FrostCard(

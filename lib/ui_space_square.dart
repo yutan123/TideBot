@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
 import 'db.dart';
 import 'theme.dart';
+import 'ai.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -24,15 +25,6 @@ class _SpacePageState extends State<SpacePage> {
   List<Map<String, dynamic>> _schedules = [];
   List<Map<String, dynamic>> _memories = [];
   bool _loading = true;
-  final List<String> _moods = [
-    'smile',
-    'heart',
-    'sad',
-    'angry',
-    'sleep',
-    'think'
-  ];
-  final List<String> _moodLabels = ['开心', '幸福', '难过', '生气', '困倦', '思考'];
   final Map<String, IconData> _moodIcons = {
     'smile': Icons.sentiment_satisfied_rounded,
     'heart': Icons.favorite_rounded,
@@ -76,8 +68,30 @@ class _SpacePageState extends State<SpacePage> {
             .inDays;
       final sch = await db.querySchedules(_botId, limit: 3);
       final mem = await db.queryMemories(_botId, type: 'medium', limit: 3);
+      final messages = await db.queryMessages(_botId, limit: 30);
+      final latestMood = messages.reversed.firstWhere(
+        (m) =>
+            m['role'] == 'assistant' &&
+            (m['mood']?.toString().isNotEmpty ?? false),
+        orElse: () => <String, dynamic>{},
+      );
+      final mood = latestMood['mood']?.toString() ?? '平静';
+      _moodLabel = mood;
+      _moodIcon = mood == '开心'
+          ? 'smile'
+          : mood == '伤心'
+              ? 'sad'
+              : mood == '生气'
+                  ? 'angry'
+                  : 'think';
       _schedules = sch;
       _memories = mem;
+      // Generates once per calendar day and returns cached text on later opens.
+      if (_dailyQuote.isEmpty ||
+          await db.getKV('quote_date_$_botId') !=
+              '${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}') {
+        _dailyQuote = await AIManager().getDailyQuote(_botId);
+      }
       if (mounted)
         setState(() {
           _loading = false;
@@ -173,20 +187,7 @@ class _SpacePageState extends State<SpacePage> {
                         _buildHeader(timeStr, dateStr, theme),
                         const SizedBox(height: 20),
                         if (_botId.isNotEmpty) ...[
-                          BouncyTap(
-                              onTap: () {
-                                setState(() {
-                                  final q = [
-                                    '世界很大，好在有你。',
-                                    '今天也是充满希望的一天。',
-                                    '活在当下，珍惜眼前。',
-                                    '心之所向，素履以往。'
-                                  ];
-                                  _dailyQuote =
-                                      q[DateTime.now().millisecond % q.length];
-                                });
-                              },
-                              child: _buildQuoteCard(theme)),
+                          _buildQuoteCard(theme),
                           const SizedBox(height: 16),
                           Row(children: [
                             Expanded(child: _buildDaysCard(theme)),
@@ -340,22 +341,12 @@ class _SpacePageState extends State<SpacePage> {
                   color: Color(0xFF8E8E93),
                   fontFamily: 'TideFont')),
           const SizedBox(height: 8),
-          Wrap(
-              spacing: 6,
-              children: List.generate(_moods.length, (i) {
-                final mIcon = _moodIcons[_moods[i]] ?? Icons.help_outline;
-                final isActive = _moodIcon == _moods[i];
-                return BouncyTap(
-                    onTap: () => setState(() {
-                          _moodIcon = _moods[i];
-                          _moodLabel = _moodLabels[i];
-                        }),
-                    child: Icon(mIcon,
-                        size: isActive ? 26 : 18,
-                        color: isActive
-                            ? theme.primary
-                            : const Color(0xFFC7C7CC)));
-              })),
+          Text('随最近一条回复更新',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: theme.textFaint,
+                  fontFamily: 'TideFont')),
         ]));
   }
 
@@ -391,9 +382,9 @@ class _SpacePageState extends State<SpacePage> {
                           fontFamily: 'TideFont')),
                   if ((s['note'] ?? '').toString().isNotEmpty)
                     Text(s['note'] ?? '',
-                      style: TextStyle(fontSize: 13, color: theme.textWeak),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
+                        style: TextStyle(fontSize: 13, color: theme.textWeak),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
                 ])),
             Text(formatTime(s['time']),
                 style: TextStyle(
@@ -421,9 +412,7 @@ class _SpacePageState extends State<SpacePage> {
           const SizedBox(height: 6),
           Text(formatTime(m['created_at']),
               style: TextStyle(
-                  fontSize: 11,
-                  color: theme.textFaint,
-                  fontFamily: 'TideFont'))
+                  fontSize: 11, color: theme.textFaint, fontFamily: 'TideFont'))
         ]));
   }
 }
