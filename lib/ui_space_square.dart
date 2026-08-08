@@ -7,6 +7,7 @@ import 'db.dart';
 import 'theme.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
+import 'memory_manager_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -137,6 +138,15 @@ class _SpacePageState extends State<SpacePage> {
             ])));
   }
 
+  Future<void> _openMemoryManager() async {
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) =>
+                MemoryManagerPage(botId: _botId, botName: _botName)));
+    if (mounted) _loadData();
+  }
+
   void _showMemoryDetail(Map<String, dynamic> m) {
     final theme = TideTheme.of(context);
     showTideSheet(
@@ -214,13 +224,42 @@ class _SpacePageState extends State<SpacePage> {
                               onTap: () => _showScheduleDetail(s),
                               child: _buildScheduleCard(s, theme))),
                         ],
-                        if (_memories.isNotEmpty) ...[
+                        if (_botId.isNotEmpty) ...[
                           const SizedBox(height: 16),
-                          _buildSectionTitle('TA 的日记'),
+                          Row(children: [
+                            Expanded(child: _buildSectionTitle('TA 的日记')),
+                            TextButton.icon(
+                              onPressed: _openMemoryManager,
+                              icon: const Icon(Icons.open_in_full_rounded,
+                                  size: 16),
+                              label: const Text('管理',
+                                  style: TextStyle(fontFamily: 'TideFont')),
+                            ),
+                          ]),
                           const SizedBox(height: 8),
-                          ..._memories.map((m) => BouncyTap(
-                              onTap: () => _showMemoryDetail(m),
-                              child: _buildMemoryCard(m))),
+                          if (_memories.isEmpty)
+                            Text('还没有中期记忆',
+                                style: TextStyle(
+                                    color: theme.textFaint,
+                                    fontFamily: 'TideFont'))
+                          else
+                            SizedBox(
+                                height: 176,
+                                child: ListView.builder(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _memories.length,
+                                  itemBuilder: (_, index) => SizedBox(
+                                      width: 240,
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 10),
+                                        child: BouncyTap(
+                                            onTap: () => _showMemoryDetail(
+                                                _memories[index]),
+                                            child: _buildMemoryCard(
+                                                _memories[index])),
+                                      )),
+                                )),
                         ],
                       ])),
         ));
@@ -441,12 +480,10 @@ class SquarePageState extends State<SquarePage>
   int _particleRun = 0;
   final List<Offset> _particleOrigins = [];
   final _games = [
-    {'name': '五子棋', 'desc': '经典对弈', 'icon': 'grid'},
-    {'name': '井字棋', 'desc': '休闲小游戏', 'icon': 'circle'},
-    {'name': '20问猜物', 'desc': 'AI猜你心思', 'icon': 'help'},
-    {'name': '好运骰子', 'desc': '看看今天运气', 'icon': 'casino'},
-    {'name': '文字冒险', 'desc': '沉浸故事世界', 'icon': 'book'},
-    {'name': '真心话大冒险', 'desc': '拉近彼此距离', 'icon': 'favorite'},
+    {'name': '五子棋', 'desc': '和 TA 真实对弈', 'icon': 'grid'},
+    {'name': '井字棋', 'desc': '和 TA 真实对弈', 'icon': 'circle'},
+    {'name': '20问猜物', 'desc': '由 TA 发问和猜测', 'icon': 'help'},
+    {'name': '斗地主', 'desc': '32 张牌双人对局', 'icon': 'casino'},
   ];
   final Map<String, IconData> _gameIcons = {
     'grid': Icons.grid_4x4_rounded,
@@ -499,37 +536,41 @@ class SquarePageState extends State<SquarePage>
     if (await db.getKV('bot_posts_enabled') != 'true') return;
     final day = DateTime.now();
     final dayKey = '${day.year}-${day.month}-${day.day}';
+    final perDay =
+        (int.tryParse(await db.getKV('bot_posts_per_day') ?? '') ?? 1)
+            .clamp(1, 10);
     final bots = await db.queryBots();
     for (final bot in bots) {
       final botId = bot['id']?.toString() ?? '';
-      if (botId.isEmpty || bot['chat_model']?.toString().isEmpty != false)
+      if (botId.isEmpty || bot['chat_model']?.toString().isEmpty != false) {
         continue;
-      final marker = 'bot_post_date_$botId';
-      if (await db.getKV(marker) == dayKey) continue;
-      final res = await AIManager().sendMessage(
-        botId: botId,
-        text: '请以第一人称写一条适合公开空间的简短生活动态（20到60字），自然、友好，不要使用心情标签或话题标签。',
-      );
-      if (res['success'] != true) continue;
-      final content = res['reply']?.toString().trim() ?? '';
-      if (content.isEmpty) continue;
-      final history = await db.getChatHistory(botId);
-      if (history.isNotEmpty && history.last['role'] == 'assistant') {
-        await db.deleteMessage(history.last['id'].toString());
       }
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await db.insertPost({
-        'id': 'botpost_${botId}_$dayKey',
-        'author_id': bot['name'] ?? '机器人',
-        'content': content,
-        'image_path': '',
-        'likes': 0,
-        'comments': 0,
-        'user_liked': 0,
-        'user_collected': 0,
-        'timestamp': now,
-      });
-      await db.setKV(marker, dayKey);
+      for (var index = 0; index < perDay; index++) {
+        final marker = 'bot_post_date_${botId}_$index';
+        if (await db.getKV(marker) == dayKey) continue;
+        final res = await AIManager().sendMessage(
+          botId: botId,
+          text:
+              '请以第一人称写一条适合公开空间的简短生活动态（20到60字）。这是今天第 ${index + 1} 条，请避免重复已有内容；自然、友好，不要使用心情标签或话题标签。',
+          persistResponse: false,
+        );
+        if (res['success'] != true) continue;
+        final content = res['reply']?.toString().trim() ?? '';
+        if (content.isEmpty) continue;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await db.insertPost({
+          'id': 'botpost_${botId}_${dayKey}_$index',
+          'author_id': bot['name'] ?? '机器人',
+          'content': content,
+          'image_path': '',
+          'likes': 0,
+          'comments': 0,
+          'user_liked': 0,
+          'user_collected': 0,
+          'timestamp': now + index,
+        });
+        await db.setKV(marker, dayKey);
+      }
     }
   }
 
@@ -988,10 +1029,10 @@ class SquarePageState extends State<SquarePage>
                       TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
               const SizedBox(height: 10),
               ...bots.map((bot) => ListTile(
-                    leading: CircleAvatar(
-                        backgroundColor: theme.primary.withOpacity(0.15),
-                        child: Icon(Icons.smart_toy_rounded,
-                            color: theme.primary)),
+                    leading: TideBotAvatar(
+                        name: bot['name']?.toString() ?? '未命名机器人',
+                        path: bot['avatar']?.toString(),
+                        size: 44),
                     title: Text(bot['name']?.toString() ?? '未命名机器人',
                         style: TextStyle(
                             color: theme.textStrong, fontFamily: 'TideFont')),

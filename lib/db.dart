@@ -21,7 +21,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -38,7 +38,7 @@ class DBManager {
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
             content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
-            error_log TEXT, error_code TEXT, error_message TEXT, timestamp INTEGER,
+            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, timestamp INTEGER,
 
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
@@ -181,6 +181,12 @@ class DBManager {
             )
           ''');
         }
+        if (oldVersion < 10) {
+          try {
+            await db.execute(
+                'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -260,6 +266,17 @@ class DBManager {
   Future<void> deleteMessage(String msgId) async {
     final db = await database;
     await db.delete('chat_history', where: 'id = ?', whereArgs: [msgId]);
+  }
+
+  Future<Map<String, dynamic>?> getMessageById(String msgId) async {
+    final db = await database;
+    final rows = await db.query(
+      'chat_history',
+      where: 'id = ?',
+      whereArgs: [msgId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   Future<void> clearChatHistory(String botId) async {
@@ -366,6 +383,22 @@ class DBManager {
         whereArgs: whereArgs,
         orderBy: 'timestamp DESC',
         limit: limit);
+  }
+
+  Future<void> insertMemory(Map<String, dynamic> memory) async {
+    final db = await database;
+    await db.insert('memories', memory,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateMemory(String id, Map<String, dynamic> values) async {
+    final db = await database;
+    await db.update('memories', values, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteMemory(String id) async {
+    final db = await database;
+    await db.delete('memories', where: 'id = ?', whereArgs: [id]);
   }
 
   // 删除指定机器人的记忆

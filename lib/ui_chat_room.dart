@@ -52,6 +52,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String? _customBg;
   bool _showMessageTime = true;
   bool _showChatAvatar = false;
+  Map<String, dynamic>? _replyingTo;
   late Map<String, dynamic> _bot;
 
   late AnimationController _bottomBarCtrl;
@@ -135,11 +136,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void _loadMsgs() async {
     print('_loadMsgs called with bot ID: ${_bot['id']}');
     try {
-      final msgs =
-          await DBManager().queryMessages(_bot['id'] as String, limit: 100);
+      final db = DBManager();
+      final msgs = await db.queryMessages(_bot['id'] as String, limit: 100);
+      // A quoted message can be older than the current page. Fetch each missing
+      // source once so reply cards stay meaningful after reopening a long chat.
+      final loadedIds =
+          msgs.map((m) => m['id']?.toString()).whereType<String>().toSet();
+      final replyIds = msgs
+          .map((m) => m['reply_to_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty && !loadedIds.contains(id))
+          .toSet();
+      for (final replyId in replyIds) {
+        final source = await db.getMessageById(replyId);
+        if (source != null) msgs.add(source);
+      }
       print('_loadMsgs success: got ${msgs.length} messages');
-      // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，
-      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
+      // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
       if (mounted)
         setState(() {
           final byId = <String, Map<String, dynamic>>{
@@ -202,6 +215,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'file_path': document ?? img,
       'document_name':
           document == null ? null : document.split(Platform.pathSeparator).last,
+      'reply_to_id': _replyingTo?['id']?.toString(),
       'timestamp': now,
     };
 
@@ -231,11 +245,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'content': text,
           'file_path': document ?? img,
           'mood': null,
+          'reply_to_id': _replyingTo?['id']?.toString(),
           'timestamp': now,
         }).timeout(const Duration(seconds: 5));
       } catch (e) {
         debugPrint('[send] persist user message failed: $e');
       }
+      if (mounted) setState(() => _replyingTo = null);
       final cm = _bot['chat_model']?.toString().trim() ?? '';
       final localModelId = (await SharedPreferences.getInstance().then(
                   (prefs) => prefs.getString('local_chat_model_$botId')) ??
@@ -270,6 +286,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       debugPrint('[send] request start bot=$botId model=$cm');
+      final streamEnabled =
+          (await DBManager().getKV('streaming_output')) != 'false';
+      Map<String, dynamic>? streamingMessage;
+      if (streamEnabled && localModelId.isEmpty && mounted) {
+        streamingMessage = <String, dynamic>{
+          'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
+          'bot_id': botId,
+          'role': 'assistant',
+          'type': 'text',
+          'content': '',
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        setState(() => _msgs.add(streamingMessage!));
+      }
       // First local GGUF load and CPU generation can legitimately take longer
       // than a remote HTTP request. Keep the short timeout for providers while
       // allowing local inference enough time to finish.
@@ -281,10 +311,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             botId: botId,
             messages: history,
             imageBase64: imgB64,
+            onDelta: streamingMessage == null
+                ? null
+                : (delta) {
+                    if (!mounted) return;
+                    setState(() {
+                      streamingMessage!['content'] =
+                          '${streamingMessage!['content']}$delta';
+                    });
+                    _scrollDown();
+                  },
           )
           .timeout(requestTimeout);
 
       if (result['success'] != true) {
+        if (streamingMessage != null && mounted) {
+          setState(() => _msgs.remove(streamingMessage));
+        }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
         msg['error_log'] = errorLog;
@@ -308,7 +351,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
       final aiMsg = <String, dynamic>{
-        'id': 'm_${DateTime.now().millisecondsSinceEpoch}',
+        'id': result['message_id']?.toString() ??
+            'm_${DateTime.now().millisecondsSinceEpoch}',
         'bot_id': botId,
         'role': 'assistant',
         'content': content,
@@ -316,7 +360,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       };
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
       // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
-      if (mounted) setState(() => _msgs.add(aiMsg));
+      if (mounted) {
+        if (streamingMessage != null) {
+          // The bubble has already been updated from real SSE deltas. Keep its
+          // in-memory identity but normalize its final text and database ID.
+          setState(() {
+            streamingMessage!['id'] = aiMsg['id'];
+            streamingMessage!['content'] = content;
+            streamingMessage!['timestamp'] = aiMsg['timestamp'];
+          });
+        } else {
+          setState(() => _msgs.add(aiMsg));
+        }
+      }
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
@@ -1030,7 +1086,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final display = localFile != null
         ? '本地 · $localId'
         : remote != null
-            ? _providerTitle(remote)
+            ? '${_providerTitle(remote)} · ${remote['model']?.toString().trim().isNotEmpty == true ? remote['model'].toString().trim() : '未填写模型名'}'
             : providers.isEmpty && localFiles.isEmpty
                 ? '无可用模型'
                 : '未选择';
@@ -1347,19 +1403,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 Navigator.pop(sheetContext);
               },
             ),
-            if (msg['type'] == 'text')
-              ListTile(
-                leading: Icon(Icons.format_quote_rounded,
-                    color: TideTheme.of(sheetContext).primary),
-                title:
-                    const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
-                onTap: () {
-                  _msgC.text = text.isEmpty ? '' : '> $text\n';
-                  _msgC.selection =
-                      TextSelection.collapsed(offset: _msgC.text.length);
-                  Navigator.pop(sheetContext);
-                },
-              ),
+            ListTile(
+              leading: Icon(Icons.format_quote_rounded,
+                  color: TideTheme.of(sheetContext).primary),
+              title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
+              onTap: () {
+                final type = msg['type']?.toString() ?? 'text';
+                final quote = text.isNotEmpty
+                    ? text
+                    : (type == 'image'
+                        ? '[图片]'
+                        : type == 'audio'
+                            ? '[语音]'
+                            : '[消息]');
+                setState(() => _replyingTo = Map<String, dynamic>.from(msg));
+                _msgC.text = '';
+                _msgC.selection = const TextSelection.collapsed(offset: 0);
+                Navigator.pop(sheetContext);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),
@@ -1378,6 +1440,50 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ],
         ),
       ),
+    );
+  }
+
+  String _replyPreview(Map<String, dynamic> message) {
+    final text = message['content']?.toString().trim() ?? '';
+    if (text.isNotEmpty) return text;
+    return switch (message['type']?.toString()) {
+      'image' => '[图片]',
+      'audio' => '[语音]',
+      'document' => '[文档]',
+      _ => '[消息]',
+    };
+  }
+
+  Widget _replyCard(String replyId, bool isUser) {
+    final original = _msgs.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => item?['id']?.toString() == replyId,
+        orElse: () => null);
+    final missing = original == null;
+    final author = missing
+        ? '原消息'
+        : (original['role'] == 'user' ? '你' : _bot['name']?.toString() ?? 'TA');
+    final preview = missing ? '[原消息已删除]' : _replyPreview(original);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: isUser
+            ? Colors.white.withOpacity(0.16)
+            : TideTheme.of(context).surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+            left: BorderSide(
+                color: isUser ? Colors.white70 : TideTheme.of(context).primary,
+                width: 3)),
+      ),
+      child: Text('$author：${_replyPreview(original)}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+              fontSize: 12,
+              color: isUser ? Colors.white : TideTheme.of(context).textWeak,
+              fontFamily: 'TideFont')),
     );
   }
 
@@ -1634,7 +1740,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 ? m['document_name'].toString()
                 : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
         final txt = (m['content'] as String?) ?? '';
-
+        final replyId = m['reply_to_id']?.toString();
         final ts = m['timestamp'] as int? ?? 0;
 
         return GestureDetector(
@@ -1744,6 +1850,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             Padding(
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: _parseText(txt, isUser)),
+                          if (replyId != null && replyId.isNotEmpty)
+                            _replyCard(replyId, isUser),
                           // 普通文字气泡
                           if (!hasAudio && txt.isNotEmpty)
                             _parseText(txt, isUser),

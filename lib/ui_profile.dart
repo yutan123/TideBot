@@ -610,6 +610,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       TextEditingController(text: '60');
   final TextEditingController _proactiveMaxController =
       TextEditingController(text: '90');
+  final TextEditingController _botPostsPerDayController =
+      TextEditingController(text: '1');
 
   @override
   void initState() {
@@ -635,6 +637,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
+    final botPostsPerDay =
+        int.tryParse(await db.getKV('bot_posts_per_day') ?? '');
     final proactiveMin =
         int.tryParse(await db.getKV('proactive_min_minutes') ?? '');
     final proactiveMax =
@@ -647,6 +651,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
+      _botPostsPerDayController.text =
+          (botPostsPerDay ?? 1).clamp(1, 10).toString();
       _proactiveMin = (proactiveMin ?? 60).clamp(1, 1440);
       _proactiveMax = (proactiveMax ?? 90).clamp(_proactiveMin, 1440);
       _proactiveMinController.text = _proactiveMin.toString();
@@ -660,6 +666,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     _streamSpeedController.dispose();
     _proactiveMinController.dispose();
     _proactiveMaxController.dispose();
+    _botPostsPerDayController.dispose();
     super.dispose();
   }
 
@@ -760,6 +767,23 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 })),
       ]);
 
+  Widget _compactPostsPerDay(TideTheme theme) => TextField(
+      controller: _botPostsPerDayController,
+      keyboardType: TextInputType.number,
+      style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+      decoration: InputDecoration(
+          isDense: true,
+          prefixIcon:
+              Icon(Icons.dynamic_feed_rounded, color: theme.primary, size: 19),
+          labelText: '每个机器人每天发布数量（1–10）',
+          filled: true,
+          fillColor: theme.surfaceVariant,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16))),
+      onChanged: (v) {
+        final n = int.tryParse(v);
+        if (n != null && n >= 1 && n <= 10) _save('bot_posts_per_day', '$n');
+      });
+
   Widget _compactSpeed(TideTheme theme) => TextField(
       controller: _streamSpeedController,
       keyboardType: TextInputType.number,
@@ -852,12 +876,13 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               _settingSwitch(
                 theme: theme,
                 title: '机器人发布动态',
-                help: '开启后，每位已配置聊天模型的机器人每天最多发布一条独立动态。内容在进入广场时生成并按日期去重。',
+                help: '开启后，每位已配置聊天模型的机器人会在进入广场时按设置数量生成独立动态，并按日期去重。',
                 value: _botPosts,
                 onChanged: (v) {
                   setState(() => _botPosts = v);
                   _save('bot_posts_enabled', '$v');
                 },
+                child: _botPosts ? _compactPostsPerDay(theme) : null,
               ),
             ]),
           ),

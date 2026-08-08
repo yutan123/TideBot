@@ -250,12 +250,13 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
               prefixIconColor: tideTheme.iconMuted,
               suffixIconColor: tideTheme.iconMuted,
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: tideTheme.border),
+                borderRadius: BorderRadius.circular(16),
+                borderSide:
+                    BorderSide(color: tideTheme.border.withOpacity(0.45)),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: tideTheme.primary, width: 1.5),
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: tideTheme.primary, width: 1.25),
               ),
             ),
             appBarTheme: AppBarTheme(

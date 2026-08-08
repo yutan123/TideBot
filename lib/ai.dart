@@ -21,6 +21,7 @@ class AIManager {
     required String botId,
     required List<Map<String, dynamic>> messages,
     String imageBase64 = '',
+    void Function(String delta)? onDelta,
   }) async {
     final lastUser = messages.lastWhere((m) => m['role'] == 'user',
         orElse: () => {'content': ''});
@@ -36,7 +37,12 @@ class AIManager {
         imgPath = tmpFile.path;
       } catch (_) {}
     }
-    return sendMessage(botId: botId, text: text, imagePath: imgPath);
+    return sendMessage(
+      botId: botId,
+      text: text,
+      imagePath: imgPath,
+      onDelta: onDelta,
+    );
   }
 
   Future<String> chat({
@@ -54,12 +60,16 @@ class AIManager {
         : result['error']?.toString() ?? '';
   }
 
-  Future<Map<String, dynamic>> sendMessage(
-      {required String botId,
-      required String text,
-      String? imagePath,
-      String? activeGame // 支持动态注入游戏规则
-      }) async {
+  Future<Map<String, dynamic>> sendMessage({
+    required String botId,
+    required String text,
+    String? imagePath,
+    String? activeGame, // 支持动态注入游戏规则
+    bool persistResponse = true,
+    bool includeChatHistory = true,
+    bool enableAutoSummary = true,
+    void Function(String delta)? onDelta,
+  }) async {
     final db = DBManager();
     // 数据库初始化异常/卡住时必须尽快回到聊天室 finally，不能无限显示“正在输入中”。
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
@@ -72,8 +82,9 @@ class AIManager {
     final localId = (prefs.getString('local_chat_model_$botId') ?? '').trim();
     if (localId.isNotEmpty) {
       try {
-        final history =
-            await db.getChatHistory(botId).timeout(const Duration(seconds: 8));
+        final history = includeChatHistory
+            ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
+            : <Map<String, dynamic>>[];
         final localMessages = <Map<String, dynamic>>[
           {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)},
         ];
@@ -120,13 +131,23 @@ class AIManager {
         (prefs.getInt('max_token_$botId') ?? bot['max_tokens'] as int? ?? 10000)
             .clamp(1000, 128000);
     final timeAware = (await db.getKV('time_awareness')) != 'false';
-    final history =
-        await db.getChatHistory(botId).timeout(const Duration(seconds: 8));
+    final history = includeChatHistory
+        ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
+        : <Map<String, dynamic>>[];
 
     // Keep stable instructions first for provider prefix caches. Dynamic time is
     // appended last, and history is packed newest-first within the user budget.
+    final mediumMemories = activeGame == null
+        ? await db.queryMemories(botId, type: 'medium', limit: 3)
+        : <Map<String, dynamic>>[];
+    final memoryContext = mediumMemories
+        .map((m) => m['content']?.toString().trim() ?? '')
+        .where((content) => content.isNotEmpty)
+        .join('\n');
+    final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        (memoryContext.isEmpty ? '' : '\n【已整理的中期记忆，仅在相关时参考】\n$memoryContext');
     final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)},
+      {'role': 'system', 'content': systemPrompt},
     ];
     final historyMessages = <Map<String, dynamic>>[];
     var usedChars = 0;
@@ -212,26 +233,84 @@ class AIManager {
       if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
       print(
           '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
-      final response = await http
-          .post(
-            Uri.parse("$baseUrl/chat/completions"),
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": "Bearer ${provider['api_key']}"
-            },
-            body: jsonEncode({
-              "model": modelName,
-              "messages": messages,
-              "max_tokens": bot['max_tokens'] ?? 10000
-            }),
-          )
-          .timeout(const Duration(seconds: 40));
-      print('[ai] response status=${response.statusCode}');
-      if (response.statusCode == 200) {
-        final json = jsonDecode(utf8.decode(response.bodyBytes));
-
-        String replyText = json['choices'][0]['message']['content'] ?? '';
-        final usage = json['usage'] is Map ? json['usage'] as Map : const {};
+      final payload = {
+        'model': modelName,
+        'messages': messages,
+        'max_tokens': bot['max_tokens'] ?? 10000,
+        if (onDelta != null) 'stream': true,
+      };
+      String replyText = '';
+      Map usage = const {};
+      String errorBody = '';
+      int statusCode;
+      if (onDelta != null) {
+        final request =
+            http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
+              ..headers.addAll({
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream',
+                'Authorization': 'Bearer ${provider['api_key']}',
+              })
+              ..body = jsonEncode(payload);
+        final response =
+            await request.send().timeout(const Duration(seconds: 40));
+        statusCode = response.statusCode;
+        if (statusCode == 200) {
+          final contentType =
+              response.headers['content-type']?.toLowerCase() ?? '';
+          if (contentType.contains('application/json')) {
+            final body = await response.stream.bytesToString();
+            final json = jsonDecode(body);
+            replyText =
+                json['choices']?[0]?['message']?['content']?.toString() ?? '';
+            usage = json['usage'] is Map ? json['usage'] as Map : const {};
+            if (replyText.isNotEmpty) onDelta(replyText);
+          } else {
+            await response.stream
+                .transform(utf8.decoder)
+                .transform(const LineSplitter())
+                .forEach((line) {
+              if (!line.startsWith('data:')) return;
+              final data = line.substring(5).trim();
+              if (data == '[DONE]' || data.isEmpty) return;
+              try {
+                final event = jsonDecode(data);
+                final delta =
+                    event['choices']?[0]?['delta']?['content']?.toString() ??
+                        '';
+                if (delta.isNotEmpty) {
+                  replyText += delta;
+                  onDelta(delta);
+                }
+                if (event['usage'] is Map) usage = event['usage'] as Map;
+              } catch (_) {}
+            });
+          }
+        } else {
+          errorBody = await response.stream.bytesToString();
+        }
+      } else {
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/chat/completions'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${provider['api_key']}'
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 40));
+        statusCode = response.statusCode;
+        errorBody = utf8.decode(response.bodyBytes);
+        if (statusCode == 200) {
+          final json = jsonDecode(errorBody);
+          replyText =
+              json['choices']?[0]?['message']?['content']?.toString() ?? '';
+          usage = json['usage'] is Map ? json['usage'] as Map : const {};
+        }
+      }
+      print('[ai] response status=$statusCode');
+      if (statusCode == 200) {
         final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??
             (messages.fold<int>(
                         0,
@@ -251,6 +330,16 @@ class AIManager {
           completionTokens: completionTokens,
           totalTokens: totalTokens,
         );
+        if (enableAutoSummary && includeChatHistory && persistResponse) {
+          unawaited(_summarizeHistoryIfNeeded(
+            bot: bot,
+            botId: botId,
+            provider: provider,
+            modelName: modelName,
+            history: history,
+            maxContext: maxContext,
+          ));
+        }
 
         // 情绪提取器：解析并剔除底层情绪标签
         String mood = _extractMood(replyText);
@@ -260,68 +349,69 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        await db.insertChatMessage({
-          'id': msgId,
-          'bot_id': botId,
-          'role': 'assistant',
-          'type': 'text',
-          'content': replyText,
-          'file_path': null,
-          'mood': mood,
-          'timestamp': ts + 1
-        });
-        // 聊天请求可能在等待模型期间进入后台。仅在用户已开启通知且
-        // 应用不在前台时提醒；前台聊天由 UI 气泡承载，不重复打扰。
-        try {
-          final notifyEnabled =
-              (await db.getKV('unread_notifications')) != 'false';
-          if (notifyEnabled && !AppState.isForeground.value) {
-            final title = bot['name']?.toString().trim().isNotEmpty == true
-                ? bot['name'].toString()
-                : 'TideBot';
-            await OpsManager().showSystemNotification(
-              id: ts.remainder(1 << 31),
-              title: title,
-              body: replyText.isEmpty ? '收到一条新消息' : replyText,
-              botId: botId,
-            );
-          }
-        } catch (_) {
-          // 通知权限或厂商系统限制不应影响已成功落库的聊天回复。
-        }
-
-        final ttsModel = bot['tts_model'];
-        if (ttsModel != null && ttsModel.toString().isNotEmpty) {
-          // fire-and-forget：后台生成语音，成功后单独把该气泡升级为 audio 类型（replace 覆盖同 id）
-          unawaited(() async {
-            final audioPath =
-                await _generateTTS(replyText, ttsModel.toString());
-            if (audioPath != null && audioPath.isNotEmpty) {
-              try {
-                await db.insertChatMessage({
-                  'id': msgId,
-                  'bot_id': botId,
-                  'role': 'assistant',
-                  'type': 'audio',
-                  'content': replyText,
-                  'file_path': audioPath,
-                  'mood': mood,
-                  'timestamp': ts + 1,
-                });
-              } catch (_) {}
+        if (persistResponse) {
+          await db.insertChatMessage({
+            'id': msgId,
+            'bot_id': botId,
+            'role': 'assistant',
+            'type': 'text',
+            'content': replyText,
+            'file_path': null,
+            'mood': mood,
+            'timestamp': ts + 1
+          });
+          // 聊天请求可能在等待模型期间进入后台。仅在用户已开启通知且
+          // 应用不在前台时提醒；前台聊天由 UI 气泡承载，不重复打扰。
+          try {
+            final notifyEnabled =
+                (await db.getKV('unread_notifications')) != 'false';
+            if (notifyEnabled && !AppState.isForeground.value) {
+              final title = bot['name']?.toString().trim().isNotEmpty == true
+                  ? bot['name'].toString()
+                  : 'TideBot';
+              await OpsManager().showSystemNotification(
+                id: ts.remainder(1 << 31),
+                title: title,
+                body: replyText.isEmpty ? '收到一条新消息' : replyText,
+                botId: botId,
+              );
             }
-          }());
+          } catch (_) {
+            // 通知权限或厂商系统限制不应影响已成功落库的聊天回复。
+          }
+
+          final ttsModel = bot['tts_model'];
+          if (ttsModel != null && ttsModel.toString().isNotEmpty) {
+            // fire-and-forget：后台生成语音，成功后单独把该气泡升级为 audio 类型（replace 覆盖同 id）
+            unawaited(() async {
+              final audioPath =
+                  await _generateTTS(replyText, ttsModel.toString());
+              if (audioPath != null && audioPath.isNotEmpty) {
+                try {
+                  await db.insertChatMessage({
+                    'id': msgId,
+                    'bot_id': botId,
+                    'role': 'assistant',
+                    'type': 'audio',
+                    'content': replyText,
+                    'file_path': audioPath,
+                    'mood': mood,
+                    'timestamp': ts + 1,
+                  });
+                } catch (_) {}
+              }
+            }());
+          }
         }
-        return {'success': true, 'reply': replyText};
+        return {'success': true, 'reply': replyText, 'message_id': msgId};
       } else {
-        final body = utf8.decode(response.bodyBytes);
-        final detail = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+        final detail = errorBody.replaceAll(RegExp(r'\s+'), ' ').trim();
         print(
             '[ai] response error=${detail.length > 300 ? detail.substring(0, 300) : detail}');
         return {
-          'error': _friendlyHttpError(response.statusCode, detail),
-          'error_log': 'HTTP ${response.statusCode}\n$detail',
-          'error_code': response.statusCode,
+          'error': _friendlyHttpError(statusCode, detail),
+          'error_log': 'HTTP $statusCode\n$detail',
+          'error_code': statusCode,
         };
       }
     } catch (e) {
@@ -410,7 +500,7 @@ class AIManager {
                 {
                   'role': 'system',
                   'content':
-                      '你是图片转述器。准确描述画面、可读文字、对象和关键信息；不要编造。输出供另一个文本模型理解的简洁中文。',
+                      '你是严谨的视觉分析器。请详细、客观地转述图片：先概述整体场景，再按位置说明人物/物体、动作、颜色、布局、可读文字（逐字抄录时标注不确定处）、界面元素和可能与用户问题相关的细节。看不清或无法确认必须明确说明，绝不依据常识补全或编造。输出供聊天模型使用的完整中文描述。',
                 },
                 {
                   'role': 'user',
@@ -559,6 +649,82 @@ class AIManager {
     return null;
   }
 
+  /// Compresses older ordinary chat into a reviewable medium-term memory.
+  /// It runs in the background so a normal reply is never delayed.
+  Future<void> _summarizeHistoryIfNeeded({
+    required Map<String, dynamic> bot,
+    required String botId,
+    required Map<String, dynamic> provider,
+    required String modelName,
+    required List<Map<String, dynamic>> history,
+    required int maxContext,
+  }) async {
+    try {
+      final totalChars = history.where((m) => m['type'] == 'text').fold<int>(
+          0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
+      final threshold = (maxContext * 3.2 * 0.9).floor();
+      if (totalChars < threshold || history.length < 8) return;
+
+      final cutoff = (history.length * 0.65).floor();
+      final older =
+          history.take(cutoff).where((m) => m['type'] == 'text').toList();
+      if (older.isEmpty) return;
+      final endTimestamp = older.last['timestamp']?.toString() ?? '0';
+      final db = DBManager();
+      final summaryKey = 'memory_summary_until_$botId';
+      if (await db.getKV(summaryKey) == endTimestamp) return;
+      final transcript = older
+          .map((m) =>
+              '${m['role'] == 'user' ? '用户' : bot['name']}：${m['content']}')
+          .join('\n');
+      final baseUrl = provider['base_url']
+              ?.toString()
+              .trim()
+              .replaceFirst(RegExp(r'/+$'), '') ??
+          '';
+      if (baseUrl.isEmpty) return;
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}',
+            },
+            body: jsonEncode({
+              'model': modelName,
+              'messages': [
+                {
+                  'role': 'system',
+                  'content':
+                      '将以下聊天压缩为可供未来对话参考的中期记忆。保留用户偏好、关系进展、已确认事实、未完成事项；不要编造，不要写心情标签，使用简洁中文要点。',
+                },
+                {'role': 'user', 'content': transcript},
+              ],
+              'max_tokens': 800,
+            }),
+          )
+          .timeout(const Duration(seconds: 40));
+      if (response.statusCode != 200) return;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final summary =
+          decoded['choices']?[0]?['message']?['content']?.toString().trim() ??
+              '';
+      if (summary.isEmpty) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.insertMemory({
+        'id': 'summary_${botId}_$endTimestamp',
+        'bot_id': botId,
+        'title': '对话摘要 ${DateTime.now().toString().substring(0, 10)}',
+        'type': 'medium',
+        'content': summary,
+        'timestamp': now,
+      });
+      await db.setKV(summaryKey, endTimestamp);
+    } catch (e) {
+      print('[memory] auto summary failed: $e');
+    }
+  }
+
   // 空间广场：今日一言生成逻辑
   Future<String> getDailyQuote(String botId) async {
     final db = DBManager();
@@ -649,15 +815,10 @@ class AIManager {
           "\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的“是”或“否”推断出答案；如果你是出题人，你只能回答“是”或“否”。在 20 问内未能猜出则判定输。";
     } else if (activeGame == 'gomoku') {
       p +=
-          "\n【系统级游戏劫持】：你正在进行五子棋对战。请围绕用户给出的落子和局面交流；棋盘 UI 会处理实际落子与胜负，不要虚构未发生的棋局结果。";
+          "\n【游戏规则】：你正与用户真实进行 9×9 五子棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-9）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
     } else if (activeGame == 'tic_tac_toe') {
-      p += "\n【系统级游戏劫持】：你正在进行井字棋对战。棋盘 UI 会处理实际落子与胜负；请作为对手点评局面，不要虚构未发生的落子。";
-    } else if (activeGame == 'dice') {
-      p += "\n【系统级游戏劫持】：你正在玩好运骰子。根据用户提供的双方点数，简短地祝贺、鼓励或发起下一局，不要改写点数。";
-    } else if (activeGame == 'adventure') {
-      p += "\n【系统级游戏劫持】：你正在共同进行文字冒险。延续用户的选择推进故事，每次给出简短场景和两个明确的下一步选项。";
-    } else if (activeGame == 'truth_dare') {
-      p += "\n【系统级游戏劫持】：你正在玩真心话大冒险。友善回应题卡或用户回答；可以追问或给出轻量、可拒绝且安全的下一题。";
+      p +=
+          "\n【游戏规则】：你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-3）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
     }
     return p;
   }

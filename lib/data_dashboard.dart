@@ -63,7 +63,7 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(icon, color: theme.primary),
-            const SizedBox(height: 18),
+            const Spacer(),
             Text('${_values[key] ?? 0}',
                 style: TextStyle(
                     fontSize: 28,
@@ -72,8 +72,13 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
                     fontFamily: 'TideFont')),
             const SizedBox(height: 4),
             Text(title,
-                style:
-                    TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12,
+                    height: 1.25,
+                    color: theme.textWeak,
+                    fontFamily: 'TideFont')),
           ]),
         );
     return Scaffold(
