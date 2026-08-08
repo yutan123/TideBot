@@ -1829,7 +1829,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 decoration: BoxDecoration(
                   color: _hasBg ? theme.glass.withOpacity(0.72) : theme.surface,
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: theme.border),
+                  border: Border.all(color: Colors.transparent),
                   boxShadow: theme.isDark
                       ? null
                       : [

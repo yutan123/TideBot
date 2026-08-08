@@ -21,7 +21,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 7,
+      version: 9,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -73,6 +73,23 @@ class DBManager {
         await db.execute('''
           CREATE TABLE kv_store (
             key TEXT PRIMARY KEY, value TEXT
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE feed_events (
+            id TEXT PRIMARY KEY, post_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+            event_type TEXT NOT NULL, timestamp INTEGER NOT NULL,
+            UNIQUE(post_id, actor_id, event_type),
+            FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE ai_usage_events (
+            id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
           )
         ''');
       },
@@ -142,6 +159,27 @@ class DBManager {
             await db.execute(
                 'ALTER TABLE chat_history ADD COLUMN error_message TEXT');
           } catch (_) {}
+        }
+        if (oldVersion < 8) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS feed_events (
+              id TEXT PRIMARY KEY, post_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+              event_type TEXT NOT NULL, timestamp INTEGER NOT NULL,
+              UNIQUE(post_id, actor_id, event_type),
+              FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+            )
+          ''');
+        }
+        if (oldVersion < 9) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS ai_usage_events (
+              id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
+              prompt_tokens INTEGER NOT NULL DEFAULT 0,
+              completion_tokens INTEGER NOT NULL DEFAULT 0,
+              total_tokens INTEGER NOT NULL DEFAULT 0,
+              reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
+            )
+          ''');
         }
       },
     );
@@ -499,6 +537,65 @@ class DBManager {
   Future<void> deletePost(String postId) async {
     final db = await database;
     await db.delete('posts', where: 'id = ?', whereArgs: [postId]);
+  }
+
+  /// Records a feed action only once for the same actor and post.
+  Future<bool> recordFeedEvent({
+    required String postId,
+    required String actorId,
+    required String eventType,
+  }) async {
+    final db = await database;
+    try {
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${actorId}_${eventType}',
+            'post_id': postId,
+            'actor_id': actorId,
+            'event_type': eventType,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
+      return true;
+    } on DatabaseException {
+      return false;
+    }
+  }
+
+  Future<bool> hasFeedEvent({
+    required String postId,
+    required String actorId,
+    required String eventType,
+  }) async {
+    final db = await database;
+    final rows = await db.query('feed_events',
+        where: 'post_id = ? AND actor_id = ? AND event_type = ?',
+        whereArgs: [postId, actorId, eventType],
+        limit: 1);
+    return rows.isNotEmpty;
+  }
+
+  Future<void> recordAiUsage({
+    required String botId,
+    required String eventType,
+    required int promptTokens,
+    required int completionTokens,
+    required int totalTokens,
+    int replyCount = 1,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.insert('ai_usage_events', {
+      'id': 'usage_${now}_${botId}_${eventType}',
+      'bot_id': botId,
+      'event_type': eventType,
+      'prompt_tokens': promptTokens,
+      'completion_tokens': completionTokens,
+      'total_tokens': totalTokens,
+      'reply_count': replyCount,
+      'timestamp': now,
+    });
   }
 
   // 更新 bots.last_msg_time

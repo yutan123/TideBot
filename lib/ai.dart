@@ -231,6 +231,26 @@ class AIManager {
         final json = jsonDecode(utf8.decode(response.bodyBytes));
 
         String replyText = json['choices'][0]['message']['content'] ?? '';
+        final usage = json['usage'] is Map ? json['usage'] as Map : const {};
+        final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??
+            (messages.fold<int>(
+                        0,
+                        (sum, m) =>
+                            sum + (m['content']?.toString().length ?? 0)) /
+                    3.2)
+                .ceil();
+        final completionTokens =
+            (usage['completion_tokens'] as num?)?.toInt() ??
+                (replyText.length / 3.2).ceil();
+        final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
+            promptTokens + completionTokens;
+        await db.recordAiUsage(
+          botId: botId,
+          eventType: 'chat',
+          promptTokens: promptTokens,
+          completionTokens: completionTokens,
+          totalTokens: totalTokens,
+        );
 
         // 情绪提取器：解析并剔除底层情绪标签
         String mood = _extractMood(replyText);

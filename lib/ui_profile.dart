@@ -13,6 +13,7 @@ import 'db.dart';
 import 'ai.dart';
 import 'global_notice.dart';
 import 'theme.dart';
+import 'data_dashboard.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -34,7 +35,7 @@ class _ProfilePageState extends State<ProfilePage> {
       'page': 'advanced'
     },
     {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
-    {'icon': Icons.security_rounded, 'title': '隐私与安全', 'page': 'privacy'},
+    {'icon': Icons.analytics_rounded, 'title': '数据大盘', 'page': 'dashboard'},
     {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
     {'icon': Icons.storage_rounded, 'title': '数据管理', 'page': 'data'},
     {'icon': Icons.feedback_rounded, 'title': '反馈与建议', 'page': 'feedback'},
@@ -284,6 +285,12 @@ class _ProfilePageState extends State<ProfilePage> {
                             }
                           })
                     ])));
+        break;
+      case 'dashboard':
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const DataDashboardPage()),
+        );
         break;
       case 'privacy':
         showTideSheet(
@@ -593,6 +600,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _streaming = true;
   bool _timeAwareness = true;
   bool _proactiveReply = true;
+  bool _botPosts = false;
   int _proactiveMin = 60;
   int _proactiveMax = 90;
   int _speed = 50;
@@ -626,6 +634,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
         await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
+    final botPosts = await db.getKV('bot_posts_enabled');
     final proactiveMin =
         int.tryParse(await db.getKV('proactive_min_minutes') ?? '');
     final proactiveMax =
@@ -637,6 +646,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _streaming = stream != 'false';
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
+      _botPosts = botPosts == 'true';
       _proactiveMin = (proactiveMin ?? 60).clamp(1, 1440);
       _proactiveMax = (proactiveMax ?? 90).clamp(_proactiveMin, 1440);
       _proactiveMinController.text = _proactiveMin.toString();
@@ -657,6 +667,118 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     await DBManager().insertKV(key, value);
   }
 
+  Widget _settingSwitch(
+          {required TideTheme theme,
+          required String title,
+          String? help,
+          required bool value,
+          required ValueChanged<bool> onChanged,
+          Widget? child}) =>
+      Column(children: [
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          title: Row(children: [
+            Text(title, style: const TextStyle(fontFamily: 'TideFont')),
+            if (help != null)
+              IconButton(
+                  icon: Icon(Icons.help_outline_rounded,
+                      size: 18, color: theme.textWeak),
+                  tooltip: '说明',
+                  onPressed: () => TideDialogs.show(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                              backgroundColor: theme.surface,
+                              title: Text(title,
+                                  style: TextStyle(
+                                      color: theme.textStrong,
+                                      fontFamily: 'TideFont')),
+                              content: Text(help,
+                                  style: TextStyle(
+                                      color: theme.textWeak,
+                                      fontFamily: 'TideFont',
+                                      height: 1.5)),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('知道了',
+                                        style:
+                                            TextStyle(fontFamily: 'TideFont')))
+                              ])))
+          ]),
+          value: value,
+          activeColor: theme.primary,
+          onChanged: onChanged,
+        ),
+        if (child != null)
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12), child: child),
+      ]);
+
+  Widget _compactRange(TideTheme theme) => Row(children: [
+        Expanded(
+            child: TextField(
+                controller: _proactiveMinController,
+                keyboardType: TextInputType.number,
+                style:
+                    TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+                decoration: InputDecoration(
+                    isDense: true,
+                    labelText: '最短（分钟）',
+                    filled: true,
+                    fillColor: theme.surfaceVariant,
+                    border: InputBorder.none),
+                onChanged: (v) {
+                  final n = int.tryParse(v);
+                  if (n != null && n >= 1 && n <= _proactiveMax) {
+                    _proactiveMin = n;
+                    _save('proactive_min_minutes', '$n');
+                  }
+                })),
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text('至',
+                style:
+                    TextStyle(color: theme.textWeak, fontFamily: 'TideFont'))),
+        Expanded(
+            child: TextField(
+                controller: _proactiveMaxController,
+                keyboardType: TextInputType.number,
+                style:
+                    TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+                decoration: InputDecoration(
+                    isDense: true,
+                    labelText: '最长（分钟）',
+                    filled: true,
+                    fillColor: theme.surfaceVariant,
+                    border: InputBorder.none),
+                onChanged: (v) {
+                  final n = int.tryParse(v);
+                  if (n != null && n >= _proactiveMin && n <= 1440) {
+                    _proactiveMax = n;
+                    _save('proactive_max_minutes', '$n');
+                  }
+                })),
+      ]);
+
+  Widget _compactSpeed(TideTheme theme) => TextField(
+      controller: _streamSpeedController,
+      keyboardType: TextInputType.number,
+      style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+      decoration: InputDecoration(
+          isDense: true,
+          prefixIcon: Icon(Icons.speed_rounded, color: theme.primary, size: 19),
+          labelText: '显示速度（1–100）',
+          filled: true,
+          fillColor: theme.surfaceVariant,
+          border: InputBorder.none),
+      onChanged: (v) {
+        final n = int.tryParse(v);
+        if (n != null && n >= 1 && n <= 100) {
+          _speed = n;
+          _save('streaming_speed', '$n');
+        }
+      });
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -676,175 +798,69 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
         children: [
           FrostCard(
             padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  title: const Text('显示消息发送时间',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  value: _showTime,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _showTime = value);
-                    _save('show_message_time', value.toString());
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('聊天界面显示头像',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  value: _showAvatar,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _showAvatar = value);
-                    _save('show_chat_avatar', value.toString());
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('现实时间感知',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  subtitle: const Text('发送时在请求末尾附注当前时间，不影响稳定提示词缓存',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                  value: _timeAwareness,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _timeAwareness = value);
-                    _save('time_awareness', value.toString());
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('主动回复',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  subtitle: const Text('应用运行时，在沉默一段时间后随机发起一次自然对话',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                  value: _proactiveReply,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _proactiveReply = value);
-                    _save('proactive_reply', value.toString());
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('流式输出',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  subtitle: const Text('模型支持时逐步显示回复',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                  value: _streaming,
-                  activeColor: theme.primary,
-                  onChanged: (value) {
-                    setState(() => _streaming = value);
-                    _save('streaming_output', value.toString());
-                  },
-                ),
-              ],
-            ),
-          ),
-          if (_proactiveReply) ...[
-            const SizedBox(height: 16),
-            FrostCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('触发主动回复的沉默时间',
-                        style: TextStyle(
-                            color: theme.textStrong,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 4),
-                    Text('用户与机器人未发送消息后，在这个随机区间内触发。',
-                        style: TextStyle(
-                            color: theme.textWeak,
-                            fontSize: 12,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      Expanded(
-                          child: TextField(
-                              controller: _proactiveMinController,
-                              keyboardType: TextInputType.number,
-                              style: TextStyle(
-                                  color: theme.textStrong,
-                                  fontFamily: 'TideFont'),
-                              decoration: InputDecoration(
-                                  labelText: '最短（分钟）',
-                                  filled: true,
-                                  fillColor: theme.surfaceVariant,
-                                  border: InputBorder.none),
-                              onChanged: (v) {
-                                final n = int.tryParse(v);
-                                if (n != null && n >= 1 && n <= _proactiveMax) {
-                                  _proactiveMin = n;
-                                  _save('proactive_min_minutes', '$n');
-                                }
-                              })),
-                      const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 8),
-                          child: Text('至')),
-                      Expanded(
-                          child: TextField(
-                              controller: _proactiveMaxController,
-                              keyboardType: TextInputType.number,
-                              style: TextStyle(
-                                  color: theme.textStrong,
-                                  fontFamily: 'TideFont'),
-                              decoration: InputDecoration(
-                                  labelText: '最长（分钟）',
-                                  filled: true,
-                                  fillColor: theme.surfaceVariant,
-                                  border: InputBorder.none),
-                              onChanged: (v) {
-                                final n = int.tryParse(v);
-                                if (n != null &&
-                                    n >= _proactiveMin &&
-                                    n <= 1440) {
-                                  _proactiveMax = n;
-                                  _save('proactive_max_minutes', '$n');
-                                }
-                              })),
-                    ]),
-                  ]),
-            ),
-          ],
-          if (_streaming) ...[
-            const SizedBox(height: 16),
-            FrostCard(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('流式输出速度（1-100）',
-                      style: TextStyle(
-                          fontFamily: 'TideFont',
-                          color: theme.textStrong,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _streamSpeedController,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                        color: theme.textStrong, fontFamily: 'TideFont'),
-                    decoration: InputDecoration(
-                      hintText: '默认 50',
-                      hintStyle: TextStyle(
-                          color: theme.textWeak, fontFamily: 'TideFont'),
-                      filled: true,
-                      fillColor: theme.surfaceVariant,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    onChanged: (value) {
-                      final parsed = int.tryParse(value);
-                      if (parsed != null && parsed >= 1 && parsed <= 100) {
-                        _speed = parsed;
-                        _save('streaming_speed', parsed.toString());
-                      }
-                    },
-                  ),
-                ],
+            child: Column(children: [
+              _settingSwitch(
+                theme: theme,
+                title: '显示消息发送时间',
+                value: _showTime,
+                onChanged: (v) {
+                  setState(() => _showTime = v);
+                  _save('show_message_time', '$v');
+                },
               ),
-            ),
-          ],
+              _settingSwitch(
+                theme: theme,
+                title: '聊天界面显示头像',
+                value: _showAvatar,
+                onChanged: (v) {
+                  setState(() => _showAvatar = v);
+                  _save('show_chat_avatar', '$v');
+                },
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '现实时间感知',
+                help: '发送请求时，在末尾附注现实时间；稳定人设提示保持不变，以提升缓存命中率。',
+                value: _timeAwareness,
+                onChanged: (v) {
+                  setState(() => _timeAwareness = v);
+                  _save('time_awareness', '$v');
+                },
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '主动回复',
+                help: '应用保持运行时，机器人会在连续沉默达到下方随机区间后尝试自然开启话题。',
+                value: _proactiveReply,
+                onChanged: (v) {
+                  setState(() => _proactiveReply = v);
+                  _save('proactive_reply', '$v');
+                },
+                child: _proactiveReply ? _compactRange(theme) : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '流式输出',
+                help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
+                value: _streaming,
+                onChanged: (v) {
+                  setState(() => _streaming = v);
+                  _save('streaming_output', '$v');
+                },
+                child: _streaming ? _compactSpeed(theme) : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '机器人发布动态',
+                help: '开启后，每位已配置聊天模型的机器人每天最多发布一条独立动态。内容在进入广场时生成并按日期去重。',
+                value: _botPosts,
+                onChanged: (v) {
+                  setState(() => _botPosts = v);
+                  _save('bot_posts_enabled', '$v');
+                },
+              ),
+            ]),
+          ),
         ],
       ),
     );
