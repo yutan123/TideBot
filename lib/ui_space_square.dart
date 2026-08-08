@@ -6,7 +6,7 @@ import 'ui_components.dart';
 import 'db.dart';
 import 'theme.dart';
 import 'ai.dart';
-import 'tic_tac_toe_page.dart';
+import 'game_arena_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -77,14 +77,12 @@ class _SpacePageState extends State<SpacePage> {
         orElse: () => <String, dynamic>{},
       );
       final mood = latestMood['mood']?.toString() ?? '平静';
-      final selectedMood = await db.getKV('selected_mood_$_botId');
-      _moodLabel = selectedMood?.isNotEmpty == true ? selectedMood! : mood;
-      final displayMood = _moodLabel;
-      _moodIcon = displayMood == '开心'
+      _moodLabel = mood;
+      _moodIcon = mood == '开心'
           ? 'smile'
-          : displayMood == '伤心' || displayMood == '难过'
+          : mood == '伤心'
               ? 'sad'
-              : displayMood == '生气'
+              : mood == '生气'
                   ? 'angry'
                   : 'think';
       _schedules = sch;
@@ -334,7 +332,6 @@ class _SpacePageState extends State<SpacePage> {
   Widget _buildMoodCard(TideTheme theme) {
     final icon = _moodIcons[_moodIcon] ?? Icons.sentiment_satisfied_rounded;
     return FrostCard(
-        onTap: _chooseMood,
         padding: const EdgeInsets.all(16),
         child: Column(children: [
           Icon(icon, size: 36, color: theme.primary),
@@ -345,69 +342,13 @@ class _SpacePageState extends State<SpacePage> {
                   color: theme.textStrong,
                   fontFamily: 'TideFont')),
           const SizedBox(height: 8),
-          Text('点击选择 TA 想呈现的心情',
+          Text('由 TA 的最近回复决定',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 11,
                   color: theme.textFaint,
                   fontFamily: 'TideFont')),
         ]));
-  }
-
-  Future<void> _chooseMood() async {
-    const moods = {
-      '开心': 'smile',
-      '喜欢': 'heart',
-      '平静': 'think',
-      '困倦': 'sleep',
-      '难过': 'sad',
-      '生气': 'angry'
-    };
-    final theme = TideTheme.of(context);
-    await showTideSheet(
-      context: context,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('选择心情',
-                  style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 6),
-              Text('可选：开心、喜欢、平静、困倦、难过、生气。选择后用于空间展示与后续互动的情绪倾向。',
-                  style: TextStyle(
-                      color: theme.textWeak,
-                      fontSize: 13,
-                      height: 1.5,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 14),
-              Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: moods.entries
-                      .map((entry) => ChoiceChip(
-                          label: Text(entry.key,
-                              style: const TextStyle(fontFamily: 'TideFont')),
-                          selected: _moodLabel == entry.key,
-                          onSelected: (_) async {
-                            await DBManager()
-                                .setKV('selected_mood_$_botId', entry.key);
-                            if (!mounted) return;
-                            setState(() {
-                              _moodLabel = entry.key;
-                              _moodIcon = entry.value;
-                            });
-                            Navigator.pop(context);
-                          }))
-                      .toList()),
-            ]),
-      ),
-    );
   }
 
   Widget _buildSectionTitle(String title) => Padding(
@@ -1018,6 +959,64 @@ class SquarePageState extends State<SquarePage>
     _openFeedDetail(f);
   }
 
+  Future<void> _startGame(String game) async {
+    final bots = await DBManager().queryBots();
+    if (!mounted) return;
+    if (bots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('请先创建机器人', style: TextStyle(fontFamily: 'TideFont'))));
+      return;
+    }
+    final theme = TideTheme.of(context);
+    await showTideSheet(
+      context: context,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('选择对战机器人',
+                  style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 6),
+              Text('本局 $game 会和选中的 TA 进行，游戏内也能直接聊天。',
+                  style:
+                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+              const SizedBox(height: 10),
+              ...bots.map((bot) => ListTile(
+                    leading: CircleAvatar(
+                        backgroundColor: theme.primary.withOpacity(0.15),
+                        child: Icon(Icons.smart_toy_rounded,
+                            color: theme.primary)),
+                    title: Text(bot['name']?.toString() ?? '未命名机器人',
+                        style: TextStyle(
+                            color: theme.textStrong, fontFamily: 'TideFont')),
+                    subtitle: Text(
+                        bot['chat_model']?.toString().isNotEmpty == true
+                            ? '已配置模型'
+                            : '未配置模型，仍可进行本地回合',
+                        style: TextStyle(
+                            color: theme.textWeak,
+                            fontSize: 12,
+                            fontFamily: 'TideFont')),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  GameArenaPage(game: game, bot: bot)));
+                    },
+                  )),
+            ]),
+      ),
+    );
+  }
+
   Widget _buildGames(TideTheme theme) => GridView.builder(
       key: const ValueKey('games'),
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
@@ -1032,18 +1031,7 @@ class SquarePageState extends State<SquarePage>
         final g = _games[i];
         final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
         return BouncyTap(
-            onTap: () {
-              if (g['name'] == '井字棋') {
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TicTacToePage()));
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: const Text('先来一局井字棋吧，更多玩法会逐步加入。',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    behavior: SnackBarBehavior.floating,
-                    backgroundColor: theme.primary));
-              }
-            },
+            onTap: () => _startGame(g['name']?.toString() ?? ''),
             child: FrostCard(
                 padding: const EdgeInsets.all(16),
                 child: Column(
