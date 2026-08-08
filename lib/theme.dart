@@ -243,8 +243,7 @@ class TideBotThemeProvider extends StatelessWidget {
   final TideTheme theme;
   final Widget child;
   const TideBotThemeProvider(
-      {Key? key, required this.theme, required this.child})
-      : super(key: key);
+      {super.key, required this.theme, required this.child});
   static TideTheme of(BuildContext context) {
     final w = context.dependOnInheritedWidgetOfExactType<_TideThemeWidget>();
     return w?.theme ?? TideTheme();

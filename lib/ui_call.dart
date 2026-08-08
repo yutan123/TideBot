@@ -89,8 +89,8 @@ class _CallPageState extends State<CallPage>
                                     height: 220 - i * 38,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: theme.primary.withOpacity(
-                                        ready ? 0.08 + i * 0.025 : 0.035,
+                                      color: theme.primary.withValues(
+                                        alpha: ready ? 0.08 + i * 0.025 : 0.035,
                                       ),
                                     ),
                                   ),
@@ -98,7 +98,7 @@ class _CallPageState extends State<CallPage>
                               CircleAvatar(
                                 radius: 57,
                                 backgroundColor:
-                                    theme.primary.withOpacity(0.16),
+                                    theme.primary.withValues(alpha: 0.16),
                                 backgroundImage: avatar.isNotEmpty
                                     ? FileImage(File(avatar))
                                     : null,

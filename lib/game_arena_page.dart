@@ -329,7 +329,9 @@ class _GameArenaPageState extends State<GameArenaPage> {
     final values = cards.map(_rankValue).toList();
     if (values.any((value) => value < 0)) return null;
     final counts = <int, int>{};
-    for (final value in values) counts[value] = (counts[value] ?? 0) + 1;
+    for (final value in values) {
+      counts[value] = (counts[value] ?? 0) + 1;
+    }
     final groups = counts.values.toList()..sort();
     final high = counts.keys.reduce(max);
     if (cards.length == 1) return {'kind': 1, 'high': high, 'size': 1};
@@ -351,8 +353,9 @@ class _GameArenaPageState extends State<GameArenaPage> {
       final consecutive = List.generate(ordered.length - 1,
               (index) => ordered[index + 1] == ordered[index] + 1)
           .every((ok) => ok);
-      if (consecutive)
+      if (consecutive) {
         return {'kind': 6, 'high': ordered.last, 'size': cards.length};
+      }
     }
     return null;
   }
@@ -378,8 +381,9 @@ class _GameArenaPageState extends State<GameArenaPage> {
   }
 
   Future<void> _playSelectedPoker() async {
-    if (_pokerTurn != 'user' || _pokerSelected.isEmpty || _waitingForReply)
+    if (_pokerTurn != 'user' || _pokerSelected.isEmpty || _waitingForReply) {
       return;
+    }
     final cards = _pokerSelected.toList()
       ..sort((a, b) => _rankValue(a).compareTo(_rankValue(b)));
     if (_pokerPattern(cards) == null) {
@@ -455,7 +459,9 @@ class _GameArenaPageState extends State<GameArenaPage> {
       return;
     }
     setState(() {
-      for (final card in cards) _botPokerHand.remove(card);
+      for (final card in cards) {
+        _botPokerHand.remove(card);
+      }
       _pokerPlayed.addAll(cards);
       _lastPokerPlay = cards;
       _pokerLead = 'bot';

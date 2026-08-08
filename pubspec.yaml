@@ -39,6 +39,7 @@ dependencies:
   flutter_local_notifications: ^17.1.2
   llama_flutter_android: ^0.2.6
 
+  path: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

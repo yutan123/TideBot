@@ -132,7 +132,7 @@ class _ProfilePageState extends State<ProfilePage> {
             child: CircleAvatar(
                 radius: 32,
                 backgroundColor:
-                    TideTheme.of(context).primary.withOpacity(0.15),
+                    TideTheme.of(context).primary.withValues(alpha: 0.15),
                 backgroundImage:
                     _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
                         ? FileImage(File(_avatarPath))
@@ -170,7 +170,7 @@ class _ProfilePageState extends State<ProfilePage> {
       child: Row(children: [
         Icon(s['icon'] as IconData,
             size: 22, color: TideTheme.of(context).primary),
-        SizedBox(width: 14),
+        const SizedBox(width: 14),
         Expanded(
             child: Text(s['title'] ?? '',
                 style: TextStyle(
@@ -217,16 +217,16 @@ class _ProfilePageState extends State<ProfilePage> {
             context: context,
             height: 300,
             child: Padding(
-                padding: EdgeInsets.all(20),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('关于 TideBot',
+                      const Text('关于 TideBot',
                           style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 12),
+                      const SizedBox(height: 12),
                       Text('版本: 1.0.0',
                           style: TextStyle(
                               fontSize: 14,
@@ -237,13 +237,13 @@ class _ProfilePageState extends State<ProfilePage> {
                               fontSize: 14,
                               color: TideTheme.of(context).textWeak,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text('100% 本地运行，隐私无忧。',
                           style: TextStyle(
                               fontSize: 13,
                               color: TideTheme.of(context).textWeak,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Text('开发者: yutan123',
                           style: TextStyle(
                               fontSize: 13,
@@ -256,20 +256,20 @@ class _ProfilePageState extends State<ProfilePage> {
             context: context,
             height: 220,
             child: Padding(
-                padding: EdgeInsets.all(20),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('数据管理',
+                      const Text('数据管理',
                           style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       ListTile(
                           leading: Icon(Icons.download_rounded,
                               color: TideTheme.of(context).primary),
-                          title: Text('导出聊天记录',
+                          title: const Text('导出聊天记录',
                               style: TextStyle(fontFamily: 'TideFont')),
                           onTap: () async {
                             await DBManager().exportToMarkdown();
@@ -277,7 +277,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                      content: Text('已导出到本地存储',
+                                      content: const Text('已导出到本地存储',
                                           style: TextStyle(
                                               fontFamily: 'TideFont')),
                                       backgroundColor:
@@ -297,22 +297,22 @@ class _ProfilePageState extends State<ProfilePage> {
             context: context,
             height: 350,
             child: Padding(
-                padding: EdgeInsets.all(20),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('隐私与安全',
+                      const Text('隐私与安全',
                           style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 12),
-                      Text('TideBot 采用纯本地架构：',
+                      const SizedBox(height: 12),
+                      const Text('TideBot 采用纯本地架构：',
                           style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
                               fontFamily: 'TideFont')),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
                           '所有聊天数据存储在本地数据库\nAPI 密钥加密存储在本地\n无任何数据上传\n无统计 SDK, 无广告',
                           style: TextStyle(
@@ -333,20 +333,20 @@ class _ProfilePageState extends State<ProfilePage> {
   // 主题设置的配色圆点（取 theme.dart 的日间主色作为预览）
   Color _themeDotPrimary(String id) {
     final map = {
-      'rose': Color(0xFFD98C94),
-      'aurora': Color(0xFF6C8CD5),
-      'lavender': Color(0xFF9B8AC4),
-      'sky': Color(0xFF5D9BC5),
-      'mint': Color(0xFF5FAF8A),
-      'peach': Color(0xFFE39A6B),
-      'plum': Color(0xFF8E74B4),
-      'teal': Color(0xFF4FA79C),
-      'sunset': Color(0xFFE06A5A),
-      'ocean': Color(0xFF3E7CB1),
-      'pinkg': Color(0xFFE07A9A),
-      'night': Color(0xFF6B5FAE),
+      'rose': const Color(0xFFD98C94),
+      'aurora': const Color(0xFF6C8CD5),
+      'lavender': const Color(0xFF9B8AC4),
+      'sky': const Color(0xFF5D9BC5),
+      'mint': const Color(0xFF5FAF8A),
+      'peach': const Color(0xFFE39A6B),
+      'plum': const Color(0xFF8E74B4),
+      'teal': const Color(0xFF4FA79C),
+      'sunset': const Color(0xFFE06A5A),
+      'ocean': const Color(0xFF3E7CB1),
+      'pinkg': const Color(0xFFE07A9A),
+      'night': const Color(0xFF6B5FAE),
     };
-    return map[id] ?? Color(0xFF6C8CD5);
+    return map[id] ?? const Color(0xFF6C8CD5);
   }
 
   void _showThemePicker() {
@@ -356,9 +356,9 @@ class _ProfilePageState extends State<ProfilePage> {
         child: StatefulBuilder(builder: (ctx, setSt) {
           final t = TideTheme.of(ctx, listen: false);
           String mi = 'auto';
-          if (!t.hasManualMode)
+          if (!t.hasManualMode) {
             mi = 'auto';
-          else if (t.mode == ThemeMode.dark)
+          } else if (t.mode == ThemeMode.dark)
             mi = 'dark';
           else
             mi = 'light';
@@ -387,8 +387,8 @@ class _ProfilePageState extends State<ProfilePage> {
                             decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(16),
                                 color: t.bgColor == const Color(0xFFF2F2F7)
-                                    ? t.primary.withOpacity(0.12)
-                                    : Colors.white.withOpacity(0.12)),
+                                    ? t.primary.withValues(alpha: 0.12)
+                                    : Colors.white.withValues(alpha: 0.12)),
                             child: Row(children: [
                               Icon(
                                   mi == 'dark'
@@ -502,7 +502,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                         fontFamily: 'TideFont')),
                                 if (t.chatBg.isNotEmpty) ...[
                                   const SizedBox(width: 8),
-                                  Icon(Icons.check_circle,
+                                  const Icon(Icons.check_circle,
                                       size: 16, color: Color(0xFF34C759))
                                 ],
                               ])),
@@ -535,10 +535,10 @@ class _ProfilePageState extends State<ProfilePage> {
         await File(path).copy(dest);
         await tide.setChatBg(dest);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: const Text('聊天背景已更新',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              backgroundColor: const Color(0xFF34C759),
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content:
+                  Text('聊天背景已更新', style: TextStyle(fontFamily: 'TideFont')),
+              backgroundColor: Color(0xFF34C759),
               behavior: SnackBarBehavior.floating));
         }
       }
@@ -713,7 +713,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                               ])))
           ]),
           value: value,
-          activeColor: theme.primary,
+          activeThumbColor: theme.primary,
           onChanged: onChanged,
         ),
         if (child != null)
@@ -946,7 +946,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                   subtitle: const Text('APP 不在前台时提醒',
                       style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
                   value: _unread,
-                  activeColor: theme.primary,
+                  activeThumbColor: theme.primary,
                   onChanged: (value) async {
                     if (value && !await AppPermissions.notifications(context)) {
                       return;
@@ -961,7 +961,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                   subtitle: const Text('开启后显示持久化状态通知',
                       style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
                   value: _keepRunning,
-                  activeColor: theme.primary,
+                  activeThumbColor: theme.primary,
                   onChanged: _switchingPersistentNotification
                       ? null
                       : (value) async {
@@ -1088,22 +1088,24 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         ttsList = decoded.map((e) => e as Map<String, dynamic>).toList();
       } catch (_) {}
     }
-    if (mounted)
+    if (mounted) {
       setState(() {
         _providers = list;
         _ttsProviders = ttsList;
         _loading = false;
       });
+    }
   }
 
   Future<void> _saveList() async {
     await DBManager().insertKV('provider_list', jsonEncode(_providers));
     await DBManager().insertKV('tts_provider_list', jsonEncode(_ttsProviders));
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已保存', style: TextStyle(fontFamily: 'TideFont')),
+          content: const Text('已保存', style: TextStyle(fontFamily: 'TideFont')),
           behavior: SnackBarBehavior.floating,
           backgroundColor: TideTheme.of(context).primary));
+    }
   }
 
   void _addProvider() {
@@ -1138,13 +1140,14 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                         horizontal: 12, vertical: 8),
                                     decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(16),
-                                        color: Colors.white.withOpacity(0.8)),
+                                        color: Colors.white
+                                            .withValues(alpha: 0.8)),
                                     child: Text(p['name']!,
                                         style: const TextStyle(
                                             fontSize: 13,
                                             fontFamily: 'TideFont')))))
                             .toList()),
-                    SizedBox(height: 12),
+                    const SizedBox(height: 12),
                     BouncyTap(
                         onTap: () {
                           Navigator.pop(context);
@@ -1185,13 +1188,14 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                         horizontal: 12, vertical: 8),
                                     decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(16),
-                                        color: Colors.white.withOpacity(0.8)),
+                                        color: Colors.white
+                                            .withValues(alpha: 0.8)),
                                     child: Text(p['name']!,
                                         style: const TextStyle(
                                             fontSize: 13,
                                             fontFamily: 'TideFont')))))
                             .toList()),
-                    SizedBox(height: 12),
+                    const SizedBox(height: 12),
                     BouncyTap(
                         onTap: () {
                           Navigator.pop(context);
@@ -1369,7 +1373,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 fontSize: 13,
                 color: TideTheme.of(context).textWeak,
                 fontFamily: 'TideFont')),
-        SizedBox(height: 4),
+        const SizedBox(height: 4),
         Container(
             decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
@@ -1378,9 +1382,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 controller: c,
                 obscureText: obscure,
                 style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
-                decoration: InputDecoration(
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
+                decoration: const InputDecoration(
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     border: InputBorder.none)))
       ]);
   void _editProvider(Map<String, dynamic> p) {
@@ -1475,29 +1479,32 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   Future<void> _testProvider(Map<String, dynamic> p) async {
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('测试中...', style: TextStyle(fontFamily: 'TideFont')),
           duration: Duration(seconds: 1),
           behavior: SnackBarBehavior.floating));
+    }
     try {
       final ms = await AIManager().testConnection(
           p['url'] ?? '',
           p['key'] ?? '',
           (p['model'] as String?)?.split(',').first.trim() ?? '');
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('连接成功！${ms}ms',
                 style: const TextStyle(fontFamily: 'TideFont')),
             backgroundColor: const Color(0xFF34C759),
             behavior: SnackBarBehavior.floating));
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('连接失败: $e',
                 style: const TextStyle(fontFamily: 'TideFont')),
             backgroundColor: const Color(0xFFE74C3C),
             behavior: SnackBarBehavior.floating));
+      }
     }
   }
 
@@ -1544,7 +1551,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                             color:
                                                 TideTheme.of(context).textWeak,
                                             fontFamily: 'TideFont')),
-                                    SizedBox(height: 6),
+                                    const SizedBox(height: 6),
                                     Text('点击右上角 + 添加',
                                         style: TextStyle(
                                             fontSize: 13,
@@ -1554,7 +1561,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                   ]))),
                     if (_providers.isNotEmpty) ...[
                       Padding(
-                          padding: EdgeInsets.only(top: 8, bottom: 8),
+                          padding: const EdgeInsets.only(top: 8, bottom: 8),
                           child: Text('AI 模型',
                               style: TextStyle(
                                   fontSize: 15,
@@ -1575,23 +1582,25 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                       Row(children: [
                                         Expanded(
                                             child: Text(p['name'] ?? '',
-                                                style: TextStyle(
+                                                style: const TextStyle(
                                                     fontSize: 16,
                                                     fontWeight: FontWeight.w600,
                                                     fontFamily: 'TideFont'))),
                                         BouncyTap(
                                             onTap: () => _testProvider(p),
                                             child: Container(
-                                                padding: EdgeInsets.symmetric(
-                                                    horizontal: 10,
-                                                    vertical: 4),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 10,
+                                                        vertical: 4),
                                                 decoration: BoxDecoration(
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                             10),
                                                     color: TideTheme.of(context)
                                                         .primary
-                                                        .withOpacity(0.15)),
+                                                        .withValues(
+                                                            alpha: 0.15)),
                                                 child: Text('测试',
                                                     style: TextStyle(
                                                         fontSize: 12,
@@ -1600,15 +1609,15 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                                             .primary,
                                                         fontFamily:
                                                             'TideFont')))),
-                                        SizedBox(width: 8),
+                                        const SizedBox(width: 8),
                                         BouncyTap(
                                             onTap: () => _deleteProvider(i),
-                                            child: Icon(
+                                            child: const Icon(
                                                 Icons.delete_outline_rounded,
                                                 size: 20,
                                                 color: Color(0xFFE74C3C)))
                                       ]),
-                                      SizedBox(height: 6),
+                                      const SizedBox(height: 6),
                                       Text(p['url'] ?? '',
                                           style: TextStyle(
                                               fontSize: 12,
@@ -1621,7 +1630,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                           .toString()
                                           .isNotEmpty)
                                         Padding(
-                                            padding: EdgeInsets.only(top: 4),
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
                                             child: Text('模型: ${p['model']}',
                                                 style: TextStyle(
                                                     fontSize: 12,
@@ -1632,7 +1642,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                           .toString()
                                           .isNotEmpty)
                                         Padding(
-                                            padding: EdgeInsets.only(top: 2),
+                                            padding:
+                                                const EdgeInsets.only(top: 2),
                                             child: Text(
                                                 'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
                                                 style: TextStyle(
@@ -1645,7 +1656,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                     ],
                     if (_ttsProviders.isNotEmpty) ...[
                       Padding(
-                          padding: EdgeInsets.only(top: 16, bottom: 8),
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
                           child: Text('TTS 语音',
                               style: TextStyle(
                                   fontSize: 15,
@@ -1679,7 +1690,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                                 size: 20,
                                                 color: Color(0xFFE74C3C)))
                                       ]),
-                                      SizedBox(height: 6),
+                                      const SizedBox(height: 6),
                                       Text(p['url'] ?? '',
                                           style: TextStyle(
                                               fontSize: 12,
@@ -1692,7 +1703,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                           .toString()
                                           .isNotEmpty)
                                         Padding(
-                                            padding: EdgeInsets.only(top: 4),
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
                                             child: Text('模型: ${p['model']}',
                                                 style: TextStyle(
                                                     fontSize: 12,
@@ -1703,7 +1715,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                           .toString()
                                           .isNotEmpty)
                                         Padding(
-                                            padding: EdgeInsets.only(top: 2),
+                                            padding:
+                                                const EdgeInsets.only(top: 2),
                                             child: Text('音色: ${p['voice']}',
                                                 style: TextStyle(
                                                     fontSize: 11,
@@ -2048,7 +2061,7 @@ class _LocalModelPageState extends State<LocalModelPage> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         itemCount: _models.length + 1,
         itemBuilder: (ctx, i) {
-          if (i == 0)
+          if (i == 0) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(
@@ -2059,6 +2072,7 @@ class _LocalModelPageState extends State<LocalModelPage> {
                       color: TideTheme.of(context).textWeak,
                       fontFamily: 'TideFont')),
             );
+          }
           final modelIndex = i - 1;
           final m = _models[modelIndex];
           final installed = m['installed'] == true;

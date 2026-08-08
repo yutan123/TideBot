@@ -42,7 +42,7 @@ class AppPermissions {
       content: Text(permanentlyDenied ? '$message，请在系统设置中开启' : message,
           style: const TextStyle(fontFamily: 'TideFont')),
       action: permanentlyDenied
-          ? SnackBarAction(label: '去设置', onPressed: openAppSettings)
+          ? const SnackBarAction(label: '去设置', onPressed: openAppSettings)
           : null,
       behavior: SnackBarBehavior.floating,
       backgroundColor: const Color(0xFFE74C3C),

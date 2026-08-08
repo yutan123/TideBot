@@ -116,8 +116,9 @@ class AIManager {
 
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     final providerId = bot['chat_model'];
-    if (providerId == null || providerId.toString().isEmpty)
+    if (providerId == null || providerId.toString().isEmpty) {
       return {'error': '未配置引擎中枢，请先在聊天页设置模型'};
+    }
     // 优先用统一的聊天链路读取，兼容 API 设置页的 provider_list
     final provider = await db.getChatProviderById(providerId.toString());
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
@@ -780,11 +781,12 @@ class AIManager {
             }),
           )
           .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 200)
+      if (res.statusCode == 200) {
         return {
           'success': true,
           'delay': DateTime.now().difference(start).inMilliseconds
         };
+      }
       return {'success': false, 'error': '服务端返回 HTTP ${res.statusCode}'};
     } catch (e) {
       return {'success': false, 'error': '无法连接，请检查 URL 格式或网络'};

@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/rendering.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -24,7 +23,7 @@ import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
-  const ChatRoomPage({Key? key, required this.botData}) : super(key: key);
+  const ChatRoomPage({super.key, required this.botData});
   @override
   State<ChatRoomPage> createState() => _ChatRoomPageState();
 }
@@ -153,7 +152,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
       print('_loadMsgs success: got ${msgs.length} messages');
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
-      if (mounted)
+      if (mounted) {
         setState(() {
           final byId = <String, Map<String, dynamic>>{
             for (final m in msgs)
@@ -168,6 +167,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 .compareTo((b['timestamp'] as int?) ?? 0));
           _msgsLoading = false;
         });
+      }
     } catch (e) {
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
@@ -213,8 +213,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'content': text,
       'image': img,
       'file_path': document ?? img,
-      'document_name':
-          document == null ? null : document.split(Platform.pathSeparator).last,
+      'document_name': document?.split(Platform.pathSeparator).last,
       'reply_to_id': _replyingTo?['id']?.toString(),
       'timestamp': now,
     };
@@ -317,7 +316,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     if (!mounted) return;
                     setState(() {
                       streamingMessage!['content'] =
-                          '${streamingMessage!['content']}$delta';
+                          '${streamingMessage['content']}$delta';
                     });
                     _scrollDown();
                   },
@@ -366,8 +365,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           // in-memory identity but normalize its final text and database ID.
           setState(() {
             streamingMessage!['id'] = aiMsg['id'];
-            streamingMessage!['content'] = content;
-            streamingMessage!['timestamp'] = aiMsg['timestamp'];
+            streamingMessage['content'] = content;
+            streamingMessage['timestamp'] = aiMsg['timestamp'];
           });
         } else {
           setState(() => _msgs.add(aiMsg));
@@ -952,9 +951,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     TextField(
                                         controller: c,
                                         keyboardType: TextInputType.number,
-                                        decoration: InputDecoration(
+                                        decoration: const InputDecoration(
                                             hintText: '输入token数量',
-                                            hintStyle: const TextStyle(
+                                            hintStyle: TextStyle(
                                                 fontFamily: 'TideFont'),
                                             border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.all(
@@ -1252,10 +1251,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     const SizedBox(width: 10),
                     Expanded(
                         child: TideDialogs.glassButton('确认清除', onTap: () async {
-                      if (delMsgs)
+                      if (delMsgs) {
                         await DBManager().deleteMessages(_bot['id'] as String);
-                      if (delMem)
+                      }
+                      if (delMem) {
                         await DBManager().deleteMemories(_bot['id'] as String);
+                      }
                       Navigator.pop(ctx);
                       _loadMsgs();
                     }, color: const Color(0xFFE74C3C))),
@@ -1314,7 +1315,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final value = position.inMilliseconds.clamp(0, max.toInt()).toDouble();
     final foreground = isUser ? Colors.white : TideTheme.of(context).textStrong;
     final muted = isUser
-        ? Colors.white.withOpacity(0.78)
+        ? Colors.white.withValues(alpha: 0.78)
         : TideTheme.of(context).textWeak;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
@@ -1408,14 +1409,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   color: TideTheme.of(sheetContext).primary),
               title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
               onTap: () {
-                final type = msg['type']?.toString() ?? 'text';
-                final quote = text.isNotEmpty
-                    ? text
-                    : (type == 'image'
-                        ? '[图片]'
-                        : type == 'audio'
-                            ? '[语音]'
-                            : '[消息]');
                 setState(() => _replyingTo = Map<String, dynamic>.from(msg));
                 _msgC.text = '';
                 _msgC.selection = const TextSelection.collapsed(offset: 0);
@@ -1469,7 +1462,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
         color: isUser
-            ? Colors.white.withOpacity(0.16)
+            ? Colors.white.withValues(alpha: 0.16)
             : TideTheme.of(context).surfaceVariant,
         borderRadius: BorderRadius.circular(10),
         border: Border(
@@ -1477,7 +1470,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 color: isUser ? Colors.white70 : TideTheme.of(context).primary,
                 width: 3)),
       ),
-      child: Text('$author：${_replyPreview(original)}',
+      child: Text('$author：$preview',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -1515,7 +1508,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     gradient: RadialGradient(colors: [
-                                      theme.primaryLight.withOpacity(0.25),
+                                      theme.primaryLight
+                                          .withValues(alpha: 0.25),
                                       Colors.transparent
                                     ]))))),
                     Positioned(
@@ -1528,7 +1522,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     gradient: RadialGradient(colors: [
-                                      theme.primary.withOpacity(0.15),
+                                      theme.primary.withValues(alpha: 0.15),
                                       Colors.transparent
                                     ]))))),
                   ]),
@@ -1549,8 +1543,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
             color: _hasBg
-                ? TideTheme.of(context).glass.withOpacity(0.15)
-                : TideTheme.of(context).glass.withOpacity(0.55),
+                ? TideTheme.of(context).glass.withValues(alpha: 0.15)
+                : TideTheme.of(context).glass.withValues(alpha: 0.55),
             child: SafeArea(
               bottom: false,
               child: Container(
@@ -1714,10 +1708,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Widget _chatBody() {
-    if (_msgsLoading)
+    if (_msgsLoading) {
       return Center(
           child:
               CircularProgressIndicator(color: TideTheme.of(context).primary));
+    }
     return ListView.builder(
       controller: _scrollC,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1780,7 +1775,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       radius: 14,
                                       backgroundColor: TideTheme.of(context)
                                           .primary
-                                          .withOpacity(0.15),
+                                          .withValues(alpha: 0.15),
                                       child: Icon(Icons.person_rounded,
                                           size: 16,
                                           color: TideTheme.of(context).primary),
@@ -1892,20 +1887,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           text: text.substring(m.start, m.end),
           style: TextStyle(
               color: isUser
-                  ? Colors.white.withOpacity(0.6)
+                  ? Colors.white.withValues(alpha: 0.6)
                   : TideTheme.of(context).textWeak,
               fontSize: 12,
               fontFamily: 'TideFont',
               fontStyle: FontStyle.italic)));
       last = m.end;
     }
-    if (last < text.length)
+    if (last < text.length) {
       spans.add(TextSpan(
           text: text.substring(last),
           style: TextStyle(
               color: isUser ? Colors.white : TideTheme.of(context).textStrong,
               fontSize: 14,
               fontFamily: 'TideFont')));
+    }
     return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -1935,14 +1931,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _hasBg ? theme.glass.withOpacity(0.72) : theme.surface,
+                  color: _hasBg
+                      ? theme.glass.withValues(alpha: 0.72)
+                      : theme.surface,
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: Colors.transparent),
                   boxShadow: theme.isDark
                       ? null
                       : [
                           BoxShadow(
-                              color: Colors.black.withOpacity(0.08),
+                              color: Colors.black.withValues(alpha: 0.08),
                               blurRadius: 12,
                               offset: const Offset(0, 4))
                         ],
@@ -1998,12 +1996,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           height: 32,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color:
-                                theme.primary.withOpacity(_hasText ? 1 : 0.48),
+                            color: theme.primary
+                                .withValues(alpha: _hasText ? 1 : 0.48),
                             boxShadow: [
                               BoxShadow(
-                                  color: theme.primary
-                                      .withOpacity(_hasText ? 0.38 : 0.12),
+                                  color: theme.primary.withValues(
+                                      alpha: _hasText ? 0.38 : 0.12),
                                   blurRadius: 8)
                             ],
                           ),
@@ -2037,9 +2035,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           maxLines: null,
           expands: h > 50,
           style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
-          decoration: InputDecoration(
-              contentPadding: const EdgeInsets.all(10),
-              border: InputBorder.none)));
+          decoration: const InputDecoration(
+              contentPadding: EdgeInsets.all(10), border: InputBorder.none)));
 }
 
 extension _ListExt<T> on List<T> {

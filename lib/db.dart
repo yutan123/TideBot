@@ -583,7 +583,7 @@ class DBManager {
       await db.insert(
           'feed_events',
           {
-            'id': 'fe_${postId}_${actorId}_${eventType}',
+            'id': 'fe_${postId}_${actorId}_$eventType',
             'post_id': postId,
             'actor_id': actorId,
             'event_type': eventType,
@@ -620,7 +620,7 @@ class DBManager {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.insert('ai_usage_events', {
-      'id': 'usage_${now}_${botId}_${eventType}',
+      'id': 'usage_${now}_${botId}_$eventType',
       'bot_id': botId,
       'event_type': eventType,
       'prompt_tokens': promptTokens,

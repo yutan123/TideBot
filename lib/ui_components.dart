@@ -4,7 +4,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'app_navigation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/rendering.dart';
 import 'theme.dart';
 
 // ========== 全局弹性点击包装器 ==========
@@ -13,8 +12,7 @@ class BouncyTap extends StatefulWidget {
   final VoidCallback? onTap;
   final double scaleAmount;
   const BouncyTap(
-      {Key? key, required this.child, this.onTap, this.scaleAmount = 0.05})
-      : super(key: key);
+      {super.key, required this.child, this.onTap, this.scaleAmount = 0.05});
   @override
   State<BouncyTap> createState() => _BouncyTapState();
 }
@@ -152,7 +150,7 @@ class TideDialogs {
       context: context,
       barrierDismissible: barrierDismissible,
       barrierLabel: '',
-      barrierColor: Colors.black.withOpacity(0.35),
+      barrierColor: Colors.black.withValues(alpha: 0.35),
       transitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, anim1, anim2) => builder(context),
       transitionBuilder: (context, anim, secAnim, child) => ScaleTransition(
@@ -173,7 +171,7 @@ class TideDialogs {
           width: MediaQuery.of(context).size.width * maxWidth,
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-              color: TideTheme.of(context).surface.withOpacity(0.94),
+              color: TideTheme.of(context).surface.withValues(alpha: 0.94),
               borderRadius: BorderRadius.circular(22),
               border:
                   Border.all(color: TideTheme.of(context).border, width: 0.5)),
@@ -221,7 +219,7 @@ Future<T?> showTideSheet<T>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withOpacity(0.35),
+    barrierColor: Colors.black.withValues(alpha: 0.35),
     builder: (ctx) => GestureDetector(
       onTap: () => Navigator.pop(ctx),
       child: Container(
@@ -242,7 +240,8 @@ Future<T?> showTideSheet<T>(
                   height: sheetH,
                   width: double.infinity,
                   decoration: BoxDecoration(
-                      color: TideTheme.of(context).surface.withOpacity(0.96),
+                      color:
+                          TideTheme.of(context).surface.withValues(alpha: 0.96),
                       borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(24))),
                   child: Column(children: [
@@ -327,7 +326,7 @@ class ExplosionPainter extends CustomPainter {
     final pt = Paint()..style = PaintingStyle.fill;
     for (var p in ps) {
       if (p.life > 0) {
-        pt.color = p.color.withOpacity(p.life.clamp(0.0, 1.0));
+        pt.color = p.color.withValues(alpha: p.life.clamp(0.0, 1.0));
         c.drawCircle(Offset(p.x, p.y), p.size, pt);
       }
     }
@@ -342,8 +341,7 @@ class ParticleOverlay extends StatefulWidget {
   final List<Offset> origins;
   final VoidCallback? onDone;
   const ParticleOverlay(
-      {Key? key, required this.child, required this.origins, this.onDone})
-      : super(key: key);
+      {super.key, required this.child, required this.origins, this.onDone});
   @override
   State<ParticleOverlay> createState() => _ParticleOverlayState();
 }
@@ -360,7 +358,9 @@ class _ParticleOverlayState extends State<ParticleOverlay>
     _c = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 2000));
     _c.addListener(() => setState(() {
-          for (var p in _ps) p.update();
+          for (var p in _ps) {
+            p.update();
+          }
         }));
     _c.addStatusListener((s) {
       if (s == AnimationStatus.completed) widget.onDone?.call();
@@ -375,8 +375,8 @@ class _ParticleOverlayState extends State<ParticleOverlay>
     final colors = [
       theme.primary,
       theme.primaryLight,
-      theme.primary.withOpacity(0.7),
-      theme.primaryLight.withOpacity(0.5),
+      theme.primary.withValues(alpha: 0.7),
+      theme.primaryLight.withValues(alpha: 0.5),
     ];
     for (var o in widget.origins) {
       for (int i = 0; i < 30; i++) {
@@ -418,13 +418,12 @@ class GlassCard extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const GlassCard(
-      {Key? key,
+      {super.key,
       required this.child,
       this.padding = const EdgeInsets.all(16),
       this.radius = 20,
       this.onTap,
-      this.onLongPress})
-      : super(key: key);
+      this.onLongPress});
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -437,13 +436,13 @@ class GlassCard extends StatelessWidget {
             child: Container(
                 padding: padding,
                 decoration: BoxDecoration(
-                    color: TideTheme.of(context).glass.withOpacity(0.7),
+                    color: TideTheme.of(context).glass.withValues(alpha: 0.7),
                     borderRadius: BorderRadius.circular(radius),
                     border: Border.all(
                         color: TideTheme.of(context).border, width: 0.5),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.03),
+                          color: Colors.black.withValues(alpha: 0.03),
                           blurRadius: 10,
                           offset: const Offset(0, 2))
                     ]),
@@ -461,14 +460,13 @@ class FrostCard extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const FrostCard(
-      {Key? key,
+      {super.key,
       required this.child,
       this.padding = const EdgeInsets.all(16),
       this.margin = EdgeInsets.zero,
       this.radius = 20,
       this.onTap,
-      this.onLongPress})
-      : super(key: key);
+      this.onLongPress});
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -483,13 +481,13 @@ class FrostCard extends StatelessWidget {
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
-                color: TideTheme.of(context).glass.withOpacity(0.7),
+                color: TideTheme.of(context).glass.withValues(alpha: 0.7),
                 borderRadius: BorderRadius.circular(radius),
                 border:
                     Border.all(color: TideTheme.of(context).border, width: 0.5),
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
+                      color: Colors.black.withValues(alpha: 0.04),
                       blurRadius: 12,
                       offset: const Offset(0, 3))
                 ],
@@ -508,8 +506,9 @@ String fmtTime(dynamic ts) {
   if (ts == null) return '';
   if (ts is String) {
     final dt = DateTime.tryParse(ts);
-    if (dt != null)
+    if (dt != null) {
       return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    }
     return ts;
   }
   if (ts is int) {

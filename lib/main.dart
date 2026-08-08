@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/rendering.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -127,7 +126,7 @@ final FlowProvider flowProvider = FlowProvider();
 
 class FlowGlassBg extends StatelessWidget {
   final Widget child;
-  const FlowGlassBg({Key? key, required this.child}) : super(key: key);
+  const FlowGlassBg({super.key, required this.child});
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -163,7 +162,8 @@ class FlowGlassBg extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: RadialGradient(colors: [
-                theme.primaryLight.withOpacity(theme.isDark ? 0.08 : 0.16),
+                theme.primaryLight
+                    .withValues(alpha: theme.isDark ? 0.08 : 0.16),
                 Colors.transparent,
               ]),
             ),
@@ -178,8 +178,7 @@ class FlowGlassBg extends StatelessWidget {
 
 class TideBotApp extends StatefulWidget {
   final bool hasSeenOnboarding;
-  const TideBotApp({Key? key, required this.hasSeenOnboarding})
-      : super(key: key);
+  const TideBotApp({super.key, required this.hasSeenOnboarding});
   @override
   State<TideBotApp> createState() => _TideBotAppState();
 }
@@ -252,7 +251,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
                 borderSide:
-                    BorderSide(color: tideTheme.border.withOpacity(0.45)),
+                    BorderSide(color: tideTheme.border.withValues(alpha: 0.45)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -298,7 +297,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
 }
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({Key? key}) : super(key: key);
+  const OnboardingScreen({super.key});
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
@@ -404,7 +403,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ]),
                 boxShadow: [
                   BoxShadow(
-                      color: TideTheme.of(context).primary.withOpacity(0.35),
+                      color:
+                          TideTheme.of(context).primary.withValues(alpha: 0.35),
                       blurRadius: 16,
                       offset: const Offset(0, 6))
                 ],
@@ -437,7 +437,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ]),
                 boxShadow: [
                   BoxShadow(
-                      color: TideTheme.of(context).primary.withOpacity(0.3),
+                      color:
+                          TideTheme.of(context).primary.withValues(alpha: 0.3),
                       blurRadius: 30,
                       offset: const Offset(0, 10))
                 ]),
@@ -465,8 +466,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 class JellyDock extends StatefulWidget {
   final int currentIndex;
   final Function(int) onTap;
-  const JellyDock({Key? key, required this.currentIndex, required this.onTap})
-      : super(key: key);
+  const JellyDock({super.key, required this.currentIndex, required this.onTap});
   @override
   State<JellyDock> createState() => _JellyDockState();
 }
@@ -573,13 +573,13 @@ class _JellyDockState extends State<JellyDock>
             height: 56,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.35),
+              color: Colors.white.withValues(alpha: 0.35),
               borderRadius: BorderRadius.circular(28),
-              border:
-                  Border.all(color: Colors.white.withOpacity(0.25), width: 0.5),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.25), width: 0.5),
               boxShadow: [
                 BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
+                    color: Colors.black.withValues(alpha: 0.06),
                     blurRadius: 20,
                     offset: const Offset(0, 4))
               ],
@@ -602,7 +602,7 @@ class _JellyDockState extends State<JellyDock>
                           width: _w.value,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: theme.primary.withOpacity(0.18),
+                            color: theme.primary.withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(22),
                           ),
                         ),
@@ -636,7 +636,7 @@ class _JellyDockState extends State<JellyDock>
 }
 
 class TideMainScaffold extends StatefulWidget {
-  const TideMainScaffold({Key? key}) : super(key: key);
+  const TideMainScaffold({super.key});
   @override
   State<TideMainScaffold> createState() => _TideMainScaffoldState();
 }
@@ -727,7 +727,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                         colors: [theme.primary, theme.primaryLight]),
                     boxShadow: [
                       BoxShadow(
-                          color: theme.primary.withOpacity(0.35),
+                          color: theme.primary.withValues(alpha: 0.35),
                           blurRadius: 14,
                           offset: const Offset(0, 4))
                     ],
@@ -753,7 +753,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
                         colors: [theme.primary, theme.primaryLight]),
                     boxShadow: [
                       BoxShadow(
-                          color: theme.primary.withOpacity(0.35),
+                          color: theme.primary.withValues(alpha: 0.35),
                           blurRadius: 14,
                           offset: const Offset(0, 4))
                     ],

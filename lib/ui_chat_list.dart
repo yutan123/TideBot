@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'db.dart';
 import 'ui_components.dart';
 import 'ui_chat_room.dart';
@@ -7,7 +6,7 @@ import 'theme.dart';
 
 class ChatListPage extends StatefulWidget {
   final GlobalKey<ChatListPageState>? pageKey;
-  const ChatListPage({Key? key, this.pageKey}) : super(key: key);
+  const ChatListPage({super.key, this.pageKey});
   @override
   State<ChatListPage> createState() => ChatListPageState();
 }
@@ -156,11 +155,11 @@ class ChatListPageState extends State<ChatListPage> {
     return _showParticles
         ? ParticleOverlay(
             key: ValueKey(_particleRun),
-            child: content,
             origins: _origins,
             onDone: () {
               if (mounted) setState(() => _showParticles = false);
-            })
+            },
+            child: content)
         : content;
   }
 

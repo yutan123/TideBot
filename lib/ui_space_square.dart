@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
@@ -60,11 +59,11 @@ class _SpacePageState extends State<SpacePage> {
       _botName = b['name'] as String? ?? '';
       _dailyQuote = b['daily_quote'] as String? ?? '';
       final created = b['created_at'];
-      if (created is int)
+      if (created is int) {
         _daysSince = DateTime.now()
             .difference(DateTime.fromMillisecondsSinceEpoch(created))
             .inDays;
-      else if (created is String && created.isNotEmpty)
+      } else if (created is String && created.isNotEmpty)
         _daysSince = DateTime.now()
             .difference(DateTime.tryParse(created) ?? DateTime.now())
             .inDays;
@@ -94,10 +93,11 @@ class _SpacePageState extends State<SpacePage> {
               '${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}') {
         _dailyQuote = await AIManager().getDailyQuote(_botId);
       }
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
         });
+      }
     } else {
       _daysSince = 0;
       _dailyQuote = '';
@@ -206,9 +206,9 @@ class _SpacePageState extends State<SpacePage> {
                             Expanded(child: _buildMoodCard(theme))
                           ]),
                         ] else
-                          FrostCard(
-                              padding: const EdgeInsets.all(24),
-                              child: const Center(
+                          const FrostCard(
+                              padding: EdgeInsets.all(24),
+                              child: Center(
                                   child: Text('还没有创建机器人\n点击底部聊天 Tab 开始',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
@@ -315,8 +315,8 @@ class _SpacePageState extends State<SpacePage> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
-                      color:
-                          theme.surface.withOpacity(theme.isDark ? 0.82 : 0.80),
+                      color: theme.surface
+                          .withValues(alpha: theme.isDark ? 0.82 : 0.80),
                       border: Border.all(color: theme.border)),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text(_botName,
@@ -646,19 +646,21 @@ class SquarePageState extends State<SquarePage>
                         'content': ctrl.text,
                         'timestamp': now
                       });
-                      if (mounted)
+                      if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                             content: const Text('已发送到聊天',
                                 style: TextStyle(fontFamily: 'TideFont')),
                             behavior: SnackBarBehavior.floating,
                             backgroundColor: theme.primary));
+                      }
                     } else {
-                      if (mounted)
+                      if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                                 content: Text('请先创建机器人',
                                     style: TextStyle(fontFamily: 'TideFont')),
                                 behavior: SnackBarBehavior.floating));
+                      }
                     }
                   }),
                 ])));
@@ -808,7 +810,7 @@ class SquarePageState extends State<SquarePage>
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          color: theme.primary.withOpacity(0.12),
+                          color: theme.primary.withValues(alpha: 0.12),
                         ),
                         child: Icon(
                             _showGames
@@ -830,11 +832,11 @@ class SquarePageState extends State<SquarePage>
     return _showParticles
         ? ParticleOverlay(
             key: ValueKey(_particleRun),
-            child: content,
             origins: _particleOrigins,
             onDone: () {
               if (mounted) setState(() => _showParticles = false);
             },
+            child: content,
           )
         : content;
   }
@@ -843,10 +845,10 @@ class SquarePageState extends State<SquarePage>
       ? ListView(
           key: const ValueKey('feeds_empty'),
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-          children: [
+          children: const [
               FrostCard(
-                  padding: const EdgeInsets.all(24),
-                  child: const Center(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
                       child: Text('还没有动态\n点击右下角 + 发布第一条',
                           textAlign: TextAlign.center,
                           style: TextStyle(
@@ -878,7 +880,8 @@ class SquarePageState extends State<SquarePage>
                         child: Row(children: [
                           CircleAvatar(
                               radius: 18,
-                              backgroundColor: theme.primary.withOpacity(0.15),
+                              backgroundColor:
+                                  theme.primary.withValues(alpha: 0.15),
                               child: Icon(Icons.person_rounded,
                                   size: 20, color: theme.primary)),
                           const SizedBox(width: 10),
@@ -1207,7 +1210,7 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
                         horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: theme.primary.withOpacity(0.1)),
+                        color: theme.primary.withValues(alpha: 0.1)),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.image_rounded, size: 20, color: theme.primary),
                       const SizedBox(width: 8),
@@ -1340,7 +1343,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                   children: [
                     CircleAvatar(
                       radius: 22,
-                      backgroundColor: theme.primary.withOpacity(0.15),
+                      backgroundColor: theme.primary.withValues(alpha: 0.15),
                       child: Icon(
                         Icons.person_rounded,
                         size: 24,
@@ -1493,7 +1496,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                         children: [
                           CircleAvatar(
                             radius: 15,
-                            backgroundColor: theme.primary.withOpacity(0.12),
+                            backgroundColor:
+                                theme.primary.withValues(alpha: 0.12),
                             child: Icon(
                               Icons.person_rounded,
                               size: 16,

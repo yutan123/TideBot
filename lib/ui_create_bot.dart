@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,7 +11,7 @@ import 'theme.dart';
 
 class CreateBotPage extends StatefulWidget {
   final Map<String, dynamic>? editBot;
-  const CreateBotPage({Key? key, this.editBot}) : super(key: key);
+  const CreateBotPage({super.key, this.editBot});
   @override
   State<CreateBotPage> createState() => _CreateBotPageState();
 }
@@ -69,11 +68,12 @@ class _CreateBotPageState extends State<CreateBotPage> {
       }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('保存失败: $e',
                 style: const TextStyle(fontFamily: 'TideFont')),
             behavior: SnackBarBehavior.floating));
+      }
     }
   }
 
@@ -128,8 +128,8 @@ class _CreateBotPageState extends State<CreateBotPage> {
             filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
             child: Container(
                 decoration: BoxDecoration(
-                    color:
-                        theme.surface.withOpacity(theme.isDark ? 0.88 : 0.72),
+                    color: theme.surface
+                        .withValues(alpha: theme.isDark ? 0.88 : 0.72),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: theme.border, width: 0.5)),
                 child: TextField(
@@ -217,7 +217,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
                               BoxShadow(
                                   color: TideTheme.of(context)
                                       .primary
-                                      .withOpacity(0.3),
+                                      .withValues(alpha: 0.3),
                                   blurRadius: 14,
                                   offset: const Offset(0, 5))
                             ]),

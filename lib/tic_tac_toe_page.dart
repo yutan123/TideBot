@@ -33,7 +33,9 @@ class _TicTacToePageState extends State<TicTacToePage> {
       final value = _board[line[0]];
       if (value.isNotEmpty &&
           value == _board[line[1]] &&
-          value == _board[line[2]]) return value;
+          value == _board[line[2]]) {
+        return value;
+      }
     }
     return _board.every((cell) => cell.isNotEmpty) ? 'draw' : null;
   }
