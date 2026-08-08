@@ -28,26 +28,38 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     for (var i = 0; i < keys.length; i++) {
       final from = starts[i];
       final usage = await db.rawQuery(
-        'SELECT COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(SUM(reply_count), 0) AS replies FROM ai_usage_events${from == null ? '' : ' WHERE timestamp >= ?'}',
+        "SELECT COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(SUM(reply_count), 0) AS replies, MIN(timestamp) AS first_at FROM ai_usage_events WHERE event_type = 'chat'${from == null ? '' : ' AND timestamp >= ?'}",
         from == null ? null : [from],
       );
+      final firstLedgerAt = (usage.first['first_at'] as num?)?.toInt();
+      // The usage ledger is authoritative for new calls. Only assistant replies
+      // older than its first record are retained as legacy estimates, preventing
+      // the same reply from being counted once as text and once as API usage.
+      final legacyWhere = <String>[
+        "role = 'assistant'",
+        "type IN ('text', 'audio')"
+      ];
+      final legacyArgs = <dynamic>[];
+      if (from != null) {
+        legacyWhere.add('timestamp >= ?');
+        legacyArgs.add(from);
+      }
+      if (firstLedgerAt != null) {
+        legacyWhere.add('timestamp < ?');
+        legacyArgs.add(firstLedgerAt);
+      }
       final legacy = await db.query('chat_history',
           columns: ['content'],
-          where: from == null
-              ? "role = 'assistant'"
-              : "role = 'assistant' AND timestamp >= ?",
-          whereArgs: from == null ? null : [from]);
+          where: legacyWhere.join(' AND '),
+          whereArgs: legacyArgs);
       final ledgerReplies = (usage.first['replies'] as num?)?.toInt() ?? 0;
-      // Old replies made before the usage ledger are retained as an estimate.
+      final ledgerTokens = (usage.first['tokens'] as num?)?.toInt() ?? 0;
       final legacyTokens = legacy.fold<int>(
           0,
           (sum, row) =>
               sum + ((row['content']?.toString().length ?? 0) / 3.2).ceil());
-      _values['${keys[i]}Messages'] =
-          ledgerReplies > 0 ? ledgerReplies : legacy.length;
-      _values['${keys[i]}Tokens'] = ledgerReplies > 0
-          ? ((usage.first['tokens'] as num?)?.toInt() ?? 0)
-          : legacyTokens;
+      _values['${keys[i]}Messages'] = ledgerReplies + legacy.length;
+      _values['${keys[i]}Tokens'] = ledgerTokens + legacyTokens;
     }
     if (mounted) setState(() {});
   }

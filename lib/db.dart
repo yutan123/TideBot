@@ -21,7 +21,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 10,
+      version: 12,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -38,7 +38,7 @@ class DBManager {
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
             content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
-            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, timestamp INTEGER,
+            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, sources_json TEXT, timestamp INTEGER,
 
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
@@ -73,6 +73,12 @@ class DBManager {
         await db.execute('''
           CREATE TABLE kv_store (
             key TEXT PRIMARY KEY, value TEXT
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE stickers (
+            id TEXT PRIMARY KEY, emotion TEXT NOT NULL, file_path TEXT NOT NULL,
+            created_at INTEGER NOT NULL
           )
         ''');
         await db.execute('''
@@ -187,6 +193,24 @@ class DBManager {
                 'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT');
           } catch (_) {}
         }
+        if (oldVersion < 11) {
+          try {
+            await db.execute(
+                'ALTER TABLE chat_history ADD COLUMN sources_json TEXT');
+          } catch (_) {}
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS stickers (
+              id TEXT PRIMARY KEY, emotion TEXT NOT NULL, file_path TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 12) {
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)');
+        }
       },
     );
   }
@@ -227,6 +251,17 @@ class DBManager {
     await db.update(
       'chat_history',
       {'content': content},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateMessageSources(
+      String id, List<Map<String, String>> sources) async {
+    final db = await database;
+    await db.update(
+      'chat_history',
+      {'sources_json': jsonEncode(sources)},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -282,6 +317,40 @@ class DBManager {
   Future<void> clearChatHistory(String botId) async {
     final db = await database;
     await db.delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
+  }
+
+  // ================= 表情包素材池 =================
+  Future<List<Map<String, dynamic>>> queryStickers({String? emotion}) async {
+    final db = await database;
+    return db.query(
+      'stickers',
+      where: emotion == null ? null : 'emotion = ?',
+      whereArgs: emotion == null ? null : [emotion],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<void> insertSticker(Map<String, dynamic> sticker) async {
+    final db = await database;
+    await db.insert('stickers', sticker,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteSticker(String id) async {
+    final db = await database;
+    await db.delete('stickers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<String>> stickerEmotions() async {
+    final db = await database;
+    final rows = await db.query('stickers',
+        columns: ['emotion'],
+        distinct: true,
+        orderBy: 'emotion COLLATE NOCASE');
+    return rows
+        .map((row) => row['emotion']?.toString().trim() ?? '')
+        .where((emotion) => emotion.isNotEmpty)
+        .toList();
   }
 
   // ================= 潜意识记忆 =================

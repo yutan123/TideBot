@@ -14,6 +14,7 @@ import 'ai.dart';
 import 'global_notice.dart';
 import 'theme.dart';
 import 'data_dashboard.dart';
+import 'sticker_manager_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -601,6 +602,15 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _timeAwareness = true;
   bool _proactiveReply = true;
   bool _botPosts = false;
+  bool _imageGeneration = true;
+  bool _webSearch = false;
+  bool _stickers = false;
+  String _imageStyle = '写实';
+  String _searchProvider = 'Tavily';
+  int _stickerChance = 50;
+  final TextEditingController _searchKeyController = TextEditingController();
+  final TextEditingController _stickerChanceController =
+      TextEditingController(text: '50');
   int _proactiveMin = 60;
   int _proactiveMax = 90;
   int _speed = 50;
@@ -637,6 +647,14 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
+    final imageGeneration = await db.getKV('bot_image_generation_enabled');
+    final imageStyle = await db.getKV('bot_image_style');
+    final webSearch = await db.getKV('web_search_enabled');
+    final searchProvider = await db.getKV('web_search_provider');
+    final searchKey = await db.getKV('web_search_api_key');
+    final stickers = await db.getKV('bot_stickers_enabled');
+    final stickerChance =
+        int.tryParse(await db.getKV('bot_sticker_chance') ?? '');
     final botPostsPerDay =
         int.tryParse(await db.getKV('bot_posts_per_day') ?? '');
     final proactiveMin =
@@ -651,6 +669,16 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
+      _imageGeneration = imageGeneration != 'false';
+      _imageStyle =
+          ['写实', '动漫', '科幻', '自定义'].contains(imageStyle) ? imageStyle! : '写实';
+      _webSearch = webSearch == 'true';
+      _searchProvider =
+          searchProvider?.isNotEmpty == true ? searchProvider! : 'Tavily';
+      _searchKeyController.text = searchKey ?? '';
+      _stickers = stickers == 'true';
+      _stickerChance = (stickerChance ?? 50).clamp(1, 100);
+      _stickerChanceController.text = _stickerChance.toString();
       _botPostsPerDayController.text =
           (botPostsPerDay ?? 1).clamp(1, 10).toString();
       _proactiveMin = (proactiveMin ?? 60).clamp(1, 1440);
@@ -667,6 +695,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     _proactiveMinController.dispose();
     _proactiveMaxController.dispose();
     _botPostsPerDayController.dispose();
+    _searchKeyController.dispose();
+    _stickerChanceController.dispose();
     super.dispose();
   }
 
@@ -721,6 +751,23 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12), child: child),
       ]);
 
+  InputDecoration _roundInput(TideTheme theme,
+      {required String label, Widget? icon}) {
+    final border = OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: theme.border));
+    return InputDecoration(
+        isDense: true,
+        labelText: label,
+        prefixIcon: icon,
+        filled: true,
+        fillColor: theme.surfaceVariant,
+        enabledBorder: border,
+        focusedBorder: border.copyWith(
+            borderSide: BorderSide(color: theme.primary, width: 1.5)),
+        border: border);
+  }
+
   Widget _compactRange(TideTheme theme) => Row(children: [
         Expanded(
             child: TextField(
@@ -728,12 +775,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 keyboardType: TextInputType.number,
                 style:
                     TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-                decoration: InputDecoration(
-                    isDense: true,
-                    labelText: '最短（分钟）',
-                    filled: true,
-                    fillColor: theme.surfaceVariant,
-                    border: InputBorder.none),
+                decoration: _roundInput(theme, label: '最短（分钟）'),
                 onChanged: (v) {
                   final n = int.tryParse(v);
                   if (n != null && n >= 1 && n <= _proactiveMax) {
@@ -752,12 +794,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 keyboardType: TextInputType.number,
                 style:
                     TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-                decoration: InputDecoration(
-                    isDense: true,
-                    labelText: '最长（分钟）',
-                    filled: true,
-                    fillColor: theme.surfaceVariant,
-                    border: InputBorder.none),
+                decoration: _roundInput(theme, label: '最长（分钟）'),
                 onChanged: (v) {
                   final n = int.tryParse(v);
                   if (n != null && n >= _proactiveMin && n <= 1440) {
@@ -872,6 +909,135 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   _save('streaming_output', '$v');
                 },
                 child: _streaming ? _compactSpeed(theme) : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '机器人生图',
+                help: '开启后机器人可在需要生成图片时使用生图能力，并必须遵循下方默认风格。关闭后机器人不会感知此工具存在。',
+                value: _imageGeneration,
+                onChanged: (v) {
+                  setState(() => _imageGeneration = v);
+                  _save('bot_image_generation_enabled', '$v');
+                },
+                child: _imageGeneration
+                    ? DropdownButtonFormField<String>(
+                        initialValue: _imageStyle,
+                        decoration: _roundInput(theme,
+                            label: '默认生图风格',
+                            icon: Icon(Icons.palette_outlined,
+                                color: theme.primary)),
+                        items: const ['写实', '动漫', '科幻', '自定义']
+                            .map((style) => DropdownMenuItem(
+                                value: style,
+                                child: Text(style,
+                                    style: const TextStyle(
+                                        fontFamily: 'TideFont'))))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() => _imageStyle = value);
+                          _save('bot_image_style', value);
+                        })
+                    : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '联网搜索',
+                help: '仅开启后机器人才能按需搜索实时信息。请自行填写对应服务商 API Key；未开启时机器人不会感知搜索工具。',
+                value: _webSearch,
+                onChanged: (v) {
+                  setState(() => _webSearch = v);
+                  _save('web_search_enabled', '$v');
+                },
+                child: _webSearch
+                    ? Column(children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: _searchProvider,
+                          decoration: _roundInput(theme,
+                              label: '搜索服务商',
+                              icon: Icon(Icons.travel_explore_rounded,
+                                  color: theme.primary)),
+                          items: const [
+                            'Tavily',
+                            '博查 Bocha',
+                            'Serper',
+                            'Brave Search',
+                            'Bing Web Search'
+                          ]
+                              .map((provider) => DropdownMenuItem(
+                                  value: provider,
+                                  child: Text(provider,
+                                      style: const TextStyle(
+                                          fontFamily: 'TideFont'))))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() => _searchProvider = value);
+                            _save('web_search_provider', value);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _searchKeyController,
+                          obscureText: true,
+                          style: TextStyle(
+                              color: theme.textStrong, fontFamily: 'TideFont'),
+                          decoration: _roundInput(theme,
+                              label: '搜索 API Key',
+                              icon: Icon(Icons.key_rounded,
+                                  color: theme.primary)),
+                          onChanged: (value) =>
+                              _save('web_search_api_key', value.trim()),
+                        ),
+                      ])
+                    : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '机器人发送表情包',
+                help: '仅从你自己维护的素材池中选择。关闭后机器人不知道表情包功能存在。',
+                value: _stickers,
+                onChanged: (v) {
+                  setState(() => _stickers = v);
+                  _save('bot_stickers_enabled', '$v');
+                },
+                child: _stickers
+                    ? Column(children: [
+                        TextField(
+                          controller: _stickerChanceController,
+                          keyboardType: TextInputType.number,
+                          style: TextStyle(
+                              color: theme.textStrong, fontFamily: 'TideFont'),
+                          decoration: _roundInput(theme,
+                              label: '发送概率（1–100）',
+                              icon: Icon(Icons.sentiment_satisfied_alt_rounded,
+                                  color: theme.primary)),
+                          onChanged: (value) {
+                            final chance = int.tryParse(value);
+                            if (chance != null &&
+                                chance >= 1 &&
+                                chance <= 100) {
+                              _stickerChance = chance;
+                              _save('bot_sticker_chance', '$chance');
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              icon: const Icon(
+                                  Icons.add_photo_alternate_outlined),
+                              label: const Text('添加和管理表情包',
+                                  style: TextStyle(fontFamily: 'TideFont')),
+                              onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          const StickerManagerPage())),
+                            )),
+                      ])
+                    : null,
               ),
               _settingSwitch(
                 theme: theme,

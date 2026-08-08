@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -115,12 +116,18 @@ class AIManager {
     }
 
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
-    final providerId = bot['chat_model'];
-    if (providerId == null || providerId.toString().isEmpty) {
-      return {'error': '未配置引擎中枢，请先在聊天页设置模型'};
+    // A newly added provider is usable immediately. Only fill an empty model;
+    // never overwrite a deliberate per-bot choice.
+    var providerId = bot['chat_model']?.toString().trim() ?? '';
+    if (providerId.isEmpty) {
+      final providers = await db.queryChatProviders();
+      if (providers.isEmpty) return {'error': '未配置引擎中枢，请先在 API 设置中添加模型'};
+      providerId = providers.first['id']?.toString() ?? '';
+      if (providerId.isEmpty) return {'error': '模型配置无效，请检查 API 设置'};
+      await db.updateBot(botId, {'chat_model': providerId});
     }
     // 优先用统一的聊天链路读取，兼容 API 设置页的 provider_list
-    final provider = await db.getChatProviderById(providerId.toString());
+    final provider = await db.getChatProviderById(providerId);
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
     // 模型名：优先用 provider['model']（多个逗号分隔取第一个），否则退回 name 最后一段
     String modelName = (provider['model'] as String? ?? '').trim();
@@ -145,7 +152,14 @@ class AIManager {
         .map((m) => m['content']?.toString().trim() ?? '')
         .where((content) => content.isNotEmpty)
         .join('\n');
+    final toolContext = await _buildToolContext(db);
+    final searchSources = await _searchIfAuthorized(db, text);
+    final searchContext = searchSources.isEmpty
+        ? ''
+        : '\n【本次联网搜索结果】\n${searchSources.map((s) => '- ${s['title']}: ${s['snippet']} (${s['url']})').join('\n')}\n请仅依据上述结果回答，并在结尾保留来源卡片。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        toolContext +
+        searchContext +
         (memoryContext.isEmpty ? '' : '\n【已整理的中期记忆，仅在相关时参考】\n$memoryContext');
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
@@ -161,8 +175,11 @@ class AIManager {
           historyMessages.isNotEmpty) {
         break;
       }
-      historyMessages.add({'role': msg['role'], 'content': content});
-      usedChars += content.length;
+      final stampedContent = timeAware
+          ? '[发送时间：${_formatMessageTime(msg['timestamp'])}] $content'
+          : content;
+      historyMessages.add({'role': msg['role'], 'content': stampedContent});
+      usedChars += stampedContent.length;
     }
     messages.addAll(historyMessages.reversed);
     var lastIsCurrentUser = false;
@@ -350,6 +367,26 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
+        final generatedImagePath = await _generateImageIfAuthorized(
+          db: db,
+          botId: botId,
+          prompt: text,
+        );
+        Map<String, dynamic>? sticker;
+        if (persistResponse &&
+            await db.getKV('bot_stickers_enabled') == 'true') {
+          final chance =
+              (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 50)
+                  .clamp(1, 100);
+          if (Random().nextInt(100) < chance) {
+            final candidates = await db.queryStickers(emotion: mood);
+            final available =
+                candidates.isEmpty ? await db.queryStickers() : candidates;
+            if (available.isNotEmpty) {
+              sticker = available[Random().nextInt(available.length)];
+            }
+          }
+        }
         if (persistResponse) {
           await db.insertChatMessage({
             'id': msgId,
@@ -359,6 +396,8 @@ class AIManager {
             'content': replyText,
             'file_path': null,
             'mood': mood,
+            'sources_json':
+                searchSources.isEmpty ? null : jsonEncode(searchSources),
             'timestamp': ts + 1
           });
           // 聊天请求可能在等待模型期间进入后台。仅在用户已开启通知且
@@ -381,6 +420,32 @@ class AIManager {
             // 通知权限或厂商系统限制不应影响已成功落库的聊天回复。
           }
 
+          if (generatedImagePath != null) {
+            await db.insertChatMessage({
+              'id': 'msg_i_${ts + 2}',
+              'bot_id': botId,
+              'role': 'assistant',
+              'type': 'image',
+              'content': '',
+              'file_path': generatedImagePath,
+              'mood': mood,
+              'timestamp': ts + 2,
+            });
+          }
+
+          if (sticker != null) {
+            await db.insertChatMessage({
+              'id': 'msg_s_${ts + 3}',
+              'bot_id': botId,
+              'role': 'assistant',
+              'type': 'sticker',
+              'content': sticker['emotion']?.toString() ?? '',
+              'file_path': sticker['file_path']?.toString(),
+              'mood': mood,
+              'timestamp': ts + 2,
+            });
+          }
+
           final ttsModel = bot['tts_model'];
           if (ttsModel != null && ttsModel.toString().isNotEmpty) {
             // fire-and-forget：后台生成语音，成功后单独把该气泡升级为 audio 类型（replace 覆盖同 id）
@@ -397,6 +462,9 @@ class AIManager {
                     'content': replyText,
                     'file_path': audioPath,
                     'mood': mood,
+                    'sources_json': searchSources.isEmpty
+                        ? null
+                        : jsonEncode(searchSources),
                     'timestamp': ts + 1,
                   });
                 } catch (_) {}
@@ -404,7 +472,14 @@ class AIManager {
             }());
           }
         }
-        return {'success': true, 'reply': replyText, 'message_id': msgId};
+        return {
+          'success': true,
+          'reply': replyText,
+          'message_id': msgId,
+          if (searchSources.isNotEmpty) 'sources': searchSources,
+          if (generatedImagePath != null) 'image_path': generatedImagePath,
+          if (sticker != null) 'sticker': sticker,
+        };
       } else {
         final detail = errorBody.replaceAll(RegExp(r'\s+'), ' ').trim();
         print(
@@ -726,6 +801,13 @@ class AIManager {
     }
   }
 
+  String _formatMessageTime(dynamic raw) {
+    final millis = raw is int ? raw : int.tryParse(raw?.toString() ?? '') ?? 0;
+    final value = DateTime.fromMillisecondsSinceEpoch(millis);
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${value.year}-${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+  }
+
   // 空间广场：今日一言生成逻辑
   Future<String> getDailyQuote(String botId) async {
     final db = DBManager();
@@ -743,7 +825,8 @@ class AIManager {
     // 暗中调用 AI 引擎生成，但不暴露在聊天历史中
     final res = await sendMessage(
         botId: botId,
-        text: "请结合你的人设，生成一句今天的早安问候或感悟，字数严格在10到15字，不要废话，不要包含[心情]标签。");
+        text:
+            '请结合你的人设，生成一句全天通用的「今日一言」，字数严格在10到15字。它会贯穿整天展示：禁止早安、午安、晚安、早晨/中午/晚上等时间词，禁止问候和提醒当前时间，不要包含[心情]标签。');
     if (res['success'] == true) {
       final quote = res['reply']?.toString().trim() ?? '';
       // sendMessage persists its assistant reply. Remove only that generated
@@ -801,6 +884,207 @@ class AIManager {
       return result['delay'] as int;
     }
     throw Exception(result['error'] ?? '连接失败');
+  }
+
+  bool _needsWebSearch(String text) {
+    const cues = [
+      '搜索',
+      '查一下',
+      '查找',
+      '联网',
+      '最新',
+      '新闻',
+      '实时',
+      '今天',
+      '天气',
+      '汇率',
+      '价格',
+      '股价',
+      '比赛结果'
+    ];
+    return cues.any(text.contains);
+  }
+
+  Future<List<Map<String, String>>> _searchIfAuthorized(
+      DBManager db, String query) async {
+    if (!_needsWebSearch(query) ||
+        await db.getKV('web_search_enabled') != 'true') return [];
+    final apiKey = (await db.getKV('web_search_api_key') ?? '').trim();
+    if (apiKey.isEmpty) return [];
+    final provider = await db.getKV('web_search_provider') ?? 'Tavily';
+    try {
+      late final http.Response response;
+      if (provider == 'Tavily') {
+        response = await http
+            .post(
+              Uri.parse('https://api.tavily.com/search'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(
+                  {'api_key': apiKey, 'query': query, 'max_results': 5}),
+            )
+            .timeout(const Duration(seconds: 15));
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        return _searchRows(body['results']);
+      }
+      if (provider == '博查 Bocha') {
+        response = await http
+            .post(
+              Uri.parse('https://api.bochaai.com/v1/web-search'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $apiKey'
+              },
+              body: jsonEncode({'query': query, 'count': 5}),
+            )
+            .timeout(const Duration(seconds: 15));
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        return _searchRows(
+            body['data']?['webPages']?['value'] ?? body['data']?['value']);
+      }
+      if (provider == 'Serper') {
+        response = await http
+            .post(
+              Uri.parse('https://google.serper.dev/search'),
+              headers: {
+                'Content-Type': 'application/json',
+                'X-API-KEY': apiKey
+              },
+              body: jsonEncode({'q': query, 'num': 5}),
+            )
+            .timeout(const Duration(seconds: 15));
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        return _searchRows(body['organic']);
+      }
+      if (provider == 'Brave Search') {
+        response = await http.get(
+          Uri.parse(
+              'https://api.search.brave.com/res/v1/web/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
+          headers: {
+            'Accept': 'application/json',
+            'X-Subscription-Token': apiKey
+          },
+        ).timeout(const Duration(seconds: 15));
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        return _searchRows(body['web']?['results']);
+      }
+      response = await http.get(
+        Uri.parse(
+            'https://api.bing.microsoft.com/v7.0/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
+        headers: {'Ocp-Apim-Subscription-Key': apiKey},
+      ).timeout(const Duration(seconds: 15));
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      return _searchRows(body['webPages']?['value']);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  List<Map<String, String>> _searchRows(dynamic rows) {
+    if (rows is! List) return [];
+    return rows
+        .map((raw) {
+          final row = raw is Map ? raw : const <String, dynamic>{};
+          return <String, String>{
+            'title':
+                row['title']?.toString() ?? row['name']?.toString() ?? '网页来源',
+            'url': row['url']?.toString() ?? row['link']?.toString() ?? '',
+            'snippet': row['content']?.toString() ??
+                row['snippet']?.toString() ??
+                row['description']?.toString() ??
+                '',
+          };
+        })
+        .where((row) => row['url']!.startsWith('http'))
+        .toList();
+  }
+
+  bool _needsImageGeneration(String text) {
+    const cues = ['生成图片', '生成一张图', '画一张', '画个', '帮我画', '生图', '画图', '绘制'];
+    return cues.any(text.contains);
+  }
+
+  Future<String?> _generateImageIfAuthorized({
+    required DBManager db,
+    required String botId,
+    required String prompt,
+  }) async {
+    if (!_needsImageGeneration(prompt) ||
+        await db.getKV('bot_image_generation_enabled') == 'false') return null;
+    final prefs = await SharedPreferences.getInstance();
+    final imageModelId =
+        (prefs.getString('image_gen_model_$botId') ?? '').trim();
+    if (imageModelId.isEmpty) return null;
+    final provider = await db.getChatProviderById(imageModelId);
+    if (provider == null) return null;
+    final baseUrl = (provider['base_url']?.toString() ?? '')
+        .replaceFirst(RegExp(r'/+$'), '');
+    if (baseUrl.isEmpty) return null;
+    final style = await db.getKV('bot_image_style') ?? '写实';
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/images/generations'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}'
+            },
+            body: jsonEncode({
+              'model': provider['model'],
+              'prompt': '$prompt。画面风格：$style。',
+              'n': 1,
+              'size': '1024x1024'
+            }),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      final data = body['data'];
+      if (data is! List || data.isEmpty) return null;
+      final item = data.first;
+      final directory = await getApplicationDocumentsDirectory();
+      final path =
+          '${directory.path}/tide_image_${DateTime.now().millisecondsSinceEpoch}.png';
+      final b64 = item['b64_json']?.toString();
+      if (b64 != null && b64.isNotEmpty) {
+        await File(path).writeAsBytes(base64Decode(b64));
+        return path;
+      }
+      final url = item['url']?.toString() ?? '';
+      if (url.startsWith('http')) {
+        final file =
+            await http.get(Uri.parse(url)).timeout(const Duration(seconds: 45));
+        if (file.statusCode == 200) {
+          await File(path).writeAsBytes(file.bodyBytes);
+          return path;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<String> _buildToolContext(DBManager db) async {
+    final parts = <String>[];
+    if (await db.getKV('bot_image_generation_enabled') != 'false') {
+      final style = await db.getKV('bot_image_style') ?? '写实';
+      parts.add(
+          '【已授权工具：生图】当用户明确需要图片时，可建议使用生图；所有图片必须采用“$style”风格。不要声称已生成不存在的图片。');
+    }
+    if (await db.getKV('web_search_enabled') == 'true') {
+      final provider = await db.getKV('web_search_provider') ?? 'Tavily';
+      final hasKey = (await db.getKV('web_search_api_key') ?? '').isNotEmpty;
+      if (hasKey) {
+        parts.add(
+            '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索后必须附可点击来源；不要编造搜索结果。');
+      }
+    }
+    if (await db.getKV('bot_stickers_enabled') == 'true') {
+      final emotions = await db.stickerEmotions();
+      if (emotions.isNotEmpty) {
+        parts.add(
+            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。仅在对话情绪适配时可请求客户端发送其中一种，不能虚构素材。');
+      }
+    }
+    return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }
 
   // 构建核心防御护栏与游戏机制注入

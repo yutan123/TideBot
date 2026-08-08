@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'theme.dart';
 
+/// Quiet daily visual transition with no logo, product copy or call to action.
 class DailyLaunchAnimation extends StatefulWidget {
   final Widget child;
   const DailyLaunchAnimation({super.key, required this.child});
@@ -16,8 +17,6 @@ class DailyLaunchAnimation extends StatefulWidget {
 class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  late final Animation<double> _logoScale;
-  late final Animation<double> _logoOpacity;
   Timer? _timer;
   bool _visible = false;
 
@@ -26,29 +25,25 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2400),
+      duration: const Duration(milliseconds: 1800),
     );
-    _logoScale = Tween<double>(begin: 0.72, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    );
-    _logoOpacity = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
     _prepare();
   }
 
   Future<void> _prepare() async {
     final prefs = await SharedPreferences.getInstance();
-    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
     if (prefs.getString('launch_animation_date') == today) return;
     await prefs.setString('launch_animation_date', today);
     if (!mounted) return;
     setState(() => _visible = true);
     _controller.forward();
-    _timer = Timer(const Duration(milliseconds: 2500), _dismiss);
+    _timer = Timer(const Duration(milliseconds: 1900), _dismiss);
   }
 
   void _dismiss() {
-    if (!mounted || !_visible) return;
-    setState(() => _visible = false);
+    if (mounted && _visible) setState(() => _visible = false);
   }
 
   @override
@@ -67,61 +62,94 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
         widget.child,
         if (_visible)
           Material(
-            color: theme.bgColor,
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  Center(
-                    child: FadeTransition(
-                      opacity: _logoOpacity,
-                      child: ScaleTransition(
-                        scale: _logoScale,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 88,
-                              height: 88,
-                              decoration: BoxDecoration(
-                                color: theme.surfaceVariant,
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              child: Icon(Icons.auto_awesome_rounded,
-                                  size: 40, color: theme.primary),
+            color: theme.isDark ? Colors.black : Colors.white,
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                final progress =
+                    Curves.easeInOutCubic.transform(_controller.value);
+                final disappearing =
+                    (1 - ((progress - .66) / .34)).clamp(0.0, 1.0);
+                return Stack(
+                  children: [
+                    _Glow(
+                      alignment: Alignment(-.75 + progress * .6, -.45),
+                      radius: 160 + progress * 120,
+                      color: theme.primary
+                          .withValues(alpha: theme.isDark ? .22 : .14),
+                    ),
+                    _Glow(
+                      alignment: Alignment(.85 - progress * .8, .55),
+                      radius: 130 + progress * 150,
+                      color: theme.primaryLight
+                          .withValues(alpha: theme.isDark ? .18 : .12),
+                    ),
+                    Center(
+                      child: Opacity(
+                        opacity: disappearing,
+                        child: SizedBox(
+                          width: 112,
+                          height: 112,
+                          child: CustomPaint(
+                            painter: _RipplePainter(
+                              progress: progress,
+                              color: theme.primary
+                                  .withValues(alpha: theme.isDark ? .65 : .42),
                             ),
-                            const SizedBox(height: 18),
-                            Text('正在整理今天的陪伴',
-                                style: TextStyle(
-                                    color: theme.textStrong,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.w700,
-                                    fontFamily: 'TideFont')),
-                            const SizedBox(height: 8),
-                            Text('愿你今天也被温柔对待',
-                                style: TextStyle(
-                                    color: theme.textWeak,
-                                    fontSize: 13,
-                                    fontFamily: 'TideFont')),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  Positioned(
-                    top: 10,
-                    right: 12,
-                    child: TextButton(
-                      onPressed: _dismiss,
-                      child: Text('跳过',
-                          style: TextStyle(
-                              color: theme.textWeak, fontFamily: 'TideFont')),
-                    ),
-                  ),
-                ],
-              ),
+                  ],
+                );
+              },
             ),
           ),
       ],
     );
   }
+}
+
+class _Glow extends StatelessWidget {
+  final Alignment alignment;
+  final double radius;
+  final Color color;
+  const _Glow(
+      {required this.alignment, required this.radius, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: alignment,
+        child: Container(
+          width: radius,
+          height: radius,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(colors: [color, Colors.transparent]),
+          ),
+        ),
+      );
+}
+
+class _RipplePainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  const _RipplePainter({required this.progress, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    for (var i = 0; i < 3; i++) {
+      final phase = (progress + i / 3) % 1.0;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3
+        ..color = color.withValues(alpha: (1 - phase) * .55);
+      canvas.drawCircle(center, 16 + phase * size.width * .42, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RipplePainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }

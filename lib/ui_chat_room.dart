@@ -12,6 +12,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
@@ -101,6 +102,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
+    _streamDisplayTimer?.cancel();
     _msgC.removeListener(_msgChanged);
     _msgC.dispose();
     _scrollC.dispose();
@@ -185,6 +187,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
   }
 
+  Timer? _streamDisplayTimer;
+
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
@@ -257,7 +261,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               '')
           .trim();
       if (cm.isEmpty && localModelId.isEmpty) {
-        throw StateError('未选择聊天模型，请在聊天设置中选择远程模型或本地 GGUF 后再发送');
+        final providers = await DBManager().queryChatProviders();
+        if (providers.isEmpty) {
+          throw StateError('未配置聊天模型，请在 API 设置中添加远程模型或选择本地 GGUF 后再发送');
+        }
       }
 
       final documentNotice = document == null
@@ -288,6 +295,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final streamEnabled =
           (await DBManager().getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
+      var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
@@ -297,6 +305,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'content': '',
           'timestamp': DateTime.now().millisecondsSinceEpoch,
         };
+        final speed =
+            (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
+                    50)
+                .clamp(1, 100);
+        final interval = Duration(milliseconds: 30 + ((100 - speed) * 7));
+        final batch = (1 + speed ~/ 18).clamp(1, 6);
+        _streamDisplayTimer?.cancel();
+        final displayMessage = streamingMessage;
+        _streamDisplayTimer = Timer.periodic(interval, (_) {
+          if (!mounted || pendingDisplay.isEmpty) return;
+          final take =
+              pendingDisplay.length < batch ? pendingDisplay.length : batch;
+          final chunk = pendingDisplay.substring(0, take);
+          pendingDisplay = pendingDisplay.substring(take);
+          setState(() =>
+              displayMessage['content'] = '${displayMessage['content']}$chunk');
+          _scrollDown();
+        });
         setState(() => _msgs.add(streamingMessage!));
       }
       // First local GGUF load and CPU generation can legitimately take longer
@@ -313,15 +339,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             onDelta: streamingMessage == null
                 ? null
                 : (delta) {
-                    if (!mounted) return;
-                    setState(() {
-                      streamingMessage!['content'] =
-                          '${streamingMessage['content']}$delta';
-                    });
-                    _scrollDown();
+                    pendingDisplay += delta;
                   },
           )
           .timeout(requestTimeout);
+
+      _streamDisplayTimer?.cancel();
+      _streamDisplayTimer = null;
+      if (streamingMessage != null && pendingDisplay.isNotEmpty && mounted) {
+        final displayMessage = streamingMessage;
+        setState(() {
+          displayMessage['content'] =
+              '${displayMessage['content']}$pendingDisplay';
+          pendingDisplay = '';
+        });
+      }
 
       if (result['success'] != true) {
         if (streamingMessage != null && mounted) {
@@ -355,6 +387,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         'bot_id': botId,
         'role': 'assistant',
         'content': content,
+        'sources_json':
+            result['sources'] == null ? null : jsonEncode(result['sources']),
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
@@ -370,6 +404,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           });
         } else {
           setState(() => _msgs.add(aiMsg));
+        }
+        final imagePath = result['image_path']?.toString();
+        if (imagePath?.isNotEmpty == true) {
+          setState(() => _msgs.add({
+                'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'image',
+                'content': '',
+                'file_path': imagePath,
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+              }));
+        }
+        final sticker = result['sticker'];
+        if (sticker is Map) {
+          setState(() => _msgs.add({
+                'id': 'sticker_${DateTime.now().millisecondsSinceEpoch}',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'sticker',
+                'content': sticker['emotion']?.toString() ?? '',
+                'file_path': sticker['file_path']?.toString(),
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+              }));
         }
       }
     } catch (e, st) {
@@ -1722,8 +1780,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final isUser = m['role'] == 'user';
         // 内存消息使用 image/audio；数据库历史使用 type/file_path，统一兼容两种来源。
         final filePath = m['file_path']?.toString();
-        final imagePath =
-            m['image']?.toString() ?? (m['type'] == 'image' ? filePath : null);
+        final imagePath = m['image']?.toString() ??
+            ((m['type'] == 'image' || m['type'] == 'sticker')
+                ? filePath
+                : null);
         final audioPath =
             m['audio']?.toString() ?? (m['type'] == 'audio' ? filePath : null);
         final documentPath = m['type'] == 'document' ? filePath : null;
@@ -1736,6 +1796,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
         final txt = (m['content'] as String?) ?? '';
         final replyId = m['reply_to_id']?.toString();
+        final sources = _decodeSources(m['sources_json']);
         final ts = m['timestamp'] as int? ?? 0;
 
         return GestureDetector(
@@ -1850,6 +1911,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           // 普通文字气泡
                           if (!hasAudio && txt.isNotEmpty)
                             _parseText(txt, isUser),
+                          if (sources.isNotEmpty) _sourceCards(sources),
                           if (_showMessageTime)
                             Padding(
                                 padding: const EdgeInsets.only(top: 2),
@@ -1866,6 +1928,59 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       },
     );
   }
+
+  List<Map<String, String>> _decodeSources(dynamic raw) {
+    if (raw == null || raw.toString().isEmpty) return [];
+    try {
+      final values = jsonDecode(raw.toString());
+      if (values is! List) return [];
+      return values
+          .whereType<Map>()
+          .map((item) => <String, String>{
+                'title': item['title']?.toString() ?? '网页来源',
+                'url': item['url']?.toString() ?? '',
+              })
+          .where((item) => item['url']!.startsWith('http'))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Widget _sourceCards(List<Map<String, String>> sources) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('参考来源',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: TideTheme.of(context).textFaint,
+                    fontFamily: 'TideFont')),
+            ...sources.take(3).map((source) => InkWell(
+                  onTap: () => launchUrl(Uri.parse(source['url']!),
+                      mode: LaunchMode.externalApplication),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(children: [
+                      Icon(Icons.open_in_new_rounded,
+                          size: 14, color: TideTheme.of(context).primary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                          child: Text(source['title']!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: TideTheme.of(context).primary,
+                                  fontFamily: 'TideFont'))),
+                    ]),
+                  ),
+                )),
+          ],
+        ),
+      );
 
 // 音频时长由播放器进度组件统一显示。
 

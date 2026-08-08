@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -26,6 +27,8 @@ class _SpacePageState extends State<SpacePage> {
   List<Map<String, dynamic>> _schedules = [];
   List<Map<String, dynamic>> _memories = [];
   bool _loading = true;
+  Timer? _memoryTimer;
+  int _memoryIndex = 0;
   final Map<String, IconData> _moodIcons = {
     'smile': Icons.sentiment_satisfied_rounded,
     'heart': Icons.favorite_rounded,
@@ -39,6 +42,17 @@ class _SpacePageState extends State<SpacePage> {
   void initState() {
     super.initState();
     _loadData();
+    _memoryTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
+      if (mounted && _memories.length > 1) {
+        setState(() => _memoryIndex = (_memoryIndex + 1) % _memories.length);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _memoryTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -59,16 +73,19 @@ class _SpacePageState extends State<SpacePage> {
       _botName = b['name'] as String? ?? '';
       _dailyQuote = b['daily_quote'] as String? ?? '';
       final created = b['created_at'];
-      if (created is int) {
-        _daysSince = DateTime.now()
-            .difference(DateTime.fromMillisecondsSinceEpoch(created))
-            .inDays;
-      } else if (created is String && created.isNotEmpty)
-        _daysSince = DateTime.now()
-            .difference(DateTime.tryParse(created) ?? DateTime.now())
-            .inDays;
+      final createdMillis = created is num
+          ? created.toInt()
+          : int.tryParse(created?.toString() ?? '');
+      final metAt = createdMillis != null
+          ? DateTime.fromMillisecondsSinceEpoch(createdMillis)
+          : DateTime.tryParse(created?.toString() ?? '') ?? DateTime.now();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final metDate = DateTime(metAt.year, metAt.month, metAt.day);
+      _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
       final sch = await db.querySchedules(_botId, limit: 3);
-      final mem = await db.queryMemories(_botId, type: 'medium', limit: 3);
+      final mem = await db.queryMemories(_botId, type: 'medium', limit: 50);
+      if (_memoryIndex >= mem.length) _memoryIndex = 0;
       final messages = await db.queryMessages(_botId, limit: 30);
       final latestMood = messages.reversed.firstWhere(
         (m) =>
@@ -243,23 +260,38 @@ class _SpacePageState extends State<SpacePage> {
                                     color: theme.textFaint,
                                     fontFamily: 'TideFont'))
                           else
-                            SizedBox(
-                                height: 176,
-                                child: ListView.builder(
-                                  scrollDirection: Axis.horizontal,
-                                  itemCount: _memories.length,
-                                  itemBuilder: (_, index) => SizedBox(
-                                      width: 240,
-                                      child: Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 10),
-                                        child: BouncyTap(
-                                            onTap: () => _showMemoryDetail(
-                                                _memories[index]),
-                                            child: _buildMemoryCard(
-                                                _memories[index])),
-                                      )),
-                                )),
+                            BouncyTap(
+                              onTap: () =>
+                                  _showMemoryDetail(_memories[_memoryIndex]),
+                              child: SizedBox(
+                                height: 154,
+                                child: ClipRect(
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 480),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    switchOutCurve: Curves.easeInCubic,
+                                    transitionBuilder: (child, animation) {
+                                      final isIncoming = child.key ==
+                                          ValueKey(
+                                              _memories[_memoryIndex]['id']);
+                                      final offset = Tween<Offset>(
+                                        begin: isIncoming
+                                            ? const Offset(0, .75)
+                                            : const Offset(0, -.75),
+                                        end: Offset.zero,
+                                      ).animate(animation);
+                                      return SlideTransition(
+                                          position: offset, child: child);
+                                    },
+                                    child: _buildMemoryCard(
+                                      _memories[_memoryIndex],
+                                      key: ValueKey(
+                                          _memories[_memoryIndex]['id']),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ])),
         ));
@@ -432,28 +464,33 @@ class _SpacePageState extends State<SpacePage> {
                     color: theme.textWeak,
                     fontFamily: 'TideFont'))
           ]));
-  Widget _buildMemoryCard(Map<String, dynamic> m) {
+  Widget _buildMemoryCard(Map<String, dynamic> m, {Key? key}) {
     final theme = TideTheme.of(context);
-    return FrostCard(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(m['title'] ?? '',
-              style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: theme.textStrong,
-                  fontFamily: 'TideFont')),
-          const SizedBox(height: 4),
-          Text(m['content'] ?? '',
-              style: TextStyle(fontSize: 13, color: theme.textStrong),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 6),
-          Text(formatTime(m['created_at']),
-              style: TextStyle(
-                  fontSize: 11, color: theme.textFaint, fontFamily: 'TideFont'))
-        ]));
+    return KeyedSubtree(
+        key: key,
+        child: FrostCard(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(14),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(m['title'] ?? '',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 4),
+              Text(m['content'] ?? '',
+                  style: TextStyle(fontSize: 13, color: theme.textStrong),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 6),
+              Text(formatTime(m['created_at']),
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: theme.textFaint,
+                      fontFamily: 'TideFont'))
+            ])));
   }
 }
 
