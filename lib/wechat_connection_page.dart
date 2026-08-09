@@ -342,7 +342,7 @@ class _WeChatConnectionPageState extends State<WeChatConnectionPage> {
                             fontFamily: 'TideFont'))),
               const SizedBox(height: 18),
               Text(
-                  '说明：通过 OpenClaw 微信插件完成二维码绑定，仅支持私聊。微信消息会交由已选机器人使用 TideBot 的模型配置处理，回复和聊天记录会同步到本应用。',
+                  '说明：微信桥接通过一个桥接服务完成二维码绑定（仅支持私聊）。若把桥接地址填为本机地址（如 http://127.0.0.1:8200），则桥接服务在本机/本机局域网内运行，微信数据全程不出本地网络；接入远程桥接时才会走外部服务。微信消息会交由已选机器人使用 TideBot 的模型配置处理，回复和聊天记录会同步到本应用。',
                   style: TextStyle(
                       color: theme.textWeak,
                       height: 1.6,
@@ -384,7 +384,7 @@ class _BridgeUrlTileState extends State<_BridgeUrlTile> {
           controller: ctrl,
           keyboardType: TextInputType.url,
           decoration: const InputDecoration(
-              hintText: 'http://192.168.1.100:8200',
+              hintText: 'http://127.0.0.1:8200',
               hintStyle: TextStyle(fontFamily: 'TideFont')),
         ),
         actions: [

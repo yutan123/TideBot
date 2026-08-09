@@ -1023,6 +1023,19 @@ class AIManager {
       final baseUrl = (provider['base_url']?.toString().trim() ?? '')
           .replaceFirst(RegExp(r'/+$'), '');
       if (baseUrl.isEmpty) return;
+      // 把所有已存的"日记"条目一并取回，连同新出现的聊天内容一起交给模型改写合并，
+      // 让模型基于"已有记忆 + 新信息"输出一套全新的完整日记，而不是只按新聊天增量新增。
+      final existingMemories = await db.queryMemories(botId, type: 'medium');
+      final existingText = existingMemories.isEmpty
+          ? '（目前还没有任何日记）'
+          : existingMemories
+              .map((m) => (m['content']?.toString() ?? '').trim())
+              .where((c) => c.isNotEmpty)
+              .join('\n');
+      final userPayload = '【已有的日记】\n'
+          '$existingText\n\n'
+          '【新发生的聊天内容】\n'
+          '$transcript';
       // 以 JSON 数组形式返回"第一人称日记条目"，杜绝把一段长总结当一个记忆。
       final response = await http
           .post(
@@ -1036,19 +1049,20 @@ class AIManager {
               'messages': [
                 {
                   'role': 'system',
-                  'content':
-                      '下面的聊天内容中，请以机器人的第一人称（用"我"）把值得在未来记住的真实事件、用户提供的事实、关系进展、未完成事项，拆成独立短句形式的一条条"日记"。要求：\n'
-                          '1. 直接输出一个 JSON 字符串数组，数组元素是字符串，例如 ["我记得用户的生日是5月20日", "用户最近在准备面试，我给他打气"]。\n'
-                          '2. 每条都是独立条目，不要合并成长文，也不要给任何一条加标题或编号。\n'
-                          '3. 用第一人称书写，不要用"本次对话""讨论""用户说"这类转述口吻总结聊天过程。\n'
-                          '4. 不编造，不写心情标签。若没有值得记住的新信息，输出 []。',
+                  'content': '你是一个机器人，正在维护自己的"日记"（记忆库）。已有的日记里记录了过去的真实事件与感受，新发生的聊天内容里可能有新的值得记住的信息。'
+                      '请以机器人的第一人称（用"我"）把【已有日记】和【新发生的聊天内容】合并整理成一份全新的完整日记。要求：\n'
+                      '1. 直接输出一个 JSON 字符串数组，数组元素是字符串，例如 ["我记得用户的生日是5月20日", "用户最近在准备面试，我给他打气"]。\n'
+                      '2. 每条都是独立条目，不要合并成长文，也不要给任何一条加标题或编号。\n'
+                      '3. 保留已有日记里仍然成立的事实（可改写得更简洁、合并重复项），补充新聊天中值得记住的新内容，删除已过时或不再需要的信息。\n'
+                      '4. 用第一人称书写，不要用"本次对话""讨论""用户说"这类转述口吻总结聊天过程。\n'
+                      '5. 不编造，不写心情标签。若没有任何值得记住的信息，输出 []。',
                 },
-                {'role': 'user', 'content': transcript},
+                {'role': 'user', 'content': userPayload},
               ],
-              'max_tokens': 800,
+              'max_tokens': 1200,
             }),
           )
-          .timeout(const Duration(seconds: 40));
+          .timeout(const Duration(seconds: 50));
       if (response.statusCode != 200) return;
       String bodyText = utf8.decode(response.bodyBytes).trim();
       // 兼容模型把 JSON 包在 ```json ... ``` 代码块里的情况。
@@ -1061,23 +1075,29 @@ class AIManager {
       if (arrayStart < 0 || arrayEnd <= arrayStart) return;
       final List<dynamic> entries =
           jsonDecode(bodyText.substring(arrayStart, arrayEnd + 1));
+      final newEntries = entries
+          .map((e) => e?.toString().trim() ?? '')
+          .where((c) => c.isNotEmpty)
+          .toList();
+      if (newEntries.isEmpty) return;
+      // 先删除旧的 medium 日记，再用模型改写合并后的完整集合整体替换落库，
+      // 避免日记在反复总结下无限膨胀。
+      for (final old in existingMemories) {
+        final id = old['id']?.toString();
+        if (id != null && id.isNotEmpty) await db.deleteMemory(id);
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
-      var idx = 0;
-      for (final entry in entries) {
-        final content = entry?.toString().trim() ?? '';
-        if (content.isEmpty) continue;
-        final deltas = now + idx * 1000;
+      for (var idx = 0; idx < newEntries.length; idx++) {
         // 拆成独立、无标题、第一人称的日记条目逐条落库到 medium。
         await db.upsertMemoryItem(
           botId: botId,
           type: 'medium',
           title: '',
-          content: content,
-          timestamp: deltas,
+          content: newEntries[idx],
+          timestamp: now + idx * 1000,
         );
-        idx++;
       }
-      if (idx > 0) await db.setKV(summaryKey, endTimestamp);
+      await db.setKV(summaryKey, endTimestamp);
     } catch (e) {
       print('[memory] auto summary failed: $e');
     }

@@ -6,8 +6,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
@@ -17,6 +15,7 @@ import 'theme.dart';
 import 'data_dashboard.dart';
 import 'sticker_manager_page.dart';
 import 'wechat_connection_page.dart';
+import 'local_model_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -702,7 +701,7 @@ class _ProfilePageState extends State<ProfilePage> {
             controller: ctrl,
             keyboardType: TextInputType.url,
             decoration: InputDecoration(
-              hintText: 'http://192.168.1.100:8200',
+              hintText: 'http://127.0.0.1:8200',
               isDense: true,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -1670,11 +1669,13 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                         horizontal: 12, vertical: 8),
                                     decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(16),
-                                        color: Colors.white
-                                            .withValues(alpha: 0.8)),
+                                        color: TideTheme.of(context)
+                                            .surfaceVariant),
                                     child: Text(p['name']!,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                             fontSize: 13,
+                                            color: TideTheme.of(context)
+                                                .textStrong,
                                             fontFamily: 'TideFont')))))
                             .toList()),
                     const SizedBox(height: 12),
@@ -1718,11 +1719,13 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                         horizontal: 12, vertical: 8),
                                     decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(16),
-                                        color: Colors.white
-                                            .withValues(alpha: 0.8)),
+                                        color: TideTheme.of(context)
+                                            .surfaceVariant),
                                     child: Text(p['name']!,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                             fontSize: 13,
+                                            color: TideTheme.of(context)
+                                                .textStrong,
                                             fontFamily: 'TideFont')))))
                             .toList()),
                     const SizedBox(height: 12),
@@ -2292,9 +2295,10 @@ class _LocalModelPageState extends State<LocalModelPage> {
     {
       'name': 'Phi-3-mini',
       'desc': '微软轻量模型，推理能力强',
-      'size': '~2.2GB',
+      'size': '~2.4GB',
       'id': 'phi3_mini',
-      'url': '',
+      'url':
+          'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
       'installed': false,
       'progress': 0.0,
       'downloading': false
@@ -2323,30 +2327,16 @@ class _LocalModelPageState extends State<LocalModelPage> {
     return received > 0 ? '${_mb(received)} 已下载（服务器未提供总大小）' : '正在连接下载服务器…';
   }
 
-  Future<void> _saveDownloadState(Map<String, dynamic> model) async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = model['id'] as String;
-    await prefs.setInt(
-        'local_model_received_$id', model['receivedBytes'] as int? ?? 0);
-    await prefs.setInt(
-        'local_model_total_$id', model['totalBytes'] as int? ?? 0);
-  }
-
-  Future<void> _clearDownloadState(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('local_model_received_$id');
-    await prefs.remove('local_model_total_$id');
-  }
-
   /// 暂停下载：停止拉取网络流，但保留 .part 文件与进度 KV，可稍后继续（断点续传）。
   Future<void> _pauseModel(int index) async {
     final model = _models[index];
     if (model['downloading'] != true) return;
+    final id = model['id'] as String;
+    // 通过全局服务把下载状态置为暂停；服务仍在单例中持有进度，可随时继续。
+    LocalModelService.instance.downloadingNotifier(id).value = false;
     if (mounted) {
       setState(() => model['downloading'] = false);
     }
-    // 保存当前已接收进度，供下次进入或点击继续时续传。
-    await _saveDownloadState(model);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('已暂停下载，进度已保留，点击「下载」可继续',
@@ -2358,65 +2348,46 @@ class _LocalModelPageState extends State<LocalModelPage> {
   Future<void> _deleteModel(int index) async {
     final model = _models[index];
     final id = model['id'] as String;
-    final dir = await getApplicationDocumentsDirectory();
-    final target = File('${dir.path}/$id.gguf');
-    final part = File('${target.path}.part');
 
-    final confirmed = await TideDialogs.show<bool>(
+    // 删除确认：使用标准 Material AlertDialog，保持与 APP 一致的简洁风格，
+    // 避免玻璃卡片带来的花哨观感（不再有黄色下划线等异常样式）。
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => Center(
-        child: TideDialogs.glassContent(context: dialogContext, children: [
-          Text('删除本地模型',
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        return AlertDialog(
+          backgroundColor: theme.surface,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('删除本地模型',
               style: TextStyle(
-                  color: TideTheme.of(dialogContext).textStrong,
+                  color: theme.textStrong,
                   fontFamily: 'TideFont',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text('确定删除“${model['name']}”及其下载进度吗？',
+                  fontSize: 17)),
+          content: Text('确定删除“${model['name']}”及其下载进度吗？',
               style: TextStyle(
-                  color: TideTheme.of(dialogContext).textWeak,
-                  fontFamily: 'TideFont')),
-          const SizedBox(height: 18),
-          Row(children: [
-            Expanded(
-                child: TideDialogs.glassButton('取消',
-                    color: TideTheme.of(dialogContext).surfaceVariant,
-                    textColor: TideTheme.of(dialogContext).textStrong,
-                    onTap: () => Navigator.pop(dialogContext, false))),
-            const SizedBox(width: 10),
-            Expanded(
-                child: TideDialogs.glassButton('删除',
-                    color: const Color(0xFFE74C3C),
-                    onTap: () => Navigator.pop(dialogContext, true))),
-          ]),
-        ]),
-      ),
+                  color: theme.textWeak, fontFamily: 'TideFont', fontSize: 14)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text('取消',
+                  style:
+                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('删除',
+                  style: TextStyle(
+                      color: Color(0xFFE74C3C), fontFamily: 'TideFont')),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
 
-    // 正在下载时先让流循环失效；网络流关闭后再清理 .part，避免取消后又写回文件。
-    if (model['downloading'] == true && mounted) {
-      setState(() => model['downloading'] = false);
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-    }
-    try {
-      if (await target.exists()) await target.delete();
-      if (await part.exists()) await part.delete();
-    } catch (_) {
-      // Keep cleanup best-effort; state references must still be removed.
-    }
-    await _clearDownloadState(id);
-
-    final prefs = await SharedPreferences.getInstance();
-    for (final key in prefs.getKeys().where(
-          (key) => key.startsWith('local_chat_model_'),
-        )) {
-      if (prefs.getString(key) == id) {
-        await prefs.remove(key);
-      }
-    }
-
+    // 文件清理、下载取消、KV 清理统一交给全局服务，避免与正在运行的下载流竞争。
+    await LocalModelService.instance.deleteModel(id);
     if (!mounted) return;
     setState(() {
       model['installed'] = false;
@@ -2437,28 +2408,31 @@ class _LocalModelPageState extends State<LocalModelPage> {
   }
 
   Future<void> _checkInstalled() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final prefs = await SharedPreferences.getInstance();
+    final service = LocalModelService.instance;
     for (final m in _models) {
       final id = m['id'] as String;
-      final target = File('${dir.path}/$id.gguf');
-      final part = File('${target.path}.part');
-      final installed =
-          await target.exists() && await target.length() > 1024 * 1024;
-      final received = installed
-          ? await target.length()
-          : (await part.exists() ? await part.length() : 0);
-      final savedTotal = prefs.getInt('local_model_total_$id') ?? 0;
-      m['installed'] = installed;
-      m['downloading'] = false;
+      final state = await service.installedState(id);
+      final savedTotal = state['totalBytes'] as int? ?? 0;
+      final received = state['receivedBytes'] as int? ?? 0;
+      m['installed'] = state['installed'];
+      m['downloading'] =
+          service.isDownloading(id) || (state['downloading'] == true);
       // Local-chat selection is scoped to each bot in the chat settings.
       // Do not expose a stale global selection state on the download page.
       m['localSelected'] = false;
-
       m['receivedBytes'] = received;
-      m['totalBytes'] = installed ? received : savedTotal;
-      m['progress'] =
-          savedTotal > 0 ? (received / savedTotal).clamp(0.0, 1.0) : 0.0;
+      m['totalBytes'] = savedTotal;
+      final progress = service.progressNotifier(id).value;
+      if (m['downloading'] == true && progress > 0) {
+        m['progress'] = progress;
+      } else {
+        m['progress'] =
+            savedTotal > 0 ? (received / savedTotal).clamp(0.0, 1.0) : 0.0;
+        // 若服务本就在后台下载，以服务持有进度为准。
+        if (service.isDownloading(id)) {
+          m['progress'] = service.progressNotifier(id).value;
+        }
+      }
     }
     if (mounted) setState(() {});
   }
@@ -2472,147 +2446,48 @@ class _LocalModelPageState extends State<LocalModelPage> {
           behavior: SnackBarBehavior.floating));
       return;
     }
-    final dir = await getApplicationDocumentsDirectory();
     final id = m['id'] as String;
-    final target = File('${dir.path}/$id.gguf');
-    final part = File('${target.path}.part');
-    var existing = await part.exists() ? await part.length() : 0;
     if (mounted) {
-      setState(() {
-        m['downloading'] = true;
-        m['receivedBytes'] = existing;
-      });
+      setState(() => m['downloading'] = true);
     }
-
-    final client = http.Client();
-    IOSink? sink;
-    try {
-      final routes = <String>[
-        url,
-        url.replaceFirst('https://huggingface.co/', 'https://hf-mirror.com/'),
-        url.replaceFirst('https://huggingface.co/', 'https://hf.co/'),
-      ];
-      http.StreamedResponse? response;
-      final errors = <String>[];
-      for (final route in routes.take(3)) {
-        for (var attempt = 1; attempt <= 3 && response == null; attempt++) {
-          try {
-            final request = http.Request('GET', Uri.parse(route));
-            if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
-            final candidate =
-                await client.send(request).timeout(const Duration(minutes: 20));
-            if (candidate.statusCode == 200 || candidate.statusCode == 206) {
-              response = candidate;
-            } else {
-              errors.add('$route 第$attempt次 HTTP ${candidate.statusCode}');
-              await candidate.stream.drain();
-            }
-          } catch (e) {
-            errors.add('$route 第$attempt次 $e');
+    // 实际下载交给全局服务（单例），离开本页也不会中断；进度通过 onState/notifier 回传。
+    await LocalModelService.instance.startDownload(
+      id: id,
+      name: m['name'] as String,
+      url: url,
+      onState: (state) {
+        if (!mounted) return;
+        setState(() {
+          if (state['installed'] == true) {
+            m['installed'] = true;
+            m['downloading'] = false;
+            m['progress'] = 1.0;
+            m['receivedBytes'] = state['receivedBytes'] ?? m['receivedBytes'];
+            m['totalBytes'] = state['receivedBytes'] ?? m['totalBytes'];
+          } else {
+            m['downloading'] = true;
+            m['downloading'] = state['downloading'] == true;
+            m['receivedBytes'] = state['receivedBytes'] ?? m['receivedBytes'];
+            m['totalBytes'] = state['totalBytes'] ?? m['totalBytes'];
+            m['progress'] =
+                LocalModelService.instance.progressNotifier(id).value;
           }
-        }
-        if (response != null) break;
-      }
-      if (response == null) {
-        throw HttpException('三条下载线路均失败（每条已重试三次）：${errors.join('；')}');
-      }
-
-      // A server that ignores Range returns 200. Restart safely instead of
-      // appending a duplicate file.
-      if (existing > 0 && response.statusCode == 200) {
-        await part.delete();
-        existing = 0;
-        final request = http.Request('GET', Uri.parse(url));
-        response =
-            await client.send(request).timeout(const Duration(minutes: 20));
-      }
-      if (response.statusCode != 200 && response.statusCode != 206) {
-        throw HttpException('下载服务器返回 HTTP ${response.statusCode}');
-      }
-
-      final total = response.contentLength == null
-          ? 0
-          : existing + response.contentLength!;
-      sink =
-          part.openWrite(mode: existing > 0 ? FileMode.append : FileMode.write);
-      var received = existing;
-      var lastPersisted = existing;
-      if (mounted) {
-        setState(() {
-          m['receivedBytes'] = received;
-          m['totalBytes'] = total;
-          m['progress'] = total > 0 ? received / total : 0.0;
         });
-      }
-
-      await for (final bytes in response.stream) {
-        // 用户点“取消并删除”后立即停止消费网络流，finally 会关闭客户端。
-        if (m['downloading'] != true) {
-          throw const FileSystemException('下载已取消');
-        }
-        sink.add(bytes);
-        received += bytes.length;
-        if (received - lastPersisted >= 256 * 1024) {
-          lastPersisted = received;
-          m['receivedBytes'] = received;
-          m['totalBytes'] = total;
-          await _saveDownloadState(m);
-          if (mounted) {
-            setState(() => m['progress'] = total > 0 ? received / total : 0.0);
-          }
-        }
-      }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      m['receivedBytes'] = received;
-      m['totalBytes'] = total;
-      await _saveDownloadState(m);
-
-      if (!await part.exists() || await part.length() <= 1024 * 1024) {
-        throw const FileSystemException('下载文件过小，已拒绝标记为已安装');
-      }
-      if (total > 0 && received != total) {
-        throw const FileSystemException('下载不完整，将保留进度以便下次继续');
-      }
-      if (await target.exists()) await target.delete();
-      await part.rename(target.path);
-      await _clearDownloadState(id);
-      if (mounted) {
-        setState(() {
-          m['installed'] = true;
-          m['downloading'] = false;
-          m['progress'] = 1.0;
-          m['receivedBytes'] = received;
-          m['totalBytes'] = received;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${m['name']} 已真实下载到本机',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            backgroundColor: const Color(0xFF34C759),
-            behavior: SnackBarBehavior.floating));
-      }
-    } catch (e) {
-      await sink?.flush();
-      await sink?.close();
-      final cancelled = m['downloading'] != true && e.toString().contains('取消');
-      final received = await part.exists() ? await part.length() : 0;
-      m['receivedBytes'] = received;
-      if (!cancelled) await _saveDownloadState(m);
-      if (mounted && !cancelled) {
-        setState(() {
-          m['downloading'] = false;
-          final total = m['totalBytes'] as int? ?? 0;
-          m['progress'] = total > 0 ? received / total : 0.0;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('下载暂停/失败：$e；已保留 ${_mb(received)}，可稍后继续',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            backgroundColor: const Color(0xFFE74C3C),
-            behavior: SnackBarBehavior.floating));
-      }
-    } finally {
-      client.close();
+      },
+    );
+    if (mounted) {
+      // 结束后再刷新一次，确认安装状态与进度显示准确。
+      final st = await LocalModelService.instance.installedState(id);
+      setState(() {
+        m['installed'] = st['installed'];
+        m['downloading'] = st['downloading'] == true;
+        final received = st['receivedBytes'] as int? ?? 0;
+        final total = st['totalBytes'] as int? ?? 0;
+        m['receivedBytes'] = received;
+        m['totalBytes'] = total;
+        m['progress'] = LocalModelService.instance.progressNotifier(id).value;
+        if (st['installed'] == true) m['progress'] = 1.0;
+      });
     }
   }
 
@@ -2646,133 +2521,149 @@ class _LocalModelPageState extends State<LocalModelPage> {
           }
           final modelIndex = i - 1;
           final m = _models[modelIndex];
-          final installed = m['installed'] == true;
-          final downloading = m['downloading'] == true;
-          return FrostCard(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Row(children: [
-                              Text(m['name'] as String,
-                                  style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      fontFamily: 'TideFont')),
-                              if (installed)
-                                const Padding(
-                                    padding: EdgeInsets.only(left: 8),
-                                    child: Icon(Icons.check_circle,
-                                        size: 18, color: Color(0xFF34C759)))
-                            ]),
-                            const SizedBox(height: 4),
-                            Text('${m['desc']} • ${m['size']}',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textWeak,
-                                    fontFamily: 'TideFont'))
-                          ])),
-                      if (installed)
-                        BouncyTap(
-                            onTap: () => _deleteModel(modelIndex),
-                            child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(14),
-                                    color:
-                                        TideTheme.of(context).surfaceVariant),
-                                child: Text('删除',
-                                    style: TextStyle(
-                                        fontSize: 13,
-                                        color: TideTheme.of(context).textStrong,
-                                        fontFamily: 'TideFont'))))
-                      else
-                        downloading
-                            ? Row(mainAxisSize: MainAxisSize.min, children: [
-                                // 暂停：停止拉取网络流，但保留 .part 与进度 KV，可稍后继续。
-                                BouncyTap(
-                                  onTap: () => _pauseModel(modelIndex),
-                                  child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 8),
-                                      decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                          color: TideTheme.of(context)
-                                              .surfaceVariant),
-                                      child: Text('暂停',
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              color: TideTheme.of(context)
-                                                  .textStrong,
-                                              fontFamily: 'TideFont'))),
-                                ),
-                                const SizedBox(width: 8),
-                                // 删除：清空模型文件、下载进度和相关 KV。
-                                BouncyTap(
-                                  onTap: () => _deleteModel(modelIndex),
-                                  child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 8),
-                                      decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                          color: TideTheme.of(context)
-                                              .surfaceVariant),
-                                      child: Text('删除',
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              color: TideTheme.of(context)
-                                                  .textStrong,
-                                              fontFamily: 'TideFont'))),
-                                ),
-                              ])
-                            : BouncyTap(
-                                onTap: () => _downloadModel(modelIndex),
-                                child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 14, vertical: 8),
-                                    decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(14),
-                                        color: TideTheme.of(context).primary),
-                                    child: const Text('下载',
-                                        style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.white,
-                                            fontFamily: 'TideFont')))),
-                    ]),
-                    if (downloading ||
-                        (!installed && (m['receivedBytes'] as int? ?? 0) > 0))
-                      Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                LinearProgressIndicator(
-                                    value: (m['totalBytes'] as int? ?? 0) > 0
-                                        ? m['progress'] as double
-                                        : null,
-                                    backgroundColor:
-                                        TideTheme.of(context).surfaceVariant,
-                                    color: TideTheme.of(context).primary),
-                                const SizedBox(height: 6),
-                                Text(
-                                    downloading
-                                        ? _progressLabel(m)
-                                        : '${_progressLabel(m)} · 已暂停，点击下载继续',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: TideTheme.of(context).textWeak,
-                                        fontFamily: 'TideFont')),
-                              ])),
-                  ]));
+          final mId = m['id'] as String;
+          final service = LocalModelService.instance;
+          // 订阅全局服务的进度/下载状态，后台下载期间页面在前台也能实时刷新。
+          final listenable = Listenable.merge([
+            service.progressNotifier(mId),
+            service.downloadingNotifier(mId),
+          ]);
+          return AnimatedBuilder(
+              animation: listenable,
+              builder: (ctx, _) {
+                final liveProgress = service.progressNotifier(mId).value;
+                final liveDownloading = service.downloadingNotifier(mId).value;
+                final installed = m['installed'] == true;
+                final downloading = m['downloading'] == true || liveDownloading;
+                if (downloading) m['downloading'] = true;
+                if (liveDownloading) {
+                  m['progress'] = liveProgress;
+                  m['receivedBytes'] = service.receivedBytesOf(mId);
+                  m['totalBytes'] = service.totalBytesOf(mId);
+                }
+                return _buildModelCard(
+                    context, m, modelIndex, installed, downloading);
+              });
         },
       ));
+
+  /// 单个本地模型卡片（纯 UI，字段由调用方注入，便于通过 notifier 实时刷新）。
+  Widget _buildModelCard(BuildContext context, Map<String, dynamic> m,
+      int modelIndex, bool installed, bool downloading) {
+    return FrostCard(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Row(children: [
+                    Text(m['name'] as String,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    if (installed)
+                      const Padding(
+                          padding: EdgeInsets.only(left: 8),
+                          child: Icon(Icons.check_circle,
+                              size: 18, color: Color(0xFF34C759)))
+                  ]),
+                  const SizedBox(height: 4),
+                  Text('${m['desc']} • ${m['size']}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: TideTheme.of(context).textWeak,
+                          fontFamily: 'TideFont'))
+                ])),
+            if (installed)
+              BouncyTap(
+                  onTap: () => _deleteModel(modelIndex),
+                  child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          color: TideTheme.of(context).surfaceVariant),
+                      child: Text('删除',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: TideTheme.of(context).textStrong,
+                              fontFamily: 'TideFont'))))
+            else
+              downloading
+                  ? Row(mainAxisSize: MainAxisSize.min, children: [
+                      // 暂停：停止拉取网络流，但保留 .part 与进度 KV，可稍后继续。
+                      BouncyTap(
+                        onTap: () => _pauseModel(modelIndex),
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                color: TideTheme.of(context).surfaceVariant),
+                            child: Text('暂停',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: TideTheme.of(context).textStrong,
+                                    fontFamily: 'TideFont'))),
+                      ),
+                      const SizedBox(width: 8),
+                      // 删除：清空模型文件、下载进度和相关 KV。
+                      BouncyTap(
+                        onTap: () => _deleteModel(modelIndex),
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                color: TideTheme.of(context).surfaceVariant),
+                            child: Text('删除',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: TideTheme.of(context).textStrong,
+                                    fontFamily: 'TideFont'))),
+                      ),
+                    ])
+                  : BouncyTap(
+                      onTap: () => _downloadModel(modelIndex),
+                      child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              color: TideTheme.of(context).primary),
+                          child: const Text('下载',
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white,
+                                  fontFamily: 'TideFont')))),
+          ]),
+          if (downloading ||
+              (!installed && (m['receivedBytes'] as int? ?? 0) > 0))
+            Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(
+                          value: (m['totalBytes'] as int? ?? 0) > 0
+                              ? m['progress'] as double
+                              : null,
+                          backgroundColor: TideTheme.of(context).surfaceVariant,
+                          color: TideTheme.of(context).primary),
+                      const SizedBox(height: 6),
+                      Text(
+                          downloading
+                              ? _progressLabel(m)
+                              : '${_progressLabel(m)} · 已暂停，点击下载继续',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: TideTheme.of(context).textWeak,
+                              fontFamily: 'TideFont')),
+                    ])),
+        ]));
+  }
 }

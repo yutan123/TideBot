@@ -15,11 +15,16 @@ class LocalLlama {
   Future<LlamaController> _ensureLoaded(String path) async {
     final file = File(path);
     if (!await file.exists()) {
-      throw StateError('本地 GGUF 文件不存在');
+      throw StateError('本地 GGUF 文件不存在，请到「本地模型」页重新下载后再试');
     }
-    if (await file.length() < 1024 * 1024) {
-      throw StateError('本地 GGUF 文件不完整');
+    final size = await file.length();
+    if (size < 1024 * 1024) {
+      throw StateError(
+          '本地 GGUF 文件不完整（仅 ${(size / 1024 / 1024).toStringAsFixed(1)} MB）');
     }
+    // GGUF 魔数校验：所有 llama.cpp 可加载的 GGUF 文件都以 ASCII "GGUF" 开头，
+    // 下载中断/续传拼接错误等导致的损坏文件会在此处被尽早拦截，避免 native 崩溃。
+    await _validateGgufMagic(file);
     if (_controller != null &&
         _path == path &&
         await _controller!.isModelLoaded()) {
@@ -27,26 +32,67 @@ class LocalLlama {
     }
 
     final controller = LlamaController();
-    await controller.loadModel(
-      modelPath: path,
-      threads: 4,
-      contextSize: 2048,
-      gpuLayers: 0,
-    );
-    if (!await controller.isModelLoaded()) {
+    LlamaController? loaded;
+    try {
+      await controller.loadModel(
+        modelPath: path,
+        threads: 2,
+        contextSize: 1024,
+        gpuLayers: 0,
+      );
+      if (!await controller.isModelLoaded()) {
+        throw StateError('GGUF 模型加载回执异常');
+      }
+      loaded = controller;
+    } catch (e) {
       await controller.dispose();
-      throw StateError('GGUF 模型加载失败');
+      // 若文件损坏到 native 无法解析，删除以便用户重新下载；同时给出明确提示。
+      final msg = '本地模型加载失败（$e）。建议删除后在「本地模型」页重新下载。';
+      final magicOk = await _tryReadGgufMagic(file);
+      if (!magicOk) {
+        try {
+          await file.delete();
+        } catch (_) {}
+        throw StateError('$msg 已自动清理损坏文件。');
+      }
+      throw StateError(msg);
     }
 
     final old = _controller;
-    _controller = controller;
+    _controller = loaded;
     _path = path;
     if (old != null) {
       try {
         await old.dispose();
       } catch (_) {}
     }
-    return controller;
+    return loaded;
+  }
+
+  /// 校验 GGUF 头部魔数（"GGUF"），不完整即判定损坏。
+  Future<void> _validateGgufMagic(File file) async {
+    if (!await _tryReadGgufMagic(file)) {
+      throw StateError('GGUF 文件头部损坏或下载不完整，请删除后重新下载。');
+    }
+  }
+
+  /// 尝试读取文件头部 4 字节是否为 "GGUF"。
+  Future<bool> _tryReadGgufMagic(File file) async {
+    try {
+      final raf = await file.open();
+      try {
+        final head = await raf.read(4);
+        return head.length == 4 &&
+            head[0] == 0x47 && // G
+            head[1] == 0x47 && // G
+            head[2] == 0x55 && // U
+            head[3] == 0x46; // F
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<String> generate({

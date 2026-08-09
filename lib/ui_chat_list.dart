@@ -31,7 +31,9 @@ class ChatListPageState extends State<ChatListPage> {
     final bots = await DBManager().queryBots();
     final enriched = <Map<String, dynamic>>[];
     for (var b in bots) {
-      final msgs = await DBManager().queryMessages(b['id'] as String, limit: 1);
+      // 取该机器人「最新」一条消息作聊天列表预览（按时间倒序取首条）。
+      final msgs = await DBManager()
+          .queryMessages(b['id'] as String, limit: 1, descending: true);
       String preview = '';
       int lastTime =
           (b['last_msg_time'] as int?) ?? (b['created_at'] as int?) ?? 0;

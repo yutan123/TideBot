@@ -244,6 +244,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     await Future<void>.delayed(Duration(milliseconds: delayMs));
   }
 
+  /// 流式已把完整文本展示在屏上时，只需按句落库（供重新进入后呈现分段）。
+  /// 此时不再重播放逐句气泡，避免“文字消失再出现”的观感，保证流水输出持续有效。
+  Future<void> _persistSegments(
+    DBManager db,
+    Map<String, dynamic> aiMsg,
+    Map<String, dynamic> result,
+    String content, {
+    bool segmentsDelayed = true,
+  }) async {
+    final segments = _splitReplySegments(content);
+    final baseTimestamp = aiMsg['timestamp'] as int;
+    final botId = _bot['id']?.toString() ?? '';
+    for (var index = 0; index < segments.length; index++) {
+      if (index > 0 && segmentsDelayed) await _applyRandomReplyDelay(db);
+      if (!mounted) return;
+      final segId =
+          index == 0 ? aiMsg['id'].toString() : '${aiMsg['id']}_segment_$index';
+      try {
+        await db.insertChatMessage({
+          'id': segId,
+          'bot_id': botId,
+          'role': 'assistant',
+          'type': 'text',
+          'content': segments[index],
+          'mood': result['mood'],
+          'sources_json':
+              result['sources'] == null ? null : jsonEncode(result['sources']),
+          'timestamp': baseTimestamp + index,
+        });
+      } catch (e) {
+        debugPrint('[send] persist stream segment failed: $e');
+        break;
+      }
+    }
+  }
+
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
@@ -456,18 +492,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
       // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
       if (mounted) {
-        if (streamingMessage != null && segmentedReply) {
-          // 分段模式下，先移除临时流式气泡，再由下方按自然句依次加入。
-          setState(() => _msgs.remove(streamingMessage));
-        }
-        if (streamingMessage != null && !segmentedReply) {
-          // The bubble has already been updated from real SSE deltas. Keep its
-          // in-memory identity but normalize its final text and database ID.
-          setState(() {
-            streamingMessage!['id'] = aiMsg['id'];
-            streamingMessage['content'] = content;
-            streamingMessage['timestamp'] = aiMsg['timestamp'];
-          });
+        // 流式气泡已通过 SSE 增量逐字上屏。无论是否开启分段，都保留这个气泡并
+        // 直接定格为完整回复——避免“整段文字先消失、再逐句重放”的观感，从而保证
+        // 开启分段后流水输出依旧正常生效。分段的落库与句间节奏仍在分支内处理。
+        if (streamingMessage != null) {
+          if (segmentedReply) {
+            // 分段已开启：把流式气泡定格为完整文本，同时按句落库，供重新进入后展示。
+            setState(() {
+              streamingMessage!['id'] = aiMsg['id'];
+              streamingMessage['content'] = content;
+              streamingMessage['timestamp'] = aiMsg['timestamp'];
+            });
+            await _persistSegments(db, aiMsg, result, content,
+                segmentsDelayed: true);
+          } else {
+            // The bubble has already been updated from real SSE deltas. Keep its
+            // in-memory identity but normalize its final text and database ID.
+            setState(() {
+              streamingMessage!['id'] = aiMsg['id'];
+              streamingMessage['content'] = content;
+              streamingMessage['timestamp'] = aiMsg['timestamp'];
+            });
+          }
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
           // 先完整写入分段副本，再删除整段原稿。旧逻辑先删后写，页面退出、
@@ -2045,6 +2091,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final replyId = m['reply_to_id']?.toString();
         final sources = _decodeSources(m['sources_json']);
         final ts = m['timestamp'] as int? ?? 0;
+        // 流式占位气泡（id 以 stream_ 开头）会先用空内容上屏，之后才填充真实文字。
+        // 它的时间不应展示，否则会出现“先出时间、后出内容”“一条消息两个时间”的观感。
+        final isStreamingPlaceholder =
+            (m['id']?.toString() ?? '').startsWith('stream_');
+        // 只有气泡真正渲染出可见内容时才显示时间：图片/贴纸必须文件真实存在，
+        // 文本必须非空，避免生成图片或分段等待时时间先出、内容后到。
+        final hasVisibleContent = isUser ||
+            txt.isNotEmpty ||
+            (hasImg && File(imagePath!).existsSync()) ||
+            hasAudio ||
+            hasDocument ||
+            replyId?.isNotEmpty == true ||
+            sharedPost != null;
+        final showTimeHere =
+            _showMessageTime && !isStreamingPlaceholder && hasVisibleContent;
 
         return GestureDetector(
           onLongPress: () => _msgLongPress(m),
@@ -2168,7 +2229,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             _parseText(txt, isUser),
                           if (_showSearchSources && sources.isNotEmpty)
                             _sourceCards(sources),
-                          if (_showMessageTime)
+                          if (showTimeHere)
                             Padding(
                                 padding: const EdgeInsets.only(top: 2),
                                 child: Text(fmtTime(ts),

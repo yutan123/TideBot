@@ -28,8 +28,6 @@ class _SpacePageState extends State<SpacePage> {
   List<Map<String, dynamic>> _schedules = [];
   List<Map<String, dynamic>> _memories = [];
   bool _loading = true;
-  Timer? _memoryTimer;
-  int _memoryIndex = 0;
   final Map<String, IconData> _moodIcons = {
     'smile': Icons.sentiment_satisfied_rounded,
     'heart': Icons.favorite_rounded,
@@ -43,16 +41,10 @@ class _SpacePageState extends State<SpacePage> {
   void initState() {
     super.initState();
     _loadData();
-    _memoryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (mounted && _memories.length > 1) {
-        setState(() => _memoryIndex = (_memoryIndex + 1) % _memories.length);
-      }
-    });
   }
 
   @override
   void dispose() {
-    _memoryTimer?.cancel();
     super.dispose();
   }
 
@@ -89,7 +81,6 @@ class _SpacePageState extends State<SpacePage> {
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
       final sch = await db.querySchedules(_botId, limit: 3);
       final mem = await db.queryMemories(_botId, type: 'medium', limit: 50);
-      if (_memoryIndex >= mem.length) _memoryIndex = 0;
       final messages = await db.queryMessages(_botId, limit: 30);
       final latestMood = messages.reversed.firstWhere(
         (m) =>
@@ -257,38 +248,48 @@ class _SpacePageState extends State<SpacePage> {
                                     color: theme.textFaint,
                                     fontFamily: 'TideFont'))
                           else
-                            BouncyTap(
-                              onTap: () =>
-                                  _showMemoryDetail(_memories[_memoryIndex]),
-                              child: SizedBox(
-                                height: 154,
-                                child: ClipRect(
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 480),
-                                    switchInCurve: Curves.easeOutCubic,
-                                    switchOutCurve: Curves.easeInCubic,
-                                    transitionBuilder: (child, animation) {
-                                      final isIncoming = child.key ==
-                                          ValueKey(
-                                              _memories[_memoryIndex]['id']);
-                                      final offset = Tween<Offset>(
-                                        begin: isIncoming
-                                            ? const Offset(0, .75)
-                                            : const Offset(0, -.75),
-                                        end: Offset.zero,
-                                      ).animate(animation);
-                                      return SlideTransition(
-                                          position: offset, child: child);
-                                    },
-                                    child: _buildMemoryCard(
-                                      _memories[_memoryIndex],
-                                      key: ValueKey(
-                                          _memories[_memoryIndex]['id']),
+                            // 所有记忆一条一条列出：无卡片、无标题，只按时间倒序排成日记。
+                            ..._memories.asMap().entries.map((entry) {
+                              final m = entry.value;
+                              return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    BouncyTap(
+                                      onTap: () => _showMemoryDetail(m),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 6),
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(m['content'] ?? '',
+                                                  style: TextStyle(
+                                                      fontSize: 14,
+                                                      height: 1.4,
+                                                      color: theme.textStrong)),
+                                              if ((m['timestamp'] as int?) !=
+                                                  null) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                    formatTime(
+                                                        m['timestamp'] as int),
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: theme.textFaint,
+                                                        fontFamily:
+                                                            'TideFont')),
+                                              ],
+                                            ]),
+                                      ),
                                     ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                                    if (entry.key != _memories.length - 1)
+                                      Divider(
+                                          height: 1,
+                                          thickness: 0.5,
+                                          color: theme.divider),
+                                  ]);
+                            }),
                         ],
                       ])),
         ));
@@ -473,27 +474,6 @@ class _SpacePageState extends State<SpacePage> {
                     color: theme.textWeak,
                     fontFamily: 'TideFont'))
           ]));
-  Widget _buildMemoryCard(Map<String, dynamic> m, {Key? key}) {
-    final theme = TideTheme.of(context);
-    return KeyedSubtree(
-        key: key,
-        child: FrostCard(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(14),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(m['content'] ?? '',
-                  style: TextStyle(fontSize: 14, color: theme.textStrong),
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 6),
-              Text(formatTime(m['timestamp']),
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont'))
-            ])));
-  }
 }
 
 // ==================== 广场页 ====================

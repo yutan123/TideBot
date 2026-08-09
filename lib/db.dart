@@ -528,14 +528,14 @@ class DBManager {
   Future<void> insertMessage(Map<String, dynamic> msg) async =>
       insertChatMessage(msg);
 
-  // 别名：新代码用 queryMessages，支持可选 limit
+  // 别名：新代码用 queryMessages，支持可选 limit 与倒序
   Future<List<Map<String, dynamic>>> queryMessages(String botId,
-      {int? limit}) async {
+      {int? limit, bool descending = false}) async {
     final db = await database;
     return await db.query('chat_history',
         where: 'bot_id = ?',
         whereArgs: [botId],
-        orderBy: 'timestamp ASC',
+        orderBy: descending ? 'timestamp DESC' : 'timestamp ASC',
         limit: limit);
   }
 
