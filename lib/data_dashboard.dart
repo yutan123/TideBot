@@ -54,10 +54,8 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
           whereArgs: legacyArgs);
       final ledgerReplies = (usage.first['replies'] as num?)?.toInt() ?? 0;
       final ledgerTokens = (usage.first['tokens'] as num?)?.toInt() ?? 0;
-      final legacyTokens = legacy.fold<int>(
-          0,
-          (sum, row) =>
-              sum + ((row['content']?.toString().length ?? 0) / 3.2).ceil());
+      final legacyTokens = legacy.fold<int>(0,
+          (sum, row) => sum + estimateTokens(row['content']?.toString() ?? ''));
       _values['${keys[i]}Messages'] = ledgerReplies + legacy.length;
       _values['${keys[i]}Tokens'] = ledgerTokens + legacyTokens;
     }

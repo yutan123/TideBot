@@ -43,7 +43,7 @@ class _SpacePageState extends State<SpacePage> {
   void initState() {
     super.initState();
     _loadData();
-    _memoryTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
+    _memoryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted && _memories.length > 1) {
         setState(() => _memoryIndex = (_memoryIndex + 1) % _memories.length);
       }
@@ -176,13 +176,6 @@ class _SpacePageState extends State<SpacePage> {
             padding: const EdgeInsets.all(20),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(m['title'] ?? '',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 8),
               Text(m['content'] ?? '',
                   style: TextStyle(
                       fontSize: 15,
@@ -190,7 +183,7 @@ class _SpacePageState extends State<SpacePage> {
                       fontFamily: 'TideFont',
                       height: 1.5)),
               const SizedBox(height: 12),
-              Text(formatTime(m['created_at']),
+              Text(formatTime(m['timestamp']),
                   style: TextStyle(
                       fontSize: 13,
                       color: theme.textFaint,
@@ -259,7 +252,7 @@ class _SpacePageState extends State<SpacePage> {
                           ]),
                           const SizedBox(height: 8),
                           if (_memories.isEmpty)
-                            Text('还没有中期记忆',
+                            Text('TA 还没有写下日记',
                                 style: TextStyle(
                                     color: theme.textFaint,
                                     fontFamily: 'TideFont'))
@@ -489,19 +482,12 @@ class _SpacePageState extends State<SpacePage> {
             padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(m['title'] ?? '',
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 4),
               Text(m['content'] ?? '',
-                  style: TextStyle(fontSize: 13, color: theme.textStrong),
-                  maxLines: 3,
+                  style: TextStyle(fontSize: 14, color: theme.textStrong),
+                  maxLines: 4,
                   overflow: TextOverflow.ellipsis),
               const SizedBox(height: 6),
-              Text(formatTime(m['created_at']),
+              Text(formatTime(m['timestamp']),
                   style: TextStyle(
                       fontSize: 11,
                       color: theme.textFaint,
@@ -610,54 +596,68 @@ class SquarePageState extends State<SquarePage>
         if (res['success'] != true) continue;
         final content = res['reply']?.toString().trim() ?? '';
         if (content.isEmpty) continue;
-        // Spread autonomous posts across the day and across bots rather than
-        // assigning the same wall-clock timestamp to every generated post.
+        // 均匀分布在一天内，避免所有机器人同时刻发布，也便于广场按时间排序。
         final dayStart =
             DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
         final slot = (botId.hashCode.abs() + index * 7919) % (24 * 60);
         final scheduledAt = dayStart + slot * Duration.millisecondsPerMinute;
         final postId = 'botpost_${botId}_${dayKey}_$index';
-        // 用种子随机让机器人发布带自然互动量的动态，同一天内重复进入保持一致。
-        final seed = botId.hashCode.abs() + index * 104729 + dayKey.hashCode;
-        final rnd = _SeededRand(seed.abs());
-        final likes = rnd.nextInt(48) + 3;
-        final comments = rnd.nextInt(6) + 1;
+        // 动态本体不含伪造的互动数据——点赞与评论必须来自真实发生的机器人互动。
         await db.insertPost({
           'id': postId,
           'author_id': bot['name'] ?? '机器人',
           'content': content,
           'image_path': '',
-          'likes': likes,
-          'comments': comments,
+          'likes': 0,
+          'comments': 0,
           'user_liked': 0,
           'user_collected': 0,
           'timestamp': scheduledAt,
         });
-        // 用其他机器人随机点赞/收藏/评论该动态，让广场更真实。
-        final commentPool = [
-          '哈哈哈这个也太真实了',
-          '深有同感！',
-          '说到我心坎里了',
-          '今天的我:同款状态',
-          '学到了，感谢分享',
-          '+1 支持一下',
-          '这个想法很不错呀',
-          '来都来了，点个赞',
-        ];
-        final commenterNames = bots
-            .where((cb) => (cb['id']?.toString() ?? '') != botId)
-            .map((cb) => cb['name']?.toString() ?? '机器人')
+        // 真实互动：让其他机器人真实地查看这条由 ${bot['name']} 发布的动态，
+        // 每个互动机器人都调用它自己的模型产出一条第一人称评论（非模板/非随机），
+        // 并把"点赞"与"评论"作为持久化事件写入 feed_events / post_comments。
+        final otherBots = bots
+            .where((cb) =>
+                (cb['id']?.toString() ?? '') != botId &&
+                (cb['chat_model']?.toString().isNotEmpty ?? false))
             .toList();
-        for (var c = 0; c < comments; c++) {
-          await db.insertPostComment({
-            'id': 'botcmt_${postId}_$c',
-            'post_id': postId,
-            'author_id': commenterNames.isEmpty
-                ? '机器人'
-                : commenterNames[rnd.nextInt(commenterNames.length)],
-            'content': commentPool[rnd.nextInt(commentPool.length)],
-            'timestamp': scheduledAt + 60000 + c * 900000,
-          });
+        for (var i = 0; i < otherBots.length && i < 2; i++) {
+          final reactor = otherBots[i];
+          final reactorId = reactor['id']?.toString() ?? '';
+          if (reactorId.isEmpty) continue;
+          // 每个互动事件幂等：同一天同一机器人对同一条动态只真实互动一次。
+          final reactKey = 'bot_react_${reactorId}_$postId';
+          if (await db.getKV(reactKey) == '1') continue;
+          // 先记录点赞事件（真实发生的互动，非模拟数）。
+          await db.recordFeedEvent(
+            postId: postId,
+            actorId: reactorId,
+            eventType: 'like',
+          );
+          // 让该机器人真实阅读动态并生产一条第一人称评论。
+          try {
+            final reactRes = await AIManager().sendMessage(
+              botId: reactorId,
+              text:
+                  '你在空间广场看到${bot['name'] ?? '另一个机器人'}发布了一条动态："$content"。请用你自己的第一人称口吻写一句简短评论（15字以内）回应这条动态，语气自然，不要出现心情标签、话题标签或"评论"二字。',
+              persistResponse: false,
+              includeChatHistory: false,
+              enableAutoSummary: false,
+            );
+            final commentText = (reactRes['reply']?.toString() ?? '').trim();
+            if (commentText.isNotEmpty) {
+              await db.insertRealPostComment(
+                postId: postId,
+                authorId: reactor['name']?.toString() ?? '机器人',
+                content: commentText,
+                timestamp: scheduledAt + 60000 + i * 900000,
+              );
+            }
+          } catch (_) {
+            // 任一机器人模型不可用不影响其他机器人，也不影响动态本身落库。
+          }
+          await db.setKV(reactKey, '1');
         }
         await db.setKV(marker, dayKey);
       }
@@ -671,22 +671,28 @@ class SquarePageState extends State<SquarePage>
     final rows =
         await db.queryPosts(offset: _feedPage * _pageSize, limit: _pageSize);
     if (rows.isEmpty || rows.length < _pageSize) _hasMore = false;
+    // 点赞数与评论数不再读取 posts 上的伪造整数字段，改为从
+    // feed_events / post_comments 真实聚合计数。
+    final feeds = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      final postId = r['id']?.toString() ?? '';
+      final likes = postId.isEmpty ? 0 : await db.countPostLikes(postId);
+      final comments = postId.isEmpty ? 0 : await db.countPostComments(postId);
+      feeds.add({
+        'user': r['author_id'] ?? '匿名',
+        'content': r['content'] ?? '',
+        'image': r['image_path'] ?? '',
+        'likes': likes,
+        'comments': comments,
+        'favorited': (r['user_liked'] as int? ?? 0) == 1,
+        'collected': (r['user_collected'] as int? ?? 0) == 1,
+        'time': r['timestamp'] != null ? formatTime(r['timestamp']) : '',
+        'id': r['id'],
+      });
+    }
     if (mounted) {
       setState(() {
-        _feeds.addAll(rows
-            .map((r) => {
-                  'user': r['author_id'] ?? '匿名',
-                  'content': r['content'] ?? '',
-                  'image': r['image_path'] ?? '',
-                  'likes': r['likes'] as int? ?? 0,
-                  'comments': r['comments'] as int? ?? 0,
-                  'favorited': (r['user_liked'] as int? ?? 0) == 1,
-                  'collected': (r['user_collected'] as int? ?? 0) == 1,
-                  'time':
-                      r['timestamp'] != null ? formatTime(r['timestamp']) : '',
-                  'id': r['id'],
-                })
-            .toList());
+        _feeds.addAll(feeds);
         _feedPage++;
         _loadingMore = false;
       });
@@ -1019,18 +1025,26 @@ class SquarePageState extends State<SquarePage>
                       Row(children: [
                         BouncyTap(
                             onTap: () async {
+                              final wasLiked = f['favorited'] as bool;
                               setState(() {
-                                f['favorited'] = !(f['favorited'] as bool);
+                                f['favorited'] = !wasLiked;
                                 f['likes'] = (f['likes'] as int) +
                                     (f['favorited'] == true ? 1 : -1);
                               });
-                              await DBManager().updatePostLikes(
-                                  f['id'] as String? ?? '', f['likes'] as int);
-                              await DBManager().updatePostUserState(
-                                f['id'] as String? ?? '',
-                                liked: f['favorited'] as bool,
-                                collected: f['collected'] as bool,
-                              );
+                              // 用户的点赞是真实互动事件，落库 feed_events。
+                              final nowLiked = await DBManager()
+                                  .toggleFeedEvent(
+                                      postId: f['id'] as String? ?? '',
+                                      actorId: 'me',
+                                      eventType: 'like');
+                              if (nowLiked != (f['favorited'] as bool) &&
+                                  mounted) {
+                                setState(() {
+                                  f['favorited'] = nowLiked;
+                                  f['likes'] =
+                                      (f['likes'] as int) + (nowLiked ? 1 : -1);
+                                });
+                              }
                             },
                             child: Row(children: [
                               Icon(
@@ -1066,11 +1080,11 @@ class SquarePageState extends State<SquarePage>
                             onTap: () async {
                               setState(() =>
                                   f['collected'] = !(f['collected'] as bool));
-                              await DBManager().updatePostUserState(
-                                f['id'] as String? ?? '',
-                                liked: f['favorited'] as bool,
-                                collected: f['collected'] as bool,
-                              );
+                              // 收藏是真实互动事件（feed_events collect，幂等切换）。
+                              await DBManager().toggleFeedEvent(
+                                  postId: f['id'] as String? ?? '',
+                                  actorId: 'me',
+                                  eventType: 'collect');
                             },
                             child: Icon(
                                 f['collected'] == true
@@ -1350,29 +1364,41 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   }
 
   Future<void> _toggleLike() async {
+    final db = DBManager();
+    final wasLiked = widget.feed['favorited'] as bool;
+    // 先乐观更新 UI，再写入真实互动事件。
     setState(() {
-      widget.feed['favorited'] = !(widget.feed['favorited'] as bool);
+      widget.feed['favorited'] = !wasLiked;
       widget.feed['likes'] = (widget.feed['likes'] as int) +
           (widget.feed['favorited'] == true ? 1 : -1);
     });
-    await DBManager().updatePostLikes(
-        widget.feed['id'] as String, widget.feed['likes'] as int);
-    await DBManager().updatePostUserState(
-      widget.feed['id'] as String,
-      liked: widget.feed['favorited'] as bool,
-      collected: widget.feed['collected'] as bool,
+    // 用户的点赞是真实发生的互动事件：写 feed_events（actor 固定为 'me'）。
+    final nowLiked = await db.toggleFeedEvent(
+      postId: widget.feed['id'] as String? ?? '',
+      actorId: 'me',
+      eventType: 'like',
     );
+    // 若写入失败（如空 postId），回滚 UI。
+    if (nowLiked != (widget.feed['favorited'] as bool) && mounted) {
+      setState(() {
+        widget.feed['favorited'] = nowLiked;
+        widget.feed['likes'] =
+            (widget.feed['likes'] as int) + (nowLiked ? 1 : -1);
+      });
+    }
     widget.onUpdate();
   }
 
   Future<void> _toggleCollect() async {
+    final db = DBManager();
     setState(() {
       widget.feed['collected'] = !(widget.feed['collected'] as bool);
     });
-    await DBManager().updatePostUserState(
-      widget.feed['id'] as String,
-      liked: widget.feed['favorited'] as bool,
-      collected: widget.feed['collected'] as bool,
+    // 收藏同样是真实互动事件（存在 feed_events 的 collect 事件）。
+    await db.toggleFeedEvent(
+      postId: widget.feed['id'] as String? ?? '',
+      actorId: 'me',
+      eventType: 'collect',
     );
     widget.onUpdate();
   }
@@ -1389,8 +1415,9 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       'timestamp': now,
     };
     await DBManager().insertPostComment(comment);
+    // 评论数不再写 posts.fake 整数，真实值由 post_comments 表聚合得出。
+    // 详情页这里直接基于已插入的评论累加展示即可。
     final count = (widget.feed['comments'] as int) + 1;
-    await DBManager().updatePostComments(widget.feed['id'] as String, count);
     if (!mounted) return;
     setState(() {
       widget.feed['comments'] = count;
@@ -1674,18 +1701,5 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         ],
       ),
     );
-  }
-}
-
-/// 轻量种子伪随机：同一个种子在同一天内产生一致结果，用于机器人互动量的模拟。
-class _SeededRand {
-  int _state;
-  _SeededRand(int seed) : _state = seed & 0x7fffffff {
-    if (_state == 0) _state = 88675123;
-  }
-
-  int nextInt(int max) {
-    _state = (_state * 1103515245 + 12345) & 0x7fffffff;
-    return _state % max;
   }
 }

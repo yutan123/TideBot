@@ -4,6 +4,34 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
+///
+/// 采用与 cl100k 接近的中英文分层规则：
+/// - CJK（中文/日文/韩文等）约占 0.6 token/字符（cl100k 中中文约 1.7 字符/token）；
+/// - 其余（英文、数字、常用符号）约占 0.25 token/字符（约 4 字符/token）。
+/// 空串返回 0，永远返回 >= 0 的整数。仅供估算，不做精确记账。
+int estimateTokens(String text) {
+  if (text.isEmpty) return 0;
+  var cjk = 0;
+  var rest = 0;
+  for (final rune in text.runes) {
+    if ((rune >= 0x4E00 && rune <= 0x9FFF) || // CJK 统一表意文字
+        (rune >= 0x3400 && rune <= 0x4DBF) || // 扩展 A
+        (rune >= 0x3040 && rune <= 0x30FF) || // 日文假名
+        (rune >= 0xAC00 && rune <= 0xD7AF) || // 韩文音节
+        (rune >= 0xF900 && rune <= 0xFAFF) || // CJK 兼容表意文字
+        (rune >= 0x20000 && rune <= 0x2FA1F)) {
+      // 扩展 B-F
+      cjk++;
+    } else {
+      rest++;
+    }
+  }
+  final cjkTokens = cjk / 1.7;
+  final restTokens = rest / 4.0;
+  return (cjkTokens + restTokens).ceil();
+}
+
 class DBManager {
   static final DBManager _instance = DBManager._internal();
   factory DBManager() => _instance;
@@ -377,19 +405,19 @@ class DBManager {
   Future<List<Map<String, dynamic>>> exportableBots() async => queryBots();
 
   /// 导出单个机器人的可移植 TideBot JSON，避免混入 API Key、设置与其他机器人数据。
-  Future<String> exportBotChat(String botId) async {
+  ///
+  /// 返回「建议文件名 + 完整 JSON 导出内容」。真正的落盘由调用方决定，
+  /// 例如通过系统的保存对话框写入公共 Download 目录（兼容 scoped storage）。
+  Future<({String fileName, String content})> buildChatExport(
+      String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
     final messages = await queryMessages(botId);
-    final dir = await getExternalStorageDirectory() ??
-        await getApplicationDocumentsDirectory();
-    final downloadDir = Directory('${dir.path}/TideBot/exports');
-    await downloadDir.create(recursive: true);
     final safeName = (bot['name']?.toString() ?? 'bot')
         .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
-    final file = File(
-        '${downloadDir.path}/tidebot_chat_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json');
-    await file.writeAsString(jsonEncode({
+    final fileName =
+        'tidebot_chat_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json';
+    final content = jsonEncode({
       'format': 'tidebot.chat',
       'version': 1,
       'exported_at': DateTime.now().toIso8601String(),
@@ -408,7 +436,18 @@ class DBManager {
                 'timestamp': m['timestamp'],
               })
           .toList(),
-    }));
+    });
+    return (fileName: fileName, content: content);
+  }
+
+  /// 兼容旧调用：写入导出的 JSON 到应用内部目录并返回其绝对路径（兜底用）。
+  Future<String> exportBotChat(String botId) async {
+    final export = await buildChatExport(botId);
+    final dir = await getApplicationDocumentsDirectory();
+    final downloadDir = Directory('${dir.path}/TideBot/exports');
+    await downloadDir.create(recursive: true);
+    final file = File('${downloadDir.path}/${export.fileName}');
+    await file.writeAsString(export.content);
     return file.path;
   }
 
@@ -808,6 +847,86 @@ class DBManager {
         whereArgs: [postId, actorId, eventType],
         limit: 1);
     return rows.isNotEmpty;
+  }
+
+  /// 删除一条互动事件（用于取消点赞 / 取消收藏）。
+  Future<void> deleteFeedEvent({
+    required String postId,
+    required String actorId,
+    required String eventType,
+  }) async {
+    final db = await database;
+    await db.delete('feed_events',
+        where: 'post_id = ? AND actor_id = ? AND event_type = ?',
+        whereArgs: [postId, actorId, eventType]);
+  }
+
+  /// 用户的点赞 / 收藏是切换行为：已存在则取消（删除事件），不存在则新增。
+  /// 返回切换后是否处于“已点赞 / 已收藏”状态。
+  Future<bool> toggleFeedEvent({
+    required String postId,
+    required String actorId,
+    required String eventType,
+  }) async {
+    final existed = await hasFeedEvent(
+        postId: postId, actorId: actorId, eventType: eventType);
+    if (existed) {
+      await deleteFeedEvent(
+          postId: postId, actorId: actorId, eventType: eventType);
+      return false;
+    }
+    await recordFeedEvent(
+        postId: postId, actorId: actorId, eventType: eventType);
+    return true;
+  }
+
+  /// 统计某条动态的真实点赞数（来自 feed_events 中的 like / collect 互动的去重计数）。
+  Future<int> countPostLikes(String postId) async {
+    final db = await database;
+    final likeRows = await db.query('feed_events',
+        where: 'post_id = ? AND event_type = ?', whereArgs: [postId, 'like']);
+    return likeRows.length;
+  }
+
+  /// 统计某条动态的真实评论数（来自 post_comments）。
+  Future<int> countPostComments(String postId) async {
+    final db = await database;
+    final rows = await db
+        .query('post_comments', where: 'post_id = ?', whereArgs: [postId]);
+    return rows.length;
+  }
+
+  /// 记录一条真实评论（由机器人生成），并去重插入 feed_events 的 comment 事件。
+  Future<void> insertRealPostComment({
+    required String postId,
+    required String authorId,
+    required String content,
+    int? timestamp,
+  }) async {
+    final db = await database;
+    final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
+    final id = 'rc_${postId}_${authorId}_$now';
+    await db.insert('post_comments', {
+      'id': id,
+      'post_id': postId,
+      'author_id': authorId,
+      'content': content,
+      'timestamp': now,
+    });
+    try {
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${authorId}_comment',
+            'post_id': postId,
+            'actor_id': authorId,
+            'event_type': 'comment',
+            'timestamp': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
+    } on DatabaseException {
+      // 同一机器人对同一条动态只计一次互动事件。
+    }
   }
 
   Future<void> recordAiUsage({

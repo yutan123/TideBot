@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'db.dart';
 import 'theme.dart';
@@ -87,10 +88,26 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (image == null) return;
     final now = DateTime.now().millisecondsSinceEpoch;
+    // 复制到应用私有目录，避免 image_picker 的临时文件在重启或清理缓存后失效，
+    // 否则聊天里重现的表情包会因路径不存在而加载不出来。
+    String storedPath = image.path;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory('${docs.path}/stickers');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final ext = image.path.contains('.')
+          ? image.path.split('.').last.toLowerCase()
+          : 'png';
+      final dest = '${dir.path}/sticker_$now.$ext';
+      await File(image.path).copy(dest);
+      storedPath = dest;
+    } catch (_) {
+      // 拷贝失败时退回原路径，保证仍可入库展示。
+    }
     await DBManager().insertSticker({
       'id': 'sticker_$now',
       'emotion': result,
-      'file_path': image.path,
+      'file_path': storedPath,
       'created_at': now
     });
     _load();

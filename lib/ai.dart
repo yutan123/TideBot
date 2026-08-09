@@ -378,9 +378,9 @@ class AIManager {
         'max_tokens': bot['max_tokens'] ?? 10000,
         if (tools.isNotEmpty) 'tools': tools,
         if (tools.isNotEmpty) 'tool_choice': 'auto',
-        // tool_calls 在 SSE 中存在分片拼接差异；先以非流式请求保证调用
-        // 参数完整、可回传 tool 结果。普通文本回复仍保留原有流式体验。
-        if (onDelta != null && tools.isEmpty) 'stream': true,
+        // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
+        // 流式结束后若命中工具再执行并做一次非流式 follow-up 取得最终回答。
+        if (onDelta != null) 'stream': true,
       };
       String replyText = '';
       String? generatedImagePath;
@@ -410,6 +410,9 @@ class AIManager {
             usage = json['usage'] is Map ? json['usage'] as Map : const {};
             if (replyText.isNotEmpty) onDelta(replyText);
           } else {
+            // SSE 流式：逐段回传文本，同时按 index 拼接 tool_calls 分片，
+            // 以便工具调用与流式共存。流式结束后统一执行工具并做 follow-up。
+            final pendingCalls = <int, Map<String, dynamic>>{};
             await response.stream
                 .transform(utf8.decoder)
                 .transform(const LineSplitter())
@@ -420,15 +423,76 @@ class AIManager {
               try {
                 final event = jsonDecode(data);
                 final delta =
-                    event['choices']?[0]?['delta']?['content']?.toString() ??
-                        '';
-                if (delta.isNotEmpty) {
-                  replyText += delta;
-                  onDelta(delta);
+                    event['choices']?[0]?['delta'] as Map? ?? const {};
+                final content = delta['content']?.toString() ?? '';
+                if (content.isNotEmpty) {
+                  replyText += content;
+                  onDelta(content);
+                }
+                // 累加 tool_calls 片段（每个 index 独立拼接 arguments）。
+                final chunk = delta['tool_calls'];
+                if (chunk is List) {
+                  for (final c in chunk.whereType<Map>()) {
+                    final idx = ((c['index'] as num?)?.toInt() ?? 0);
+                    final call = pendingCalls.putIfAbsent(
+                        idx,
+                        () => {
+                              'id': c['id']?.toString() ?? '',
+                              'type': c['type']?.toString() ?? 'function',
+                              'function': {
+                                'name': '',
+                                'arguments': '',
+                              }
+                            });
+                    final fn = c['function'] as Map?;
+                    if (fn != null) {
+                      final idNow = c['id']?.toString() ?? '';
+                      if (idNow.isNotEmpty) call['id'] = idNow;
+                      final fnMap = call['function'] as Map;
+                      final nameChunk = fn['name']?.toString() ?? '';
+                      if (nameChunk.isNotEmpty) {
+                        fnMap['name'] = (fnMap['name'] as String) + nameChunk;
+                      }
+                      final argsChunk = fn['arguments']?.toString() ?? '';
+                      if (argsChunk.isNotEmpty) {
+                        fnMap['arguments'] =
+                            (fnMap['arguments'] as String) + argsChunk;
+                      }
+                      call['function'] = fnMap;
+                    }
+                  }
                 }
                 if (event['usage'] is Map) usage = event['usage'] as Map;
               } catch (_) {}
             });
+            if (pendingCalls.isNotEmpty) {
+              final calls = pendingCalls.values
+                  .where((c) =>
+                      (c['function'] as Map?)?['name']?.toString().isNotEmpty ==
+                      true)
+                  .toList();
+              if (calls.isNotEmpty) {
+                messages.add({
+                  'role': 'assistant',
+                  'content': replyText,
+                  'tool_calls': calls,
+                });
+                await _runStreamedTools(
+                    db: db,
+                    botId: botId,
+                    calls: calls,
+                    messages: messages,
+                    baseUrl: baseUrl,
+                    modelName: modelName,
+                    apiKey: provider['api_key']?.toString() ?? '',
+                    maxTokens: bot['max_tokens'] ?? 10000,
+                    onDelta: onDelta,
+                    replyTextCallback: (t) => replyText = t,
+                    usageCallback: (u) => usage = u,
+                    searchSourcesSetter: (l) => searchSources = l,
+                    generatedImageSetter: (p) => generatedImagePath = p);
+              }
+            }
           }
         } else {
           errorBody = await response.stream.bytesToString();
@@ -462,67 +526,34 @@ class AIManager {
                 'content': replyText,
                 'tool_calls': toolCalls,
               });
-              for (final call in toolCalls) {
-                final result = await _executeNativeToolCall(
+              await _runStreamedTools(
                   db: db,
                   botId: botId,
-                  call: call,
-                );
-                if (result['sources'] is List) {
-                  searchSources = (result['sources'] as List)
-                      .whereType<Map>()
-                      .map((item) => Map<String, String>.from(item))
-                      .toList();
-                }
-                final toolResult = result['result'];
-                if (toolResult is Map &&
-                    toolResult['image_path']?.toString().isNotEmpty == true) {
-                  generatedImagePath = toolResult['image_path'].toString();
-                }
-                messages.add({
-                  'role': 'tool',
-                  'tool_call_id': call['id']?.toString() ?? '',
-                  'content': jsonEncode(result['result'] ?? result),
-                });
-              }
-              final followUp = await http
-                  .post(
-                    Uri.parse('$baseUrl/chat/completions'),
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': 'Bearer ${provider['api_key']}',
-                    },
-                    body: jsonEncode({
-                      'model': modelName,
-                      'messages': messages,
-                      'max_tokens': bot['max_tokens'] ?? 10000,
-                    }),
-                  )
-                  .timeout(const Duration(seconds: 60));
-              if (followUp.statusCode == 200) {
-                final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
-                replyText = decoded['choices']?[0]?['message']?['content']
-                        ?.toString() ??
-                    '';
-                final followUsage = decoded['usage'];
-                if (followUsage is Map) usage = followUsage;
-              }
+                  calls: toolCalls,
+                  messages: messages,
+                  baseUrl: baseUrl,
+                  modelName: modelName,
+                  apiKey: provider['api_key']?.toString() ?? '',
+                  maxTokens: bot['max_tokens'] ?? 10000,
+                  onDelta: null,
+                  replyTextCallback: (t) => replyText = t,
+                  usageCallback: (u) => usage = u,
+                  searchSourcesSetter: (l) => searchSources = l,
+                  generatedImageSetter: (p) => generatedImagePath = p);
             }
           }
         }
       }
       print('[ai] response status=$statusCode');
       if (statusCode == 200) {
+        // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
+        final promptText = messages.fold<String>(
+            '', (sum, m) => sum + (m['content']?.toString() ?? ''));
         final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??
-            (messages.fold<int>(
-                        0,
-                        (sum, m) =>
-                            sum + (m['content']?.toString().length ?? 0)) /
-                    3.2)
-                .ceil();
+            estimateTokens(promptText);
         final completionTokens =
             (usage['completion_tokens'] as num?)?.toInt() ??
-                (replyText.length / 3.2).ceil();
+                estimateTokens(replyText);
         final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
             promptTokens + completionTokens;
         await db.recordAiUsage(
@@ -685,7 +716,24 @@ class AIManager {
   }
 
   String _cleanVisibleReply(String raw) {
-    return raw
+    // 部分模型以 DSML/XML 文本模拟工具调用；这是内部协议，绝不能进入消息气泡。
+    final withoutDsml = raw
+        .replaceAll(
+            RegExp(
+                r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(
+                r'<\|?\s*DSML\s*\|?\s*invoke[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*invoke\s*>',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(
+                r'<\|?\s*DSML\s*\|?[^>]*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?[^>]*>',
+                caseSensitive: false),
+            '');
+    return withoutDsml
         .replaceAll(RegExp(r'\[心情\s*:\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
@@ -937,8 +985,12 @@ class AIManager {
     return null;
   }
 
-  /// Compresses older ordinary chat into a reviewable medium-term memory.
+  /// Compresses older ordinary chat into first-person diary entries.
   /// It runs in the background so a normal reply is never delayed.
+  ///
+  /// 机器人的记忆是"第一人称日记"，不是对话摘要（不写"本次对话讨论了..."）。
+  /// 模型须返回 JSON 数组，每一条是机器人第一人称记录的真实事件/感受的简短句子，
+  /// 且每条都是独立条目（无标题、不合并成一段长文），由应用端逐条落库到 medium。
   Future<void> _summarizeHistoryIfNeeded({
     required Map<String, dynamic> bot,
     required String botId,
@@ -953,10 +1005,6 @@ class AIManager {
       final totalChars = textHistory.fold<int>(
           0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
       // 在上下文接近上限前就归档，避免等到模型已被截断才尝试总结。
-      // 旧 90% 阈值会让 10k 上下文的长会话长期没有可用中期记忆。
-      // Summarize at the selected context limit, or after 16 text messages,
-      // whichever comes first. This keeps long conversations from silently
-      // losing context and makes the diary/medium-memory area useful.
       final threshold = (maxContext * 3.2).floor();
       if (totalChars < threshold && textHistory.length < 16) return;
 
@@ -972,12 +1020,10 @@ class AIManager {
           .map((m) =>
               '${m['role'] == 'user' ? '用户' : bot['name']}：${m['content']}')
           .join('\n');
-      final baseUrl = provider['base_url']
-              ?.toString()
-              .trim()
-              .replaceFirst(RegExp(r'/+$'), '') ??
-          '';
+      final baseUrl = (provider['base_url']?.toString().trim() ?? '')
+          .replaceFirst(RegExp(r'/+$'), '');
       if (baseUrl.isEmpty) return;
+      // 以 JSON 数组形式返回"第一人称日记条目"，杜绝把一段长总结当一个记忆。
       final response = await http
           .post(
             Uri.parse('$baseUrl/chat/completions'),
@@ -991,7 +1037,11 @@ class AIManager {
                 {
                   'role': 'system',
                   'content':
-                      '将以下聊天压缩为可供未来对话参考的中期记忆。保留用户偏好、关系进展、已确认事实、未完成事项；不要编造，不要写心情标签。所有记忆务必采用第一人称（以"我"的口吻）书写，例如"我记得用户的名字是xx"、"用户告诉我他喜欢xx"，而不是转述给第三方的口吻。使用简洁中文要点。',
+                      '下面的聊天内容中，请以机器人的第一人称（用"我"）把值得在未来记住的真实事件、用户提供的事实、关系进展、未完成事项，拆成独立短句形式的一条条"日记"。要求：\n'
+                          '1. 直接输出一个 JSON 字符串数组，数组元素是字符串，例如 ["我记得用户的生日是5月20日", "用户最近在准备面试，我给他打气"]。\n'
+                          '2. 每条都是独立条目，不要合并成长文，也不要给任何一条加标题或编号。\n'
+                          '3. 用第一人称书写，不要用"本次对话""讨论""用户说"这类转述口吻总结聊天过程。\n'
+                          '4. 不编造，不写心情标签。若没有值得记住的新信息，输出 []。',
                 },
                 {'role': 'user', 'content': transcript},
               ],
@@ -1000,20 +1050,34 @@ class AIManager {
           )
           .timeout(const Duration(seconds: 40));
       if (response.statusCode != 200) return;
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      final summary =
-          decoded['choices']?[0]?['message']?['content']?.toString().trim() ??
-              '';
-      if (summary.isEmpty) return;
+      String bodyText = utf8.decode(response.bodyBytes).trim();
+      // 兼容模型把 JSON 包在 ```json ... ``` 代码块里的情况。
+      final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```');
+      final fenceMatch = fence.firstMatch(bodyText);
+      if (fenceMatch != null) bodyText = fenceMatch.group(1)!.trim();
+      // 提取第一个 [...] 数组片段作为条目列表。
+      final arrayStart = bodyText.indexOf('[');
+      final arrayEnd = bodyText.lastIndexOf(']');
+      if (arrayStart < 0 || arrayEnd <= arrayStart) return;
+      final List<dynamic> entries =
+          jsonDecode(bodyText.substring(arrayStart, arrayEnd + 1));
       final now = DateTime.now().millisecondsSinceEpoch;
-      await db.upsertMemoryItem(
-        botId: botId,
-        type: 'medium',
-        title: '重要事件 ${DateTime.now().toString().substring(0, 10)}',
-        content: summary,
-        timestamp: now,
-      );
-      await db.setKV(summaryKey, endTimestamp);
+      var idx = 0;
+      for (final entry in entries) {
+        final content = entry?.toString().trim() ?? '';
+        if (content.isEmpty) continue;
+        final deltas = now + idx * 1000;
+        // 拆成独立、无标题、第一人称的日记条目逐条落库到 medium。
+        await db.upsertMemoryItem(
+          botId: botId,
+          type: 'medium',
+          title: '',
+          content: content,
+          timestamp: deltas,
+        );
+        idx++;
+      }
+      if (idx > 0) await db.setKV(summaryKey, endTimestamp);
     } catch (e) {
       print('[memory] auto summary failed: $e');
     }
@@ -1033,19 +1097,23 @@ class AIManager {
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty || bot['chat_model'] == null) return "今天也要开心度过哦。";
 
-    // 暗中调用 AI 引擎生成，但不暴露在聊天历史中
+    // 暗中调用 AI 引擎生成，但不暴露在聊天历史中。
+    // persistResponse=false 保证生成的回复不会写入聊天室，也不会被自动摘要捕获；
+    // includeChatHistory=false 避免今日一言影响正式对话的上下文。
     final res = await sendMessage(
         botId: botId,
         text:
-            '请结合你的人设，生成一句全天通用的「今日一言」，字数严格在10到15字。它会贯穿整天展示：禁止早安、午安、晚安、早晨/中午/晚上等时间词，禁止问候和提醒当前时间，不要包含[心情]标签。');
+            '请结合你的人设，生成一句全天通用的「今日一言」，字数严格在10到15字。它会贯穿整天展示：禁止早安、午安、晚安、早晨/中午/晚上等时间词，禁止问候和提醒当前时间，不要包含[心情]标签。',
+        persistResponse: false,
+        includeChatHistory: false,
+        enableAutoSummary: false);
     if (res['success'] == true) {
-      final quote = res['reply']?.toString().trim() ?? '';
-      // sendMessage persists its assistant reply. Remove only that generated
-      // reply; never delete a real user message from the conversation.
-      final history = await db.getChatHistory(botId);
-      if (history.isNotEmpty && history.last['role'] == 'assistant') {
-        await db.deleteMessage(history.last['id']);
-      }
+      var quote = res['reply']?.toString().trim() ?? '';
+      // 即便模型仍然自带“今日一言：”前缀，也只保留最终内容，杜绝界面重复显示标题。
+      quote = quote
+          .replaceFirst(RegExp(r'^今日一言\s*[:：]\s*'), '')
+          .replaceAll(RegExp(r'^[「『]|今日一言', caseSensitive: false), '')
+          .trim();
       final normalized = quote.isEmpty ? '今天也要开心度过哦。' : quote;
       await db.setKV('quote_date_$botId', todayStr);
       await db.setKV('quote_text_$botId', normalized);
@@ -1359,6 +1427,76 @@ class AIManager {
     return null;
   }
 
+  /// 统一执行工具调用并取得模型 follow-up 文本。供流式与非流式两条链路复用，
+  /// 保证「工具结果 → 最终回答」在两种模式下行为一致。
+  Future<void> _runStreamedTools({
+    required DBManager db,
+    required String botId,
+    required List<Map<String, dynamic>> calls,
+    required List<Map<String, dynamic>> messages,
+    required String baseUrl,
+    required String modelName,
+    required String apiKey,
+    required int maxTokens,
+    void Function(String delta)? onDelta,
+    required void Function(String) replyTextCallback,
+    required void Function(Map) usageCallback,
+    required void Function(List<Map<String, String>>) searchSourcesSetter,
+    required void Function(String) generatedImageSetter,
+  }) async {
+    for (final call in calls) {
+      final result = await _executeNativeToolCall(
+        db: db,
+        botId: botId,
+        call: call,
+      );
+      if (result['sources'] is List) {
+        searchSourcesSetter(
+          (result['sources'] as List)
+              .whereType<Map>()
+              .map((item) => Map<String, String>.from(item))
+              .toList(),
+        );
+      }
+      final toolResult = result['result'];
+      if (toolResult is Map &&
+          toolResult['image_path']?.toString().isNotEmpty == true) {
+        generatedImageSetter(toolResult['image_path'].toString());
+      }
+      messages.add({
+        'role': 'tool',
+        'tool_call_id': call['id']?.toString() ?? '',
+        'content': jsonEncode(result['result'] ?? result),
+      });
+    }
+    // follow-up：把工具结果回传模型，取得最终自然语言回复。
+    final followUp = await http
+        .post(
+          Uri.parse('$baseUrl/chat/completions'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: jsonEncode({
+            'model': modelName,
+            'messages': messages,
+            'max_tokens': maxTokens,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+    if (followUp.statusCode == 200) {
+      final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
+      final next =
+          decoded['choices']?[0]?['message']?['content']?.toString() ?? '';
+      if (next.isNotEmpty) {
+        replyTextCallback(next);
+        onDelta?.call(next);
+      }
+      final fu = decoded['usage'];
+      if (fu is Map) usageCallback(fu);
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db) async {
     final tools = <Map<String, dynamic>>[];
     if (await db.getKV('web_search_enabled') == 'true' &&
@@ -1519,7 +1657,10 @@ class AIManager {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
-        "【记忆工具】：如果你从用户的话里捕捉到值得长期记住的确定信息（例如用户报出的名字、喜好、身份、约定），请在本条回复末尾另起一行输出机器指令 [记忆:内容]，一条记忆一个标签，多条则连续输出。内容务必用第一人称（以“我”的口吻），例如 [记忆:我记得用户的名字是李小明]。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
+        "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
+        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|我记得用户的名字是李小明]。\n"
+        "- 近期发生过的事件/感受（用第一人称写的日记式短句）用 [记忆:内容]，例如 [记忆:今天我们一起去公园散步了]。\n"
+        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻）。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {
       p +=
@@ -1544,8 +1685,10 @@ class AIManager {
     return '平静';
   }
 
-  /// 解析模型通过内部协议 [记忆:内容]（可多条）主动要求记住的信息，
-  /// 以第一人称写入 memories 表，并把协议标记从可见文本中剥离。
+  /// 解析模型通过内部协议 [记忆:类型|内容]（可多条）主动要求记住的信息，
+  /// 以第一人称、无标题、逐条写入 memories 表。
+  /// - [记忆:长期|...] -> type=long（用户画像、机器人身份、自我认识等稳定信息）
+  /// - [记忆:...]      -> type=short（近期日记式事件）
   Future<void> _persistModelMemories(
     DBManager db,
     String botName,
@@ -1557,22 +1700,32 @@ class AIManager {
       final matches = regex.allMatches(rawReply).toList();
       if (matches.isEmpty) return;
       final now = DateTime.now().millisecondsSinceEpoch;
+      var idx = 0;
       for (final m in matches) {
         var content = m.group(1)?.trim() ?? '';
         if (content.isEmpty) continue;
+        var type = 'short';
+        // 支持 [记忆:长期|内容] 显式分类；其余事件/感受按第一人称日记写为短期。
+        final longPrefix = RegExp(r'^长期\s*[|｜]\s*');
+        if (longPrefix.hasMatch(content)) {
+          type = 'long';
+          content = content.replaceFirst(longPrefix, '').trim();
+        }
+        if (content.isEmpty) continue;
         // 强制第一人称：以“我”开头，避免出现像“用户叫xxx”这类第三人称口吻。
-        if (!RegExp(r'^(我|我记得|我知道|我了解到|用户告诉我|用户说过|用户是|我的)',
+        if (!RegExp(r'^(我|我记得|我知道|我了解到|用户告诉我|用户说过|用户是|我的|今天|昨天|我们)',
                 caseSensitive: false)
             .hasMatch(content)) {
           content = '我记得$content';
         }
         await db.upsertMemoryItem(
           botId: botId,
-          type: 'short',
-          title: '近期事件',
+          type: type,
+          title: '',
           content: content,
-          timestamp: now + matches.indexOf(m),
+          timestamp: now + idx * 1000,
         );
+        idx++;
       }
     } catch (e) {
       print('[memory] persist requested memory failed: $e');

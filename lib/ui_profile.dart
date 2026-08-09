@@ -16,6 +16,7 @@ import 'global_notice.dart';
 import 'theme.dart';
 import 'data_dashboard.dart';
 import 'sticker_manager_page.dart';
+import 'wechat_connection_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -36,6 +37,7 @@ class _ProfilePageState extends State<ProfilePage> {
       'title': '高级设置',
       'page': 'advanced'
     },
+    {'icon': Icons.wechat_rounded, 'title': '连接到微信', 'page': 'wechat'},
     {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
     {'icon': Icons.analytics_rounded, 'title': '数据大盘', 'page': 'dashboard'},
     {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
@@ -213,12 +215,43 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _exportSelectedChat() async {
     final botId = await _pickDataBot('选择要导出的机器人');
     if (botId == null) return;
-    final path = await DBManager().exportBotChat(botId);
+    final db = DBManager();
+    String? targetPath;
+    try {
+      final export = await db.buildChatExport(botId);
+      // 通过系统的保存对话框写入公共目录（默认落到 Download），兼容 scoped storage。
+      final picked = await FilePicker.platform.saveFile(
+        dialogTitle: '保存聊天记录到 Download',
+        fileName: export.fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+      if (picked != null) {
+        await File(picked).writeAsString(export.content);
+        targetPath = picked;
+      }
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(e.message, style: const TextStyle(fontFamily: 'TideFont')),
+          backgroundColor: const Color(0xFFE74C3C),
+          behavior: SnackBarBehavior.floating));
+      return;
+    } catch (_) {
+      // 用户在系统保存对话框取消等情况下直接返回，不打扰。
+    }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('聊天记录已导出：$path',
-            style: const TextStyle(fontFamily: 'TideFont')),
-        behavior: SnackBarBehavior.floating));
+    if (targetPath != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已导出到系统下载目录：$targetPath',
+              style: const TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('已取消导出', style: TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating));
+    }
   }
 
   Future<void> _importSelectedChat() async {
@@ -271,6 +304,10 @@ class _ProfilePageState extends State<ProfilePage> {
         break;
       case 'advanced':
         _showAdvancedSettings();
+        break;
+      case 'wechat':
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const WeChatConnectionPage()));
         break;
       case 'notify':
         _showNotificationSettings();
@@ -620,7 +657,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void _showAdvancedSettings() {
     showTideSheet(
         context: context,
-        height: 210,
+        height: 300,
         child: Padding(
             padding: const EdgeInsets.all(20),
             child:
@@ -632,11 +669,62 @@ class _ProfilePageState extends State<ProfilePage> {
                       fontFamily: 'TideFont',
                       color: TideTheme.of(context).textStrong)),
               const SizedBox(height: 12),
+              // OpenClaw 微信桥接地址（「连接到微信」页依赖此地址请求二维码/收发消息）。
+              _bridgeUrlField(),
+              const SizedBox(height: 12),
               Text('高级模型、后台任务与调试选项将逐步在这里提供。',
                   style: TextStyle(
                       fontFamily: 'TideFont',
                       color: TideTheme.of(context).textWeak)),
             ])));
+  }
+
+  Widget _bridgeUrlField() {
+    final theme = TideTheme.of(context);
+    var saved = '';
+    return StatefulBuilder(
+      builder: (ctx, setSt) {
+        if (saved.isEmpty) {
+          DBManager().getKV('openclaw_bridge_url').then((v) {
+            if (v != null && v.isNotEmpty) {
+              saved = v;
+              if (ctx.mounted) setSt(() {});
+            }
+          });
+        }
+        final ctrl = TextEditingController(text: saved);
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('OpenClaw 桥接地址',
+              style: TextStyle(
+                  fontFamily: 'TideFont', fontSize: 13, color: theme.textWeak)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.url,
+            decoration: InputDecoration(
+              hintText: 'http://192.168.1.100:8200',
+              isDense: true,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: theme.divider)),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.save_rounded),
+                onPressed: () async {
+                  final v = ctrl.text.trim();
+                  await DBManager().setKV('openclaw_bridge_url', v);
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text(v.isEmpty ? '已清空桥接地址' : '桥接地址已保存',
+                            style: const TextStyle(fontFamily: 'TideFont')),
+                        behavior: SnackBarBehavior.floating));
+                  }
+                },
+              ),
+            ),
+          ),
+        ]);
+      },
+    );
   }
 
   void _showNotificationSettings() async {
@@ -671,6 +759,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _botPosts = false;
   bool _imageGeneration = true;
   bool _webSearch = false;
+  bool _showSearchSources = false;
   bool _stickers = false;
   String _imageStyle = '写实';
   String _searchProvider = 'Tavily';
@@ -726,6 +815,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final imageGeneration = await db.getKV('bot_image_generation_enabled');
     final imageStyle = await db.getKV('bot_image_style');
     final webSearch = await db.getKV('web_search_enabled');
+    final showSearchSources = await db.getKV('show_web_search_sources');
     final searchProvider = await db.getKV('web_search_provider');
     final searchKey = await db.getKV('web_search_api_key');
     final stickers = await db.getKV('bot_stickers_enabled');
@@ -755,6 +845,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _imageStyle =
           ['写实', '动漫', '科幻', '自定义'].contains(imageStyle) ? imageStyle! : '写实';
       _webSearch = webSearch == 'true';
+      _showSearchSources = showSearchSources == 'true';
       _searchProvider = _displaySearchProvider(
           searchProvider?.isNotEmpty == true ? searchProvider! : '');
       _searchKeyController.text = searchKey ?? '';
@@ -1147,6 +1238,17 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 },
                 child: _webSearch
                     ? Column(children: [
+                        _settingSwitch(
+                          theme: theme,
+                          title: '显示联网搜索消息来源',
+                          help:
+                              '默认隐藏。开启后，仅在使用搜索的消息底部显示一个来源图标；点击图标会在浏览器打开最终使用的网页。',
+                          value: _showSearchSources,
+                          onChanged: (v) {
+                            setState(() => _showSearchSources = v);
+                            _save('show_web_search_sources', '$v');
+                          },
+                        ),
                         _choiceField(
                           theme: theme,
                           label: '搜索服务商',
@@ -2236,6 +2338,23 @@ class _LocalModelPageState extends State<LocalModelPage> {
     await prefs.remove('local_model_total_$id');
   }
 
+  /// 暂停下载：停止拉取网络流，但保留 .part 文件与进度 KV，可稍后继续（断点续传）。
+  Future<void> _pauseModel(int index) async {
+    final model = _models[index];
+    if (model['downloading'] != true) return;
+    if (mounted) {
+      setState(() => model['downloading'] = false);
+    }
+    // 保存当前已接收进度，供下次进入或点击继续时续传。
+    await _saveDownloadState(model);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('已暂停下载，进度已保留，点击「下载」可继续',
+            style: TextStyle(fontFamily: 'TideFont')),
+        backgroundColor: Color(0xFF17A2B8),
+        behavior: SnackBarBehavior.floating));
+  }
+
   Future<void> _deleteModel(int index) async {
     final model = _models[index];
     final id = model['id'] as String;
@@ -2576,21 +2695,45 @@ class _LocalModelPageState extends State<LocalModelPage> {
                                         fontFamily: 'TideFont'))))
                       else
                         downloading
-                            ? BouncyTap(
-                                onTap: () => _deleteModel(modelIndex),
-                                child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(14),
-                                        color: TideTheme.of(context)
-                                            .surfaceVariant),
-                                    child: Text('取消并删除',
-                                        style: TextStyle(
-                                            fontSize: 13,
-                                            color: TideTheme.of(context)
-                                                .textStrong,
-                                            fontFamily: 'TideFont'))))
+                            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                // 暂停：停止拉取网络流，但保留 .part 与进度 KV，可稍后继续。
+                                BouncyTap(
+                                  onTap: () => _pauseModel(modelIndex),
+                                  child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 8),
+                                      decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          color: TideTheme.of(context)
+                                              .surfaceVariant),
+                                      child: Text('暂停',
+                                          style: TextStyle(
+                                              fontSize: 13,
+                                              color: TideTheme.of(context)
+                                                  .textStrong,
+                                              fontFamily: 'TideFont'))),
+                                ),
+                                const SizedBox(width: 8),
+                                // 删除：清空模型文件、下载进度和相关 KV。
+                                BouncyTap(
+                                  onTap: () => _deleteModel(modelIndex),
+                                  child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 8),
+                                      decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          color: TideTheme.of(context)
+                                              .surfaceVariant),
+                                      child: Text('删除',
+                                          style: TextStyle(
+                                              fontSize: 13,
+                                              color: TideTheme.of(context)
+                                                  .textStrong,
+                                              fontFamily: 'TideFont'))),
+                                ),
+                              ])
                             : BouncyTap(
                                 onTap: () => _downloadModel(modelIndex),
                                 child: Container(

@@ -52,6 +52,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String? _customBg;
   bool _showMessageTime = true;
   bool _showChatAvatar = false;
+  bool _showSearchSources = false;
   Map<String, dynamic>? _replyingTo;
   late Map<String, dynamic> _bot;
 
@@ -126,10 +127,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final db = DBManager();
     final showTime = await db.getKV('show_message_time');
     final showAvatar = await db.getKV('show_chat_avatar');
+    final showSources = await db.getKV('show_web_search_sources');
     if (mounted) {
       setState(() {
         _showMessageTime = showTime != 'false';
         _showChatAvatar = showAvatar == 'true';
+        _showSearchSources = showSources == 'true';
       });
     }
   }
@@ -174,7 +177,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
     }
-    _scrollDown();
+    _scrollDown(animated: false);
   }
 
   void _scrollDown({int attempt = 0, bool animated = true}) {
@@ -214,18 +217,31 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return matches.isEmpty ? <String>[content] : matches;
   }
 
+  /// 分段回复的句间自然等待。
+  /// 默认 400–1000ms（按句长适度伸缩，句长越长等待略长，模拟真人打字阅读节奏）；
+  /// 若用户在设置中开启了自定义随机延迟，则用自定义区间覆盖默认值。
   Future<void> _applyRandomReplyDelay(DBManager db) async {
-    if ((await db.getKV('random_reply_delay_enabled')) != 'true') return;
-    var min =
-        int.tryParse(await db.getKV('random_reply_delay_min_seconds') ?? '') ??
-            0;
-    var max =
-        int.tryParse(await db.getKV('random_reply_delay_max_seconds') ?? '') ??
-            2;
-    min = min.clamp(0, 60);
-    max = max.clamp(min, 60);
-    final seconds = min + DateTime.now().microsecond.remainder(max - min + 1);
-    if (seconds > 0) await Future<void>.delayed(Duration(seconds: seconds));
+    var minMs = 400;
+    var maxMs = 1000;
+    final enabled = await db.getKV('random_reply_delay_enabled') == 'true';
+    if (enabled) {
+      final minS = int.tryParse(
+              await db.getKV('random_reply_delay_min_seconds') ?? '') ??
+          0;
+      final maxS = int.tryParse(
+              await db.getKV('random_reply_delay_max_seconds') ?? '') ??
+          2;
+      minMs = (minS.clamp(0, 60)) * 1000;
+      maxMs = (maxS.clamp(minS, 60)) * 1000;
+      if (maxMs == 0) maxMs = minMs + 1;
+      final delay =
+          minMs + DateTime.now().microsecond.remainder(maxMs - minMs + 1);
+      if (delay > 0) await Future<void>.delayed(Duration(milliseconds: delay));
+      return;
+    }
+    // 默认模式：400–1000ms 之间随机，保证分段句间的自然节奏。
+    final delayMs = 400 + DateTime.now().microsecond.remainder(1000 - 400 + 1);
+    await Future<void>.delayed(Duration(milliseconds: delayMs));
   }
 
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
@@ -337,8 +353,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final segmentedReply =
           (await db.getKV('segmented_reply_enabled')) != 'false';
       // 分段回复需要等到完整文本才能按句子拆分，避免与流式字符气泡互相覆盖。
-      final streamEnabled =
-          !segmentedReply && (await db.getKV('streaming_output')) != 'false';
+      // 分段与流式展示可以共存：流式气泡用于等待首句，完整回复回来后
+      // 再按句落库并依次展示，不能因为开启分段就把流式功能关闭。
+      final streamEnabled = (await db.getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
@@ -439,7 +456,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
       // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
       if (mounted) {
-        if (streamingMessage != null) {
+        if (streamingMessage != null && segmentedReply) {
+          // 分段模式下，先移除临时流式气泡，再由下方按自然句依次加入。
+          setState(() => _msgs.remove(streamingMessage));
+        }
+        if (streamingMessage != null && !segmentedReply) {
           // The bubble has already been updated from real SSE deltas. Keep its
           // in-memory identity but normalize its final text and database ID.
           setState(() {
@@ -479,7 +500,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           // 首段使用同一 ID 覆盖原稿；全部成功后原稿已经不再存在，不要额外删除。
           // 若任何段失败，保留原稿，优先保证退出后聊天记录不丢。
           for (var index = 0; index < segments.length; index++) {
-            await _applyRandomReplyDelay(db);
+            // 句间自然等待：首句立即上屏（保证响应感），之后每句间 400–1000ms。
+            if (index > 0) await _applyRandomReplyDelay(db);
             if (!mounted) return;
             final segId = index == 0
                 ? aiMsg['id'].toString()
@@ -2109,7 +2131,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                               ),
                             ),
                           // 图片
-                          if (hasImg)
+                          if (hasImg && File(imagePath!).existsSync())
                             GestureDetector(
                                 onTap: () => _previewImg(imagePath),
                                 child: ClipRRect(
@@ -2118,7 +2140,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         margin:
                                             const EdgeInsets.only(bottom: 4),
                                         child: Image.file(
-                                          File(imagePath!),
+                                          File(imagePath),
                                           fit: BoxFit.cover,
                                           width: isSticker ? 112 : 180,
                                           height: isSticker ? 112 : null,
@@ -2144,7 +2166,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           // 普通文字气泡
                           if (sharedPost == null && !hasAudio && txt.isNotEmpty)
                             _parseText(txt, isUser),
-                          if (sources.isNotEmpty) _sourceCards(sources),
+                          if (_showSearchSources && sources.isNotEmpty)
+                            _sourceCards(sources),
                           if (_showMessageTime)
                             Padding(
                                 padding: const EdgeInsets.only(top: 2),
@@ -2180,40 +2203,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  Widget _sourceCards(List<Map<String, String>> sources) => Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('参考来源',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: TideTheme.of(context).textFaint,
-                    fontFamily: 'TideFont')),
-            ...sources.take(3).map((source) => InkWell(
-                  onTap: () => launchUrl(Uri.parse(source['url']!),
-                      mode: LaunchMode.externalApplication),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(children: [
-                      Icon(Icons.open_in_new_rounded,
-                          size: 14, color: TideTheme.of(context).primary),
-                      const SizedBox(width: 6),
-                      Expanded(
-                          child: Text(source['title']!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: TideTheme.of(context).primary,
-                                  fontFamily: 'TideFont'))),
-                    ]),
-                  ),
-                )),
-          ],
+  Widget _sourceCards(List<Map<String, String>> sources) {
+    final source = sources.last;
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Tooltip(
+        message: source['title'] ?? '打开来源',
+        child: InkWell(
+          onTap: () => launchUrl(Uri.parse(source['url']!),
+              mode: LaunchMode.externalApplication),
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6, left: 8),
+            child: Icon(Icons.language_rounded,
+                size: 16, color: TideTheme.of(context).primary),
+          ),
         ),
-      );
+      ),
+    );
+  }
 
 // 音频时长由播放器进度组件统一显示。
 
