@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app_navigation.dart';
 import 'db.dart';
+import 'theme.dart';
+import 'ui_components.dart';
 
 class OtaUpdate {
   static const _channel = MethodChannel('tidebot.native.channel');
@@ -49,23 +51,40 @@ class OtaUpdate {
         ? routes.map((e) => e.toString()).where((e) => e.isNotEmpty).toList()
         : <String>[];
     if (urls.isEmpty) return;
-    final action = await showDialog<String>(
+    final action = await TideDialogs.show<String>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text('发现新版本 $version'),
-        content: SingleChildScrollView(child: Text(notes)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'ignore'),
-            child: const Text('忽略此版本'),
+      builder: (ctx) {
+        final theme = TideTheme.of(ctx);
+        return Center(
+          child: Material(
+            type: MaterialType.transparency,
+            child: TideDialogs.glassContent(context: ctx, children: [
+              Text('发现新版本 $version',
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 10),
+              Text(notes,
+                  style:
+                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+              const SizedBox(height: 18),
+              Row(children: [
+                Expanded(
+                    child: TideDialogs.glassButton('忽略此版本',
+                        color: theme.buttonSecondary,
+                        textColor: theme.textStrong,
+                        onTap: () => Navigator.pop(ctx, 'ignore'))),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: TideDialogs.glassButton('立即更新',
+                        onTap: () => Navigator.pop(ctx, 'update'))),
+              ]),
+            ]),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, 'update'),
-            child: const Text('立即更新'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     if (action == 'ignore') {
       await DBManager().insertKV('ota_ignored_version', version);

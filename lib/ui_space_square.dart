@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -59,17 +60,20 @@ class _SpacePageState extends State<SpacePage> {
     final db = DBManager();
     final bots = await db.queryBots();
     if (bots.isNotEmpty) {
-      // 如果已有选中的 bot 且在列表中，保持选中；否则选第一个
+      // 选择跨页面/重启持久化；当机器人被删除时再安全回退到首个。
+      final savedBotId = await db.getKV('space_selected_bot_id') ?? '';
       Map<String, dynamic>? b;
-      if (_botId.isNotEmpty) {
+      final preferredId = _botId.isNotEmpty ? _botId : savedBotId;
+      if (preferredId.isNotEmpty) {
         try {
-          b = bots.firstWhere((x) => x['id'] == _botId);
+          b = bots.firstWhere((x) => x['id'] == preferredId);
         } catch (_) {
           b = null;
         }
       }
       b ??= bots.first;
       _botId = b['id'] as String? ?? '';
+      await db.setKV('space_selected_bot_id', _botId);
       _botName = b['name'] as String? ?? '';
       _dailyQuote = b['daily_quote'] as String? ?? '';
       final created = b['created_at'];
@@ -326,20 +330,32 @@ class _SpacePageState extends State<SpacePage> {
                               fontWeight: FontWeight.w600,
                               fontFamily: 'TideFont')),
                       const SizedBox(height: 12),
-                      ...bots.map((b) => ListTile(
-                          title: Text(b['name'] ?? '',
-                              style: const TextStyle(fontFamily: 'TideFont')),
-                          subtitle: Text(b['desc'] ?? '',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Color(0xFF8E8E93))),
-                          onTap: () {
-                            setState(() {
-                              _botId = b['id'] as String? ?? '';
-                              _botName = b['name'] as String? ?? '';
-                            });
-                            Navigator.pop(context);
-                            _loadData();
-                          })),
+                      ...bots.map((b) => Column(children: [
+                            ListTile(
+                              title: Text(b['name'] ?? '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      const TextStyle(fontFamily: 'TideFont')),
+                              trailing: _botId == b['id']
+                                  ? Icon(Icons.check_rounded,
+                                      color: TideTheme.of(context).primary)
+                                  : null,
+                              onTap: () async {
+                                final selectedId = b['id'] as String? ?? '';
+                                await db.setKV(
+                                    'space_selected_bot_id', selectedId);
+                                if (!mounted) return;
+                                setState(() {
+                                  _botId = selectedId;
+                                  _botName = b['name'] as String? ?? '';
+                                });
+                                Navigator.pop(context);
+                                _loadData();
+                              },
+                            ),
+                            const Divider(height: 1),
+                          ])),
                     ]));
               },
               child: Container(
@@ -641,66 +657,54 @@ class SquarePageState extends State<SquarePage>
   }
 
   Future<void> _shareFeed(Map<String, dynamic> f) async {
-    final theme = TideTheme.of(context);
-    TextEditingController ctrl =
-        TextEditingController(text: '分享一条动态: ${f['content']}');
-    TideDialogs.show(
-        context: context,
-        builder: (ctx) => AlertDialog(
-            backgroundColor: Colors.transparent,
-            contentPadding: EdgeInsets.zero,
-            content: TideDialogs.glassContent(
-                context: ctx,
-                maxWidth: 0.9,
-                children: [
-                  const Text('分享给机器人',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'TideFont')),
-                  const SizedBox(height: 12),
-                  TextField(
-                      controller: ctrl,
-                      maxLines: 3,
-                      style: const TextStyle(fontFamily: 'TideFont'),
-                      decoration: const InputDecoration(
-                          hintText: '编辑分享内容',
-                          border: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.all(Radius.circular(12))))),
-                  const SizedBox(height: 16),
-                  TideDialogs.glassButton('发送', onTap: () async {
-                    Navigator.pop(ctx);
-                    final db = DBManager();
-                    final bots = await db.queryBots();
-                    if (bots.isNotEmpty) {
-                      final bid = bots.first['id'] as String;
-                      final now = DateTime.now().millisecondsSinceEpoch;
-                      await db.insertMessage(<String, dynamic>{
-                        'id': 'm_$now',
-                        'bot_id': bid,
-                        'role': 'user',
-                        'content': ctrl.text,
-                        'timestamp': now
-                      });
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: const Text('已发送到聊天',
-                                style: TextStyle(fontFamily: 'TideFont')),
-                            behavior: SnackBarBehavior.floating,
-                            backgroundColor: theme.primary));
-                      }
-                    } else {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('请先创建机器人',
-                                    style: TextStyle(fontFamily: 'TideFont')),
-                                behavior: SnackBarBehavior.floating));
-                      }
-                    }
-                  }),
-                ])));
+    final db = DBManager();
+    final bots = await db.queryBots();
+    if (!mounted || bots.isEmpty) return;
+    final botId = await showTideSheet<String>(
+      context: context,
+      height: 420,
+      child: ListView(children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 14, 20, 8),
+          child: Text('分享给机器人',
+              style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont')),
+        ),
+        ...bots.map((bot) => ListTile(
+              leading: TideBotAvatar(
+                  name: bot['name']?.toString() ?? 'TA',
+                  path: bot['avatar']?.toString(),
+                  size: 42),
+              title: Text(bot['name']?.toString() ?? '未命名机器人',
+                  style: const TextStyle(fontFamily: 'TideFont')),
+              onTap: () => Navigator.pop(context, bot['id']?.toString()),
+            )),
+      ]),
+    );
+    if (botId == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final payload = jsonEncode({
+      'author': f['user']?.toString() ?? '匿名',
+      'content': f['content']?.toString() ?? '',
+      'image_path': f['image']?.toString() ?? '',
+      'timestamp': f['timestamp'] ?? now,
+    });
+    await db.insertMessage({
+      'id': 'share_$now',
+      'bot_id': botId,
+      'role': 'user',
+      'type': 'shared_post',
+      'content': payload,
+      'file_path': f['image']?.toString(),
+      'timestamp': now,
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('动态已作为分享卡片发送', style: TextStyle(fontFamily: 'TideFont')),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   void publishFeed() {
@@ -1104,9 +1108,10 @@ class SquarePageState extends State<SquarePage>
       physics: const BouncingScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.0),
+          crossAxisSpacing: 14,
+          mainAxisSpacing: 14,
+          // 仅四款游戏，使用更高的入口卡片以提升可点性与可读性。
+          childAspectRatio: 0.78),
       itemCount: _games.length,
       itemBuilder: (ctx, i) {
         final g = _games[i];
@@ -1114,18 +1119,18 @@ class SquarePageState extends State<SquarePage>
         return BouncyTap(
             onTap: () => _startGame(g['name']?.toString() ?? ''),
             child: FrostCard(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(icon, size: 40, color: theme.primary),
-                      const SizedBox(height: 8),
+                      Icon(icon, size: 52, color: theme.primary),
+                      const SizedBox(height: 14),
                       Text(g['name'] ?? '',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
                               fontFamily: 'TideFont',
-                              color: Color(0xFF1C1C1E))),
+                              color: theme.textStrong)),
                       const SizedBox(height: 4),
                       Text(g['desc'] ?? '',
                           textAlign: TextAlign.center,

@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'db.dart';
 import 'theme.dart';
+import 'ui_components.dart';
 
 class StickerManagerPage extends StatefulWidget {
   const StickerManagerPage({super.key});
@@ -33,24 +34,54 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
 
   Future<void> _add() async {
     final emotion = TextEditingController(text: '开心');
-    final result = await showDialog<String>(
+    final result = await TideDialogs.show<String>(
         context: context,
-        builder: (ctx) => AlertDialog(
-              title:
-                  const Text('添加表情包', style: TextStyle(fontFamily: 'TideFont')),
-              content: TextField(
-                  controller: emotion,
-                  decoration: const InputDecoration(labelText: '情绪分类，例如：开心、睡觉'),
-                  style: const TextStyle(fontFamily: 'TideFont')),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('取消')),
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, emotion.text.trim()),
-                    child: const Text('选择图片'))
-              ],
-            ));
+        builder: (ctx) {
+          final theme = TideTheme.of(ctx);
+          return Center(
+            child: Material(
+              type: MaterialType.transparency,
+              child: TideDialogs.glassContent(context: ctx, children: [
+                const Text('添加表情包',
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 14),
+                TextField(
+                    controller: emotion,
+                    decoration: InputDecoration(
+                      labelText: '情绪分类，例如：开心、睡觉',
+                      filled: true,
+                      fillColor: theme.surfaceVariant,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none),
+                    ),
+                    style: const TextStyle(fontFamily: 'TideFont')),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                      child: TideDialogs.glassButton('取消',
+                          color: theme.buttonSecondary,
+                          textColor: theme.textStrong,
+                          onTap: () => Navigator.pop(ctx))),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: TideDialogs.glassButton('选择图片',
+                          onTap: () =>
+                              Navigator.pop(ctx, emotion.text.trim()))),
+                ]),
+              ]),
+            ),
+          );
+        });
     emotion.dispose();
     if (result == null || result.isEmpty) return;
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);

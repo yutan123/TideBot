@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'db.dart';
 import 'theme.dart';
+import 'ui_components.dart';
 
 class MemoryManagerPage extends StatefulWidget {
   final String botId;
@@ -51,40 +52,59 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
     final title = TextEditingController(text: item?['title']?.toString() ?? '');
     final content =
         TextEditingController(text: item?['content']?.toString() ?? '');
-    final ok = await showDialog<bool>(
+    final ok = await TideDialogs.show<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24)),
-              title: Text(item == null ? '添加$_label' : '编辑记忆',
-                  style: const TextStyle(fontFamily: 'TideFont')),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
+        builder: (ctx) {
+          final theme = TideTheme.of(ctx);
+          final decoration = InputDecoration(
+            filled: true,
+            fillColor: theme.surfaceVariant,
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none),
+          );
+          return Center(
+            child: Material(
+              type: MaterialType.transparency,
+              child: TideDialogs.glassContent(context: ctx, children: [
+                Text(item == null ? '添加$_label' : '编辑记忆',
+                    style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 16),
                 TextField(
                     controller: title,
-                    decoration: InputDecoration(
-                        labelText: '标题（可选）',
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16)))),
+                    decoration: decoration.copyWith(labelText: '标题（可选）')),
                 const SizedBox(height: 12),
                 TextField(
                     controller: content,
                     minLines: 4,
                     maxLines: 7,
-                    decoration: InputDecoration(
-                        labelText: '记忆内容',
-                        alignLabelWithHint: true,
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16)))),
+                    decoration: decoration.copyWith(
+                        labelText: '记忆内容', alignLabelWithHint: true)),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                      child: TideDialogs.glassButton('取消',
+                          color: theme.buttonSecondary,
+                          textColor: theme.textStrong,
+                          onTap: () => Navigator.pop(ctx))),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: TideDialogs.glassButton('保存',
+                          onTap: () => Navigator.pop(ctx, true))),
+                ]),
               ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('取消')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('保存'))
-              ],
-            ));
+            ),
+          );
+        });
     if (ok == true && content.text.trim().isNotEmpty) {
       final now = DateTime.now().millisecondsSinceEpoch;
       final values = {
@@ -105,19 +125,40 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   }
 
   Future<void> _delete(Map<String, dynamic> item) async {
-    final ok = await showDialog<bool>(
+    final ok = await TideDialogs.show<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-                title: const Text('删除这条记忆？'),
-                content: const Text('删除后无法恢复。'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('取消')),
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('删除'))
-                ]));
+        builder: (ctx) {
+          final theme = TideTheme.of(ctx);
+          return Center(
+            child: Material(
+              type: MaterialType.transparency,
+              child: TideDialogs.glassContent(context: ctx, children: [
+                const Text('删除这条记忆？',
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 8),
+                Text('删除后无法恢复。',
+                    style: TextStyle(
+                        color: theme.textWeak, fontFamily: 'TideFont')),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                      child: TideDialogs.glassButton('取消',
+                          color: theme.buttonSecondary,
+                          textColor: theme.textStrong,
+                          onTap: () => Navigator.pop(ctx))),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: TideDialogs.glassButton('删除',
+                          color: Colors.redAccent,
+                          onTap: () => Navigator.pop(ctx, true))),
+                ]),
+              ]),
+            ),
+          );
+        });
     if (ok == true) {
       await DBManager().deleteMemory(item['id'].toString());
       await _load();

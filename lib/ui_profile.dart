@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:http/http.dart' as http;
@@ -181,6 +182,67 @@ class _ProfilePageState extends State<ProfilePage> {
         Icon(Icons.arrow_forward_ios_rounded,
             size: 14, color: TideTheme.of(context).textFaint)
       ]));
+  Future<String?> _pickDataBot(String title) async {
+    final bots = await DBManager().exportableBots();
+    if (!mounted || bots.isEmpty) return null;
+    return showTideSheet<String>(
+      context: context,
+      height: 420,
+      child: ListView(children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Text(title,
+                style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont',
+                    color: TideTheme.of(context).textStrong))),
+        ...bots.map((bot) => ListTile(
+              leading: TideBotAvatar(
+                  name: bot['name']?.toString() ?? '未命名',
+                  path: bot['avatar']?.toString(),
+                  size: 42),
+              title: Text(bot['name']?.toString() ?? '未命名机器人',
+                  style: const TextStyle(fontFamily: 'TideFont')),
+              onTap: () => Navigator.pop(context, bot['id']?.toString()),
+            )),
+      ]),
+    );
+  }
+
+  Future<void> _exportSelectedChat() async {
+    final botId = await _pickDataBot('选择要导出的机器人');
+    if (botId == null) return;
+    final path = await DBManager().exportBotChat(botId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('聊天记录已导出：$path',
+            style: const TextStyle(fontFamily: 'TideFont')),
+        behavior: SnackBarBehavior.floating));
+  }
+
+  Future<void> _importSelectedChat() async {
+    final botId = await _pickDataBot('选择要导入到的机器人');
+    if (botId == null) return;
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
+    final path = result?.files.single.path;
+    if (path == null) return;
+    try {
+      final count = await DBManager().importBotChat(botId, path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已导入 $count 条聊天记录',
+              style: const TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating));
+    } on FormatException catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.message,
+                style: const TextStyle(fontFamily: 'TideFont'))));
+    }
+  }
+
   void _onSetting(Map<String, dynamic> s) {
     switch (s['page']) {
       case 'api':
@@ -255,7 +317,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'data':
         showTideSheet(
             context: context,
-            height: 220,
+            height: 290,
             child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -273,17 +335,20 @@ class _ProfilePageState extends State<ProfilePage> {
                           title: const Text('导出聊天记录',
                               style: TextStyle(fontFamily: 'TideFont')),
                           onTap: () async {
-                            await DBManager().exportToMarkdown();
-                            if (mounted) {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                      content: const Text('已导出到本地存储',
-                                          style: TextStyle(
-                                              fontFamily: 'TideFont')),
-                                      backgroundColor:
-                                          TideTheme.of(context).primary));
-                            }
+                            Navigator.pop(context);
+                            await _exportSelectedChat();
+                          }),
+                      ListTile(
+                          leading: Icon(Icons.upload_file_rounded,
+                              color: TideTheme.of(context).primary),
+                          title: const Text('导入聊天记录',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          subtitle: const Text('仅支持 TideBot 导出的 JSON 文件',
+                              style: TextStyle(
+                                  fontFamily: 'TideFont', fontSize: 12)),
+                          onTap: () async {
+                            Navigator.pop(context);
+                            await _importSelectedChat();
                           })
                     ])));
         break;
@@ -599,6 +664,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _showTime = true;
   bool _showAvatar = false;
   bool _streaming = true;
+  bool _segmentedReply = true;
+  bool _randomReplyDelay = false;
   bool _timeAwareness = true;
   bool _proactiveReply = true;
   bool _botPosts = false;
@@ -616,6 +683,10 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   int _speed = 50;
   final TextEditingController _streamSpeedController =
       TextEditingController(text: '50');
+  final TextEditingController _replyDelayMinController =
+      TextEditingController(text: '0');
+  final TextEditingController _replyDelayMaxController =
+      TextEditingController(text: '2');
   final TextEditingController _proactiveMinController =
       TextEditingController(text: '60');
   final TextEditingController _proactiveMaxController =
@@ -644,6 +715,10 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final avatar = await db.getKV('show_chat_avatar');
     final stream =
         await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
+    final segmentedReply = await db.getKV('segmented_reply_enabled');
+    final randomReplyDelay = await db.getKV('random_reply_delay_enabled');
+    final replyDelayMin = await db.getKV('random_reply_delay_min_seconds');
+    final replyDelayMax = await db.getKV('random_reply_delay_max_seconds');
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
@@ -666,6 +741,12 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _showTime = time != 'false';
       _showAvatar = avatar == 'true';
       _streaming = stream != 'false';
+      _segmentedReply = segmentedReply != 'false';
+      _randomReplyDelay = randomReplyDelay == 'true';
+      _replyDelayMinController.text =
+          (int.tryParse(replyDelayMin ?? '') ?? 0).clamp(0, 60).toString();
+      _replyDelayMaxController.text =
+          (int.tryParse(replyDelayMax ?? '') ?? 2).clamp(0, 60).toString();
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
@@ -692,6 +773,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   @override
   void dispose() {
     _streamSpeedController.dispose();
+    _replyDelayMinController.dispose();
+    _replyDelayMaxController.dispose();
     _proactiveMinController.dispose();
     _proactiveMaxController.dispose();
     _botPostsPerDayController.dispose();
@@ -767,6 +850,42 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
             borderSide: BorderSide(color: theme.primary, width: 1.5)),
         border: border);
   }
+
+  Widget _replyDelayRange(TideTheme theme) => Row(children: [
+        Expanded(
+            child: TextField(
+                controller: _replyDelayMinController,
+                keyboardType: TextInputType.number,
+                style:
+                    TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+                decoration: _roundInput(theme, label: '最短（秒）'),
+                onChanged: (value) {
+                  final n = int.tryParse(value);
+                  final max = int.tryParse(_replyDelayMaxController.text) ?? 2;
+                  if (n != null && n >= 0 && n <= max && n <= 60) {
+                    _save('random_reply_delay_min_seconds', '$n');
+                  }
+                })),
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text('至',
+                style:
+                    TextStyle(color: theme.textWeak, fontFamily: 'TideFont'))),
+        Expanded(
+            child: TextField(
+                controller: _replyDelayMaxController,
+                keyboardType: TextInputType.number,
+                style:
+                    TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+                decoration: _roundInput(theme, label: '最长（秒）'),
+                onChanged: (value) {
+                  final n = int.tryParse(value);
+                  final min = int.tryParse(_replyDelayMinController.text) ?? 0;
+                  if (n != null && n >= min && n <= 60) {
+                    _save('random_reply_delay_max_seconds', '$n');
+                  }
+                })),
+      ]);
 
   Widget _compactRange(TideTheme theme) => Row(children: [
         Expanded(
@@ -909,6 +1028,27 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   _save('streaming_output', '$v');
                 },
                 child: _streaming ? _compactSpeed(theme) : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '分段回复',
+                help: '默认开启。模型回复会按自然句逐段呈现，让聊天节奏更接近真人。',
+                value: _segmentedReply,
+                onChanged: (v) {
+                  setState(() => _segmentedReply = v);
+                  _save('segmented_reply_enabled', '$v');
+                },
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '随机延迟回复',
+                help: '开启后，模型生成完成及每一段后续消息都会在下方秒数范围内随机等待。',
+                value: _randomReplyDelay,
+                onChanged: (v) {
+                  setState(() => _randomReplyDelay = v);
+                  _save('random_reply_delay_enabled', '$v');
+                },
+                child: _randomReplyDelay ? _replyDelayRange(theme) : null,
               ),
               _settingSwitch(
                 theme: theme,
@@ -1981,21 +2121,35 @@ class _LocalModelPageState extends State<LocalModelPage> {
     final target = File('${dir.path}/$id.gguf');
     final part = File('${target.path}.part');
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await TideDialogs.show<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('删除本地模型'),
-        content: Text('确定删除“${model['name']}”及其下载进度吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除'),
-          ),
-        ],
+      builder: (dialogContext) => Center(
+        child: TideDialogs.glassContent(context: dialogContext, children: [
+          Text('删除本地模型',
+              style: TextStyle(
+                  color: TideTheme.of(dialogContext).textStrong,
+                  fontFamily: 'TideFont',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          Text('确定删除“${model['name']}”及其下载进度吗？',
+              style: TextStyle(
+                  color: TideTheme.of(dialogContext).textWeak,
+                  fontFamily: 'TideFont')),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(
+                child: TideDialogs.glassButton('取消',
+                    color: TideTheme.of(dialogContext).surfaceVariant,
+                    textColor: TideTheme.of(dialogContext).textStrong,
+                    onTap: () => Navigator.pop(dialogContext, false))),
+            const SizedBox(width: 10),
+            Expanded(
+                child: TideDialogs.glassButton('删除',
+                    color: const Color(0xFFE74C3C),
+                    onTap: () => Navigator.pop(dialogContext, true))),
+          ]),
+        ]),
       ),
     );
     if (confirmed != true) return;

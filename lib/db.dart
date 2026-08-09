@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
 
 class DBManager {
   static final DBManager _instance = DBManager._internal();
@@ -373,7 +374,86 @@ class DBManager {
     return null;
   }
 
-  // 导出数据为 Markdown
+  Future<List<Map<String, dynamic>>> exportableBots() async => queryBots();
+
+  /// 导出单个机器人的可移植 TideBot JSON，避免混入 API Key、设置与其他机器人数据。
+  Future<String> exportBotChat(String botId) async {
+    final bot = await getBotById(botId);
+    if (bot == null) throw StateError('机器人不存在');
+    final messages = await queryMessages(botId);
+    final dir = await getExternalStorageDirectory() ??
+        await getApplicationDocumentsDirectory();
+    final downloadDir = Directory('${dir.path}/TideBot/exports');
+    await downloadDir.create(recursive: true);
+    final safeName = (bot['name']?.toString() ?? 'bot')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
+    final file = File(
+        '${downloadDir.path}/tidebot_chat_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json');
+    await file.writeAsString(jsonEncode({
+      'format': 'tidebot.chat',
+      'version': 1,
+      'exported_at': DateTime.now().toIso8601String(),
+      'bot': {'id': botId, 'name': bot['name']?.toString() ?? ''},
+      'messages': messages
+          .map((m) => {
+                'id': m['id'],
+                'role': m['role'],
+                'type': m['type'],
+                'content': m['content'],
+                'file_path': m['file_path'],
+                'mood': m['mood'],
+                'duration': m['duration'],
+                'reply_to_id': m['reply_to_id'],
+                'sources_json': m['sources_json'],
+                'timestamp': m['timestamp'],
+              })
+          .toList(),
+    }));
+    return file.path;
+  }
+
+  Future<int> importBotChat(String botId, String sourcePath) async {
+    final source = File(sourcePath);
+    final raw = jsonDecode(await source.readAsString());
+    if (raw is! Map || raw['format'] != 'tidebot.chat' || raw['version'] != 1) {
+      throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
+    }
+    final list = raw['messages'];
+    if (list is! List) throw const FormatException('聊天记录内容无效');
+    final items = list.whereType<Map>().toList();
+    final base = DateTime.now().microsecondsSinceEpoch;
+    final idMap = <String, String>{};
+    for (var i = 0; i < items.length; i++) {
+      final oldId = items[i]['id']?.toString() ?? '';
+      if (oldId.isNotEmpty) idMap[oldId] = 'import_${base}_$i';
+    }
+    var count = 0;
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      final oldId = item['id']?.toString() ?? '';
+      final timestamp = (item['timestamp'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch + i;
+      final oldReplyId = item['reply_to_id']?.toString() ?? '';
+      await insertChatMessage({
+        'id': idMap[oldId] ?? 'import_${base}_$i',
+        'bot_id': botId,
+        'role': item['role']?.toString() ?? 'user',
+        'type': item['type']?.toString() ?? 'text',
+        'content': item['content']?.toString() ?? '',
+        'file_path': item['file_path']?.toString(),
+        'mood': item['mood']?.toString(),
+        'duration': item['duration'],
+        // Preserve quotes whose source is part of this same imported archive.
+        'reply_to_id': idMap[oldReplyId],
+        'sources_json': item['sources_json']?.toString(),
+        'timestamp': timestamp + i,
+      });
+      count++;
+    }
+    return count;
+  }
+
+  // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。
   Future<void> exportToMarkdown() async {
     final db = await database;
     final bots = await db.query('bots');

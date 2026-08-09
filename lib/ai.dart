@@ -61,15 +61,70 @@ class AIManager {
         : result['error']?.toString() ?? '';
   }
 
+  /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
+  /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
   Future<Map<String, dynamic>> sendMessage({
     required String botId,
     required String text,
     String? imagePath,
-    String? activeGame, // 支持动态注入游戏规则
+    String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
     bool enableAutoSummary = true,
     void Function(String delta)? onDelta,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final primaryLocal =
+        (prefs.getString('local_chat_model_$botId') ?? '').trim();
+    final backupLocal =
+        (prefs.getString('local_backup_model_$botId') ?? '').trim();
+    final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
+    final attempts = <Map<String, String>>[
+      {'local': primaryLocal, 'provider': ''},
+      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty)
+        {'local': backupLocal, 'provider': backupRemote},
+    ];
+    while (attempts.length < 3) {
+      attempts.add(Map<String, String>.from(attempts.last));
+    }
+
+    Map<String, dynamic>? lastFailure;
+    for (var index = 0; index < attempts.length; index++) {
+      final candidate = attempts[index];
+      final result = await _sendMessageOnce(
+        botId: botId,
+        text: text,
+        imagePath: imagePath,
+        activeGame: activeGame,
+        persistResponse: persistResponse,
+        includeChatHistory: includeChatHistory,
+        enableAutoSummary: enableAutoSummary,
+        // Streaming can only safely happen for the final attempt: an earlier
+        // failed SSE stream must never leave partial text in the visible bubble.
+        onDelta: index == attempts.length - 1 ? onDelta : null,
+        forcedLocalId: candidate['local']!,
+        forcedProviderId: candidate['provider']!,
+      );
+      if (result['success'] == true) return result;
+      lastFailure = result;
+    }
+    return {
+      ...?lastFailure,
+      'error': '主模型和备用模型均请求失败（已自动尝试 3 次）。${lastFailure?['error'] ?? ''}',
+    };
+  }
+
+  Future<Map<String, dynamic>> _sendMessageOnce({
+    required String botId,
+    required String text,
+    String? imagePath,
+    String? activeGame,
+    bool persistResponse = true,
+    bool includeChatHistory = true,
+    bool enableAutoSummary = true,
+    void Function(String delta)? onDelta,
+    String forcedLocalId = '',
+    String forcedProviderId = '',
   }) async {
     final db = DBManager();
     // 数据库初始化异常/卡住时必须尽快回到聊天室 finally，不能无限显示“正在输入中”。
@@ -80,7 +135,9 @@ class AIManager {
 
     // 已选择本地 GGUF 时，绕过远程 provider，执行真实 llama.cpp 推理。
     final prefs = await SharedPreferences.getInstance();
-    final localId = (prefs.getString('local_chat_model_$botId') ?? '').trim();
+    final localId = forcedLocalId.isNotEmpty
+        ? forcedLocalId
+        : (prefs.getString('local_chat_model_$botId') ?? '').trim();
     if (localId.isNotEmpty) {
       try {
         final history = includeChatHistory
@@ -101,11 +158,32 @@ class AIManager {
           localMessages.add({'role': 'user', 'content': text});
         }
         final path = await LocalLlama.instance.pathFor(localId);
-        final reply = await LocalLlama.instance.generate(
+        final rawReply = await LocalLlama.instance.generate(
           path: path,
           messages: localMessages,
         );
-        return {'success': true, 'reply': reply, 'local': true};
+        final localMood = _extractMood(rawReply);
+        final reply = _cleanVisibleReply(rawReply);
+        final ts = DateTime.now().millisecondsSinceEpoch;
+        final messageId = 'msg_a_${ts + 1}';
+        if (persistResponse) {
+          await db.insertChatMessage({
+            'id': messageId,
+            'bot_id': botId,
+            'role': 'assistant',
+            'type': 'text',
+            'content': reply,
+            'file_path': null,
+            'mood': localMood,
+            'timestamp': ts + 1,
+          });
+        }
+        return {
+          'success': true,
+          'reply': reply,
+          'message_id': messageId,
+          'local': true,
+        };
       } catch (e, st) {
         return {
           'error': '本地模型推理失败：$e',
@@ -118,7 +196,9 @@ class AIManager {
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     // A newly added provider is usable immediately. Only fill an empty model;
     // never overwrite a deliberate per-bot choice.
-    var providerId = bot['chat_model']?.toString().trim() ?? '';
+    var providerId = forcedProviderId.isNotEmpty
+        ? forcedProviderId
+        : (bot['chat_model']?.toString().trim() ?? '');
     if (providerId.isEmpty) {
       final providers = await db.queryChatProviders();
       if (providers.isEmpty) return {'error': '未配置引擎中枢，请先在 API 设置中添加模型'};
@@ -175,11 +255,9 @@ class AIManager {
           historyMessages.isNotEmpty) {
         break;
       }
-      final stampedContent = timeAware
-          ? '[发送时间：${_formatMessageTime(msg['timestamp'])}] $content'
-          : content;
-      historyMessages.add({'role': msg['role'], 'content': stampedContent});
-      usedChars += stampedContent.length;
+      // 时间只作为系统级元信息保留，不能与可复述的对话正文混排。
+      historyMessages.add({'role': msg['role'], 'content': content});
+      usedChars += content.length;
     }
     messages.addAll(historyMessages.reversed);
     var lastIsCurrentUser = false;
@@ -359,9 +437,9 @@ class AIManager {
           ));
         }
 
-        // 情绪提取器：解析并剔除底层情绪标签
+        // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
         String mood = _extractMood(replyText);
-        replyText = replyText.replaceAll(RegExp(r'\[心情:.*?\]'), '').trim();
+        replyText = _cleanVisibleReply(replyText);
 
         // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
@@ -498,6 +576,21 @@ class AIManager {
         'error_code': 'network',
       };
     }
+  }
+
+  String _cleanVisibleReply(String raw) {
+    return raw
+        .replaceAll(RegExp(r'\[心情\s*:\s*[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[(?:工具|贴纸|表情包|类型)\s*:[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[落子\s*:\s*\d+\s*,\s*\d+\s*\]'), '')
+        .replaceAll(
+            RegExp(r'^\s*(?:type|类型)\s*:\s*(?:sticker|表情包)\s*$',
+                multiLine: true),
+            '')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
   }
 
   String _friendlyHttpError(int status, String detail) {
@@ -736,14 +829,18 @@ class AIManager {
     required int maxContext,
   }) async {
     try {
-      final totalChars = history.where((m) => m['type'] == 'text').fold<int>(
+      final textHistory =
+          history.where((m) => m['type'] == 'text').toList(growable: false);
+      final totalChars = textHistory.fold<int>(
           0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
-      final threshold = (maxContext * 3.2 * 0.9).floor();
-      if (totalChars < threshold || history.length < 8) return;
+      // 在上下文接近上限前就归档，避免等到模型已被截断才尝试总结。
+      // 旧 90% 阈值会让 10k 上下文的长会话长期没有可用中期记忆。
+      final threshold = (maxContext * 3.2 * 0.55).floor();
+      if (totalChars < threshold || textHistory.length < 6) return;
 
-      final cutoff = (history.length * 0.65).floor();
-      final older =
-          history.take(cutoff).where((m) => m['type'] == 'text').toList();
+      final cutoff =
+          (textHistory.length * 0.60).floor().clamp(1, textHistory.length);
+      final older = textHistory.take(cutoff).toList();
       if (older.isEmpty) return;
       final endTimestamp = older.last['timestamp']?.toString() ?? '0';
       final db = DBManager();
@@ -799,13 +896,6 @@ class AIManager {
     } catch (e) {
       print('[memory] auto summary failed: $e');
     }
-  }
-
-  String _formatMessageTime(dynamic raw) {
-    final millis = raw is int ? raw : int.tryParse(raw?.toString() ?? '') ?? 0;
-    final value = DateTime.fromMillisecondsSinceEpoch(millis);
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${value.year}-${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
   }
 
   // 空间广场：今日一言生成逻辑

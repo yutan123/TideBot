@@ -189,6 +189,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Timer? _streamDisplayTimer;
 
+  List<String> _splitReplySegments(String content) {
+    final matches = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
+        .allMatches(content)
+        .map((match) => match.group(0)?.trim() ?? '')
+        .where((part) => part.isNotEmpty)
+        .toList();
+    return matches.isEmpty ? <String>[content] : matches;
+  }
+
+  Future<void> _applyRandomReplyDelay(DBManager db) async {
+    if ((await db.getKV('random_reply_delay_enabled')) != 'true') return;
+    var min =
+        int.tryParse(await db.getKV('random_reply_delay_min_seconds') ?? '') ??
+            0;
+    var max =
+        int.tryParse(await db.getKV('random_reply_delay_max_seconds') ?? '') ??
+            2;
+    min = min.clamp(0, 60);
+    max = max.clamp(min, 60);
+    final seconds = min + DateTime.now().microsecond.remainder(max - min + 1);
+    if (seconds > 0) await Future<void>.delayed(Duration(seconds: seconds));
+  }
+
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 发送消息 ==========
@@ -277,11 +300,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       final history = _msgs
           .where((m) => (m['content'] as String?)?.isNotEmpty == true)
-          .map((m) => {
-                'role': m['role'],
-                'content': m['id'] == msg['id'] ? modelText : m['content'],
-              })
-          .toList();
+          .map((m) {
+        final isCurrent = m['id'] == msg['id'];
+        final content = isCurrent ? modelText : _modelReadableContent(m);
+        return {'role': m['role'], 'content': content};
+      }).toList();
       if (preparedContext != null && text.isEmpty) {
         history.add({'role': 'user', 'content': modelText});
       }
@@ -292,8 +315,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       debugPrint('[send] request start bot=$botId model=$cm');
+      final db = DBManager();
+      final segmentedReply =
+          (await db.getKV('segmented_reply_enabled')) != 'false';
+      // 分段回复需要等到完整文本才能按句子拆分，避免与流式字符气泡互相覆盖。
       final streamEnabled =
-          (await DBManager().getKV('streaming_output')) != 'false';
+          !segmentedReply && (await db.getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
@@ -402,7 +429,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             streamingMessage['content'] = content;
             streamingMessage['timestamp'] = aiMsg['timestamp'];
           });
+        } else if (segmentedReply) {
+          final segments = _splitReplySegments(content);
+          // 数据库仍只保存一条完整回复；界面逐句补全同一气泡，重进页面不会重复。
+          final displayMessage = Map<String, dynamic>.from(aiMsg)
+            ..['content'] = '';
+          for (final segment in segments) {
+            await _applyRandomReplyDelay(db);
+            if (!mounted) return;
+            setState(() {
+              if (!_msgs.contains(displayMessage)) _msgs.add(displayMessage);
+              displayMessage['content'] =
+                  '${displayMessage['content']}${displayMessage['content'].toString().isEmpty ? '' : '\n'}$segment';
+            });
+            _scrollDown();
+          }
         } else {
+          await _applyRandomReplyDelay(db);
+          if (!mounted) return;
           setState(() => _msgs.add(aiMsg));
         }
         final imagePath = result['image_path']?.toString();
@@ -846,6 +890,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         .toList();
     String localChatId =
         (prefs.getString('local_chat_model_$botId') ?? '').trim();
+    String localBackupId =
+        (prefs.getString('local_backup_model_$botId') ?? '').trim();
 
     TideDialogs.show(
         context: context,
@@ -901,12 +947,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           await pickModel('chat_model_$botId', '');
                         },
                       ),
-                      // 备用/识图/STT 模型：为扩展能力预留的独立模型选择
+                      // 备用模型可同时选择远程 Provider 或已下载的本地 GGUF。
                       _mLabel('备用模型'),
-                      _modelPicker(ctx, providers, curBak, (v) async {
-                        curBak = v;
-                        await pickModel('backup_model_$botId', v);
-                      }),
+                      _chatModelPicker(
+                        ctx,
+                        providers,
+                        localFiles,
+                        curBak,
+                        localBackupId,
+                        onRemotePick: (v) async {
+                          curBak = v;
+                          localBackupId = '';
+                          await prefs.remove('local_backup_model_$botId');
+                          await pickModel('backup_model_$botId', v);
+                        },
+                        onLocalPick: (id) async {
+                          localBackupId = id;
+                          curBak = '';
+                          await prefs.setString(
+                              'local_backup_model_$botId', id);
+                          await pickModel('backup_model_$botId', '');
+                        },
+                      ),
                       _mLabel('识图模型'),
                       _modelPicker(ctx, providers, curVision, (v) async {
                         curVision = v;
@@ -1015,7 +1077,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                                 fontFamily: 'TideFont'),
                                             border: OutlineInputBorder(
                                                 borderRadius: BorderRadius.all(
-                                                    Radius.circular(10))))),
+                                                    Radius.circular(10)),
+                                                borderSide: BorderSide.none),
+                                            enabledBorder: OutlineInputBorder(
+                                                borderRadius: BorderRadius.all(
+                                                    Radius.circular(10)),
+                                                borderSide: BorderSide.none),
+                                            focusedBorder: OutlineInputBorder(
+                                                borderRadius: BorderRadius.all(
+                                                    Radius.circular(10)),
+                                                borderSide: BorderSide.none))),
                                     const SizedBox(height: 12),
                                     TideDialogs.glassButton('确定', onTap: () {
                                       final v = int.tryParse(c.text);
@@ -1181,7 +1252,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     final id = file.path
                         .split(Platform.pathSeparator)
                         .last
-                        .replaceFirst(RegExp(r'\\.gguf$'), '');
+                        .replaceFirst(RegExp(r'\.gguf$'), '');
                     return ListTile(
                       leading: const Icon(Icons.memory_rounded),
                       title: Text(id,
@@ -1765,6 +1836,103 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
+  String _modelReadableContent(Map<String, dynamic> message) {
+    if (message['type']?.toString() != 'shared_post') {
+      return message['content']?.toString() ?? '';
+    }
+    try {
+      final raw = jsonDecode(message['content']?.toString() ?? '');
+      if (raw is Map) {
+        final author = raw['author']?.toString().trim() ?? '匿名';
+        final content = raw['content']?.toString().trim() ?? '';
+        final imagePath = raw['image_path']?.toString().trim() ?? '';
+        final timestamp = raw['timestamp'];
+        return '用户分享了一条动态。作者：$author；发布时间：${timestamp ?? '未知'}；文字：$content；'
+            '图片：${imagePath.isEmpty ? '无' : '已附带本地图片，路径为 $imagePath'}。请像看到了这条动态一样自然回应。';
+      }
+    } catch (_) {}
+    return '用户分享了一条动态：${message['content'] ?? ''}';
+  }
+
+  Map<String, dynamic>? _sharedPostPayload(Map<String, dynamic> message) {
+    if (message['type']?.toString() != 'shared_post') return null;
+    try {
+      final raw = jsonDecode(message['content']?.toString() ?? '');
+      return raw is Map ? Map<String, dynamic>.from(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _sharedPostCard(Map<String, dynamic> payload, bool isUser) {
+    final theme = TideTheme.of(context);
+    final author = payload['author']?.toString().trim().isNotEmpty == true
+        ? payload['author'].toString()
+        : '匿名';
+    final content = payload['content']?.toString() ?? '';
+    final imagePath = payload['image_path']?.toString() ?? '';
+    final timestamp = (payload['timestamp'] as num?)?.toInt();
+    final imageExists = imagePath.isNotEmpty && File(imagePath).existsSync();
+    final foreground = isUser ? Colors.white : theme.textStrong;
+    final muted =
+        isUser ? Colors.white.withValues(alpha: 0.76) : theme.textWeak;
+    return Container(
+      width: 245,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isUser
+            ? theme.primary.withValues(alpha: 0.92)
+            : theme.buttonSecondary,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.dynamic_feed_rounded, size: 17, color: foreground),
+          const SizedBox(width: 6),
+          Expanded(
+              child: Text('分享的动态',
+                  style: TextStyle(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont'))),
+        ]),
+        const SizedBox(height: 8),
+        Text(author,
+            style: TextStyle(
+                color: foreground,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'TideFont')),
+        if (timestamp != null) ...[
+          const SizedBox(height: 2),
+          Text(fmtTime(timestamp),
+              style: TextStyle(
+                  color: muted, fontSize: 11, fontFamily: 'TideFont')),
+        ],
+        if (content.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(content,
+              style: TextStyle(
+                  color: foreground, height: 1.35, fontFamily: 'TideFont')),
+        ],
+        if (imageExists) ...[
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () => _previewImg(imagePath),
+            child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.file(File(imagePath),
+                    width: double.infinity, height: 150, fit: BoxFit.cover)),
+          ),
+        ] else if (imagePath.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('图片已失效或不可访问',
+              style: TextStyle(
+                  color: muted, fontSize: 12, fontFamily: 'TideFont')),
+        ],
+      ]),
+    );
+  }
+
   Widget _chatBody() {
     if (_msgsLoading) {
       return Center(
@@ -1795,6 +1963,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 ? m['document_name'].toString()
                 : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
         final txt = (m['content'] as String?) ?? '';
+        final sharedPost = _sharedPostPayload(m);
         final replyId = m['reply_to_id']?.toString();
         final sources = _decodeSources(m['sources_json']);
         final ts = m['timestamp'] as int? ?? 0;
@@ -1908,8 +2077,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 child: _parseText(txt, isUser)),
                           if (replyId != null && replyId.isNotEmpty)
                             _replyCard(replyId, isUser),
+                          // 动态分享使用独立卡片，JSON 负载不会直接暴露为聊天正文。
+                          if (sharedPost != null)
+                            _sharedPostCard(sharedPost, isUser),
                           // 普通文字气泡
-                          if (!hasAudio && txt.isNotEmpty)
+                          if (sharedPost == null && !hasAudio && txt.isNotEmpty)
                             _parseText(txt, isUser),
                           if (sources.isNotEmpty) _sourceCards(sources),
                           if (_showMessageTime)
