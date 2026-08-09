@@ -779,7 +779,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 } catch (_) {}
               }
 
-              return AlertDialog(
+              return TideDialogSurface(
                   backgroundColor: Colors.transparent,
                   contentPadding: EdgeInsets.zero,
                   content: TideDialogs.glassContent(context: ctx, children: [
@@ -912,7 +912,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 setSt(() {});
               }
 
-              return AlertDialog(
+              return TideDialogSurface(
                   backgroundColor: Colors.transparent,
                   contentPadding: EdgeInsets.zero,
                   content: TideDialogs
@@ -1056,7 +1056,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       Navigator.pop(parentCtx);
                       TideDialogs.show(
                           context: parentCtx,
-                          builder: (c2) => AlertDialog(
+                          builder: (c2) => TideDialogSurface(
                               backgroundColor: Colors.transparent,
                               contentPadding: EdgeInsets.zero,
                               content: TideDialogs.glassContent(
@@ -1348,7 +1348,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     TideDialogs.show(
         context: context,
         builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setSt) => AlertDialog(
+            builder: (ctx, setSt) => TideDialogSurface(
                 backgroundColor: Colors.transparent,
                 contentPadding: EdgeInsets.zero,
                 content: TideDialogs.glassContent(context: ctx, children: [
@@ -1794,7 +1794,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
     TideDialogs.show(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => TideDialogSurface(
         title: const Text('请求错误详情', style: TextStyle(fontFamily: 'TideFont')),
         content: SingleChildScrollView(
           child: Column(

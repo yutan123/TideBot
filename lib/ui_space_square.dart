@@ -769,7 +769,7 @@ class SquarePageState extends State<SquarePage>
   void _deleteFeed(Map<String, dynamic> f, GlobalKey cardKey) async {
     final confirm = await TideDialogs.show<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => TideDialogSurface(
         backgroundColor: Colors.transparent,
         contentPadding: EdgeInsets.zero,
         content: TideDialogs.glassContent(context: ctx, children: [

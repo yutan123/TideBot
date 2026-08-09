@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'app_navigation.dart';
 import 'package:flutter/services.dart';
 import 'theme.dart';
 
@@ -12,7 +11,8 @@ class BouncyTap extends StatefulWidget {
   final VoidCallback? onTap;
   final double scaleAmount;
   const BouncyTap(
-      {super.key, required this.child, this.onTap, this.scaleAmount = 0.05});
+      {Key? key, required this.child, this.onTap, this.scaleAmount = 0.05})
+      : super(key: key);
   @override
   State<BouncyTap> createState() => _BouncyTapState();
 }
@@ -141,6 +141,102 @@ Future<T?> showTideDialog<T>(
       barrierDismissible: barrierDismissible);
 }
 
+/// A consistent, app-owned dialog shell. It provides the inset and handles
+/// safe-area behavior while callers supply their own content.
+class TideDialogSurface extends StatelessWidget {
+  final Widget? child;
+  final Widget? content;
+  final Widget? title;
+  final List<Widget>? actions;
+  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry? contentPadding;
+  final Color? backgroundColor;
+
+  const TideDialogSurface({
+    super.key,
+    this.child,
+    this.content,
+    this.title,
+    this.actions,
+    this.margin = const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+    this.contentPadding,
+    this.backgroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final body = child ??
+        Container(
+          decoration: BoxDecoration(
+            color: backgroundColor ?? TideTheme.of(context).surface,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          padding: contentPadding ?? const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (title != null) title!,
+              if (title != null && content != null) const SizedBox(height: 14),
+              if (content != null) Flexible(child: content!),
+              if (actions != null && actions!.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: actions!),
+              ],
+            ],
+          ),
+        );
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: margin,
+          child: Material(type: MaterialType.transparency, child: body),
+        ),
+      ),
+    );
+  }
+}
+
+/// Provides a consistent left-edge drag-back gesture for custom routes and
+/// dialogs without changing Android's normal system back behavior.
+class TideEdgeBackGesture extends StatefulWidget {
+  final Widget child;
+  const TideEdgeBackGesture({super.key, required this.child});
+
+  @override
+  State<TideEdgeBackGesture> createState() => _TideEdgeBackGestureState();
+}
+
+class _TideEdgeBackGestureState extends State<TideEdgeBackGesture> {
+  double? _startX;
+
+  void _onStart(DragStartDetails details) {
+    if (details.globalPosition.dx <= 28) _startX = details.globalPosition.dx;
+  }
+
+  void _onEnd(DragEndDetails details) {
+    final start = _startX;
+    _startX = null;
+    if (start == null) return;
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity > 280 && Navigator.of(context).canPop()) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: _onStart,
+      onHorizontalDragEnd: _onEnd,
+      child: widget.child,
+    );
+  }
+}
+
 class TideDialogs {
   static Future<T?> show<T>(
       {required BuildContext context,
@@ -150,7 +246,7 @@ class TideDialogs {
       context: context,
       barrierDismissible: barrierDismissible,
       barrierLabel: '',
-      barrierColor: Colors.black.withValues(alpha: 0.35),
+      barrierColor: Colors.black.withOpacity(0.35),
       transitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, anim1, anim2) => builder(context),
       transitionBuilder: (context, anim, secAnim, child) => ScaleTransition(
@@ -171,7 +267,7 @@ class TideDialogs {
           width: MediaQuery.of(context).size.width * maxWidth,
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-              color: TideTheme.of(context).surface.withValues(alpha: 0.94),
+              color: TideTheme.of(context).surface.withOpacity(0.94),
               borderRadius: BorderRadius.circular(22),
               border:
                   Border.all(color: TideTheme.of(context).border, width: 0.5)),
@@ -219,7 +315,7 @@ Future<T?> showTideSheet<T>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.35),
+    barrierColor: Colors.black.withOpacity(0.35),
     builder: (ctx) => GestureDetector(
       onTap: () => Navigator.pop(ctx),
       child: Container(
@@ -228,9 +324,6 @@ Future<T?> showTideSheet<T>(
         alignment: Alignment.bottomCenter,
         child: GestureDetector(
             onTap: () {},
-            onVerticalDragEnd: (details) {
-              if ((details.primaryVelocity ?? 0) > 450) Navigator.pop(ctx);
-            },
             child: ClipRRect(
               borderRadius:
                   const BorderRadius.vertical(top: Radius.circular(24)),
@@ -240,8 +333,7 @@ Future<T?> showTideSheet<T>(
                   height: sheetH,
                   width: double.infinity,
                   decoration: BoxDecoration(
-                      color:
-                          TideTheme.of(context).surface.withValues(alpha: 0.96),
+                      color: TideTheme.of(context).surface.withOpacity(0.96),
                       borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(24))),
                   child: Column(children: [
@@ -260,47 +352,6 @@ Future<T?> showTideSheet<T>(
       ),
     ),
   );
-}
-
-// ========== 全局边缘返回 ==========
-class TideEdgeBackGesture extends StatefulWidget {
-  final Widget child;
-  const TideEdgeBackGesture({super.key, required this.child});
-
-  @override
-  State<TideEdgeBackGesture> createState() => _TideEdgeBackGestureState();
-}
-
-class _TideEdgeBackGestureState extends State<TideEdgeBackGesture> {
-  double? _startX;
-  double? _startY;
-
-  void _onPointerUp(PointerUpEvent event) {
-    final startX = _startX;
-    final startY = _startY;
-    _startX = null;
-    _startY = null;
-    if (startX == null || startY == null) return;
-    final dx = event.position.dx - startX;
-    final dy = event.position.dy - startY;
-    if (startX <= 24 && dx > 88 && dx.abs() > dy.abs() * 1.5) {
-      appNavigatorKey.currentState?.maybePop();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Listener(
-        onPointerDown: (event) {
-          _startX = event.position.dx;
-          _startY = event.position.dy;
-        },
-        onPointerCancel: (_) {
-          _startX = null;
-          _startY = null;
-        },
-        onPointerUp: _onPointerUp,
-        child: widget.child,
-      );
 }
 
 // ========== 粒子系统 ==========
@@ -326,7 +377,7 @@ class ExplosionPainter extends CustomPainter {
     final pt = Paint()..style = PaintingStyle.fill;
     for (var p in ps) {
       if (p.life > 0) {
-        pt.color = p.color.withValues(alpha: p.life.clamp(0.0, 1.0));
+        pt.color = p.color.withOpacity(p.life.clamp(0.0, 1.0));
         c.drawCircle(Offset(p.x, p.y), p.size, pt);
       }
     }
@@ -341,7 +392,8 @@ class ParticleOverlay extends StatefulWidget {
   final List<Offset> origins;
   final VoidCallback? onDone;
   const ParticleOverlay(
-      {super.key, required this.child, required this.origins, this.onDone});
+      {Key? key, required this.child, required this.origins, this.onDone})
+      : super(key: key);
   @override
   State<ParticleOverlay> createState() => _ParticleOverlayState();
 }
@@ -358,9 +410,7 @@ class _ParticleOverlayState extends State<ParticleOverlay>
     _c = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 2000));
     _c.addListener(() => setState(() {
-          for (var p in _ps) {
-            p.update();
-          }
+          for (var p in _ps) p.update();
         }));
     _c.addStatusListener((s) {
       if (s == AnimationStatus.completed) widget.onDone?.call();
@@ -375,8 +425,8 @@ class _ParticleOverlayState extends State<ParticleOverlay>
     final colors = [
       theme.primary,
       theme.primaryLight,
-      theme.primary.withValues(alpha: 0.7),
-      theme.primaryLight.withValues(alpha: 0.5),
+      theme.primary.withOpacity(0.7),
+      theme.primaryLight.withOpacity(0.5),
     ];
     for (var o in widget.origins) {
       for (int i = 0; i < 30; i++) {
@@ -418,12 +468,13 @@ class GlassCard extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const GlassCard(
-      {super.key,
+      {Key? key,
       required this.child,
       this.padding = const EdgeInsets.all(16),
       this.radius = 20,
       this.onTap,
-      this.onLongPress});
+      this.onLongPress})
+      : super(key: key);
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -436,13 +487,13 @@ class GlassCard extends StatelessWidget {
             child: Container(
                 padding: padding,
                 decoration: BoxDecoration(
-                    color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+                    color: TideTheme.of(context).glass.withOpacity(0.7),
                     borderRadius: BorderRadius.circular(radius),
                     border: Border.all(
                         color: TideTheme.of(context).border, width: 0.5),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.03),
+                          color: Colors.black.withOpacity(0.03),
                           blurRadius: 10,
                           offset: const Offset(0, 2))
                     ]),
@@ -460,13 +511,14 @@ class FrostCard extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   const FrostCard(
-      {super.key,
+      {Key? key,
       required this.child,
       this.padding = const EdgeInsets.all(16),
       this.margin = EdgeInsets.zero,
       this.radius = 20,
       this.onTap,
-      this.onLongPress});
+      this.onLongPress})
+      : super(key: key);
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -481,13 +533,13 @@ class FrostCard extends StatelessWidget {
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
-                color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+                color: TideTheme.of(context).glass.withOpacity(0.7),
                 borderRadius: BorderRadius.circular(radius),
                 border:
                     Border.all(color: TideTheme.of(context).border, width: 0.5),
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
+                      color: Colors.black.withOpacity(0.04),
                       blurRadius: 12,
                       offset: const Offset(0, 3))
                 ],
@@ -506,9 +558,8 @@ String fmtTime(dynamic ts) {
   if (ts == null) return '';
   if (ts is String) {
     final dt = DateTime.tryParse(ts);
-    if (dt != null) {
+    if (dt != null)
       return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    }
     return ts;
   }
   if (ts is int) {

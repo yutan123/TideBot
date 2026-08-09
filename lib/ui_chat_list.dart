@@ -55,7 +55,7 @@ class ChatListPageState extends State<ChatListPage> {
   void _deleteBot(Map<String, dynamic> bot, GlobalKey key) async {
     final confirm = await TideDialogs.show<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => TideDialogSurface(
         backgroundColor: Colors.transparent,
         contentPadding: EdgeInsets.zero,
         content: TideDialogs.glassContent(context: ctx, children: [
