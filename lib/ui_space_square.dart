@@ -700,9 +700,16 @@ class SquarePageState extends State<SquarePage>
       'file_path': f['image']?.toString(),
       'timestamp': now,
     });
+    // A share is a real chat turn, not merely an archived card. Ask the bot
+    // immediately while keeping the JSON payload out of its natural-language UI.
+    final readable =
+        '用户分享了一条动态。作者：${f['user'] ?? '匿名'}；发布时间：${formatTime(f['timestamp'] ?? now)}；内容：${f['content'] ?? ''}；${(f['image']?.toString().isNotEmpty == true) ? '动态附有一张图片。' : ''} 请针对这条动态自然回应。';
+    final reply = await AIManager().sendMessage(botId: botId, text: readable);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('动态已作为分享卡片发送', style: TextStyle(fontFamily: 'TideFont')),
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+          reply['success'] == true ? '动态已发送，机器人已回复' : '动态已发送；机器人回复失败，可在聊天页重试',
+          style: const TextStyle(fontFamily: 'TideFont')),
       behavior: SnackBarBehavior.floating,
     ));
   }

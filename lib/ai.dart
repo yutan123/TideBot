@@ -79,14 +79,26 @@ class AIManager {
     final backupLocal =
         (prefs.getString('local_backup_model_$botId') ?? '').trim();
     final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
+    final matchingBots = (await DBManager().getAllBots())
+        .where((bot) => bot['id']?.toString() == botId)
+        .toList();
+    final primaryRemote = matchingBots.isEmpty
+        ? ''
+        : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+    // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+    // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+    final primary = {'local': primaryLocal, 'provider': primaryRemote};
+    final backup = {
+      'local': backupLocal,
+      'provider': backupRemote.isNotEmpty ? backupRemote : primaryRemote,
+    };
     final attempts = <Map<String, String>>[
-      {'local': primaryLocal, 'provider': ''},
-      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty)
-        {'local': backupLocal, 'provider': backupRemote},
-    ];
-    while (attempts.length < 3) {
-      attempts.add(Map<String, String>.from(attempts.last));
-    }
+      primary,
+      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty) backup,
+      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty) backup,
+      if (backupLocal.isEmpty && backupRemote.isEmpty) primary,
+      if (backupLocal.isEmpty && backupRemote.isEmpty) primary,
+    ].take(3).toList();
 
     Map<String, dynamic>? lastFailure;
     for (var index = 0; index < attempts.length; index++) {
@@ -249,6 +261,12 @@ class AIManager {
     final charBudget = (maxContext * 3.2).floor();
     for (final msg in history.reversed) {
       if (msg['type'] != 'text') continue;
+      // Failed/unsent messages must never become model context. They may be
+      // visible as an error bubble, but are not part of the conversation.
+      if (msg['error_log']?.toString().isNotEmpty == true ||
+          msg['error_code']?.toString().isNotEmpty == true) {
+        continue;
+      }
       final content = msg['content']?.toString() ?? '';
       if (content.isEmpty) continue;
       if (usedChars + content.length > charBudget &&
@@ -583,11 +601,14 @@ class AIManager {
         .replaceAll(RegExp(r'\[心情\s*:\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
-        .replaceAll(RegExp(r'\[(?:工具|贴纸|表情包|类型)\s*:[^\]]*\]'), '')
-        .replaceAll(RegExp(r'\[落子\s*:\s*\d+\s*,\s*\d+\s*\]'), '')
+        .replaceAll(RegExp(r'\[(?:工具|贴纸|表情包|类型)\s*[:：][^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[落子\s*[:：]\s*\d+\s*,\s*\d+\]'), '')
+        // Never expose sticker protocol / MIME-like labels as normal text.
         .replaceAll(
-            RegExp(r'^\s*(?:type|类型)\s*:\s*(?:sticker|表情包)\s*$',
-                multiLine: true),
+            RegExp(
+                r'^\s*(?:(?:type|类型|表情包类型|sticker(?:[_ -]?type)?)\s*[:：]\s*)?(?:sticker|emoji|表情包|动图|静态表情)\s*$',
+                multiLine: true,
+                caseSensitive: false),
             '')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
@@ -835,8 +856,11 @@ class AIManager {
           0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
       // 在上下文接近上限前就归档，避免等到模型已被截断才尝试总结。
       // 旧 90% 阈值会让 10k 上下文的长会话长期没有可用中期记忆。
-      final threshold = (maxContext * 3.2 * 0.55).floor();
-      if (totalChars < threshold || textHistory.length < 6) return;
+      // Summarize at the selected context limit, or after 16 text messages,
+      // whichever comes first. This keeps long conversations from silently
+      // losing context and makes the diary/medium-memory area useful.
+      final threshold = (maxContext * 3.2).floor();
+      if (totalChars < threshold && textHistory.length < 16) return;
 
       final cutoff =
           (textHistory.length * 0.60).floor().clamp(1, textHistory.length);
@@ -1002,6 +1026,26 @@ class AIManager {
     final apiKey = (await db.getKV('web_search_api_key') ?? '').trim();
     if (apiKey.isEmpty) return [];
     final provider = await db.getKV('web_search_provider') ?? 'Tavily';
+    // Agent-Reach is self-hosted/locally deployable rather than a public
+    // anonymous endpoint. The API-key field accepts its base URL for this
+    // option (for example http://127.0.0.1:3000), keeping platform search
+    // opt-in and avoiding an opaque third-party relay.
+    if (provider == 'Agent Reach（补充平台搜索）') {
+      try {
+        final base = apiKey.replaceFirst(RegExp(r'/+$'), '');
+        if (!base.startsWith('http')) return [];
+        final response = await http
+            .post(Uri.parse('$base/search'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({'query': query, 'limit': 5}))
+            .timeout(const Duration(seconds: 18));
+        if (response.statusCode < 200 || response.statusCode >= 300) return [];
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        return _searchRows(body['results'] ?? body['data'] ?? body);
+      } catch (_) {
+        return [];
+      }
+    }
     try {
       late final http.Response response;
       if (provider == 'Tavily') {

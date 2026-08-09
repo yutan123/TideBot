@@ -274,10 +274,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'reply_to_id': _replyingTo?['id']?.toString(),
           'timestamp': now,
         }).timeout(const Duration(seconds: 5));
+        // The message has been safely persisted; only now clear the quote.
+        // Clearing before this point caused reply_to_id to be lost intermittently.
+        if (mounted) setState(() => _replyingTo = null);
       } catch (e) {
         debugPrint('[send] persist user message failed: $e');
       }
-      if (mounted) setState(() => _replyingTo = null);
       final cm = _bot['chat_model']?.toString().trim() ?? '';
       final localModelId = (await SharedPreferences.getInstance().then(
                   (prefs) => prefs.getString('local_chat_model_$botId')) ??
@@ -431,17 +433,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           });
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
-          // 数据库仍只保存一条完整回复；界面逐句补全同一气泡，重进页面不会重复。
-          final displayMessage = Map<String, dynamic>.from(aiMsg)
-            ..['content'] = '';
-          for (final segment in segments) {
+          // 每个分句都是独立气泡，模拟真人逐条发送；只保留首条原始 ID，
+          // 其余使用稳定的派生 ID，避免重进页面时与完整持久化记录重复。
+          for (var index = 0; index < segments.length; index++) {
             await _applyRandomReplyDelay(db);
             if (!mounted) return;
-            setState(() {
-              if (!_msgs.contains(displayMessage)) _msgs.add(displayMessage);
-              displayMessage['content'] =
-                  '${displayMessage['content']}${displayMessage['content'].toString().isEmpty ? '' : '\n'}$segment';
-            });
+            final segmentMessage = Map<String, dynamic>.from(aiMsg)
+              ..['id'] =
+                  index == 0 ? aiMsg['id'] : '${aiMsg['id']}_segment_$index'
+              ..['content'] = segments[index]
+              ..['timestamp'] = (aiMsg['timestamp'] as int) + index;
+            setState(() => _msgs.add(segmentMessage));
             _scrollDown();
           }
         } else {
@@ -974,7 +976,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         curVision = v;
                         await pickModel('vision_model_$botId', v);
                       }),
-                      _mLabel('生图模型（可选）'),
+                      _mLabel('生图模型'),
                       _modelPicker(ctx, providers, curImageGen, (v) async {
                         curImageGen = v;
                         await pickModel('image_gen_model_$botId', v);
@@ -985,7 +987,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         await pickModel('stt_model_$botId', v);
                       }),
                       // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
-                      _mLabel('TTS模型（语音，可选）'),
+                      _mLabel('TTS模型'),
                       _modelPicker(ctx, ttsProviders, curTts, (v) async {
                         curTts = v;
                         await pickModel('tts_model_$botId', v, isTts: true);

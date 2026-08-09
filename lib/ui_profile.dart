@@ -1102,7 +1102,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                             '博查 Bocha',
                             'Serper',
                             'Brave Search',
-                            'Bing Web Search'
+                            'Bing Web Search',
+                            'Agent Reach（补充平台搜索）'
                           ]
                               .map((provider) => DropdownMenuItem(
                                   value: provider,

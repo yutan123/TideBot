@@ -99,7 +99,33 @@ class LocalLlama {
 
   Future<String> pathFor(String id) async {
     final directory = await getApplicationDocumentsDirectory();
-    return '${directory.path}/$id.gguf';
+    final expected = File('${directory.path}/$id.gguf');
+    if (await expected.exists()) return expected.path;
+
+    // Older releases persisted a selectable file name instead of the logical
+    // model id. Accept both formats and report the resolved path accurately.
+    final direct = File(id);
+    if (await direct.exists()) return direct.path;
+    final basename = id.split(RegExp(r'[/\\]')).last;
+    final named = File('${directory.path}/$basename');
+    if (await named.exists()) return named.path;
+
+    final candidates = await directory
+        .list()
+        .where((entry) =>
+            entry is File && entry.path.toLowerCase().endsWith('.gguf'))
+        .cast<File>()
+        .toList();
+    final normalized = id.toLowerCase().replaceAll('.gguf', '');
+    for (final file in candidates) {
+      final name = file.path.split(Platform.pathSeparator).last.toLowerCase();
+      if (name.replaceAll('.gguf', '') == normalized ||
+          name.contains(normalized) ||
+          normalized.contains(name.replaceAll('.gguf', ''))) {
+        return file.path;
+      }
+    }
+    throw FileSystemException('找不到已下载的本地模型文件', expected.path);
   }
 
   Future<void> dispose() async {
