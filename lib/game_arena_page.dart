@@ -36,6 +36,7 @@ class _GameArenaPageState extends State<GameArenaPage> {
   bool _waitingForReply = false;
   String _roundStatus = '轮到你落子';
   int _questionCount = 0;
+  bool _questionSolved = false;
 
   String get _botId => widget.bot['id']?.toString() ?? '';
   String get _botName => widget.bot['name']?.toString() ?? 'TideBot';
@@ -57,9 +58,29 @@ class _GameArenaPageState extends State<GameArenaPage> {
     super.dispose();
   }
 
+  @override
+  void initState() {
+    super.initState();
+    // 先手随机：棋盘类游戏开局掷一枚硬币决定谁先落子。
+    if (_activeGame == 'gomoku' || _activeGame == 'tic_tac_toe') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final botFirst = _random.nextBool();
+        if (botFirst) {
+          _roundStatus = '$_botName 先手，等待 TA 落子…';
+          _talk('开局由你先手，请选择棋盘中心附近的一个空位，输出 [落子:行,列] 后简短说明。', null, true);
+        }
+      });
+    }
+  }
+
   void _scrollMessagesToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_messageScrollController.hasClients) return;
+      if (!mounted) return;
+      if (!_messageScrollController.hasClients) {
+        Future.delayed(const Duration(milliseconds: 120), _scrollMessagesToEnd);
+        return;
+      }
       _messageScrollController.animateTo(
         _messageScrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 260),
@@ -74,15 +95,25 @@ class _GameArenaPageState extends State<GameArenaPage> {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
-  Future<void> _talk([String? preset, String? internalContext]) async {
+  Future<void> _talk(
+      [String? preset,
+      String? internalContext,
+      bool internalOnly = false]) async {
     final visibleText = (preset ?? _chatController.text).trim();
     if (visibleText.isEmpty || _waitingForReply || _botId.isEmpty) return;
 
+    if (!internalOnly) {
+      setState(() {
+        _messages.add('你：$visibleText');
+        _chatController.clear();
+      });
+    }
+    final historyVisible = internalOnly ? '' : visibleText;
     setState(() {
-      _messages.add('你：$visibleText');
-      _gameHistory
-          .add(<String, dynamic>{'role': 'user', 'content': visibleText});
-      _chatController.clear();
+      if (!internalOnly && historyVisible.isNotEmpty) {
+        _gameHistory
+            .add(<String, dynamic>{'role': 'user', 'content': historyVisible});
+      }
       _waitingForReply = true;
     });
     _scrollMessagesToEnd();
@@ -180,8 +211,10 @@ class _GameArenaPageState extends State<GameArenaPage> {
     if (match == null) {
       if (_roundStatus.startsWith('等待')) {
         _roundStatus = 'TA 的落子格式无效，正在请求重新落子…';
-        Future.delayed(const Duration(milliseconds: 30),
-            () => _talk('你刚才没有按 [落子:行,列] 格式落子。请根据当前棋盘选择一个空位，只返回合法格式后再简短说明。'));
+        Future.delayed(
+            const Duration(milliseconds: 30),
+            () => _talk('你刚才没有按 [落子:行,列] 格式落子。请根据当前棋盘选择一个空位，只返回合法格式后再简短说明。',
+                null, true));
       }
       return;
     }
@@ -198,8 +231,8 @@ class _GameArenaPageState extends State<GameArenaPage> {
         column >= size ||
         board[index].isNotEmpty) {
       _roundStatus = 'TA 的落子无效，正在请求重新选择空位…';
-      Future.microtask(
-          () => _talk('你选择的位置不合法或已被占用。请查看当前棋盘，选择一个未占用格，并严格返回 [落子:行,列]。'));
+      Future.microtask(() =>
+          _talk('你选择的位置不合法或已被占用。请查看当前棋盘，选择一个未占用格，并严格返回 [落子:行,列]。', null, true));
       return;
     }
     board[index] = mark;
@@ -259,7 +292,7 @@ class _GameArenaPageState extends State<GameArenaPage> {
   }
 
   Widget _questionGame(TideTheme theme) {
-    final complete = _questionCount >= 20;
+    final complete = _questionCount >= 20 || _questionSolved;
     final lastAi = _gameHistory.reversed
         .where((item) => item['role'] == 'assistant')
         .map((item) => item['content']?.toString() ?? '')
@@ -285,25 +318,42 @@ class _GameArenaPageState extends State<GameArenaPage> {
                 style: const TextStyle(fontFamily: 'TideFont')),
           )
         else
-          Wrap(
-            spacing: 10,
-            children: <String>['是', '否', '不确定']
-                .map((answer) => FilledButton(
-                      onPressed: complete || _waitingForReply
-                          ? null
-                          : () {
-                              setState(() => _questionCount++);
-                              _talk(
-                                answer,
-                                _questionCount >= 20
-                                    ? '用户本回合的回答是“$answer”，这是第 20 个回答。请给出最终猜测；不要复述任何规则或内部提示。'
-                                    : '用户本回合的回答是“$answer”。请基于此前问答提出下一个问题；不要复述规则或内部提示。',
-                              );
-                            },
-                      child: Text(answer,
-                          style: const TextStyle(fontFamily: 'TideFont')),
-                    ))
-                .toList(),
+          Column(
+            children: [
+              Wrap(
+                spacing: 10,
+                children: <String>['是', '否', '不确定']
+                    .map((answer) => FilledButton(
+                          onPressed: complete || _waitingForReply
+                              ? null
+                              : () {
+                                  setState(() => _questionCount++);
+                                  _talk(
+                                    answer,
+                                    _questionCount >= 20
+                                        ? '用户本回合的回答是“$answer”，这是第 20 个回答。请给出最终猜测；不要复述任何规则或内部提示。'
+                                        : '用户本回合的回答是“$answer”。请基于此前问答提出下一个问题；不要复述规则或内部提示。',
+                                  );
+                                },
+                          child: Text(answer,
+                              style: const TextStyle(fontFamily: 'TideFont')),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: complete || _waitingForReply
+                    ? null
+                    : () {
+                        setState(() => _questionSolved = true);
+                        _talk('用户确认你已猜出答案。请立刻给出最终答案并结束本局，不要继续提问、不要输出规则或内部提示。',
+                            null, true);
+                      },
+                icon: const Icon(Icons.flag_rounded),
+                label: const Text('已猜出答案',
+                    style: TextStyle(fontFamily: 'TideFont')),
+              ),
+            ],
           ),
       ],
     );
@@ -404,6 +454,61 @@ class _GameArenaPageState extends State<GameArenaPage> {
         candidate['high']! > previous['high']!;
   }
 
+  /// 判断机器人手中是否存在能够压过上一手的任意合法组合。
+  bool _botCanBeatAny() {
+    if (_lastPokerPlay.isEmpty || _pokerLead == 'user') return true;
+    final previous = _pokerPattern(_lastPokerPlay);
+    if (previous == null) return true;
+    final hand = _botPokerHand;
+    final prevHigh = previous['high']!;
+    final prevSize = previous['size']!;
+    final prevKind = previous['kind']!;
+
+    bool hasHigher(int count, int minValue) {
+      for (final card in hand) {
+        final value = _rankValue(card);
+        if (value > minValue &&
+            hand.where((c) => _rankValue(c) == value).length >= count) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // 炸弹可任意压制（非炸弹）上一手。
+    final bombValues = hand
+        .map(_rankValue)
+        .toSet()
+        .where((v) => hand.where((c) => _rankValue(c) == v).length == 4);
+    if (previous['kind'] != 5 && bombValues.isNotEmpty) return true;
+
+    switch (prevKind) {
+      case 1: // 单张
+      case 2: // 对子
+        return hasHigher(prevKind, prevHigh);
+      case 3: // 三张
+        return hasHigher(3, prevHigh);
+      case 4: // 三带一
+        return hasHigher(3, prevHigh);
+      case 5: // 炸弹对炸弹
+        return hasHigher(4, prevHigh);
+      case 6: // 顺子
+        // 存在更长的连续可压过该长度的顺子起始点即可。
+        final values = hand.map(_rankValue).toSet().toList()..sort();
+        for (final start in values) {
+          var run = 0;
+          var v = start;
+          while (values.contains(v)) {
+            run++;
+            v++;
+          }
+          if (run >= prevSize && start + prevSize - 1 > prevHigh) return true;
+        }
+        return false;
+    }
+    return false;
+  }
+
   void _showPokerNotice(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -438,13 +543,17 @@ class _GameArenaPageState extends State<GameArenaPage> {
           : '等待 $_botName 出牌…';
     });
     await _talk(
-        '双人斗地主状态：你的暗牌（仅你可见）是 ${_botPokerHand.join(' ')}。我本轮出牌：${cards.join(' ')}。上一手牌型规则只支持单张、对子、三张、三带一、五张或以上顺子、四张炸弹；你须用更大的相同牌型压制，或用炸弹压制。无法压制才回复 [过牌]；否则只能从暗牌选牌并回复 [出牌:牌1 牌2]，不要透露其他暗牌。');
+        '双人斗地主状态：你的暗牌（仅你可见）是 ${_botPokerHand.join(' ')}。我本轮出牌：${cards.join(' ')}。上一手牌型规则只支持单张、对子、三张、三带一、五张或以上顺子、四张炸弹；你须用更大的相同牌型压制，或用炸弹压制。无法压制才回复 [过牌]；否则只能从暗牌选牌并回复 [出牌:牌1 牌2]，不要透露其他暗牌。',
+        null,
+        true);
   }
 
   void _requestPokerCorrection(String reason) {
     _roundStatus = '$reason，正在请求 $_botName 重新出牌…';
-    Future.microtask(() =>
-        _talk('你上一手不合法：$reason。请按当前规则只回复 [出牌:牌1 牌2] 或 [过牌]，并且只能使用自己的暗牌。'));
+    Future.microtask(() => _talk(
+        '你上一手不合法：$reason。请按当前规则只回复 [出牌:牌1 牌2] 或 [过牌]，并且只能使用自己的暗牌。',
+        null,
+        true));
   }
 
   void _applyPokerMove(String reply) {
@@ -452,6 +561,11 @@ class _GameArenaPageState extends State<GameArenaPage> {
     if (reply.contains('[过牌]')) {
       if (_pokerLead == 'bot') {
         _requestPokerCorrection('你是上一手的领先者，不能对自己出过的牌过牌');
+        return;
+      }
+      // 你手中明明能压过上一手时不允许过牌，防止机器人“偷懒”放弃。
+      if (_botCanBeatAny()) {
+        _requestPokerCorrection('你手中存在能压过上一手的牌，不能过牌，必须出牌');
         return;
       }
       setState(() {
@@ -576,6 +690,7 @@ class _GameArenaPageState extends State<GameArenaPage> {
       _ticTacToe.fillRange(0, _ticTacToe.length, '');
       _roundStatus = '轮到你落子';
       _questionCount = 0;
+      _questionSolved = false;
       _pokerHand.clear();
       _botPokerHand.clear();
       _pokerSelected.clear();
@@ -586,6 +701,17 @@ class _GameArenaPageState extends State<GameArenaPage> {
       _pokerStarted = false;
       _gameHistory.clear();
     });
+    // 棋盘类重开同样随机决定谁先手。
+    if (_activeGame == 'gomoku' || _activeGame == 'tic_tac_toe') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final botFirst = _random.nextBool();
+        if (botFirst) {
+          _roundStatus = '$_botName 先手，等待 TA 落子…';
+          _talk('开局由你先手，请选择棋盘中心附近的一个空位，输出 [落子:行,列] 后简短说明。', null, true);
+        }
+      });
+    }
   }
 
   @override

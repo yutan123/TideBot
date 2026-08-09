@@ -754,8 +754,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _imageStyle =
           ['写实', '动漫', '科幻', '自定义'].contains(imageStyle) ? imageStyle! : '写实';
       _webSearch = webSearch == 'true';
-      _searchProvider =
-          searchProvider?.isNotEmpty == true ? searchProvider! : 'Tavily';
+      _searchProvider = _displaySearchProvider(
+          searchProvider?.isNotEmpty == true ? searchProvider! : '');
       _searchKeyController.text = searchKey ?? '';
       _stickers = stickers == 'true';
       _stickerChance = (stickerChance ?? 50).clamp(1, 100);
@@ -783,8 +783,123 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     super.dispose();
   }
 
+  String _displaySearchProvider(String raw) {
+    if (raw.contains('Agent') || raw.contains('Agent-Reach')) {
+      return '自建 Agent-Reach（可搜平台内容）';
+    }
+    if (raw.contains('Tavily')) return 'Tavily（需外网）';
+    if (raw.contains('博查') || raw.contains('Bocha')) return '博查 Bocha（国内直连）';
+    if (raw.contains('Serper')) return 'Serper（需外网）';
+    if (raw.contains('Brave')) return 'Brave Search（需外网）';
+    if (raw.contains('Bing')) return 'Bing Web Search（国内较稳定）';
+    return raw.isEmpty ? 'Tavily（需外网）' : raw;
+  }
+
+  String _searchKeyLabel(TideTheme theme) {
+    if (_searchProvider.startsWith('自建 Agent-Reach')) {
+      return 'Agent-Reach 桥接服务地址';
+    }
+    return '搜索 API Key';
+  }
+
+  String get _searchKeyHint {
+    if (_searchProvider.startsWith('自建 Agent-Reach')) {
+      return '填你自己的 Agent-Reach 桥接服务地址，按查询意图路由到 '
+          'GitHub / YouTube / Bilibili / Twitter / 小红书 / Reddit / Exa 等平台搜索。';
+    }
+    if (_searchProvider.contains('博查 Bocha')) {
+      return '联网即可访问，获取途径：博查官网 bochaai.com 申请。';
+    }
+    if (_searchProvider.contains('Bing Web Search')) {
+      return '较稳定；可在 Azure / Bing 门户申请。';
+    }
+    if (_searchProvider.contains('Tavily')) {
+      return '需能访问外网，否则无法使用；官方 tavily.com 申请。';
+    }
+    if (_searchProvider.contains('Serper')) {
+      return '需能访问外网；serper.dev 申请。';
+    }
+    if (_searchProvider.contains('Brave')) {
+      return '需能访问外网；api.search.brave.com 申请。';
+    }
+    return '填写所选服务商提供的 API Key。';
+  }
+
   Future<void> _save(String key, String value) async {
     await DBManager().insertKV(key, value);
+  }
+
+  Widget _choiceField({
+    required TideTheme theme,
+    required String label,
+    required String value,
+    required List<String> options,
+    required ValueChanged<String> onPick,
+    Widget? icon,
+  }) {
+    return BouncyTap(
+      onTap: () async {
+        final picked = await showTideSheet<String>(
+          context: context,
+          height: 360,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+            children: [
+              Text(label,
+                  style: TextStyle(
+                      color: theme.textStrong,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 8),
+              ...options.map((option) => ListTile(
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    title: Text(option,
+                        style: TextStyle(
+                            color: theme.textStrong, fontFamily: 'TideFont')),
+                    trailing: option == value
+                        ? Icon(Icons.check_rounded, color: theme.primary)
+                        : null,
+                    onTap: () => Navigator.pop(context, option),
+                  )),
+            ],
+          ),
+        );
+        if (picked != null) onPick(picked);
+      },
+      child: Container(
+        height: 54,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: theme.surfaceVariant,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(children: [
+          if (icon != null) ...[icon, const SizedBox(width: 10)],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                        color: theme.textWeak,
+                        fontSize: 11,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 2),
+                Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: theme.textStrong, fontFamily: 'TideFont')),
+              ],
+            ),
+          ),
+          Icon(Icons.expand_more_rounded, color: theme.iconMuted),
+        ]),
+      ),
+    );
   }
 
   Widget _settingSwitch(
@@ -927,14 +1042,10 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       controller: _botPostsPerDayController,
       keyboardType: TextInputType.number,
       style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-      decoration: InputDecoration(
-          isDense: true,
-          prefixIcon:
-              Icon(Icons.dynamic_feed_rounded, color: theme.primary, size: 19),
-          labelText: '每个机器人每天发布数量（1–10）',
-          filled: true,
-          fillColor: theme.surfaceVariant,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16))),
+      decoration: _roundInput(theme,
+          label: '每个机器人每天发布数量（1–10）',
+          icon:
+              Icon(Icons.dynamic_feed_rounded, color: theme.primary, size: 19)),
       onChanged: (v) {
         final n = int.tryParse(v);
         if (n != null && n >= 1 && n <= 10) _save('bot_posts_per_day', '$n');
@@ -944,13 +1055,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       controller: _streamSpeedController,
       keyboardType: TextInputType.number,
       style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-      decoration: InputDecoration(
-          isDense: true,
-          prefixIcon: Icon(Icons.speed_rounded, color: theme.primary, size: 19),
-          labelText: '显示速度（1–100）',
-          filled: true,
-          fillColor: theme.surfaceVariant,
-          border: InputBorder.none),
+      decoration: _roundInput(theme,
+          label: '显示速度（1–100）',
+          icon: Icon(Icons.speed_rounded, color: theme.primary, size: 19)),
       onChanged: (v) {
         final n = int.tryParse(v);
         if (n != null && n >= 1 && n <= 100) {
@@ -976,6 +1083,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
         children: [
+          _sectionHeader(theme, '对话表现', Icons.forum_outlined),
           FrostCard(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(children: [
@@ -1009,28 +1117,6 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               ),
               _settingSwitch(
                 theme: theme,
-                title: '主动回复',
-                help: '应用保持运行时，机器人会在连续沉默达到下方随机区间后尝试自然开启话题。',
-                value: _proactiveReply,
-                onChanged: (v) {
-                  setState(() => _proactiveReply = v);
-                  _save('proactive_reply', '$v');
-                },
-                child: _proactiveReply ? _compactRange(theme) : null,
-              ),
-              _settingSwitch(
-                theme: theme,
-                title: '流式输出',
-                help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
-                value: _streaming,
-                onChanged: (v) {
-                  setState(() => _streaming = v);
-                  _save('streaming_output', '$v');
-                },
-                child: _streaming ? _compactSpeed(theme) : null,
-              ),
-              _settingSwitch(
-                theme: theme,
                 title: '分段回复',
                 help: '默认开启。模型回复会按自然句逐段呈现，让聊天节奏更接近真人。',
                 value: _segmentedReply,
@@ -1052,38 +1138,37 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               ),
               _settingSwitch(
                 theme: theme,
-                title: '机器人生图',
-                help: '开启后机器人可在需要生成图片时使用生图能力，并必须遵循下方默认风格。关闭后机器人不会感知此工具存在。',
-                value: _imageGeneration,
+                title: '流式输出',
+                help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
+                value: _streaming,
                 onChanged: (v) {
-                  setState(() => _imageGeneration = v);
-                  _save('bot_image_generation_enabled', '$v');
+                  setState(() => _streaming = v);
+                  _save('streaming_output', '$v');
                 },
-                child: _imageGeneration
-                    ? DropdownButtonFormField<String>(
-                        initialValue: _imageStyle,
-                        decoration: _roundInput(theme,
-                            label: '默认生图风格',
-                            icon: Icon(Icons.palette_outlined,
-                                color: theme.primary)),
-                        items: const ['写实', '动漫', '科幻', '自定义']
-                            .map((style) => DropdownMenuItem(
-                                value: style,
-                                child: Text(style,
-                                    style: const TextStyle(
-                                        fontFamily: 'TideFont'))))
-                            .toList(),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setState(() => _imageStyle = value);
-                          _save('bot_image_style', value);
-                        })
-                    : null,
+                child: _streaming ? _compactSpeed(theme) : null,
+              ),
+            ]),
+          ),
+          _sectionHeader(theme, '主动与智能', Icons.auto_awesome_outlined),
+          FrostCard(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(children: [
+              _settingSwitch(
+                theme: theme,
+                title: '主动回复',
+                help: '应用保持运行时，机器人会在连续沉默达到下方随机区间后尝试自然开启话题。',
+                value: _proactiveReply,
+                onChanged: (v) {
+                  setState(() => _proactiveReply = v);
+                  _save('proactive_reply', '$v');
+                },
+                child: _proactiveReply ? _compactRange(theme) : null,
               ),
               _settingSwitch(
                 theme: theme,
                 title: '联网搜索',
-                help: '仅开启后机器人才能按需搜索实时信息。请自行填写对应服务商 API Key；未开启时机器人不会感知搜索工具。',
+                help:
+                    '仅开启后机器人才能按需搜索实时信息。请填写对应服务商 API Key 或 Agent-Reach 桥接地址；未开启时机器人不会感知搜索工具。',
                 value: _webSearch,
                 onChanged: (v) {
                   setState(() => _webSearch = v);
@@ -1091,28 +1176,21 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 },
                 child: _webSearch
                     ? Column(children: [
-                        DropdownButtonFormField<String>(
-                          initialValue: _searchProvider,
-                          decoration: _roundInput(theme,
-                              label: '搜索服务商',
-                              icon: Icon(Icons.travel_explore_rounded,
-                                  color: theme.primary)),
-                          items: const [
-                            'Tavily',
-                            '博查 Bocha',
-                            'Serper',
-                            'Brave Search',
-                            'Bing Web Search',
-                            'Agent Reach（补充平台搜索）'
-                          ]
-                              .map((provider) => DropdownMenuItem(
-                                  value: provider,
-                                  child: Text(provider,
-                                      style: const TextStyle(
-                                          fontFamily: 'TideFont'))))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value == null) return;
+                        _choiceField(
+                          theme: theme,
+                          label: '搜索服务商',
+                          value: _searchProvider,
+                          options: const [
+                            'Tavily（需外网）',
+                            '博查 Bocha（国内直连）',
+                            'Serper（需外网）',
+                            'Brave Search（需外网）',
+                            'Bing Web Search（国内较稳定）',
+                            '自建 Agent-Reach（可搜平台内容）',
+                          ],
+                          icon: Icon(Icons.travel_explore_rounded,
+                              color: theme.primary),
+                          onPick: (value) {
                             setState(() => _searchProvider = value);
                             _save('web_search_provider', value);
                           },
@@ -1124,15 +1202,54 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                           style: TextStyle(
                               color: theme.textStrong, fontFamily: 'TideFont'),
                           decoration: _roundInput(theme,
-                              label: '搜索 API Key',
+                              label: _searchKeyLabel(theme),
                               icon: Icon(Icons.key_rounded,
                                   color: theme.primary)),
                           onChanged: (value) =>
                               _save('web_search_api_key', value.trim()),
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _searchKeyHint,
+                          style: TextStyle(
+                              color: theme.textWeak,
+                              fontSize: 11,
+                              fontFamily: 'TideFont',
+                              height: 1.5),
+                        ),
                       ])
                     : null,
               ),
+              _settingSwitch(
+                theme: theme,
+                title: '机器人生图',
+                help: '开启后机器人可在需要生成图片时使用生图能力，并遵循下方默认风格。关闭后机器人不会感知此工具存在。',
+                value: _imageGeneration,
+                onChanged: (v) {
+                  setState(() => _imageGeneration = v);
+                  _save('bot_image_generation_enabled', '$v');
+                },
+                child: _imageGeneration
+                    ? _choiceField(
+                        theme: theme,
+                        label: '默认生图风格',
+                        value: _imageStyle,
+                        options: const ['写实', '动漫', '科幻', '自定义'],
+                        icon:
+                            Icon(Icons.palette_outlined, color: theme.primary),
+                        onPick: (value) {
+                          setState(() => _imageStyle = value);
+                          _save('bot_image_style', value);
+                        },
+                      )
+                    : null,
+              ),
+            ]),
+          ),
+          _sectionHeader(theme, '机器人互动', Icons.emoji_emotions_outlined),
+          FrostCard(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(children: [
               _settingSwitch(
                 theme: theme,
                 title: '机器人发送表情包',
@@ -1197,6 +1314,21 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       ),
     );
   }
+
+  Widget _sectionHeader(TideTheme theme, String title, IconData icon) =>
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
+        child: Row(children: [
+          Icon(icon, size: 16, color: theme.primary),
+          const SizedBox(width: 6),
+          Text(title,
+              style: TextStyle(
+                  color: theme.textStrong,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  fontFamily: 'TideFont')),
+        ]),
+      );
 }
 
 class NotificationSettingsPage extends StatefulWidget {
@@ -1348,6 +1480,11 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       'name': 'Kimi',
       'url': 'https://api.moonshot.cn/v1',
       'models': 'moonshot-v1-8k'
+    },
+    {
+      'name': 'Gitee AI',
+      'url': 'https://ai.gitee.com/v1',
+      'models': 'Qwen2.5-7B-Instruct'
     },
   ];
   final _ttsPresets = [

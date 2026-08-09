@@ -610,18 +610,55 @@ class SquarePageState extends State<SquarePage>
         if (res['success'] != true) continue;
         final content = res['reply']?.toString().trim() ?? '';
         if (content.isEmpty) continue;
-        final now = DateTime.now().millisecondsSinceEpoch;
+        // Spread autonomous posts across the day and across bots rather than
+        // assigning the same wall-clock timestamp to every generated post.
+        final dayStart =
+            DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
+        final slot = (botId.hashCode.abs() + index * 7919) % (24 * 60);
+        final scheduledAt = dayStart + slot * Duration.millisecondsPerMinute;
+        final postId = 'botpost_${botId}_${dayKey}_$index';
+        // 用种子随机让机器人发布带自然互动量的动态，同一天内重复进入保持一致。
+        final seed = botId.hashCode.abs() + index * 104729 + dayKey.hashCode;
+        final rnd = _SeededRand(seed.abs());
+        final likes = rnd.nextInt(48) + 3;
+        final comments = rnd.nextInt(6) + 1;
         await db.insertPost({
-          'id': 'botpost_${botId}_${dayKey}_$index',
+          'id': postId,
           'author_id': bot['name'] ?? '机器人',
           'content': content,
           'image_path': '',
-          'likes': 0,
-          'comments': 0,
+          'likes': likes,
+          'comments': comments,
           'user_liked': 0,
           'user_collected': 0,
-          'timestamp': now + index,
+          'timestamp': scheduledAt,
         });
+        // 用其他机器人随机点赞/收藏/评论该动态，让广场更真实。
+        final commentPool = [
+          '哈哈哈这个也太真实了',
+          '深有同感！',
+          '说到我心坎里了',
+          '今天的我:同款状态',
+          '学到了，感谢分享',
+          '+1 支持一下',
+          '这个想法很不错呀',
+          '来都来了，点个赞',
+        ];
+        final commenterNames = bots
+            .where((cb) => (cb['id']?.toString() ?? '') != botId)
+            .map((cb) => cb['name']?.toString() ?? '机器人')
+            .toList();
+        for (var c = 0; c < comments; c++) {
+          await db.insertPostComment({
+            'id': 'botcmt_${postId}_$c',
+            'post_id': postId,
+            'author_id': commenterNames.isEmpty
+                ? '机器人'
+                : commenterNames[rnd.nextInt(commenterNames.length)],
+            'content': commentPool[rnd.nextInt(commentPool.length)],
+            'timestamp': scheduledAt + 60000 + c * 900000,
+          });
+        }
         await db.setKV(marker, dayKey);
       }
     }
@@ -1637,5 +1674,18 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         ],
       ),
     );
+  }
+}
+
+/// 轻量种子伪随机：同一个种子在同一天内产生一致结果，用于机器人互动量的模拟。
+class _SeededRand {
+  int _state;
+  _SeededRand(int seed) : _state = seed & 0x7fffffff {
+    if (_state == 0) _state = 88675123;
+  }
+
+  int nextInt(int max) {
+    _state = (_state * 1103515245 + 12345) & 0x7fffffff;
+    return _state % max;
   }
 }

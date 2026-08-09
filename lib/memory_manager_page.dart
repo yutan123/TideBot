@@ -184,63 +184,51 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                   icon: const Icon(Icons.add_rounded))
             ]),
         body: Column(children: [
-          Container(
-              margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                  color: accent.withValues(alpha: .1),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: accent.withValues(alpha: .25))),
-              child: Row(children: [
-                Container(
-                    padding: const EdgeInsets.all(11),
-                    decoration:
-                        BoxDecoration(color: accent, shape: BoxShape.circle),
-                    child: Icon(_icon, color: Colors.white)),
-                const SizedBox(width: 13),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text(_label,
-                          style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: theme.textStrong,
-                              fontFamily: 'TideFont')),
-                      Text('${_items.length} 条已保存 · 点击卡片即可编辑',
-                          style: TextStyle(
-                              color: theme.textWeak,
-                              fontSize: 12,
-                              fontFamily: 'TideFont'))
-                    ]))
-              ])),
           Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SegmentedButton<String>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(
-                        value: 'long',
-                        icon: Icon(Icons.auto_awesome_rounded),
-                        label: Text('长期')),
-                    ButtonSegment(
-                        value: 'medium',
-                        icon: Icon(Icons.bookmark_rounded),
-                        label: Text('中期')),
-                    ButtonSegment(
-                        value: 'short',
-                        icon: Icon(Icons.bolt_rounded),
-                        label: Text('短期'))
-                  ],
-                  selected: {_type},
-                  onSelectionChanged: (v) {
-                    setState(() {
-                      _type = v.first;
-                      _loading = true;
-                    });
-                    _load();
-                  })),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            child: Row(
+              children: [
+                for (final entry in const <String, String>{
+                  'long': '全部',
+                  'medium': '整理',
+                  'short': '近期',
+                }.entries) ...[
+                  Expanded(
+                    child: BouncyTap(
+                      onTap: () {
+                        if (_type == entry.key) return;
+                        setState(() {
+                          _type = entry.key;
+                          _loading = true;
+                        });
+                        _load();
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        height: 42,
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          color: _type == entry.key
+                              ? accent
+                              : theme.surfaceVariant,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Center(
+                          child: Text(entry.value,
+                              style: TextStyle(
+                                  color: _type == entry.key
+                                      ? Colors.white
+                                      : theme.textWeak,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'TideFont')),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
           Expanded(
               child: _loading
                   ? Center(child: CircularProgressIndicator(color: accent))

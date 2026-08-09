@@ -178,9 +178,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _scrollDown() {
-    Future.delayed(const Duration(milliseconds: 80), () {
-      // 页面已经销毁时访问 ScrollController 会触发异常，属于潜在闪退点。
-      if (!mounted || !_scrollC.hasClients) return;
+    // 等当前帧渲染完成后再滚动，避免与键盘高度调整、新消息首帧布局冲突；
+    // 若客户端尚未挂载（首次打开消息列表），延后到下一帧重试。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollC.hasClients) {
+        Future.delayed(const Duration(milliseconds: 120), _scrollDown);
+        return;
+      }
       _scrollC.animateTo(_scrollC.position.maxScrollExtent,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic);
@@ -433,14 +437,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           });
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
-          // 每个分句都是独立气泡，模拟真人逐条发送；只保留首条原始 ID，
-          // 其余使用稳定的派生 ID，避免重进页面时与完整持久化记录重复。
+          // 每个分句都是独立气泡，模拟真人逐条发送。为让重进页面后仍然保持
+          // “一条一条”的观感，逐段持久化到 DB，并删除 AI 落库的整段版本。
+          try {
+            await DBManager().deleteMessage(aiMsg['id'].toString());
+          } catch (_) {}
           for (var index = 0; index < segments.length; index++) {
+            final segId =
+                index == 0 ? aiMsg['id'] : '${aiMsg['id']}_segment_$index';
+            try {
+              await DBManager().insertChatMessage({
+                'id': segId,
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'text',
+                'content': segments[index],
+                'mood': result['mood'],
+                'sources_json': result['sources'] == null
+                    ? null
+                    : jsonEncode(result['sources']),
+                'timestamp': (aiMsg['timestamp'] as int) + index,
+              });
+            } catch (_) {}
             await _applyRandomReplyDelay(db);
             if (!mounted) return;
             final segmentMessage = Map<String, dynamic>.from(aiMsg)
-              ..['id'] =
-                  index == 0 ? aiMsg['id'] : '${aiMsg['id']}_segment_$index'
+              ..['id'] = segId
               ..['content'] = segments[index]
               ..['timestamp'] = (aiMsg['timestamp'] as int) + index;
             setState(() => _msgs.add(segmentMessage));
@@ -2309,23 +2331,31 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
-  Widget _mLabel(String t) => Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 4),
-      child: Text(t,
-          style: const TextStyle(
-              fontSize: 12, color: Color(0xFF8E8E93), fontFamily: 'TideFont')));
-  Widget _mField(TextEditingController c, {double h = 40}) => Container(
-      height: h,
-      decoration: BoxDecoration(
-          color: const Color(0xFFE8E8F0),
-          borderRadius: BorderRadius.circular(10)),
-      child: TextField(
-          controller: c,
-          maxLines: null,
-          expands: h > 50,
-          style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
-          decoration: const InputDecoration(
-              contentPadding: EdgeInsets.all(10), border: InputBorder.none)));
+  Widget _mLabel(String t) {
+    final theme = TideTheme.of(context);
+    return Padding(
+        padding: const EdgeInsets.only(top: 6, bottom: 4),
+        child: Text(t,
+            style: TextStyle(
+                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')));
+  }
+
+  Widget _mField(TextEditingController c, {double h = 40}) {
+    final theme = TideTheme.of(context);
+    return Container(
+        height: h,
+        decoration: BoxDecoration(
+            color: theme.surfaceVariant,
+            borderRadius: BorderRadius.circular(10)),
+        child: TextField(
+            controller: c,
+            maxLines: null,
+            expands: h > 50,
+            style: TextStyle(
+                fontSize: 14, color: theme.textStrong, fontFamily: 'TideFont'),
+            decoration: const InputDecoration(
+                contentPadding: EdgeInsets.all(10), border: InputBorder.none)));
+  }
 }
 
 extension _ListExt<T> on List<T> {

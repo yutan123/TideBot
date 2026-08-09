@@ -457,6 +457,9 @@ class AIManager {
 
         // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
         String mood = _extractMood(replyText);
+        // 先抽取模型主动要求记住的信息，再剥离可见文本，避免把它们留在气泡里。
+        await _persistModelMemories(db, bot['name']?.toString() ?? 'TideBot',
+            bot['id']?.toString() ?? botId, replyText);
         replyText = _cleanVisibleReply(replyText);
 
         // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
@@ -601,14 +604,24 @@ class AIManager {
         .replaceAll(RegExp(r'\[心情\s*:\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
-        .replaceAll(RegExp(r'\[(?:工具|贴纸|表情包|类型)\s*[:：][^\]]*\]'), '')
-        .replaceAll(RegExp(r'\[落子\s*[:：]\s*\d+\s*,\s*\d+\]'), '')
-        // Never expose sticker protocol / MIME-like labels as normal text.
         .replaceAll(
             RegExp(
-                r'^\s*(?:(?:type|类型|表情包类型|sticker(?:[_ -]?type)?)\s*[:：]\s*)?(?:sticker|emoji|表情包|动图|静态表情)\s*$',
+                r'\[(?:工具|贴纸|表情包|表情|记忆|类型|sticker_type|sticker-type)\s*[:：][^\]]*\]'),
+            '')
+        .replaceAll(RegExp(r'\[(?:心情|发送时间|现实时间附注)\s*[：:]\s*[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[落子\s*[:：]\s*\d+\s*,\s*\d+\]'), '')
+        // Never expose sticker / tool / protocol labels that the model may leak
+        // as ordinary text lines (regardless of the value after the colon).
+        .replaceAll(
+            RegExp(
+                r'^\s*(?:(?:type|类型|表情包类型|表情类型|贴纸类型|sticker(?:[_ -]?type)?|工具|贴纸|表情包|表情|心情|发送时间|现实时间|规则|系统)\s*[=:：]\s*).*$',
                 multiLine: true,
                 caseSensitive: false),
+            '')
+        // Also strip bare protocol tokens that appear on their own line.
+        .replaceAll(
+            RegExp(r'^\s*(?:sticker|emoji|表情包|静态表情|动图|贴纸)\s*$',
+                multiLine: true, caseSensitive: false),
             '')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
@@ -893,7 +906,7 @@ class AIManager {
                 {
                   'role': 'system',
                   'content':
-                      '将以下聊天压缩为可供未来对话参考的中期记忆。保留用户偏好、关系进展、已确认事实、未完成事项；不要编造，不要写心情标签，使用简洁中文要点。',
+                      '将以下聊天压缩为可供未来对话参考的中期记忆。保留用户偏好、关系进展、已确认事实、未完成事项；不要编造，不要写心情标签。所有记忆务必采用第一人称（以"我"的口吻）书写，例如"我记得用户的名字是xx"、"用户告诉我他喜欢xx"，而不是转述给第三方的口吻。使用简洁中文要点。',
                 },
                 {'role': 'user', 'content': transcript},
               ],
@@ -1019,33 +1032,37 @@ class AIManager {
     return cues.any(text.contains);
   }
 
+  /// 归一化搜索服务商名称：剥离 UI 上附加的“（需外网）”等可达性标注，
+  /// 兼容新旧取值，统一映射到路由用的规范化名称。
+  String _normalizeSearchProvider(String raw) {
+    final base = raw.replaceAll(RegExp(r'[（(].*[)）]'), '').trim();
+    if (base.contains('Agent-Reach') || base.contains('Agent Reach')) {
+      return 'Agent Reach';
+    }
+    if (base.contains('Tavily')) return 'Tavily';
+    if (base.contains('博查') || base.contains('Bocha')) return '博查 Bocha';
+    if (base.contains('Serper')) return 'Serper';
+    if (base.contains('Brave')) return 'Brave Search';
+    if (base.contains('Bing')) return 'Bing Web Search';
+    return base;
+  }
+
   Future<List<Map<String, String>>> _searchIfAuthorized(
       DBManager db, String query) async {
     if (!_needsWebSearch(query) ||
         await db.getKV('web_search_enabled') != 'true') return [];
     final apiKey = (await db.getKV('web_search_api_key') ?? '').trim();
     if (apiKey.isEmpty) return [];
-    final provider = await db.getKV('web_search_provider') ?? 'Tavily';
-    // Agent-Reach is self-hosted/locally deployable rather than a public
-    // anonymous endpoint. The API-key field accepts its base URL for this
-    // option (for example http://127.0.0.1:3000), keeping platform search
-    // opt-in and avoiding an opaque third-party relay.
-    if (provider == 'Agent Reach（补充平台搜索）') {
-      try {
-        final base = apiKey.replaceFirst(RegExp(r'/+$'), '');
-        if (!base.startsWith('http')) return [];
-        final response = await http
-            .post(Uri.parse('$base/search'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode({'query': query, 'limit': 5}))
-            .timeout(const Duration(seconds: 18));
-        if (response.statusCode < 200 || response.statusCode >= 300) return [];
-        final body = jsonDecode(utf8.decode(response.bodyBytes));
-        return _searchRows(body['results'] ?? body['data'] ?? body);
-      } catch (_) {
-        return [];
-      }
+    final provider =
+        _normalizeSearchProvider(await db.getKV('web_search_provider') ?? '');
+    // Agent-Reach 是“能力层”，真实读取由各上游 CLI（yt-dlp / bili-cli / gh /
+    // rdt-cli / xiaohongshu-mcp 等）完成，本身不提供统一 REST /search。
+    // 因此在 TideBot 中我们把 web_search_api_key 字段当作“Agent-Reach 桥接
+    // 服务地址”，由桥接服务把查询按平台转发给对应渠道。
+    if (provider == 'Agent Reach') {
+      return _searchViaAgentReach(apiKey, query);
     }
+    List<Map<String, String>> rows;
     try {
       late final http.Response response;
       if (provider == 'Tavily') {
@@ -1058,9 +1075,8 @@ class AIManager {
             )
             .timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
-        return _searchRows(body['results']);
-      }
-      if (provider == '博查 Bocha') {
+        rows = _searchRows(body['results']);
+      } else if (provider == '博查 Bocha') {
         response = await http
             .post(
               Uri.parse('https://api.bochaai.com/v1/web-search'),
@@ -1072,10 +1088,9 @@ class AIManager {
             )
             .timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
-        return _searchRows(
+        rows = _searchRows(
             body['data']?['webPages']?['value'] ?? body['data']?['value']);
-      }
-      if (provider == 'Serper') {
+      } else if (provider == 'Serper') {
         response = await http
             .post(
               Uri.parse('https://google.serper.dev/search'),
@@ -1087,9 +1102,8 @@ class AIManager {
             )
             .timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
-        return _searchRows(body['organic']);
-      }
-      if (provider == 'Brave Search') {
+        rows = _searchRows(body['organic']);
+      } else if (provider == 'Brave Search') {
         response = await http.get(
           Uri.parse(
               'https://api.search.brave.com/res/v1/web/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
@@ -1099,15 +1113,83 @@ class AIManager {
           },
         ).timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
-        return _searchRows(body['web']?['results']);
+        rows = _searchRows(body['web']?['results']);
+      } else {
+        response = await http.get(
+          Uri.parse(
+              'https://api.bing.microsoft.com/v7.0/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
+          headers: {'Ocp-Apim-Subscription-Key': apiKey},
+        ).timeout(const Duration(seconds: 15));
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        rows = _searchRows(body['webPages']?['value']);
       }
-      response = await http.get(
-        Uri.parse(
-            'https://api.bing.microsoft.com/v7.0/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
-        headers: {'Ocp-Apim-Subscription-Key': apiKey},
-      ).timeout(const Duration(seconds: 15));
+    } catch (_) {
+      rows = [];
+    }
+    // 路由策略：普通搜索引擎搜不到时，若已配置 Agent-Reach 桥接地址，
+    // 自动降级到 Agent-Reach 的补充平台搜索渠道。
+    if (rows.isEmpty) {
+      final bridge = (await db.getKV('web_search_api_key') ?? '').trim();
+      if (bridge.startsWith('http')) {
+        final bridgeRows = await _searchViaAgentReach(bridge, query);
+        if (bridgeRows.isNotEmpty) return bridgeRows;
+      }
+    }
+    return rows;
+  }
+
+  /// Agent-Reach 平台路由：按查询意图命中 GitHub / YouTube / B站 / X / 小红书 /
+  /// Reddit 等渠道，命中则走对应渠道，否则退回 its 全网语义搜索渠道。
+  Future<List<Map<String, String>>> _searchViaAgentReach(
+      String bridge, String query) async {
+    try {
+      final base = bridge.replaceFirst(RegExp(r'/+$'), '');
+      if (!base.startsWith('http')) return [];
+      final routes = <Map<String, dynamic>>[
+        {
+          'route': 'github',
+          'cues': ['github', '仓库', 'repo', '代码仓库', 'issue']
+        },
+        {
+          'route': 'youtube',
+          'cues': ['youtube', 'youtube频道', '油管', '视频教程']
+        },
+        {
+          'route': 'bilibili',
+          'cues': ['b站', '哔哩', 'bilibili', 'bili', '弹幕']
+        },
+        {
+          'route': 'twitter',
+          'cues': ['推特', 'twitter', 'x平台', 'x站']
+        },
+        {
+          'route': 'xiaohongshu',
+          'cues': ['小红书', 'xhs', 'xiaohongshu', '种草']
+        },
+        {
+          'route': 'reddit',
+          'cues': ['reddit', '红迪']
+        },
+      ];
+      final lower = query.toLowerCase();
+      String? route;
+      for (final entry in routes) {
+        final cues = entry['cues'] as List;
+        if (cues.any((cue) => lower.contains(cue.toString()))) {
+          route = entry['route'] as String;
+          break;
+        }
+      }
+      final path = route != null ? '/$route/search' : '/exa/search';
+      final response = await http
+          .post(Uri.parse('$base$path'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'query': query, 'limit': 5}))
+          .timeout(const Duration(seconds: 18));
+      if (response.statusCode < 200 || response.statusCode >= 300) return [];
       final body = jsonDecode(utf8.decode(response.bodyBytes));
-      return _searchRows(body['webPages']?['value']);
+      return _searchRows(
+          body['results'] ?? body['data'] ?? body['items'] ?? body);
     } catch (_) {
       return [];
     }
@@ -1204,7 +1286,8 @@ class AIManager {
           '【已授权工具：生图】当用户明确需要图片时，可建议使用生图；所有图片必须采用“$style”风格。不要声称已生成不存在的图片。');
     }
     if (await db.getKV('web_search_enabled') == 'true') {
-      final provider = await db.getKV('web_search_provider') ?? 'Tavily';
+      final provider = _normalizeSearchProvider(
+          await db.getKV('web_search_provider') ?? 'Tavily');
       final hasKey = (await db.getKV('web_search_api_key') ?? '').isNotEmpty;
       if (hasKey) {
         parts.add(
@@ -1215,7 +1298,7 @@ class AIManager {
       final emotions = await db.stickerEmotions();
       if (emotions.isNotEmpty) {
         parts.add(
-            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。仅在对话情绪适配时可请求客户端发送其中一种，不能虚构素材。');
+            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。若要在回复时附带表情包，必须在回复末尾另起一行单独输出机器指令 [表情包:情绪]，只能选择上列情绪之一，不能虚构素材。该指令是内部协议，绝不能在聊天正文里写出"表情包"、"表情包类型"、"type"等字样。');
       }
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
@@ -1225,7 +1308,8 @@ class AIManager {
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。";
+        "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
+        "【记忆工具】：如果你从用户的话里捕捉到值得长期记住的确定信息（例如用户报出的名字、喜好、身份、约定），请在本条回复末尾另起一行输出机器指令 [记忆:内容]，一条记忆一个标签，多条则连续输出。内容务必用第一人称（以“我”的口吻），例如 [记忆:我记得用户的名字是李小明]。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {
       p +=
@@ -1248,5 +1332,41 @@ class AIManager {
     if (text.contains('[心情:伤心]')) return '伤心';
     if (text.contains('[心情:生气]')) return '生气';
     return '平静';
+  }
+
+  /// 解析模型通过内部协议 [记忆:内容]（可多条）主动要求记住的信息，
+  /// 以第一人称写入 memories 表，并把协议标记从可见文本中剥离。
+  Future<void> _persistModelMemories(
+    DBManager db,
+    String botName,
+    String botId,
+    String rawReply,
+  ) async {
+    try {
+      final regex = RegExp(r'\[记忆\s*[:：]\s*([^\]]+)\]');
+      final matches = regex.allMatches(rawReply).toList();
+      if (matches.isEmpty) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final m in matches) {
+        var content = m.group(1)?.trim() ?? '';
+        if (content.isEmpty) continue;
+        // 强制第一人称：以“我”开头，避免出现像“用户叫xxx”这类第三人称口吻。
+        if (!RegExp(r'^(我|我记得|我知道|我了解到|用户告诉我|用户说过|用户是|我的)',
+                caseSensitive: false)
+            .hasMatch(content)) {
+          content = '我记得$content';
+        }
+        await db.insertMemory({
+          'id': 'mem_${botId}_$now${matches.indexOf(m)}',
+          'bot_id': botId,
+          'title': '模型记忆 ${DateTime.now().toString().substring(0, 10)}',
+          'type': 'short',
+          'content': content,
+          'timestamp': now + matches.indexOf(m),
+        });
+      }
+    } catch (e) {
+      print('[memory] persist requested memory failed: $e');
+    }
   }
 }
