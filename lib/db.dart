@@ -540,6 +540,58 @@ class DBManager {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// 新记忆按条写入前做轻量去重：同一机器人、同一层级内的相同内容不重复占用。
+  /// 相近内容保留最新一条，避免短期记忆越积越多。
+  Future<void> upsertMemoryItem({
+    required String botId,
+    required String type,
+    required String content,
+    String title = '',
+    int? timestamp,
+  }) async {
+    final normalized = content.replaceAll(RegExp(r'\s+'), '').trim();
+    if (normalized.isEmpty) return;
+    final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
+    final existing = await queryMemories(botId, type: type, limit: 80);
+    Map<String, dynamic>? duplicate;
+    for (final item in existing) {
+      final old = (item['content']?.toString() ?? '')
+          .replaceAll(RegExp(r'\s+'), '')
+          .trim();
+      if (old == normalized ||
+          (old.length >= 12 &&
+              normalized.length >= 12 &&
+              (old.contains(normalized) || normalized.contains(old)))) {
+        duplicate = item;
+        break;
+      }
+    }
+    if (duplicate != null) {
+      await updateMemory(duplicate['id'].toString(), {
+        'title': title.isEmpty ? duplicate['title'] : title,
+        'content': content.trim(),
+        'timestamp': now,
+      });
+    } else {
+      await insertMemory({
+        'id': 'mem_${botId}_${now}_${normalized.hashCode.abs()}',
+        'bot_id': botId,
+        'title': title,
+        'type': type,
+        'content': content.trim(),
+        'timestamp': now,
+      });
+    }
+    const caps = {'long': 60, 'medium': 80, 'short': 100};
+    final cap = caps[type] ?? 80;
+    final rows = await queryMemories(botId, type: type);
+    if (rows.length > cap) {
+      for (final item in rows.skip(cap)) {
+        await deleteMemory(item['id'].toString());
+      }
+    }
+  }
+
   Future<void> updateMemory(String id, Map<String, dynamic> values) async {
     final db = await database;
     await db.update('memories', values, where: 'id = ?', whereArgs: [id]);

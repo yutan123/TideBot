@@ -676,6 +676,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   String _searchProvider = 'Tavily';
   int _stickerChance = 50;
   final TextEditingController _searchKeyController = TextEditingController();
+  bool _showSearchKey = false;
   final TextEditingController _stickerChanceController =
       TextEditingController(text: '50');
   int _proactiveMin = 60;
@@ -784,46 +785,17 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   }
 
   String _displaySearchProvider(String raw) {
-    if (raw.contains('Agent') || raw.contains('Agent-Reach')) {
-      return '自建 Agent-Reach（可搜平台内容）';
-    }
-    if (raw.contains('Tavily')) return 'Tavily（需外网）';
-    if (raw.contains('博查') || raw.contains('Bocha')) return '博查 Bocha（国内直连）';
-    if (raw.contains('Serper')) return 'Serper（需外网）';
-    if (raw.contains('Brave')) return 'Brave Search（需外网）';
-    if (raw.contains('Bing')) return 'Bing Web Search（国内较稳定）';
-    return raw.isEmpty ? 'Tavily（需外网）' : raw;
+    if (raw.contains('Tavily')) return 'Tavily';
+    if (raw.contains('博查') || raw.contains('Bocha')) return '博查 Bocha';
+    if (raw.contains('Serper')) return 'Serper';
+    if (raw.contains('Brave')) return 'Brave Search';
+    if (raw.contains('Bing')) return 'Bing Web Search';
+    return 'Tavily';
   }
 
-  String _searchKeyLabel(TideTheme theme) {
-    if (_searchProvider.startsWith('自建 Agent-Reach')) {
-      return 'Agent-Reach 桥接服务地址';
-    }
-    return '搜索 API Key';
-  }
+  String _searchKeyLabel(TideTheme theme) => '搜索 API Key';
 
-  String get _searchKeyHint {
-    if (_searchProvider.startsWith('自建 Agent-Reach')) {
-      return '填你自己的 Agent-Reach 桥接服务地址，按查询意图路由到 '
-          'GitHub / YouTube / Bilibili / Twitter / 小红书 / Reddit / Exa 等平台搜索。';
-    }
-    if (_searchProvider.contains('博查 Bocha')) {
-      return '联网即可访问，获取途径：博查官网 bochaai.com 申请。';
-    }
-    if (_searchProvider.contains('Bing Web Search')) {
-      return '较稳定；可在 Azure / Bing 门户申请。';
-    }
-    if (_searchProvider.contains('Tavily')) {
-      return '需能访问外网，否则无法使用；官方 tavily.com 申请。';
-    }
-    if (_searchProvider.contains('Serper')) {
-      return '需能访问外网；serper.dev 申请。';
-    }
-    if (_searchProvider.contains('Brave')) {
-      return '需能访问外网；api.search.brave.com 申请。';
-    }
-    return '填写所选服务商提供的 API Key。';
-  }
+  String get _searchKeyHint => '填写所选搜索服务商提供的 API Key；常规搜索无结果时会自动尝试内部兜底能力。';
 
   Future<void> _save(String key, String value) async {
     await DBManager().insertKV(key, value);
@@ -1167,8 +1139,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               _settingSwitch(
                 theme: theme,
                 title: '联网搜索',
-                help:
-                    '仅开启后机器人才能按需搜索实时信息。请填写对应服务商 API Key 或 Agent-Reach 桥接地址；未开启时机器人不会感知搜索工具。',
+                help: '仅开启后机器人才能按需搜索实时信息。填写对应搜索服务商 API Key 后可用。',
                 value: _webSearch,
                 onChanged: (v) {
                   setState(() => _webSearch = v);
@@ -1181,12 +1152,11 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                           label: '搜索服务商',
                           value: _searchProvider,
                           options: const [
-                            'Tavily（需外网）',
-                            '博查 Bocha（国内直连）',
-                            'Serper（需外网）',
-                            'Brave Search（需外网）',
-                            'Bing Web Search（国内较稳定）',
-                            '自建 Agent-Reach（可搜平台内容）',
+                            'Tavily',
+                            '博查 Bocha',
+                            'Serper',
+                            'Brave Search',
+                            'Bing Web Search',
                           ],
                           icon: Icon(Icons.travel_explore_rounded,
                               color: theme.primary),
@@ -1198,13 +1168,27 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                         const SizedBox(height: 10),
                         TextField(
                           controller: _searchKeyController,
-                          obscureText: true,
+                          obscureText: !_showSearchKey,
                           style: TextStyle(
                               color: theme.textStrong, fontFamily: 'TideFont'),
                           decoration: _roundInput(theme,
-                              label: _searchKeyLabel(theme),
-                              icon: Icon(Icons.key_rounded,
-                                  color: theme.primary)),
+                                  label: _searchKeyLabel(theme),
+                                  icon: Icon(Icons.key_rounded,
+                                      color: theme.primary))
+                              .copyWith(
+                            suffixIcon: IconButton(
+                              tooltip:
+                                  _showSearchKey ? '隐藏 API Key' : '显示 API Key',
+                              onPressed: () => setState(
+                                  () => _showSearchKey = !_showSearchKey),
+                              icon: Icon(
+                                _showSearchKey
+                                    ? Icons.visibility_off_rounded
+                                    : Icons.visibility_rounded,
+                                color: theme.textWeak,
+                              ),
+                            ),
+                          ),
                           onChanged: (value) =>
                               _save('web_search_api_key', value.trim()),
                         ),
@@ -2292,6 +2276,11 @@ class _LocalModelPageState extends State<LocalModelPage> {
     );
     if (confirmed != true) return;
 
+    // 正在下载时先让流循环失效；网络流关闭后再清理 .part，避免取消后又写回文件。
+    if (model['downloading'] == true && mounted) {
+      setState(() => model['downloading'] = false);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
     try {
       if (await target.exists()) await target.delete();
       if (await part.exists()) await part.delete();
@@ -2438,6 +2427,10 @@ class _LocalModelPageState extends State<LocalModelPage> {
       }
 
       await for (final bytes in response.stream) {
+        // 用户点“取消并删除”后立即停止消费网络流，finally 会关闭客户端。
+        if (m['downloading'] != true) {
+          throw const FileSystemException('下载已取消');
+        }
         sink.add(bytes);
         received += bytes.length;
         if (received - lastPersisted >= 256 * 1024) {
@@ -2483,10 +2476,11 @@ class _LocalModelPageState extends State<LocalModelPage> {
     } catch (e) {
       await sink?.flush();
       await sink?.close();
+      final cancelled = m['downloading'] != true && e.toString().contains('取消');
       final received = await part.exists() ? await part.length() : 0;
       m['receivedBytes'] = received;
-      await _saveDownloadState(m);
-      if (mounted) {
+      if (!cancelled) await _saveDownloadState(m);
+      if (mounted && !cancelled) {
         setState(() {
           m['downloading'] = false;
           final total = m['totalBytes'] as int? ?? 0;
@@ -2582,12 +2576,21 @@ class _LocalModelPageState extends State<LocalModelPage> {
                                         fontFamily: 'TideFont'))))
                       else
                         downloading
-                            ? SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: TideTheme.of(context).primary))
+                            ? BouncyTap(
+                                onTap: () => _deleteModel(modelIndex),
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(14),
+                                        color: TideTheme.of(context)
+                                            .surfaceVariant),
+                                    child: Text('取消并删除',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: TideTheme.of(context)
+                                                .textStrong,
+                                            fontFamily: 'TideFont'))))
                             : BouncyTap(
                                 onTap: () => _downloadModel(modelIndex),
                                 child: Container(

@@ -237,22 +237,46 @@ class AIManager {
 
     // Keep stable instructions first for provider prefix caches. Dynamic time is
     // appended last, and history is packed newest-first within the user budget.
-    final mediumMemories = activeGame == null
-        ? await db.queryMemories(botId, type: 'medium', limit: 3)
+    // 稳定记忆放在系统提示的固定位置，动态的中短期记忆限制条数和体积，
+    // 避免每轮请求无边界增长，同时尽可能保留服务商前缀缓存命中。
+    final longMemories = activeGame == null
+        ? await db.queryMemories(botId, type: 'long', limit: 12)
         : <Map<String, dynamic>>[];
-    final memoryContext = mediumMemories
-        .map((m) => m['content']?.toString().trim() ?? '')
-        .where((content) => content.isNotEmpty)
-        .join('\n');
+    final mediumMemories = activeGame == null
+        ? await db.queryMemories(botId, type: 'medium', limit: 6)
+        : <Map<String, dynamic>>[];
+    final shortMemories = activeGame == null
+        ? await db.queryMemories(botId, type: 'short', limit: 8)
+        : <Map<String, dynamic>>[];
+    String memoryLines(List<Map<String, dynamic>> items, int budget) {
+      var used = 0;
+      final lines = <String>[];
+      for (final item in items) {
+        final content = item['content']?.toString().trim() ?? '';
+        if (content.isEmpty || used + content.length > budget) continue;
+        lines.add('- $content');
+        used += content.length;
+      }
+      return lines.join('\n');
+    }
+
+    final longMemoryContext = memoryLines(longMemories, 1800);
+    final mediumMemoryContext = memoryLines(mediumMemories, 1600);
+    final shortMemoryContext = memoryLines(shortMemories, 1200);
     final toolContext = await _buildToolContext(db);
-    final searchSources = await _searchIfAuthorized(db, text);
-    final searchContext = searchSources.isEmpty
-        ? ''
-        : '\n【本次联网搜索结果】\n${searchSources.map((s) => '- ${s['title']}: ${s['snippet']} (${s['url']})').join('\n')}\n请仅依据上述结果回答，并在结尾保留来源卡片。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        (longMemoryContext.isEmpty
+            ? ''
+            : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
         toolContext +
-        searchContext +
-        (memoryContext.isEmpty ? '' : '\n【已整理的中期记忆，仅在相关时参考】\n$memoryContext');
+        (mediumMemoryContext.isEmpty
+            ? ''
+            : '\n【中期记忆：重要事件，仅在相关时参考】\n$mediumMemoryContext') +
+        (shortMemoryContext.isEmpty
+            ? ''
+            : '\n【短期记忆：近期详细事件，仅在相关时参考】\n$shortMemoryContext');
+    // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
+    var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
     ];
@@ -347,13 +371,19 @@ class AIManager {
       if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
       print(
           '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
-      final payload = {
+      final tools = await _buildNativeTools(db);
+      final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
         'max_tokens': bot['max_tokens'] ?? 10000,
-        if (onDelta != null) 'stream': true,
+        if (tools.isNotEmpty) 'tools': tools,
+        if (tools.isNotEmpty) 'tool_choice': 'auto',
+        // tool_calls 在 SSE 中存在分片拼接差异；先以非流式请求保证调用
+        // 参数完整、可回传 tool 结果。普通文本回复仍保留原有流式体验。
+        if (onDelta != null && tools.isEmpty) 'stream': true,
       };
       String replyText = '';
+      String? generatedImagePath;
       Map usage = const {};
       String errorBody = '';
       int statusCode;
@@ -418,9 +448,67 @@ class AIManager {
         errorBody = utf8.decode(response.bodyBytes);
         if (statusCode == 200) {
           final json = jsonDecode(errorBody);
-          replyText =
-              json['choices']?[0]?['message']?['content']?.toString() ?? '';
+          final message = json['choices']?[0]?['message'];
+          replyText = message?['content']?.toString() ?? '';
           usage = json['usage'] is Map ? json['usage'] as Map : const {};
+          if (message is Map && message['tool_calls'] is List) {
+            final toolCalls = (message['tool_calls'] as List)
+                .whereType<Map>()
+                .map((call) => Map<String, dynamic>.from(call))
+                .toList();
+            if (toolCalls.isNotEmpty) {
+              messages.add({
+                'role': 'assistant',
+                'content': replyText,
+                'tool_calls': toolCalls,
+              });
+              for (final call in toolCalls) {
+                final result = await _executeNativeToolCall(
+                  db: db,
+                  botId: botId,
+                  call: call,
+                );
+                if (result['sources'] is List) {
+                  searchSources = (result['sources'] as List)
+                      .whereType<Map>()
+                      .map((item) => Map<String, String>.from(item))
+                      .toList();
+                }
+                final toolResult = result['result'];
+                if (toolResult is Map &&
+                    toolResult['image_path']?.toString().isNotEmpty == true) {
+                  generatedImagePath = toolResult['image_path'].toString();
+                }
+                messages.add({
+                  'role': 'tool',
+                  'tool_call_id': call['id']?.toString() ?? '',
+                  'content': jsonEncode(result['result'] ?? result),
+                });
+              }
+              final followUp = await http
+                  .post(
+                    Uri.parse('$baseUrl/chat/completions'),
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': 'Bearer ${provider['api_key']}',
+                    },
+                    body: jsonEncode({
+                      'model': modelName,
+                      'messages': messages,
+                      'max_tokens': bot['max_tokens'] ?? 10000,
+                    }),
+                  )
+                  .timeout(const Duration(seconds: 60));
+              if (followUp.statusCode == 200) {
+                final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
+                replyText = decoded['choices']?[0]?['message']?['content']
+                        ?.toString() ??
+                    '';
+                final followUsage = decoded['usage'];
+                if (followUsage is Map) usage = followUsage;
+              }
+            }
+          }
         }
       }
       print('[ai] response status=$statusCode');
@@ -462,15 +550,11 @@ class AIManager {
             bot['id']?.toString() ?? botId, replyText);
         replyText = _cleanVisibleReply(replyText);
 
+        // 工具调用可能已返回图片路径，先初始化供下方落库使用。
         // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        final generatedImagePath = await _generateImageIfAuthorized(
-          db: db,
-          botId: botId,
-          prompt: text,
-        );
         Map<String, dynamic>? sticker;
         if (persistResponse &&
             await db.getKV('bot_stickers_enabled') == 'true') {
@@ -538,10 +622,11 @@ class AIManager {
               'bot_id': botId,
               'role': 'assistant',
               'type': 'sticker',
-              'content': sticker['emotion']?.toString() ?? '',
+              // emotion 是素材匹配元数据，不保存为可见聊天正文。
+              'content': '',
               'file_path': sticker['file_path']?.toString(),
               'mood': mood,
-              'timestamp': ts + 2,
+              'timestamp': ts + 3,
             });
           }
 
@@ -921,14 +1006,13 @@ class AIManager {
               '';
       if (summary.isEmpty) return;
       final now = DateTime.now().millisecondsSinceEpoch;
-      await db.insertMemory({
-        'id': 'summary_${botId}_$endTimestamp',
-        'bot_id': botId,
-        'title': '对话摘要 ${DateTime.now().toString().substring(0, 10)}',
-        'type': 'medium',
-        'content': summary,
-        'timestamp': now,
-      });
+      await db.upsertMemoryItem(
+        botId: botId,
+        type: 'medium',
+        title: '重要事件 ${DateTime.now().toString().substring(0, 10)}',
+        content: summary,
+        timestamp: now,
+      );
       await db.setKV(summaryKey, endTimestamp);
     } catch (e) {
       print('[memory] auto summary failed: $e');
@@ -1048,20 +1132,14 @@ class AIManager {
   }
 
   Future<List<Map<String, String>>> _searchIfAuthorized(
-      DBManager db, String query) async {
-    if (!_needsWebSearch(query) ||
+      DBManager db, String query,
+      {bool force = false}) async {
+    if ((!force && !_needsWebSearch(query)) ||
         await db.getKV('web_search_enabled') != 'true') return [];
     final apiKey = (await db.getKV('web_search_api_key') ?? '').trim();
     if (apiKey.isEmpty) return [];
     final provider =
         _normalizeSearchProvider(await db.getKV('web_search_provider') ?? '');
-    // Agent-Reach 是“能力层”，真实读取由各上游 CLI（yt-dlp / bili-cli / gh /
-    // rdt-cli / xiaohongshu-mcp 等）完成，本身不提供统一 REST /search。
-    // 因此在 TideBot 中我们把 web_search_api_key 字段当作“Agent-Reach 桥接
-    // 服务地址”，由桥接服务把查询按平台转发给对应渠道。
-    if (provider == 'Agent Reach') {
-      return _searchViaAgentReach(apiKey, query);
-    }
     List<Map<String, String>> rows;
     try {
       late final http.Response response;
@@ -1129,7 +1207,9 @@ class AIManager {
     // 路由策略：普通搜索引擎搜不到时，若已配置 Agent-Reach 桥接地址，
     // 自动降级到 Agent-Reach 的补充平台搜索渠道。
     if (rows.isEmpty) {
-      final bridge = (await db.getKV('web_search_api_key') ?? '').trim();
+      // Agent-Reach 是内部兜底能力，桥接地址与普通搜索 API Key 分开保存，
+      // 不暴露为用户可选的搜索服务商。
+      final bridge = (await db.getKV('agent_reach_bridge_url') ?? '').trim();
       if (bridge.startsWith('http')) {
         final bridgeRows = await _searchViaAgentReach(bridge, query);
         if (bridgeRows.isNotEmpty) return bridgeRows;
@@ -1223,8 +1303,9 @@ class AIManager {
     required DBManager db,
     required String botId,
     required String prompt,
+    bool force = false,
   }) async {
-    if (!_needsImageGeneration(prompt) ||
+    if ((!force && !_needsImageGeneration(prompt)) ||
         await db.getKV('bot_image_generation_enabled') == 'false') return null;
     final prefs = await SharedPreferences.getInstance();
     final imageModelId =
@@ -1276,6 +1357,135 @@ class AIManager {
       }
     } catch (_) {}
     return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db) async {
+    final tools = <Map<String, dynamic>>[];
+    if (await db.getKV('web_search_enabled') == 'true' &&
+        (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
+      tools.add({
+        'type': 'function',
+        'function': {
+          'name': 'web_search',
+          'description': '查询需要实时性、外部来源或事实核验的信息。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'query': {'type': 'string', 'description': '简洁明确的搜索关键词'}
+            },
+            'required': ['query'],
+            'additionalProperties': false,
+          },
+        },
+      });
+    }
+    if (await db.getKV('bot_image_generation_enabled') != 'false') {
+      // 具体 bot 是否配置生图模型由执行阶段校验，未配置时返回明确 tool 结果。
+      tools.add(_imageToolSchema());
+    }
+    if (await db.getKV('bot_stickers_enabled') == 'true' &&
+        (await db.stickerEmotions()).isNotEmpty) {
+      tools.add({
+        'type': 'function',
+        'function': {
+          'name': 'send_sticker',
+          'description': '在合适的情绪表达时发送一张已有表情包。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'emotion': {'type': 'string', 'description': '已存在的情绪分类'}
+            },
+            'required': ['emotion'],
+            'additionalProperties': false,
+          },
+        },
+      });
+    }
+    return tools;
+  }
+
+  Map<String, dynamic> _imageToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'generate_image',
+          'description': '仅在用户明确要求生成、绘制或创作图片时调用。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'prompt': {'type': 'string', 'description': '完整的绘图提示词'}
+            },
+            'required': ['prompt'],
+            'additionalProperties': false,
+          },
+        },
+      };
+
+  Future<Map<String, dynamic>> _executeNativeToolCall({
+    required DBManager db,
+    required String botId,
+    required Map<String, dynamic> call,
+  }) async {
+    final function = call['function'];
+    if (function is! Map)
+      return {
+        'result': {'ok': false, 'error': '无效工具调用'}
+      };
+    final name = function['name']?.toString() ?? '';
+    Map<String, dynamic> args = {};
+    try {
+      final raw = function['arguments']?.toString() ?? '{}';
+      final parsed = jsonDecode(raw);
+      if (parsed is Map) args = Map<String, dynamic>.from(parsed);
+    } catch (_) {
+      return {
+        'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
+      };
+    }
+    if (name == 'web_search') {
+      final query = args['query']?.toString().trim() ?? '';
+      if (query.isEmpty)
+        return {
+          'result': {'ok': false, 'error': '缺少 query'}
+        };
+      final rows = await _searchIfAuthorized(db, query, force: true);
+      return {
+        'sources': rows,
+        'result': {
+          'ok': rows.isNotEmpty,
+          'results': rows,
+          'message': rows.isEmpty ? '没有可用搜索结果。' : '搜索完成，请仅依据结果回答并引用来源。',
+        }
+      };
+    }
+    if (name == 'generate_image') {
+      final prompt = args['prompt']?.toString().trim() ?? '';
+      final path = prompt.isEmpty
+          ? null
+          : await _generateImageIfAuthorized(
+              db: db, botId: botId, prompt: prompt, force: true);
+      return {
+        'result': {
+          'ok': path != null,
+          'image_path': path,
+          'message': path == null ? '图片生成失败或未配置生图模型。' : '图片已生成并将作为聊天图片发送。',
+        }
+      };
+    }
+    if (name == 'send_sticker') {
+      final emotion = args['emotion']?.toString().trim() ?? '';
+      final candidates = await db.queryStickers(emotion: emotion);
+      final available =
+          candidates.isEmpty ? await db.queryStickers() : candidates;
+      return {
+        'result': {
+          'ok': available.isNotEmpty,
+          'message': available.isEmpty ? '没有可用表情包。' : '表情包已选定。',
+        }
+      };
+    }
+    return {
+      'result': {'ok': false, 'error': '未知工具：$name'}
+    };
   }
 
   Future<String> _buildToolContext(DBManager db) async {
@@ -1356,14 +1566,13 @@ class AIManager {
             .hasMatch(content)) {
           content = '我记得$content';
         }
-        await db.insertMemory({
-          'id': 'mem_${botId}_$now${matches.indexOf(m)}',
-          'bot_id': botId,
-          'title': '模型记忆 ${DateTime.now().toString().substring(0, 10)}',
-          'type': 'short',
-          'content': content,
-          'timestamp': now + matches.indexOf(m),
-        });
+        await db.upsertMemoryItem(
+          botId: botId,
+          type: 'short',
+          title: '近期事件',
+          content: content,
+          timestamp: now + matches.indexOf(m),
+        );
       }
     } catch (e) {
       print('[memory] persist requested memory failed: $e');

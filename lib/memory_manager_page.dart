@@ -189,9 +189,9 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
             child: Row(
               children: [
                 for (final entry in const <String, String>{
-                  'long': '全部',
-                  'medium': '整理',
-                  'short': '近期',
+                  'long': '长期记忆',
+                  'medium': '中期记忆',
+                  'short': '短期记忆',
                 }.entries) ...[
                   Expanded(
                     child: BouncyTap(

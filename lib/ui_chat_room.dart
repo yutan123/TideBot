@@ -177,17 +177,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _scrollDown();
   }
 
-  void _scrollDown() {
-    // 等当前帧渲染完成后再滚动，避免与键盘高度调整、新消息首帧布局冲突；
-    // 若客户端尚未挂载（首次打开消息列表），延后到下一帧重试。
+  void _scrollDown({int attempt = 0, bool animated = true}) {
+    // 首次加载、图片解码和键盘动画都会在后续帧改变 maxScrollExtent。
+    // 因此用有限次数的多阶段滚动，不能只按首帧的“半截高度”滚一次。
+    if (!mounted || attempt > 5) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollC.hasClients) {
-        Future.delayed(const Duration(milliseconds: 120), _scrollDown);
+      if (!mounted) return;
+      if (!_scrollC.hasClients) {
+        Future.delayed(const Duration(milliseconds: 80),
+            () => _scrollDown(attempt: attempt + 1, animated: animated));
         return;
       }
-      _scrollC.animateTo(_scrollC.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOutCubic);
+      final target = _scrollC.position.maxScrollExtent;
+      if (animated) {
+        _scrollC.animateTo(target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic);
+      } else {
+        _scrollC.jumpTo(target);
+      }
+      if (attempt < 3) {
+        Future.delayed(const Duration(milliseconds: 180),
+            () => _scrollDown(attempt: attempt + 1, animated: false));
+      }
     });
   }
 
@@ -437,16 +449,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           });
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
-          // 每个分句都是独立气泡，模拟真人逐条发送。为让重进页面后仍然保持
-          // “一条一条”的观感，逐段持久化到 DB，并删除 AI 落库的整段版本。
-          try {
-            await DBManager().deleteMessage(aiMsg['id'].toString());
-          } catch (_) {}
+          // 先完整写入分段副本，再删除整段原稿。旧逻辑先删后写，页面退出、
+          // 异常或数据库短暂失败时会导致回复整段消失。
+          final baseTimestamp = aiMsg['timestamp'] as int;
+          var persisted = true;
           for (var index = 0; index < segments.length; index++) {
-            final segId =
-                index == 0 ? aiMsg['id'] : '${aiMsg['id']}_segment_$index';
+            final segId = index == 0
+                ? aiMsg['id'].toString()
+                : '${aiMsg['id']}_segment_$index';
             try {
-              await DBManager().insertChatMessage({
+              await db.insertChatMessage({
                 'id': segId,
                 'bot_id': botId,
                 'role': 'assistant',
@@ -456,17 +468,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 'sources_json': result['sources'] == null
                     ? null
                     : jsonEncode(result['sources']),
-                'timestamp': (aiMsg['timestamp'] as int) + index,
+                'timestamp': baseTimestamp + index,
               });
-            } catch (_) {}
+            } catch (e) {
+              persisted = false;
+              debugPrint('[send] persist segment failed: $e');
+              break;
+            }
+          }
+          // 首段使用同一 ID 覆盖原稿；全部成功后原稿已经不再存在，不要额外删除。
+          // 若任何段失败，保留原稿，优先保证退出后聊天记录不丢。
+          for (var index = 0; index < segments.length; index++) {
             await _applyRandomReplyDelay(db);
             if (!mounted) return;
+            final segId = index == 0
+                ? aiMsg['id'].toString()
+                : '${aiMsg['id']}_segment_$index';
             final segmentMessage = Map<String, dynamic>.from(aiMsg)
               ..['id'] = segId
               ..['content'] = segments[index]
-              ..['timestamp'] = (aiMsg['timestamp'] as int) + index;
+              ..['timestamp'] = baseTimestamp + index;
             setState(() => _msgs.add(segmentMessage));
             _scrollDown();
+          }
+          if (!persisted) {
+            debugPrint(
+                '[send] segmented persistence incomplete; original reply retained');
           }
         } else {
           await _applyRandomReplyDelay(db);
@@ -487,15 +514,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         final sticker = result['sticker'];
         if (sticker is Map) {
+          // sticker 已由 AIManager 落库；content 只用于内部分类，不能作为
+          // 可见正文展示，避免把“开心/表情包类型”等协议泄漏给用户。
           setState(() => _msgs.add({
-                'id': 'sticker_${DateTime.now().millisecondsSinceEpoch}',
+                'id': 'msg_s_${(aiMsg['timestamp'] as int) + 2}',
                 'bot_id': botId,
                 'role': 'assistant',
                 'type': 'sticker',
-                'content': sticker['emotion']?.toString() ?? '',
+                'content': '',
                 'file_path': sticker['file_path']?.toString(),
-                'timestamp': DateTime.now().millisecondsSinceEpoch,
+                'timestamp': (aiMsg['timestamp'] as int) + 2,
               }));
+          _scrollDown();
         }
       }
     } catch (e, st) {
@@ -1986,7 +2016,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             m['document_name']?.toString().trim().isNotEmpty == true
                 ? m['document_name'].toString()
                 : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
-        final txt = (m['content'] as String?) ?? '';
+        final isSticker = m['type'] == 'sticker';
+        // 表情包的 content 是内部情绪分类，绝不能作为正文显示。
+        final txt = isSticker ? '' : ((m['content'] as String?) ?? '');
         final sharedPost = _sharedPostPayload(m);
         final replyId = m['reply_to_id']?.toString();
         final sources = _decodeSources(m['sources_json']);
@@ -2085,8 +2117,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     child: Container(
                                         margin:
                                             const EdgeInsets.only(bottom: 4),
-                                        child: Image.file(File(imagePath!),
-                                            fit: BoxFit.cover, width: 180)))),
+                                        child: Image.file(
+                                          File(imagePath!),
+                                          fit: BoxFit.cover,
+                                          width: isSticker ? 112 : 180,
+                                          height: isSticker ? 112 : null,
+                                          cacheWidth: isSticker ? 224 : 360,
+                                        )))),
                           // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
                           if (hasAudio)
                             _audioBubble(
@@ -2244,7 +2281,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 decoration: BoxDecoration(
                   color: _hasBg
                       ? theme.glass.withValues(alpha: 0.72)
-                      : theme.surface,
+                      : theme.surfaceVariant,
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: Colors.transparent),
                   boxShadow: theme.isDark
