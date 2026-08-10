@@ -1023,20 +1023,24 @@ class AIManager {
       final baseUrl = (provider['base_url']?.toString().trim() ?? '')
           .replaceFirst(RegExp(r'/+$'), '');
       if (baseUrl.isEmpty) return;
-      // 把所有已存的"日记"条目一并取回，连同新出现的聊天内容一起交给模型改写合并，
-      // 让模型基于"已有记忆 + 新信息"输出一套全新的完整日记，而不是只按新聊天增量新增。
+      // 采用“按条更新”而非清空重建：每条已有日记都提供稳定 ID，
+      // 模型只需返回新增、更新或删除操作。解析失败时旧记忆会完整保留。
       final existingMemories = await db.queryMemories(botId, type: 'medium');
       final existingText = existingMemories.isEmpty
           ? '（目前还没有任何日记）'
           : existingMemories
-              .map((m) => (m['content']?.toString() ?? '').trim())
+              .map((m) {
+                final id = m['id']?.toString() ?? '';
+                final content = (m['content']?.toString() ?? '').trim();
+                final category = m['category']?.toString() ?? 'fact';
+                return 'id=$id；分类=$category；正文=$content';
+              })
               .where((c) => c.isNotEmpty)
               .join('\n');
-      final userPayload = '【已有的日记】\n'
+      final userPayload = '【已有日记（可按 id 更新或删除）】\n'
           '$existingText\n\n'
           '【新发生的聊天内容】\n'
           '$transcript';
-      // 以 JSON 数组形式返回"第一人称日记条目"，杜绝把一段长总结当一个记忆。
       final response = await http
           .post(
             Uri.parse('$baseUrl/chat/completions'),
@@ -1049,13 +1053,15 @@ class AIManager {
               'messages': [
                 {
                   'role': 'system',
-                  'content': '你是一个机器人，正在维护自己的"日记"（记忆库）。已有的日记里记录了过去的真实事件与感受，新发生的聊天内容里可能有新的值得记住的信息。'
-                      '请以机器人的第一人称（用"我"）把【已有日记】和【新发生的聊天内容】合并整理成一份全新的完整日记。要求：\n'
-                      '1. 直接输出一个 JSON 字符串数组，数组元素是字符串，例如 ["我记得用户的生日是5月20日", "用户最近在准备面试，我给他打气"]。\n'
-                      '2. 每条都是独立条目，不要合并成长文，也不要给任何一条加标题或编号。\n'
-                      '3. 保留已有日记里仍然成立的事实（可改写得更简洁、合并重复项），补充新聊天中值得记住的新内容，删除已过时或不再需要的信息。\n'
-                      '4. 用第一人称书写，不要用"本次对话""讨论""用户说"这类转述口吻总结聊天过程。\n'
-                      '5. 不编造，不写心情标签。若没有任何值得记住的信息，输出 []。',
+                  'content': '你正在以自己的身份维护记忆日记。请依据人设和称呼，用第一人称自然记录，不要写成客服摘要。'
+                      '必须只输出一个 JSON 对象，格式：'
+                      '{"upsert":[{"id":"已有 id 或留空","content":"第一人称正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
+                      '规则：\n'
+                      '1. content 是单条独立正文，不得标题、编号、心情标签或“重要事件”。\n'
+                      '2. 必须第一人称，语气贴合角色人设；不要出现“用户说”“助手回复”“本次对话”“讨论了”。\n'
+                      '3. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
+                      '4. 已有内容仍正确时不要重复新增；需要修正就对其 id upsert；过时或冲突才 delete。\n'
+                      '5. expires_days 为 0 表示不过期，近期事项可填 1~30。无更新时输出 {"upsert":[],"delete":[]}。',
                 },
                 {'role': 'user', 'content': userPayload},
               ],
@@ -1065,39 +1071,67 @@ class AIManager {
           .timeout(const Duration(seconds: 50));
       if (response.statusCode != 200) return;
       String bodyText = utf8.decode(response.bodyBytes).trim();
-      // 兼容模型把 JSON 包在 ```json ... ``` 代码块里的情况。
       final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```');
       final fenceMatch = fence.firstMatch(bodyText);
       if (fenceMatch != null) bodyText = fenceMatch.group(1)!.trim();
-      // 提取第一个 [...] 数组片段作为条目列表。
-      final arrayStart = bodyText.indexOf('[');
-      final arrayEnd = bodyText.lastIndexOf(']');
-      if (arrayStart < 0 || arrayEnd <= arrayStart) return;
-      final List<dynamic> entries =
-          jsonDecode(bodyText.substring(arrayStart, arrayEnd + 1));
-      final newEntries = entries
-          .map((e) => e?.toString().trim() ?? '')
-          .where((c) => c.isNotEmpty)
-          .toList();
-      if (newEntries.isEmpty) return;
-      // 先删除旧的 medium 日记，再用模型改写合并后的完整集合整体替换落库，
-      // 避免日记在反复总结下无限膨胀。
-      for (final old in existingMemories) {
-        final id = old['id']?.toString();
-        if (id != null && id.isNotEmpty) await db.deleteMemory(id);
-      }
+      final objectStart = bodyText.indexOf('{');
+      final objectEnd = bodyText.lastIndexOf('}');
+      if (objectStart < 0 || objectEnd <= objectStart) return;
+      final payload =
+          jsonDecode(bodyText.substring(objectStart, objectEnd + 1));
+      if (payload is! Map) return;
+      final knownIds = existingMemories
+          .map((m) => m['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      final rawUpserts = payload['upsert'];
+      final rawDeletes = payload['delete'];
+      final upserts =
+          rawUpserts is List ? rawUpserts.whereType<Map>() : const <Map>[];
+      final deletes = rawDeletes is List ? rawDeletes : const <dynamic>[];
       final now = DateTime.now().millisecondsSinceEpoch;
-      for (var idx = 0; idx < newEntries.length; idx++) {
-        // 拆成独立、无标题、第一人称的日记条目逐条落库到 medium。
+      var changed = false;
+      for (final raw in upserts) {
+        final content = raw['content']?.toString().trim() ?? '';
+        if (content.isEmpty || content.length > 500) continue;
+        final requestedId = raw['id']?.toString().trim() ?? '';
+        // 不允许模型伪造已有 id；空 id 由客户端新建稳定 id。
+        final id = requestedId.isNotEmpty && knownIds.contains(requestedId)
+            ? requestedId
+            : 'mem_${botId}_${now}_${content.hashCode.abs()}';
+        final category = raw['category']?.toString().trim() ?? 'fact';
+        final safeCategory =
+            const {'profile', 'preference', 'task', 'fact'}.contains(category)
+                ? category
+                : 'fact';
+        final importance = (raw['importance'] as num?)?.toInt() ?? 3;
+        final expiresDays = (raw['expires_days'] as num?)?.toInt() ?? 0;
+        final expiresAt = expiresDays.clamp(0, 30) == 0
+            ? null
+            : now + expiresDays.clamp(1, 30) * Duration.millisecondsPerDay;
         await db.upsertMemoryItem(
           botId: botId,
+          id: id,
           type: 'medium',
-          title: '',
-          content: newEntries[idx],
-          timestamp: now + idx * 1000,
+          content: content,
+          category: safeCategory,
+          importance: importance,
+          expiresAt: expiresAt,
+          timestamp: now,
         );
+        changed = true;
       }
-      await db.setKV(summaryKey, endTimestamp);
+      for (final rawId in deletes) {
+        final id = rawId?.toString().trim() ?? '';
+        if (knownIds.contains(id)) {
+          await db.deleteMemory(id);
+          changed = true;
+        }
+      }
+      // 即使模型判断无需变更，也标记本段已审阅，避免重复消耗请求。
+      if (changed || (upserts.isEmpty && deletes.isEmpty)) {
+        await db.setKV(summaryKey, endTimestamp);
+      }
     } catch (e) {
       print('[memory] auto summary failed: $e');
     }

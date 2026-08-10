@@ -14,8 +14,8 @@ import 'global_notice.dart';
 import 'theme.dart';
 import 'data_dashboard.dart';
 import 'sticker_manager_page.dart';
-import 'wechat_connection_page.dart';
 import 'local_model_service.dart';
+import 'local_llama.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -36,7 +36,6 @@ class _ProfilePageState extends State<ProfilePage> {
       'title': '高级设置',
       'page': 'advanced'
     },
-    {'icon': Icons.wechat_rounded, 'title': '连接到微信', 'page': 'wechat'},
     {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
     {'icon': Icons.analytics_rounded, 'title': '数据大盘', 'page': 'dashboard'},
     {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
@@ -303,10 +302,6 @@ class _ProfilePageState extends State<ProfilePage> {
         break;
       case 'advanced':
         _showAdvancedSettings();
-        break;
-      case 'wechat':
-        Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const WeChatConnectionPage()));
         break;
       case 'notify':
         _showNotificationSettings();
@@ -655,74 +650,25 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _showAdvancedSettings() {
     showTideSheet(
-        context: context,
-        height: 300,
-        child: Padding(
-            padding: const EdgeInsets.all(20),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('高级设置',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'TideFont',
-                      color: TideTheme.of(context).textStrong)),
-              const SizedBox(height: 12),
-              // OpenClaw 微信桥接地址（「连接到微信」页依赖此地址请求二维码/收发消息）。
-              _bridgeUrlField(),
-              const SizedBox(height: 12),
-              Text('高级模型、后台任务与调试选项将逐步在这里提供。',
-                  style: TextStyle(
-                      fontFamily: 'TideFont',
-                      color: TideTheme.of(context).textWeak)),
-            ])));
-  }
-
-  Widget _bridgeUrlField() {
-    final theme = TideTheme.of(context);
-    var saved = '';
-    return StatefulBuilder(
-      builder: (ctx, setSt) {
-        if (saved.isEmpty) {
-          DBManager().getKV('openclaw_bridge_url').then((v) {
-            if (v != null && v.isNotEmpty) {
-              saved = v;
-              if (ctx.mounted) setSt(() {});
-            }
-          });
-        }
-        final ctrl = TextEditingController(text: saved);
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('OpenClaw 桥接地址',
+      context: context,
+      height: 220,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('高级设置',
               style: TextStyle(
-                  fontFamily: 'TideFont', fontSize: 13, color: theme.textWeak)),
-          const SizedBox(height: 6),
-          TextField(
-            controller: ctrl,
-            keyboardType: TextInputType.url,
-            decoration: InputDecoration(
-              hintText: 'http://127.0.0.1:8200',
-              isDense: true,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: theme.divider)),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.save_rounded),
-                onPressed: () async {
-                  final v = ctrl.text.trim();
-                  await DBManager().setKV('openclaw_bridge_url', v);
-                  if (ctx.mounted) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                        content: Text(v.isEmpty ? '已清空桥接地址' : '桥接地址已保存',
-                            style: const TextStyle(fontFamily: 'TideFont')),
-                        behavior: SnackBarBehavior.floating));
-                  }
-                },
-              ),
-            ),
-          ),
-        ]);
-      },
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                  color: TideTheme.of(context).textStrong)),
+          const SizedBox(height: 12),
+          Text('高级模型、后台任务与调试选项将逐步在这里提供。',
+              style: TextStyle(
+                  height: 1.5,
+                  fontFamily: 'TideFont',
+                  color: TideTheme.of(context).textWeak)),
+        ]),
+      ),
     );
   }
 
@@ -2317,6 +2263,33 @@ class _LocalModelPageState extends State<LocalModelPage> {
   ];
   String _mb(int bytes) => '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 
+  Future<bool> _verifyDownloadedModel(Map<String, dynamic> model) async {
+    final id = model['id'] as String;
+    try {
+      final path = await LocalLlama.instance.pathFor(id);
+      await LocalLlama.instance.validateModel(path);
+      if (!mounted) return true;
+      setState(() {
+        model['installed'] = true;
+        model['verificationError'] = '';
+      });
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      setState(() {
+        model['installed'] = false;
+        model['verificationError'] = e.toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('模型下载完成，但加载验证失败：$e',
+            style: const TextStyle(fontFamily: 'TideFont')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+      ));
+      return false;
+    }
+  }
+
   String _progressLabel(Map<String, dynamic> model) {
     final received = model['receivedBytes'] as int? ?? 0;
     final total = model['totalBytes'] as int? ?? 0;
@@ -2414,7 +2387,11 @@ class _LocalModelPageState extends State<LocalModelPage> {
       final state = await service.installedState(id);
       final savedTotal = state['totalBytes'] as int? ?? 0;
       final received = state['receivedBytes'] as int? ?? 0;
-      m['installed'] = state['installed'];
+      m['installed'] = false;
+      if (state['installed'] == true) {
+        // “已下载”不等于“可用”：进入页面时再次用 native runtime 验证。
+        await _verifyDownloadedModel(m);
+      }
       m['downloading'] =
           service.isDownloading(id) || (state['downloading'] == true);
       // Local-chat selection is scoped to each bot in the chat settings.
@@ -2459,7 +2436,7 @@ class _LocalModelPageState extends State<LocalModelPage> {
         if (!mounted) return;
         setState(() {
           if (state['installed'] == true) {
-            m['installed'] = true;
+            m['installed'] = false;
             m['downloading'] = false;
             m['progress'] = 1.0;
             m['receivedBytes'] = state['receivedBytes'] ?? m['receivedBytes'];
@@ -2476,10 +2453,15 @@ class _LocalModelPageState extends State<LocalModelPage> {
       },
     );
     if (mounted) {
+      // 下载完成后立即由 native runtime 做一次真实加载验证。
+      final downloaded = await LocalModelService.instance.installedState(id);
+      if (downloaded['installed'] == true) {
+        await _verifyDownloadedModel(m);
+      }
       // 结束后再刷新一次，确认安装状态与进度显示准确。
       final st = await LocalModelService.instance.installedState(id);
       setState(() {
-        m['installed'] = st['installed'];
+        m['installed'] = m['installed'] == true && st['installed'] == true;
         m['downloading'] = st['downloading'] == true;
         final received = st['receivedBytes'] as int? ?? 0;
         final total = st['totalBytes'] as int? ?? 0;
@@ -2576,7 +2558,17 @@ class _LocalModelPageState extends State<LocalModelPage> {
                       style: TextStyle(
                           fontSize: 12,
                           color: TideTheme.of(context).textWeak,
-                          fontFamily: 'TideFont'))
+                          fontFamily: 'TideFont')),
+                  if ((m['verificationError']?.toString() ?? '').isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 5),
+                      child: Text('加载验证失败：请删除后重新下载，或换用更小的兼容模型。',
+                          style: TextStyle(
+                              fontSize: 11,
+                              height: 1.35,
+                              color: Color(0xFFE74C3C),
+                              fontFamily: 'TideFont')),
+                    )
                 ])),
             if (installed)
               BouncyTap(

@@ -174,6 +174,34 @@ class LocalLlama {
     throw FileSystemException('找不到已下载的本地模型文件', expected.path);
   }
 
+  /// 真实验证模型能否被当前 Android native runtime 加载。
+  /// 只执行 load → isModelLoaded → dispose，不会生成文本，也不会保留内存。
+  Future<void> validateModel(String path) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      throw FileSystemException('找不到模型文件', path);
+    }
+    await _validateGgufMagic(file);
+    final controller = LlamaController();
+    try {
+      await controller.loadModel(
+        modelPath: path,
+        threads: 1,
+        contextSize: 512,
+        gpuLayers: 0,
+      );
+      if (!await controller.isModelLoaded()) {
+        throw StateError('Native 引擎未确认模型已加载');
+      }
+    } catch (e) {
+      throw StateError('此模型无法被当前设备的本地推理引擎加载：$e');
+    } finally {
+      try {
+        await controller.dispose();
+      } catch (_) {}
+    }
+  }
+
   Future<void> dispose() async {
     final controller = _controller;
     _controller = null;

@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 12,
+      version: 13,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -74,7 +74,9 @@ class DBManager {
         ''');
         await db.execute('''
           CREATE TABLE memories (
-            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT, content TEXT, timestamp INTEGER,
+            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
+            content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
+            expires_at INTEGER, timestamp INTEGER,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
@@ -239,6 +241,22 @@ class DBManager {
               'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)');
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)');
+        }
+        if (oldVersion < 13) {
+          try {
+            await db.execute(
+                "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'fact'");
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 3');
+          } catch (_) {}
+          try {
+            await db
+                .execute('ALTER TABLE memories ADD COLUMN expires_at INTEGER');
+          } catch (_) {}
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
         }
       },
     );
@@ -555,19 +573,22 @@ class DBManager {
 
   // 查询记忆 (memories 表)
   Future<List<Map<String, dynamic>>> queryMemories(String botId,
-      {String? type, int? limit}) async {
+      {String? type, int? limit, bool includeExpired = false}) async {
     final db = await database;
-    String? whereStr;
-    List<dynamic>? whereArgs;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final whereParts = <String>['bot_id = ?'];
+    final whereArgs = <dynamic>[botId];
     if (type != null) {
-      whereStr = 'bot_id = ? AND type = ?';
-      whereArgs = [botId, type];
-    } else {
-      whereStr = 'bot_id = ?';
-      whereArgs = [botId];
+      whereParts.add('type = ?');
+      whereArgs.add(type);
+    }
+    if (!includeExpired) {
+      whereParts
+          .add('(expires_at IS NULL OR expires_at <= 0 OR expires_at > ?)');
+      whereArgs.add(now);
     }
     return await db.query('memories',
-        where: whereStr,
+        where: whereParts.join(' AND '),
         whereArgs: whereArgs,
         orderBy: 'timestamp DESC',
         limit: limit);
@@ -585,7 +606,11 @@ class DBManager {
     required String botId,
     required String type,
     required String content,
+    String? id,
     String title = '',
+    String category = 'fact',
+    int importance = 3,
+    int? expiresAt,
     int? timestamp,
   }) async {
     final normalized = content.replaceAll(RegExp(r'\s+'), '').trim();
@@ -605,10 +630,26 @@ class DBManager {
         break;
       }
     }
-    if (duplicate != null) {
+    final targetId = (id ?? '').trim();
+    if (targetId.isNotEmpty) {
+      await insertMemory({
+        'id': targetId,
+        'bot_id': botId,
+        'title': title,
+        'type': type,
+        'content': content.trim(),
+        'category': category,
+        'importance': importance.clamp(1, 5),
+        'expires_at': expiresAt,
+        'timestamp': now,
+      });
+    } else if (duplicate != null) {
       await updateMemory(duplicate['id'].toString(), {
         'title': title.isEmpty ? duplicate['title'] : title,
         'content': content.trim(),
+        'category': category,
+        'importance': importance.clamp(1, 5),
+        'expires_at': expiresAt,
         'timestamp': now,
       });
     } else {
@@ -618,6 +659,9 @@ class DBManager {
         'title': title,
         'type': type,
         'content': content.trim(),
+        'category': category,
+        'importance': importance.clamp(1, 5),
+        'expires_at': expiresAt,
         'timestamp': now,
       });
     }

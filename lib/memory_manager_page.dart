@@ -49,7 +49,6 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   }
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
-    final title = TextEditingController(text: item?['title']?.toString() ?? '');
     final content =
         TextEditingController(text: item?['content']?.toString() ?? '');
     final ok = await TideDialogs.show<bool>(
@@ -80,10 +79,6 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                         fontFamily: 'TideFont')),
                 const SizedBox(height: 16),
                 TextField(
-                    controller: title,
-                    decoration: decoration.copyWith(labelText: '标题（可选）')),
-                const SizedBox(height: 12),
-                TextField(
                     controller: content,
                     minLines: 4,
                     maxLines: 7,
@@ -108,7 +103,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
     if (ok == true && content.text.trim().isNotEmpty) {
       final now = DateTime.now().millisecondsSinceEpoch;
       final values = {
-        'title': title.text.trim(),
+        'title': '',
         'type': _type,
         'content': content.text.trim(),
         'timestamp': now
@@ -120,7 +115,6 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
         await DBManager().updateMemory(item['id'].toString(), values);
       await _load();
     }
-    title.dispose();
     content.dispose();
   }
 
@@ -257,86 +251,56 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               itemCount: _items.length,
                               itemBuilder: (_, i) {
                                 final item = _items[i];
-                                final title =
-                                    item['title']?.toString().trim() ?? '';
                                 return InkWell(
-                                    borderRadius: BorderRadius.circular(22),
-                                    onTap: () => _edit(item),
-                                    child: Container(
-                                        margin:
-                                            const EdgeInsets.only(bottom: 10),
-                                        padding: const EdgeInsets.all(16),
-                                        decoration: BoxDecoration(
-                                            color: theme.surfaceVariant,
-                                            borderRadius:
-                                                BorderRadius.circular(22),
-                                            border: Border.all(
-                                                color: theme.border)),
-                                        child: Row(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () => _edit(item),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 14, horizontal: 4),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Column(
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Container(
-                                                  width: 4,
-                                                  height: 54,
-                                                  decoration: BoxDecoration(
-                                                      color: accent,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              4))),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                  child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                    Text(
-                                                        title.isEmpty
-                                                            ? _label
-                                                            : title,
-                                                        style: TextStyle(
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                            color: theme
-                                                                .textStrong,
-                                                            fontFamily:
-                                                                'TideFont')),
-                                                    const SizedBox(height: 6),
-                                                    Text(
-                                                        item['content']
-                                                                ?.toString() ??
-                                                            '',
-                                                        maxLines: 3,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                            height: 1.45,
-                                                            fontSize: 13,
-                                                            color:
-                                                                theme.textWeak,
-                                                            fontFamily:
-                                                                'TideFont')),
-                                                    const SizedBox(height: 8),
-                                                    Text(
-                                                        _date(
-                                                            item['timestamp']),
-                                                        style: TextStyle(
-                                                            fontSize: 11,
-                                                            color:
-                                                                theme.textFaint,
-                                                            fontFamily:
-                                                                'TideFont'))
-                                                  ])),
-                                              IconButton(
-                                                  onPressed: () =>
-                                                      _delete(item),
-                                                  icon: Icon(
-                                                      Icons
-                                                          .delete_outline_rounded,
-                                                      size: 20,
-                                                      color: theme.textFaint))
-                                            ])));
+                                              Text(
+                                                item['content']?.toString() ??
+                                                    '',
+                                                style: TextStyle(
+                                                  height: 1.55,
+                                                  fontSize: 15,
+                                                  color: theme.textStrong,
+                                                  fontFamily: 'TideFont',
+                                                ),
+                                              ),
+                                              const SizedBox(height: 5),
+                                              Text(
+                                                _date(item['timestamp']),
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: theme.textFaint,
+                                                  fontFamily: 'TideFont',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        IconButton(
+                                          tooltip: '删除',
+                                          onPressed: () => _delete(item),
+                                          icon: Icon(
+                                              Icons.delete_outline_rounded,
+                                              size: 19,
+                                              color: theme.textFaint),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
                               })))
         ]));
   }

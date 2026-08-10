@@ -27,6 +27,10 @@ class _SpacePageState extends State<SpacePage> {
   String _moodLabel = '';
   List<Map<String, dynamic>> _schedules = [];
   List<Map<String, dynamic>> _memories = [];
+  final ScrollController _diaryScrollController = ScrollController();
+  Timer? _diaryTimer;
+  bool _diaryAutoScrolling = false;
+  int _diaryScrollIndex = 0;
   bool _loading = true;
   final Map<String, IconData> _moodIcons = {
     'smile': Icons.sentiment_satisfied_rounded,
@@ -45,7 +49,30 @@ class _SpacePageState extends State<SpacePage> {
 
   @override
   void dispose() {
+    _diaryTimer?.cancel();
+    _diaryScrollController.dispose();
     super.dispose();
+  }
+
+  void _toggleDiaryAutoScroll() {
+    if (_memories.length < 2) return;
+    if (_diaryAutoScrolling) {
+      _diaryTimer?.cancel();
+      setState(() => _diaryAutoScrolling = false);
+      return;
+    }
+    setState(() => _diaryAutoScrolling = true);
+    _diaryTimer?.cancel();
+    _diaryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || !_diaryScrollController.hasClients) return;
+      _diaryScrollIndex = (_diaryScrollIndex + 1) % _memories.length;
+      final maxExtent = _diaryScrollController.position.maxScrollExtent;
+      final target = _memories.length <= 1
+          ? 0.0
+          : maxExtent * _diaryScrollIndex / (_memories.length - 1);
+      _diaryScrollController.animateTo(target,
+          duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+    });
   }
 
   Future<void> _loadData() async {
@@ -99,6 +126,7 @@ class _SpacePageState extends State<SpacePage> {
                   : 'think';
       _schedules = sch;
       _memories = mem;
+      if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
       // Generates once per calendar day and returns cached text on later opens.
       if (_dailyQuote.isEmpty ||
           await db.getKV('quote_date_$_botId') !=
@@ -248,48 +276,75 @@ class _SpacePageState extends State<SpacePage> {
                                     color: theme.textFaint,
                                     fontFamily: 'TideFont'))
                           else
-                            // 所有记忆一条一条列出：无卡片、无标题，只按时间倒序排成日记。
-                            ..._memories.asMap().entries.map((entry) {
-                              final m = entry.value;
-                              return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    BouncyTap(
-                                      onTap: () => _showMemoryDetail(m),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 6),
-                                        child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(m['content'] ?? '',
-                                                  style: TextStyle(
-                                                      fontSize: 14,
-                                                      height: 1.4,
-                                                      color: theme.textStrong)),
-                                              if ((m['timestamp'] as int?) !=
-                                                  null) ...[
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                    formatTime(
-                                                        m['timestamp'] as int),
-                                                    style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: theme.textFaint,
-                                                        fontFamily:
-                                                            'TideFont')),
-                                              ],
-                                            ]),
-                                      ),
-                                    ),
-                                    if (entry.key != _memories.length - 1)
-                                      Divider(
+                            GestureDetector(
+                              onTap: _toggleDiaryAutoScroll,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    height: 196,
+                                    child: ListView.separated(
+                                      controller: _diaryScrollController,
+                                      physics:
+                                          const NeverScrollableScrollPhysics(),
+                                      padding: EdgeInsets.zero,
+                                      itemCount: _memories.length,
+                                      separatorBuilder: (_, __) => Divider(
                                           height: 1,
                                           thickness: 0.5,
                                           color: theme.divider),
-                                  ]);
-                            }),
+                                      itemBuilder: (_, index) {
+                                        final m = _memories[index];
+                                        return BouncyTap(
+                                          onTap: () => _showMemoryDetail(m),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 8),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(m['content'] ?? '',
+                                                    style: TextStyle(
+                                                        fontSize: 14,
+                                                        height: 1.4,
+                                                        color: theme.textStrong,
+                                                        fontFamily:
+                                                            'TideFont')),
+                                                if (m['timestamp'] != null) ...[
+                                                  const SizedBox(height: 3),
+                                                  Text(
+                                                      formatTime(
+                                                          m['timestamp']),
+                                                      style: TextStyle(
+                                                          fontSize: 11,
+                                                          color:
+                                                              theme.textFaint,
+                                                          fontFamily:
+                                                              'TideFont')),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _memories.length < 2
+                                        ? '点击查看正文'
+                                        : _diaryAutoScrolling
+                                            ? '正在每 5 秒滚动 · 点击此处停止'
+                                            : '点击日记区域后，每 5 秒自动滚动',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: theme.textFaint,
+                                        fontFamily: 'TideFont'),
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ])),
         ));
@@ -994,10 +1049,12 @@ class SquarePageState extends State<SquarePage>
                                             width: double.infinity,
                                             fit: BoxFit.cover))),
                               Text(f['content'] ?? '',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 14,
                                       fontFamily: 'TideFont',
-                                      color: Color(0xFF3C3C43),
+                                      color: theme.isDark
+                                          ? Colors.white
+                                          : const Color(0xFF3C3C43),
                                       height: 1.5)),
                             ]),
                       ),
