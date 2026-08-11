@@ -226,11 +226,15 @@ class _ProfilePageState extends State<ProfilePage> {
         fileName: export.fileName,
         type: FileType.custom,
         allowedExtensions: const ['json'],
+        // Android/iOS 的 SAF 保存器要求调用方直接传入字节；它返回的路径
+        // 可能只是 content URI，不能再使用 dart:io File(path) 写入。
+        bytes: utf8.encode(export.content),
       );
       if (picked == null) {
         cancelled = true;
       } else {
-        await File(picked).writeAsString(export.content);
+        // bytes 已由 saveFile 写入；Android/iOS 上 picked 可能为 content URI，
+        // 不能再用 File(picked) 进行第二次写入。
         targetPath = picked;
       }
     } on StateError catch (e) {

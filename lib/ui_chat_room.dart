@@ -32,6 +32,7 @@ class ChatRoomPage extends StatefulWidget {
 class _ChatRoomPageState extends State<ChatRoomPage>
     with SingleTickerProviderStateMixin {
   final TextEditingController _msgC = TextEditingController();
+  final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollC = ScrollController();
   List<Map<String, dynamic>> _msgs = [];
   bool _isRecording = false;
@@ -53,7 +54,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _showMessageTime = true;
   bool _showChatAvatar = false;
   bool _showSearchSources = false;
-  Map<String, dynamic>? _replyingTo;
   late Map<String, dynamic> _bot;
 
   late AnimationController _bottomBarCtrl;
@@ -67,6 +67,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     super.initState();
     _bot = Map.from(widget.botData);
     _msgC.addListener(_msgChanged);
+    _inputFocus.addListener(_handleInputFocus);
     _audioPositionSub = _player.onPositionChanged.listen((v) {
       if (!mounted) return;
       setState(() => _audioPosition = v);
@@ -105,6 +106,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void dispose() {
     _streamDisplayTimer?.cancel();
     _msgC.removeListener(_msgChanged);
+    _inputFocus.removeListener(_handleInputFocus);
+    _inputFocus.dispose();
     _msgC.dispose();
     _scrollC.dispose();
     _rec.dispose();
@@ -177,7 +180,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
     }
-    _scrollDown(animated: false);
+    // 首次进入仅在首帧完成后静态定位到底部，避免先显示顶部再弹跳。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scrollDown(animated: false);
+    });
+  }
+
+  void _handleInputFocus() {
+    if (!_inputFocus.hasFocus) return;
+    // 等键盘 inset 完成布局后再定位，末条消息会和输入栏一起露出，且不触发进场跳动。
+    Future<void>.delayed(const Duration(milliseconds: 260), () {
+      if (mounted && _inputFocus.hasFocus) _scrollDown(animated: false);
+    });
   }
 
   void _scrollDown({bool animated = true}) {
@@ -297,7 +311,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'image': img,
       'file_path': document ?? img,
       'document_name': document?.split(Platform.pathSeparator).last,
-      'reply_to_id': _replyingTo?['id']?.toString(),
       'timestamp': now,
     };
 
@@ -327,12 +340,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'content': text,
           'file_path': document ?? img,
           'mood': null,
-          'reply_to_id': _replyingTo?['id']?.toString(),
           'timestamp': now,
-        }).timeout(const Duration(seconds: 5));
-        // The message has been safely persisted; only now clear the quote.
-        // Clearing before this point caused reply_to_id to be lost intermittently.
-        if (mounted) setState(() => _replyingTo = null);
+        }).timeout(const Duration(seconds: 12));
       } catch (e) {
         debugPrint('[send] persist user message failed: $e');
       }
@@ -414,8 +423,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // First local GGUF load and CPU generation can legitimately take longer
       // than a remote HTTP request. Keep the short timeout for providers while
       // allowing local inference enough time to finish.
+      // 远程模型首 token、工具调用或冷启动可能超过 30 秒；30 秒会把仍在执行的
+      // 正常请求误判为失败。网络请求本身仍由 AI 层设置连接/空闲超时。
       final requestTimeout = localModelId.isEmpty
-          ? const Duration(seconds: 30)
+          ? const Duration(minutes: 2)
           : const Duration(minutes: 5);
       final result = await AIManager()
           .chatResult(
@@ -1632,7 +1643,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final text = msg['content']?.toString() ?? '';
     showTideSheet(
       context: context,
-      height: msg['type'] == 'text' ? 300 : 230,
+      height: 230,
       child: Builder(
         builder: (sheetContext) => ListView(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -1653,17 +1664,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 Navigator.pop(sheetContext);
               },
             ),
-            ListTile(
-              leading: Icon(Icons.format_quote_rounded,
-                  color: TideTheme.of(sheetContext).primary),
-              title: const Text('引用', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () {
-                setState(() => _replyingTo = Map<String, dynamic>.from(msg));
-                _msgC.text = '';
-                _msgC.selection = const TextSelection.collapsed(offset: 0);
-                Navigator.pop(sheetContext);
-              },
-            ),
+            // 引用功能已移除，避免生成和维护 reply_to_id 关联。
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),
@@ -2370,6 +2371,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     ),
                     Expanded(
                       child: TextField(
+                        focusNode: _inputFocus,
                         controller: _msgC,
                         minLines: 1,
                         maxLines: 4,

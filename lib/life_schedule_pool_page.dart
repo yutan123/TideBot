@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'life_schedule_service.dart';
 import 'theme.dart';
+import 'ui_components.dart';
 
 class LifeSchedulePoolPage extends StatefulWidget {
   final Map<String, List<String>> initialPools;
@@ -29,25 +30,46 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
 
   Future<void> _add(String key) async {
     final controller = TextEditingController();
-    final value = await showDialog<String>(
+    final value = await showTideSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('添加${_labels[key]}',
-            style: const TextStyle(fontFamily: 'TideFont')),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '输入内容'),
+      height: 300,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('添加${_labels[key]}',
+                style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 18),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              onSubmitted: (_) =>
+                  Navigator.pop(context, controller.text.trim()),
+              decoration: const InputDecoration(hintText: '输入内容'),
+            ),
+            const Spacer(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消')),
+                const SizedBox(width: 8),
+                FilledButton(
+                    onPressed: () =>
+                        Navigator.pop(context, controller.text.trim()),
+                    child: const Text('添加')),
+              ],
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('添加')),
-        ],
       ),
     );
+    controller.dispose();
     if (value == null || value.isEmpty || _pools[key]!.contains(value)) return;
     setState(() => _pools[key]!.add(value));
     await LifeScheduleService.instance.savePools(_pools);

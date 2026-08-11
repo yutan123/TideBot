@@ -22,6 +22,7 @@ class LocalModelService {
   final Map<String, int> _receivedBytes = {};
   final Map<String, int> _totalBytes = {};
   final Map<String, bool> _cancelRequested = {};
+  final Map<String, http.Client> _activeClients = {};
   final Set<String> _completed = {};
 
   /// 当前已接收字节数（内存值，供前台 UI 实时显示）。
@@ -44,6 +45,7 @@ class LocalModelService {
 
   Future<void> pauseDownload(String id) async {
     _cancelRequested[id] = true;
+    _activeClients.remove(id)?.close();
     downloadingNotifier(id).value = false;
     await OpsManager().cancelDownloadProgress(_notificationId(id));
   }
@@ -51,6 +53,7 @@ class LocalModelService {
   /// 删除模型，同时取消正在进行的下载。
   Future<void> deleteModel(String id) async {
     _cancelRequested[id] = true;
+    _activeClients.remove(id)?.close();
     await OpsManager().cancelDownloadProgress(_notificationId(id));
     final dl = _downloading[id];
     if (dl != null) dl.value = false;
@@ -127,15 +130,17 @@ class LocalModelService {
     onState?.call({'downloading': true, 'receivedBytes': existing});
 
     final client = http.Client();
+    _activeClients[id] = client;
     IOSink? sink;
     var knownTotal = 0; // 仅在拿到响应后才能确定，用于失败续传时保留真实总大小
     int notifId = id.hashCode & 0x00FFFFFF; // 稳定唯一通知 id
     try {
-      final routes = <String>[
-        url,
+      final routes = <String>{
+        // 国内优先使用镜像，海外/镜像异常时自动回退官方和 hf.co。
         url.replaceFirst('https://huggingface.co/', 'https://hf-mirror.com/'),
         url.replaceFirst('https://huggingface.co/', 'https://hf.co/'),
-      ];
+        url,
+      }.toList();
       http.StreamedResponse? response;
       final errors = <String>[];
       for (final route in routes.take(3)) {
@@ -144,7 +149,7 @@ class LocalModelService {
             final request = http.Request('GET', Uri.parse(route));
             if (existing > 0) request.headers['Range'] = 'bytes=$existing-';
             final candidate =
-                await client.send(request).timeout(const Duration(minutes: 20));
+                await client.send(request).timeout(const Duration(seconds: 25));
             if (candidate.statusCode == 200 || candidate.statusCode == 206) {
               response = candidate;
             } else {
@@ -280,6 +285,7 @@ class LocalModelService {
         onState?.call({'downloading': false, 'receivedBytes': received});
       }
     } finally {
+      if (identical(_activeClients[id], client)) _activeClients.remove(id);
       client.close();
     }
   }
