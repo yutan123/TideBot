@@ -222,6 +222,8 @@ class AIManager {
     var providerId = forcedProviderId.isNotEmpty
         ? forcedProviderId
         : (bot['chat_model']?.toString().trim() ?? '');
+    print(
+        '[ai] resolve bot=$botId configured_provider=$providerId local=$localId');
     if (providerId.isEmpty) {
       final providers = await db.queryChatProviders();
       if (providers.isEmpty) return {'error': '未配置引擎中枢，请先在 API 设置中添加模型'};
@@ -232,6 +234,9 @@ class AIManager {
     // 优先用统一的聊天链路读取，兼容 API 设置页的 provider_list
     final provider = await db.getChatProviderById(providerId);
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
+    print(
+        '[ai] provider resolved id=$providerId name=${provider['name']} base=${provider['base_url']}');
+    // 模型名
     // 模型名：优先用 provider['model']（多个逗号分隔取第一个），否则退回 name 最后一段
     String modelName = (provider['model'] as String? ?? '').trim();
     if (modelName.isEmpty) {
@@ -387,11 +392,10 @@ class AIManager {
       final tools = allowTools
           ? await _buildNativeTools(db)
           : const <Map<String, dynamic>>[];
-      // Many OpenAI-compatible providers do not implement tool calling. Keep
-      // normal conversation compatible by sending a plain chat payload; tools
-      // are only attached after explicit capability opt-in.
-      final toolCallingEnabled = allowTools &&
-          ((await db.getKV('provider_tools_$providerId')) == 'true');
+      // Native tools remain enabled for every normal chat request. Provider
+      // compatibility is handled by retrying the exact same turn without only
+      // the unsupported tool fields after an explicit provider rejection.
+      final toolCallingEnabled = allowTools && tools.isNotEmpty;
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
