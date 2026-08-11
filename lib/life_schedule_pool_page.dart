@@ -33,41 +33,72 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
     final value = await showTideSheet<String>(
       context: context,
       height: 300,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('添加${_labels[key]}',
-                style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'TideFont')),
-            const SizedBox(height: 18),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              onSubmitted: (_) =>
-                  Navigator.pop(context, controller.text.trim()),
-              decoration: const InputDecoration(hintText: '输入内容'),
-            ),
-            const Spacer(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消')),
-                const SizedBox(width: 8),
-                FilledButton(
-                    onPressed: () =>
-                        Navigator.pop(context, controller.text.trim()),
-                    child: const Text('添加')),
-              ],
-            ),
-          ],
-        ),
-      ),
+      child: Builder(builder: (sheetContext) {
+        final theme = TideTheme.of(sheetContext);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('添加${_labels[key]}',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 18),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                onSubmitted: (_) =>
+                    Navigator.pop(context, controller.text.trim()),
+                decoration: InputDecoration(
+                  hintText: '输入内容',
+                  hintStyle:
+                      TextStyle(color: theme.textFaint, fontFamily: 'TideFont'),
+                  filled: true,
+                  fillColor: theme.surfaceVariant,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: theme.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: theme.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: theme.primary, width: 1.4),
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '取消',
+                      onTap: () => Navigator.pop(context),
+                      color: theme.surfaceVariant,
+                      textColor: theme.textStrong,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '添加',
+                      onTap: () =>
+                          Navigator.pop(context, controller.text.trim()),
+                      color: theme.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }),
     );
     controller.dispose();
     if (value == null || value.isEmpty || _pools[key]!.contains(value)) return;
@@ -117,10 +148,28 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: values
-                      .map((value) => InputChip(
-                            label: Text(value,
-                                style: const TextStyle(fontFamily: 'TideFont')),
-                            onDeleted: () => _remove(entry.key, value),
+                      .map((value) => Container(
+                            padding: const EdgeInsets.only(
+                                left: 12, right: 5, top: 7, bottom: 7),
+                            decoration: BoxDecoration(
+                              color: theme.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(99),
+                              border: Border.all(
+                                  color: theme.primary.withValues(alpha: 0.28)),
+                            ),
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Text(value,
+                                  style: TextStyle(
+                                      color: theme.textStrong,
+                                      fontFamily: 'TideFont')),
+                              const SizedBox(width: 5),
+                              GestureDetector(
+                                onTap: () => _remove(entry.key, value),
+                                child: Icon(Icons.close_rounded,
+                                    size: 16, color: theme.primary),
+                              ),
+                            ]),
                           ))
                       .toList(),
                 ),

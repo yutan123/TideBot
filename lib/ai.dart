@@ -72,6 +72,8 @@ class AIManager {
     bool persistResponse = true,
     bool includeChatHistory = true,
     bool enableAutoSummary = true,
+    bool skipLifeState = false,
+    bool allowTools = true,
     void Function(String delta)? onDelta,
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -112,6 +114,8 @@ class AIManager {
         persistResponse: persistResponse,
         includeChatHistory: includeChatHistory,
         enableAutoSummary: enableAutoSummary,
+        skipLifeState: skipLifeState,
+        allowTools: allowTools,
         // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
         // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
         onDelta: onDelta,
@@ -135,6 +139,8 @@ class AIManager {
     bool persistResponse = true,
     bool includeChatHistory = true,
     bool enableAutoSummary = true,
+    bool skipLifeState = false,
+    bool allowTools = true,
     void Function(String delta)? onDelta,
     String forcedLocalId = '',
     String forcedProviderId = '',
@@ -160,7 +166,7 @@ class AIManager {
           {
             'role': 'system',
             'content': _buildSystemPrompt(bot, activeGame) +
-                await _lifeStateContext(botId),
+                (skipLifeState ? '' : await _lifeStateContext(botId)),
           },
         ];
         for (final msg in history.take(20)) {
@@ -268,8 +274,8 @@ class AIManager {
     final longMemoryContext = memoryLines(longMemories, 1200);
     final mediumMemoryContext = memoryLines(mediumMemories, 800);
     final shortMemoryContext = memoryLines(shortMemories, 600);
-    final toolContext = await _buildToolContext(db);
-    final lifeContext = await _lifeStateContext(botId);
+    final toolContext = allowTools ? await _buildToolContext(db) : '';
+    final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         lifeContext +
         (longMemoryContext.isEmpty
@@ -378,13 +384,20 @@ class AIManager {
       if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
       print(
           '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
-      final tools = await _buildNativeTools(db);
+      final tools = allowTools
+          ? await _buildNativeTools(db)
+          : const <Map<String, dynamic>>[];
+      // Many OpenAI-compatible providers do not implement tool calling. Keep
+      // normal conversation compatible by sending a plain chat payload; tools
+      // are only attached after explicit capability opt-in.
+      final toolCallingEnabled = allowTools &&
+          ((await db.getKV('provider_tools_$providerId')) == 'true');
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
         'max_tokens': bot['max_tokens'] ?? 10000,
-        if (tools.isNotEmpty) 'tools': tools,
-        if (tools.isNotEmpty) 'tool_choice': 'auto',
+        if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
+        if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
         // 流式结束后若命中工具再执行并做一次非流式 follow-up 取得最终回答。
         if (onDelta != null) 'stream': true,

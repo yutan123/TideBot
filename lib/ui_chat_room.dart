@@ -405,7 +405,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           pendingDisplay = pendingDisplay.substring(take);
           setState(() =>
               displayMessage['content'] = '${displayMessage['content']}$chunk');
-          _scrollDown();
+          // Do not animate on every streamed chunk: repeated animateTo calls
+          // cause layout churn, dropped frames and heat during long replies.
+          if (pendingDisplay.isEmpty ||
+              displayMessage['content'].toString().length % 80 < batch) {
+            _scrollDown(animated: false);
+          }
         });
         setState(() => _msgs.add(streamingMessage!));
       }
@@ -2052,7 +2057,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return ListView.builder(
       key: const PageStorageKey<String>('chat_messages'),
       controller: _scrollC,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: EdgeInsets.fromLTRB(
+        12,
+        8,
+        12,
+        16 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
         final m = _msgs[i];

@@ -106,12 +106,15 @@ class LifeScheduleService {
     await DBManager().setKV('life_schedule_pools', jsonEncode(value));
   }
 
+  /// Reads the state already generated for today.
+  ///
+  /// This intentionally never generates a schedule on the foreground chat
+  /// request path: generation itself uses a model request, which used to make
+  /// the first user message recursively wait for another model request.
   Future<Map<String, dynamic>?> ensureToday(String botId) async {
     if (!await enabled()) return null;
-    final db = DBManager();
-    final existing = await db.getLifeSchedule(botId, dateKey());
-    if (existing != null) return Map<String, dynamic>.from(existing);
-    return await generateToday(botId);
+    final existing = await DBManager().getLifeSchedule(botId, dateKey());
+    return existing == null ? null : Map<String, dynamic>.from(existing);
   }
 
   Future<Map<String, dynamic>?> generateToday(
@@ -142,8 +145,10 @@ class LifeScheduleService {
 {"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","activity":"...","rigid":false}]}
 时间线 3 到 5 条；刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
       persistResponse: false,
-      includeChatHistory: true,
+      includeChatHistory: false,
       enableAutoSummary: false,
+      skipLifeState: true,
+      allowTools: false,
     );
     if (result['success'] != true) return old;
     final text = result['reply']?.toString() ?? '';

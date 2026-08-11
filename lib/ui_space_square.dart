@@ -9,6 +9,7 @@ import 'theme.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
+import 'global_notice.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -1410,18 +1411,62 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     }
   }
 
+  bool _isMyComment(Map<String, dynamic> comment) {
+    final author = comment['author_id']?.toString().trim();
+    return author == 'me' || author == '我';
+  }
+
   Future<void> _deleteComment(Map<String, dynamic> comment) async {
-    if (comment['author_id']?.toString() != 'me') return;
+    if (!_isMyComment(comment)) return;
     final id = comment['id']?.toString() ?? '';
-    if (id.isEmpty) return;
-    await DBManager().deletePostComment(id);
-    if (!mounted) return;
-    setState(() {
-      _comments.remove(comment);
-      widget.feed['comments'] =
-          ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
-    });
-    widget.onUpdate();
+    if (id.isEmpty || comment['pending'] == true) return;
+    final confirmed = await TideDialogs.show<bool>(
+      context: context,
+      builder: (ctx) => TideDialogSurface(
+        backgroundColor: Colors.transparent,
+        contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, children: [
+          Text('删除评论',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: TideTheme.of(ctx).textStrong,
+                  fontFamily: 'TideFont')),
+          const SizedBox(height: 8),
+          Text('确定删除这条评论吗？',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: TideTheme.of(ctx).textWeak, fontFamily: 'TideFont')),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(
+                child: TideDialogs.glassButton('取消',
+                    onTap: () => Navigator.pop(ctx, false),
+                    color: TideTheme.of(ctx).surfaceVariant,
+                    textColor: TideTheme.of(ctx).textStrong)),
+            const SizedBox(width: 10),
+            Expanded(
+                child: TideDialogs.glassButton('删除',
+                    onTap: () => Navigator.pop(ctx, true),
+                    color: TideTheme.of(ctx).primary)),
+          ]),
+        ]),
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await DBManager().deletePostComment(id);
+      if (!mounted) return;
+      setState(() {
+        _comments.removeWhere((item) => item['id']?.toString() == id);
+        widget.feed['comments'] =
+            ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
+      });
+      widget.onUpdate();
+    } catch (_) {
+      if (mounted) GlobalNotice.show('删除评论失败，请重试');
+    }
   }
 
   @override
@@ -1600,7 +1645,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                 else
                   ..._comments.map(
                     (comment) => GestureDetector(
-                      onLongPress: comment['author_id']?.toString() == 'me'
+                      behavior: HitTestBehavior.opaque,
+                      onLongPress: _isMyComment(comment)
                           ? () => _deleteComment(comment)
                           : null,
                       child: Padding(
