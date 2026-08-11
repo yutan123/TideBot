@@ -412,6 +412,11 @@ class AIManager {
         // 流式结束后若命中工具再执行并做一次非流式 follow-up 取得最终回答。
         if (onDelta != null) 'stream': true,
       };
+      AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
+        'url': '$baseUrl/chat/completions',
+        'requested_at': DateTime.now().toIso8601String(),
+        'payload': payload,
+      });
       String replyText = '';
       String? generatedImagePath;
       Map usage = const {};
@@ -576,6 +581,8 @@ class AIManager {
       }
       print('[ai] response status=$statusCode');
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
+      AppLogService.instance.add('RESPONSE',
+          '模型提供商响应（HTTP $statusCode）\n${errorBody.isEmpty ? replyText : errorBody}');
       if (statusCode == 200) {
         // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
         final promptText = messages.fold<String>(
@@ -1191,7 +1198,7 @@ class AIManager {
     final res = await sendMessage(
         botId: botId,
         text:
-            '请结合你的人设，生成一句全天通用的「今日一言」，字数严格在10到15字。它会贯穿整天展示：禁止早安、午安、晚安、早晨/中午/晚上等时间词，禁止问候和提醒当前时间，不要包含[心情]标签。',
+            '请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
         persistResponse: false,
         includeChatHistory: false,
         enableAutoSummary: false);
