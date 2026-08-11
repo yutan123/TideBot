@@ -180,28 +180,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _scrollDown(animated: false);
   }
 
-  void _scrollDown({int attempt = 0, bool animated = true}) {
-    // 首次加载、图片解码和键盘动画都会在后续帧改变 maxScrollExtent。
-    // 因此用有限次数的多阶段滚动，不能只按首帧的“半截高度”滚一次。
-    if (!mounted || attempt > 5) return;
+  void _scrollDown({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (!_scrollC.hasClients) {
-        Future.delayed(const Duration(milliseconds: 80),
-            () => _scrollDown(attempt: attempt + 1, animated: animated));
-        return;
-      }
+      if (!mounted || !_scrollC.hasClients) return;
       final target = _scrollC.position.maxScrollExtent;
       if (animated) {
         _scrollC.animateTo(target,
-            duration: const Duration(milliseconds: 220),
+            duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic);
       } else {
         _scrollC.jumpTo(target);
-      }
-      if (attempt < 3) {
-        Future.delayed(const Duration(milliseconds: 180),
-            () => _scrollDown(attempt: attempt + 1, animated: false));
       }
     });
   }
@@ -497,14 +485,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         // 开启分段后流水输出依旧正常生效。分段的落库与句间节奏仍在分支内处理。
         if (streamingMessage != null) {
           if (segmentedReply) {
-            // 分段已开启：把流式气泡定格为完整文本，同时按句落库，供重新进入后展示。
+            // 结束流式后立即用独立句子气泡替换占位气泡，保证首次显示与重进页面一致。
+            final segments = _splitReplySegments(content);
+            final baseTimestamp = aiMsg['timestamp'] as int;
+            final displaySegments = <Map<String, dynamic>>[];
+            for (var index = 0; index < segments.length; index++) {
+              displaySegments.add(Map<String, dynamic>.from(aiMsg)
+                ..['id'] = index == 0
+                    ? aiMsg['id'].toString()
+                    : '${aiMsg['id']}_segment_$index'
+                ..['content'] = segments[index]
+                ..['timestamp'] = baseTimestamp + index);
+            }
             setState(() {
-              streamingMessage!['id'] = aiMsg['id'];
-              streamingMessage['content'] = content;
-              streamingMessage['timestamp'] = aiMsg['timestamp'];
+              _msgs.remove(streamingMessage);
+              _msgs.addAll(displaySegments);
             });
             await _persistSegments(db, aiMsg, result, content,
-                segmentsDelayed: true);
+                segmentsDelayed: false);
           } else {
             // The bubble has already been updated from real SSE deltas. Keep its
             // in-memory identity but normalize its final text and database ID.

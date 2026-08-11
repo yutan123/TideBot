@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
+import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 
 import 'ops.dart';
@@ -156,7 +157,11 @@ class AIManager {
             ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
             : <Map<String, dynamic>>[];
         final localMessages = <Map<String, dynamic>>[
-          {'role': 'system', 'content': _buildSystemPrompt(bot, activeGame)},
+          {
+            'role': 'system',
+            'content': _buildSystemPrompt(bot, activeGame) +
+                await _lifeStateContext(botId),
+          },
         ];
         for (final msg in history.take(20)) {
           if (msg['type'] == 'text') {
@@ -260,11 +265,13 @@ class AIManager {
       return lines.join('\n');
     }
 
-    final longMemoryContext = memoryLines(longMemories, 1800);
-    final mediumMemoryContext = memoryLines(mediumMemories, 1600);
-    final shortMemoryContext = memoryLines(shortMemories, 1200);
+    final longMemoryContext = memoryLines(longMemories, 1200);
+    final mediumMemoryContext = memoryLines(mediumMemories, 800);
+    final shortMemoryContext = memoryLines(shortMemories, 600);
     final toolContext = await _buildToolContext(db);
+    final lifeContext = await _lifeStateContext(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        lifeContext +
         (longMemoryContext.isEmpty
             ? ''
             : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
@@ -1575,6 +1582,34 @@ class AIManager {
       // 具体 bot 是否配置生图模型由执行阶段校验，未配置时返回明确 tool 结果。
       tools.add(_imageToolSchema());
     }
+    if (await LifeScheduleService.instance.enabled()) {
+      tools.add({
+        'type': 'function',
+        'function': {
+          'name': 'update_life_state',
+          'description': '仅当真实聊天使生活状态确有必要改变时，更新自己的详细穿搭、心情或今日可变日程。绝不可删除或改写刚性事项。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'kind': {
+                'type': 'string',
+                'enum': ['outfit', 'schedule'],
+                'description': 'outfit 仅换穿搭；schedule 替换今日可变日程且必须原样保留刚性事项',
+              },
+              'outfit': {'type': 'string', 'description': '换装时的完整从头到脚穿搭描述'},
+              'mood': {'type': 'string', 'description': '可选的新心情'},
+              'timeline': {
+                'type': 'array',
+                'items': {'type': 'object'},
+                'description': '改日程时的完整时间线；刚性事项必须保留 time、activity 与 rigid:true',
+              },
+            },
+            'required': ['kind'],
+            'additionalProperties': false,
+          },
+        },
+      });
+    }
     if (await db.getKV('bot_stickers_enabled') == 'true' &&
         (await db.stickerEmotions()).isNotEmpty) {
       tools.add({
@@ -1650,7 +1685,12 @@ class AIManager {
       };
     }
     if (name == 'generate_image') {
-      final prompt = args['prompt']?.toString().trim() ?? '';
+      var prompt = args['prompt']?.toString().trim() ?? '';
+      final life = await LifeScheduleService.instance.ensureToday(botId);
+      final outfit = life?['outfit']?.toString().trim() ?? '';
+      if (outfit.isNotEmpty) {
+        prompt = '$prompt。人物穿搭必须严格遵循：$outfit';
+      }
       final path = prompt.isEmpty
           ? null
           : await _generateImageIfAuthorized(
@@ -1660,6 +1700,17 @@ class AIManager {
           'ok': path != null,
           'image_path': path,
           'message': path == null ? '图片生成失败或未配置生图模型。' : '图片已生成并将作为聊天图片发送。',
+        }
+      };
+    }
+    if (name == 'update_life_state') {
+      final updated =
+          await LifeScheduleService.instance.updateFromTool(botId, args);
+      return {
+        'result': {
+          'ok': updated != null,
+          'message':
+              updated == null ? '未修改：日程不存在、参数无效，或试图改动刚性事项。' : '今日生活状态已更新。',
         }
       };
     }
@@ -1714,7 +1765,7 @@ class AIManager {
         "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
         "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|我记得用户的名字是李小明]。\n"
         "- 近期发生过的事件/感受（用第一人称写的日记式短句）用 [记忆:内容]，例如 [记忆:今天我们一起去公园散步了]。\n"
-        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻）。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
+        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻）。日记式记忆不要使用第二人称“你”；已知用户称呼时优先使用该称呼，否则使用“他”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {
       p +=
@@ -1730,6 +1781,13 @@ class AIManager {
           "\n【游戏规则】：你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-3）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
     }
     return p;
+  }
+
+  Future<String> _lifeStateContext(String botId) async {
+    if (!await LifeScheduleService.instance.enabled()) return '';
+    final row = await LifeScheduleService.instance.ensureToday(botId);
+    if (row == null) return '';
+    return '\n${LifeScheduleService.instance.compactContext(row)}';
   }
 
   String _extractMood(String text) {

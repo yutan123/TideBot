@@ -16,6 +16,8 @@ import 'data_dashboard.dart';
 import 'sticker_manager_page.dart';
 import 'local_model_service.dart';
 import 'local_llama.dart';
+import 'life_schedule_service.dart';
+import 'life_schedule_pool_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -215,6 +217,7 @@ class _ProfilePageState extends State<ProfilePage> {
     if (botId == null) return;
     final db = DBManager();
     String? targetPath;
+    var cancelled = false;
     try {
       final export = await db.buildChatExport(botId);
       // 通过系统的保存对话框写入公共目录（默认落到 Download），兼容 scoped storage。
@@ -224,7 +227,9 @@ class _ProfilePageState extends State<ProfilePage> {
         type: FileType.custom,
         allowedExtensions: const ['json'],
       );
-      if (picked != null) {
+      if (picked == null) {
+        cancelled = true;
+      } else {
         await File(picked).writeAsString(export.content);
         targetPath = picked;
       }
@@ -236,10 +241,17 @@ class _ProfilePageState extends State<ProfilePage> {
           backgroundColor: const Color(0xFFE74C3C),
           behavior: SnackBarBehavior.floating));
       return;
-    } catch (_) {
-      // 用户在系统保存对话框取消等情况下直接返回，不打扰。
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content:
+            Text('导出失败：$e', style: const TextStyle(fontFamily: 'TideFont')),
+        backgroundColor: const Color(0xFFE74C3C),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
     }
-    if (!mounted) return;
+    if (!mounted || cancelled) return;
     if (targetPath != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('已导出到系统下载目录：$targetPath',
@@ -702,6 +714,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _timeAwareness = true;
   bool _proactiveReply = true;
   bool _botPosts = false;
+  bool _lifeSchedule = true;
   bool _imageGeneration = true;
   bool _webSearch = false;
   bool _showSearchSources = false;
@@ -757,6 +770,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
+    final lifeSchedule = await db.getKV('life_schedule_enabled');
     final imageGeneration = await db.getKV('bot_image_generation_enabled');
     final imageStyle = await db.getKV('bot_image_style');
     final webSearch = await db.getKV('web_search_enabled');
@@ -786,6 +800,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
+      _lifeSchedule = lifeSchedule != 'false';
       _imageGeneration = imageGeneration != 'false';
       _imageStyle =
           ['写实', '动漫', '科幻', '自定义'].contains(imageStyle) ? imageStyle! : '写实';
@@ -1045,6 +1060,17 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   }
                 })),
       ]);
+
+  Future<void> _manageLifePools() async {
+    final current = await LifeScheduleService.instance.pools();
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LifeSchedulePoolPage(initialPools: current),
+      ),
+    );
+  }
 
   Widget _compactPostsPerDay(TideTheme theme) => TextField(
       controller: _botPostsPerDayController,
@@ -1326,6 +1352,27 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                           const StickerManagerPage())),
                             )),
                       ])
+                    : null,
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '拟人化日程',
+                help: '默认开启。每位机器人会在当天首次打开应用时按各自模型生成生活状态；日程仅在聊天和生图时作为内部背景使用。',
+                value: _lifeSchedule,
+                onChanged: (v) {
+                  setState(() => _lifeSchedule = v);
+                  _save('life_schedule_enabled', '$v');
+                },
+                child: _lifeSchedule
+                    ? SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.tune_rounded),
+                          label: const Text('管理日程池',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          onPressed: _manageLifePools,
+                        ),
+                      )
                     : null,
               ),
               _settingSwitch(
@@ -2305,8 +2352,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
     final model = _models[index];
     if (model['downloading'] != true) return;
     final id = model['id'] as String;
-    // 通过全局服务把下载状态置为暂停；服务仍在单例中持有进度，可随时继续。
-    LocalModelService.instance.downloadingNotifier(id).value = false;
+    // 取消网络流、保留 .part 断点续传数据，并同时清理通知。
+    await LocalModelService.instance.pauseDownload(id);
     if (mounted) {
       setState(() => model['downloading'] = false);
     }

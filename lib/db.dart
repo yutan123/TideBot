@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 13,
+      version: 14,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -83,6 +83,16 @@ class DBManager {
         await db.execute('''
           CREATE TABLE schedule_tasks (
             id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE bot_life_schedules (
+            id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+            theme TEXT DEFAULT '', mood TEXT DEFAULT '', outfit_style TEXT DEFAULT '',
+            outfit TEXT DEFAULT '', timeline_json TEXT DEFAULT '[]',
+            generated_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            UNIQUE(bot_id, date_key),
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
@@ -258,8 +268,39 @@ class DBManager {
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
         }
+        if (oldVersion < 14) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS bot_life_schedules (
+              id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+              theme TEXT DEFAULT '', mood TEXT DEFAULT '', outfit_style TEXT DEFAULT '',
+              outfit TEXT DEFAULT '', timeline_json TEXT DEFAULT '[]',
+              generated_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+              UNIQUE(bot_id, date_key),
+              FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)');
+        }
       },
     );
+  }
+
+  // ================= 拟人化日程 =================
+  Future<Map<String, dynamic>?> getLifeSchedule(
+      String botId, String dateKey) async {
+    final db = await database;
+    final rows = await db.query('bot_life_schedules',
+        where: 'bot_id = ? AND date_key = ?',
+        whereArgs: [botId, dateKey],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> upsertLifeSchedule(Map<String, dynamic> schedule) async {
+    final db = await database;
+    await db.insert('bot_life_schedules', schedule,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   // ================= Bots CRUD =================
@@ -849,6 +890,11 @@ class DBManager {
   Future<void> insertPostComment(Map<String, dynamic> comment) async {
     final db = await database;
     await db.insert('post_comments', comment);
+  }
+
+  Future<void> deletePostComment(String commentId) async {
+    final db = await database;
+    await db.delete('post_comments', where: 'id = ?', whereArgs: [commentId]);
   }
 
   Future<void> deletePost(String postId) async {

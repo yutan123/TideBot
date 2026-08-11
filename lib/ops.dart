@@ -197,6 +197,11 @@ class OpsManager {
         payload: botId);
   }
 
+  Future<void> cancelDownloadProgress(int notifId) async {
+    await initializeNotifications();
+    await _notifications.cancel(notifId);
+  }
+
   Future<String> executeAccessibilityCommand(
       String action, Map<String, dynamic> payload) async {
     try {

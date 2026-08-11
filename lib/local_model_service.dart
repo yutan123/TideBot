@@ -40,9 +40,18 @@ class LocalModelService {
 
   bool isDownloading(String id) => _downloading[id]?.value ?? false;
 
+  int _notificationId(String id) => id.hashCode & 0x00FFFFFF;
+
+  Future<void> pauseDownload(String id) async {
+    _cancelRequested[id] = true;
+    downloadingNotifier(id).value = false;
+    await OpsManager().cancelDownloadProgress(_notificationId(id));
+  }
+
   /// 删除模型，同时取消正在进行的下载。
   Future<void> deleteModel(String id) async {
     _cancelRequested[id] = true;
+    await OpsManager().cancelDownloadProgress(_notificationId(id));
     final dl = _downloading[id];
     if (dl != null) dl.value = false;
 
@@ -83,6 +92,11 @@ class LocalModelService {
         ? await target.length()
         : (await part.exists() ? await part.length() : 0);
     final savedTotal = prefs.getInt('local_model_total_$id') ?? 0;
+    _receivedBytes[id] = received;
+    _totalBytes[id] = installed ? received : savedTotal;
+    if (!installed && savedTotal > 0) {
+      progressNotifier(id).value = (received / savedTotal).clamp(0.0, 1.0);
+    }
     return {
       'installed': installed,
       'receivedBytes': received,

@@ -25,7 +25,6 @@ class _SpacePageState extends State<SpacePage> {
   int _daysSince = 0;
   String _moodIcon = 'smile';
   String _moodLabel = '';
-  List<Map<String, dynamic>> _schedules = [];
   List<Map<String, dynamic>> _memories = [];
   final ScrollController _diaryScrollController = ScrollController();
   Timer? _diaryTimer;
@@ -106,7 +105,6 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final sch = await db.querySchedules(_botId, limit: 3);
       final mem = await db.queryMemories(_botId, type: 'medium', limit: 50);
       final messages = await db.queryMessages(_botId, limit: 30);
       final latestMood = messages.reversed.firstWhere(
@@ -124,7 +122,6 @@ class _SpacePageState extends State<SpacePage> {
               : mood == '生气'
                   ? 'angry'
                   : 'think';
-      _schedules = sch;
       _memories = mem;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
       // Generates once per calendar day and returns cached text on later opens.
@@ -141,7 +138,6 @@ class _SpacePageState extends State<SpacePage> {
     } else {
       _daysSince = 0;
       _dailyQuote = '';
-      _schedules = [];
       _memories = [];
       _botId = '';
       _botName = '';
@@ -149,34 +145,7 @@ class _SpacePageState extends State<SpacePage> {
     }
   }
 
-  void _showScheduleDetail(Map<String, dynamic> s) {
-    final theme = TideTheme.of(context);
-    showTideSheet(
-        context: context,
-        child: Padding(
-            padding: const EdgeInsets.all(20),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(s['title'] ?? '',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 8),
-              Text(s['note'] ?? '',
-                  style: TextStyle(
-                      fontSize: 15,
-                      color: theme.textWeak,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 12),
-              Text(formatTime(s['time']),
-                  style: TextStyle(
-                      fontSize: 13,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont'))
-            ])));
-  }
+  // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 
   Future<void> _openMemoryManager() async {
     await Navigator.push(
@@ -250,13 +219,6 @@ class _SpacePageState extends State<SpacePage> {
                                           fontFamily: 'TideFont',
                                           height: 1.6)))),
                         const SizedBox(height: 16),
-                        if (_schedules.isNotEmpty) ...[
-                          _buildSectionTitle('最近日程'),
-                          const SizedBox(height: 8),
-                          ..._schedules.map((s) => BouncyTap(
-                              onTap: () => _showScheduleDetail(s),
-                              child: _buildScheduleCard(s, theme))),
-                        ],
                         if (_botId.isNotEmpty) ...[
                           const SizedBox(height: 16),
                           Row(children: [
@@ -330,18 +292,7 @@ class _SpacePageState extends State<SpacePage> {
                                       },
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _memories.length < 2
-                                        ? '点击查看正文'
-                                        : _diaryAutoScrolling
-                                            ? '正在每 5 秒滚动 · 点击此处停止'
-                                            : '点击日记区域后，每 5 秒自动滚动',
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: theme.textFaint,
-                                        fontFamily: 'TideFont'),
-                                  ),
+                                  const SizedBox.shrink(),
                                 ],
                               ),
                             ),
@@ -496,39 +447,7 @@ class _SpacePageState extends State<SpacePage> {
               fontFamily: 'TideFont',
               color: TideTheme.of(context).textStrong)));
 
-  Widget _buildScheduleCard(Map<String, dynamic> s, TideTheme theme) =>
-      FrostCard(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(14),
-          child: Row(children: [
-            Container(
-                width: 4,
-                height: 40,
-                decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(2),
-                    color: theme.primary)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(s['title'] ?? '',
-                      style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                          fontFamily: 'TideFont')),
-                  if ((s['note'] ?? '').toString().isNotEmpty)
-                    Text(s['note'] ?? '',
-                        style: TextStyle(fontSize: 13, color: theme.textWeak),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis),
-                ])),
-            Text(formatTime(s['time']),
-                style: TextStyle(
-                    fontSize: 13,
-                    color: theme.textWeak,
-                    fontFamily: 'TideFont'))
-          ]));
+  // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 }
 
 // ==================== 广场页 ====================
@@ -719,8 +638,14 @@ class SquarePageState extends State<SquarePage>
         'image': r['image_path'] ?? '',
         'likes': likes,
         'comments': comments,
-        'favorited': (r['user_liked'] as int? ?? 0) == 1,
-        'collected': (r['user_collected'] as int? ?? 0) == 1,
+        'favorited': postId.isNotEmpty
+            ? await db.hasFeedEvent(
+                postId: postId, actorId: 'me', eventType: 'like')
+            : false,
+        'collected': postId.isNotEmpty
+            ? await db.hasFeedEvent(
+                postId: postId, actorId: 'me', eventType: 'collect')
+            : false,
         'time': r['timestamp'] != null ? formatTime(r['timestamp']) : '',
         'id': r['id'],
       });
@@ -1376,6 +1301,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   final _commentCtrl = TextEditingController();
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
+  bool _sendingComment = false;
 
   @override
   void initState() {
@@ -1442,24 +1368,58 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
 
   Future<void> _sendComment() async {
     final content = _commentCtrl.text.trim();
-    if (content.isEmpty) return;
+    if (content.isEmpty || _sendingComment) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final comment = <String, dynamic>{
       'id': 'pc_$now',
       'post_id': widget.feed['id'],
-      'author_id': '我',
+      'author_id': 'me',
       'content': content,
       'timestamp': now,
+      'pending': true,
     };
-    await DBManager().insertPostComment(comment);
-    // 评论数不再写 posts.fake 整数，真实值由 post_comments 表聚合得出。
-    // 详情页这里直接基于已插入的评论累加展示即可。
-    final count = (widget.feed['comments'] as int) + 1;
+    setState(() {
+      _sendingComment = true;
+      _commentCtrl.clear();
+      _comments.add(comment);
+      widget.feed['comments'] = (widget.feed['comments'] as int) + 1;
+    });
+    try {
+      final stored = Map<String, dynamic>.from(comment)..remove('pending');
+      await DBManager().insertPostComment(stored);
+      if (mounted) {
+        setState(() {
+          comment.remove('pending');
+          _sendingComment = false;
+        });
+      }
+      widget.onUpdate();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _comments.remove(comment);
+          widget.feed['comments'] =
+              ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
+          _sendingComment = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('评论发送失败，请重试', style: TextStyle(fontFamily: 'TideFont')),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  Future<void> _deleteComment(Map<String, dynamic> comment) async {
+    if (comment['author_id']?.toString() != 'me') return;
+    final id = comment['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    await DBManager().deletePostComment(id);
     if (!mounted) return;
     setState(() {
-      widget.feed['comments'] = count;
-      _comments.add(comment);
-      _commentCtrl.clear();
+      _comments.remove(comment);
+      widget.feed['comments'] =
+          ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
     });
     widget.onUpdate();
   }
@@ -1639,49 +1599,54 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                   )
                 else
                   ..._comments.map(
-                    (comment) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          CircleAvatar(
-                            radius: 15,
-                            backgroundColor:
-                                theme.primary.withValues(alpha: 0.12),
-                            child: Icon(
-                              Icons.person_rounded,
-                              size: 16,
-                              color: theme.primary,
+                    (comment) => GestureDetector(
+                      onLongPress: comment['author_id']?.toString() == 'me'
+                          ? () => _deleteComment(comment)
+                          : null,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(
+                              radius: 15,
+                              backgroundColor:
+                                  theme.primary.withValues(alpha: 0.12),
+                              child: Icon(
+                                Icons.person_rounded,
+                                size: 16,
+                                color: theme.primary,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  comment['author_id'] ?? '匿名',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: theme.textStrong,
-                                    fontFamily: 'TideFont',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    comment['author_id'] ?? '匿名',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: theme.textStrong,
+                                      fontFamily: 'TideFont',
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  comment['content'] ?? '',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: theme.textWeak,
-                                    fontFamily: 'TideFont',
-                                    height: 1.4,
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    comment['content'] ?? '',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: theme.textWeak,
+                                      fontFamily: 'TideFont',
+                                      height: 1.4,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1702,7 +1667,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                     child: TextField(
                       controller: _commentCtrl,
                       textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendComment(),
+                      onSubmitted:
+                          _sendingComment ? null : (_) => _sendComment(),
                       style: TextStyle(
                         color: theme.textStrong,
                         fontFamily: 'TideFont',
@@ -1728,8 +1694,13 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                   ),
                   const SizedBox(width: 8),
                   IconButton(
-                    onPressed: _sendComment,
-                    icon: Icon(Icons.send_rounded, color: theme.primary),
+                    onPressed: _sendingComment ? null : _sendComment,
+                    icon: _sendingComment
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : Icon(Icons.send_rounded, color: theme.primary),
                   ),
                 ],
               ),
