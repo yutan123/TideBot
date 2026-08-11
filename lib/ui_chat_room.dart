@@ -169,10 +169,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       print('_loadMsgs error: $e');
       if (mounted) setState(() => _msgsLoading = false);
     }
-    // 首次进入仅在首帧完成后静态定位到底部，避免先显示顶部再弹跳。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _scrollDown(animated: false);
-    });
+    // The list uses reverse layout, so its initial scroll position is already at
+    // the newest message. Do not schedule a visible post-frame jump here.
   }
 
   void _handleInputFocus() {
@@ -186,7 +184,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void _scrollDown({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollC.hasClients) return;
-      final target = _scrollC.position.maxScrollExtent;
+      final target = _scrollC.position.minScrollExtent;
       if (animated) {
         _scrollC.animateTo(target,
             duration: const Duration(milliseconds: 180),
@@ -198,6 +196,40 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Timer? _streamDisplayTimer;
+
+  /// Removes model-side protocol fragments before they can reach a streaming
+  /// bubble. Keep incomplete `[` / `<` fragments buffered: a label can arrive
+  /// across several SSE chunks, so filtering each chunk independently leaks it.
+  String _visibleStreamingText(String raw, {bool finalChunk = false}) {
+    var text = raw
+        .replaceAll(
+            RegExp(
+                r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(
+                r'<\|?\s*DSML\s*\|?\s*invoke[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*invoke\s*>',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(
+                r'\[(?:心情|发送时间|现实时间(?:附注)?|工具|贴纸|表情包|表情|记忆|类型|sticker(?:[_ -]?type)?)\s*[:：][^\]]*\]',
+                caseSensitive: false),
+            '');
+
+    if (!finalChunk) {
+      final bracket = text.lastIndexOf('[');
+      final closingBracket = text.lastIndexOf(']');
+      final angle = text.lastIndexOf('<');
+      final closingAngle = text.lastIndexOf('>');
+      final cutAt = bracket > closingBracket
+          ? bracket
+          : (angle > closingAngle ? angle : -1);
+      if (cutAt >= 0) text = text.substring(0, cutAt);
+    }
+    return text;
+  }
 
   List<String> _splitReplySegments(String content) {
     final matches = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
@@ -379,6 +411,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 再按句落库并依次展示，不能因为开启分段就把流式功能关闭。
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
+      var rawStreamText = '';
+      var shownStreamText = '';
       var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
@@ -430,7 +464,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             onDelta: streamingMessage == null
                 ? null
                 : (delta) {
-                    pendingDisplay += delta;
+                    rawStreamText += delta;
+                    final visible = _visibleStreamingText(rawStreamText);
+                    if (visible.length > shownStreamText.length) {
+                      pendingDisplay +=
+                          visible.substring(shownStreamText.length);
+                      shownStreamText = visible;
+                    }
                   },
           )
           .timeout(requestTimeout);
@@ -2057,16 +2097,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return ListView.builder(
       key: const PageStorageKey<String>('chat_messages'),
       controller: _scrollC,
+      reverse: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.fromLTRB(
-        12,
-        8,
-        12,
-        16 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
-        final m = _msgs[i];
+        final m = _msgs[_msgs.length - 1 - i];
         final isUser = m['role'] == 'user';
         // 内存消息使用 image/audio；数据库历史使用 type/file_path，统一兼容两种来源。
         final filePath = m['file_path']?.toString();

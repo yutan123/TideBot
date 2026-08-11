@@ -11,6 +11,7 @@ import 'media_preprocessor.dart';
 
 import 'ops.dart';
 import 'app_state.dart';
+import 'app_log_service.dart';
 import 'local_llama.dart';
 
 class AIManager {
@@ -224,6 +225,8 @@ class AIManager {
         : (bot['chat_model']?.toString().trim() ?? '');
     print(
         '[ai] resolve bot=$botId configured_provider=$providerId local=$localId');
+    AppLogService.instance
+        .add('AI', '解析机器人 $botId，provider=$providerId，local=$localId');
     if (providerId.isEmpty) {
       final providers = await db.queryChatProviders();
       if (providers.isEmpty) return {'error': '未配置引擎中枢，请先在 API 设置中添加模型'};
@@ -236,6 +239,7 @@ class AIManager {
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
     print(
         '[ai] provider resolved id=$providerId name=${provider['name']} base=${provider['base_url']}');
+    AppLogService.instance.add('AI', '已解析服务商 ${provider['name']}，模型配置将开始请求');
     // 模型名
     // 模型名：优先用 provider['model']（多个逗号分隔取第一个），否则退回 name 最后一段
     String modelName = (provider['model'] as String? ?? '').trim();
@@ -389,6 +393,8 @@ class AIManager {
       if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
       print(
           '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
+      AppLogService.instance.add('AI',
+          '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
           ? await _buildNativeTools(db)
           : const <Map<String, dynamic>>[];
@@ -569,6 +575,7 @@ class AIManager {
         }
       }
       print('[ai] response status=$statusCode');
+      AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
       if (statusCode == 200) {
         // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
         final promptText = messages.fold<String>(
@@ -731,6 +738,7 @@ class AIManager {
       }
     } catch (e) {
       print('[ai] request failed: $e');
+      AppLogService.instance.add('ERROR', '模型请求异常：$e');
       return {
         'error': '网络连接失败：请检查网络、Base URL 和服务端状态',
         'error_log': e.toString(),

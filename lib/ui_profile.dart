@@ -18,6 +18,7 @@ import 'local_model_service.dart';
 import 'local_llama.dart';
 import 'life_schedule_service.dart';
 import 'life_schedule_pool_page.dart';
+import 'advanced_settings_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -665,27 +666,9 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _showAdvancedSettings() {
-    showTideSheet(
-      context: context,
-      height: 220,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('高级设置',
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'TideFont',
-                  color: TideTheme.of(context).textStrong)),
-          const SizedBox(height: 12),
-          Text('高级模型、后台任务与调试选项将逐步在这里提供。',
-              style: TextStyle(
-                  height: 1.5,
-                  fontFamily: 'TideFont',
-                  color: TideTheme.of(context).textWeak)),
-        ]),
-      ),
-    );
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const AdvancedSettingsPage(),
+    ));
   }
 
   void _showNotificationSettings() async {

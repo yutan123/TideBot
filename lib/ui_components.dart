@@ -3,9 +3,35 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
 
 // ========== 全局弹性点击包装器 ==========
+class TideHaptics {
+  TideHaptics._();
+  static bool _enabled = false;
+  static bool _loaded = false;
+
+  static Future<void> load() async {
+    if (_loaded) return;
+    _enabled = (await SharedPreferences.getInstance())
+            .getBool('tide_haptics_enabled') ??
+        false;
+    _loaded = true;
+  }
+
+  static Future<void> setEnabled(bool value) async {
+    _enabled = value;
+    _loaded = true;
+    await (await SharedPreferences.getInstance())
+        .setBool('tide_haptics_enabled', value);
+  }
+
+  static void tap() {
+    if (_enabled) HapticFeedback.lightImpact();
+  }
+}
+
 class BouncyTap extends StatefulWidget {
   final Widget child;
   final VoidCallback? onTap;
@@ -43,7 +69,7 @@ class _BouncyTapState extends State<BouncyTap>
     return GestureDetector(
       onTapDown: (_) {
         _c.forward();
-        HapticFeedback.lightImpact();
+        TideHaptics.tap();
       },
       onTapUp: (_) {
         _c.reverse();

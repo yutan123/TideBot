@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'app_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -27,6 +28,8 @@ void main() async {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   final prefs = await SharedPreferences.getInstance();
   await tideTheme.loadFromDB();
+  await TideHaptics.load();
+  await AppLogService.instance.restoreForLaunch();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
   runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
   Future<void>.delayed(const Duration(seconds: 2), OtaUpdate.checkOncePerDay);
