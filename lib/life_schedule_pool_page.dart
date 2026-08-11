@@ -35,14 +35,16 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
       height: 300,
       child: Builder(builder: (sheetContext) {
         final theme = TideTheme.of(sheetContext);
-        return AnimatedPadding(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
+        // showTideSheet 已通过 MediaQuery.viewInsets 收缩整张面板并整体上移，
+        // 这里不能再叠加 AnimatedPadding(viewInsets)，否则双份键盘避让会挤压布局。
+        // 改为 SingleChildScrollView，键盘弹出导致空间不足时允许内部滚动。
+        return SingleChildScrollView(
           padding: EdgeInsets.only(
               bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('添加${_labels[key]}',
@@ -77,7 +79,7 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
                     ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [

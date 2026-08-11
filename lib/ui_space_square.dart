@@ -630,6 +630,17 @@ class SquarePageState extends State<SquarePage>
     final rows =
         await db.queryPosts(offset: _feedPage * _pageSize, limit: _pageSize);
     if (rows.isEmpty || rows.length < _pageSize) _hasMore = false;
+    // 动态本体把 robot 发布的 author_id 存成机器人名字，这里按名字关联回
+    // 机器人的头像，让广场动态展示真实的机器人头像而非默认人形图标。
+    final bots = await db.queryBots();
+    Map<String, dynamic> botByName(String? name) {
+      if (name == null || name.isEmpty) return const {};
+      for (final b in bots) {
+        if (b['name']?.toString() == name) return b;
+      }
+      return const {};
+    }
+
     // 点赞数与评论数不再读取 posts 上的伪造整数字段，改为从
     // feed_events / post_comments 真实聚合计数。
     final feeds = <Map<String, dynamic>>[];
@@ -637,8 +648,13 @@ class SquarePageState extends State<SquarePage>
       final postId = r['id']?.toString() ?? '';
       final likes = postId.isEmpty ? 0 : await db.countPostLikes(postId);
       final comments = postId.isEmpty ? 0 : await db.countPostComments(postId);
+      final author = r['author_id']?.toString().trim() ?? '匿名';
+      final bot = botByName(author);
       feeds.add({
-        'user': r['author_id'] ?? '匿名',
+        'user': author == '我' ? '我' : author,
+        'author_id': author,
+        'is_bot': bot.isNotEmpty,
+        'bot_avatar': bot['avatar']?.toString(),
         'content': r['content'] ?? '',
         'image': r['image_path'] ?? '',
         'likes': likes,
@@ -934,12 +950,17 @@ class SquarePageState extends State<SquarePage>
                       GestureDetector(
                         onTap: () => _openFeedDetail(f),
                         child: Row(children: [
-                          CircleAvatar(
-                              radius: 18,
-                              backgroundColor:
-                                  theme.primary.withValues(alpha: 0.15),
-                              child: Icon(Icons.person_rounded,
-                                  size: 20, color: theme.primary)),
+                          f['is_bot'] == true
+                              ? TideBotAvatar(
+                                  name: f['user']?.toString() ?? 'TA',
+                                  path: f['bot_avatar']?.toString(),
+                                  size: 36)
+                              : CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor:
+                                      theme.primary.withValues(alpha: 0.15),
+                                  child: Icon(Icons.person_rounded,
+                                      size: 20, color: theme.primary)),
                           const SizedBox(width: 10),
                           Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1500,15 +1521,21 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
               children: [
                 Row(
                   children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: theme.primary.withValues(alpha: 0.15),
-                      child: Icon(
-                        Icons.person_rounded,
-                        size: 24,
-                        color: theme.primary,
-                      ),
-                    ),
+                    feed['is_bot'] == true
+                        ? TideBotAvatar(
+                            name: feed['user']?.toString() ?? 'TA',
+                            path: feed['bot_avatar']?.toString(),
+                            size: 44)
+                        : CircleAvatar(
+                            radius: 22,
+                            backgroundColor:
+                                theme.primary.withValues(alpha: 0.15),
+                            child: Icon(
+                              Icons.person_rounded,
+                              size: 24,
+                              color: theme.primary,
+                            ),
+                          ),
                     const SizedBox(width: 12),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

@@ -25,6 +25,9 @@ class AIManager {
     required List<Map<String, dynamic>> messages,
     String imageBase64 = '',
     void Function(String delta)? onDelta,
+    // 合并/防抖重发时，被拦截的过期请求应跳过落库，避免库里出现“旧回复”，
+    // 再由合并后的新请求统一落库，保证聊天记录与界面顺序一致。
+    bool persistResponse = true,
   }) async {
     final lastUser = messages.lastWhere((m) => m['role'] == 'user',
         orElse: () => {'content': ''});
@@ -45,6 +48,7 @@ class AIManager {
       text: text,
       imagePath: imgPath,
       onDelta: onDelta,
+      persistResponse: persistResponse,
     );
   }
 
@@ -259,9 +263,17 @@ class AIManager {
     // appended last, and history is packed newest-first within the user budget.
     // 稳定记忆放在系统提示的固定位置，动态的中短期记忆限制条数和体积，
     // 避免每轮请求无边界增长，同时尽可能保留服务商前缀缓存命中。
-    final longMemories = activeGame == null
+    final longMemoriesRaw = activeGame == null
         ? await db.queryMemories(botId, type: 'long', limit: 12)
         : <Map<String, dynamic>>[];
+    // 注入路径兜底清洗：即使库里存在本次清洗前写入的未清洗长期记忆，
+    // 也在拼进系统提示前统一去掉时间词与“我记得”，保证展示给模型的一律合规。
+    final longMemories = longMemoriesRaw
+        .map((it) => {
+              ...it,
+              'content': _cleanLongMemoryText(it['content']?.toString() ?? ''),
+            })
+        .toList();
     final mediumMemories = activeGame == null
         ? await db.queryMemories(botId, type: 'medium', limit: 6)
         : <Map<String, dynamic>>[];
@@ -1212,6 +1224,9 @@ class AIManager {
       final normalized = quote.isEmpty ? '今天也要开心度过哦。' : quote;
       await db.setKV('quote_date_$botId', todayStr);
       await db.setKV('quote_text_$botId', normalized);
+      // 同时写入带日期后缀的 key，供“近三天去重”按日期查询命中，
+      // 避免上屏查询用带日期 key、而保存只写无日期 key 导致去重一直失效。
+      await db.setKV('quote_text_${botId}_$todayStr', normalized);
       return normalized;
     }
     return "今天也要开心度过哦。";
@@ -1797,9 +1812,9 @@ class AIManager {
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
         "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
-        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|我记得用户的名字是李小明]。\n"
-        "- 近期发生过的事件/感受（用第一人称写的日记式短句）用 [记忆:内容]，例如 [记忆:今天我们一起去公园散步了]。\n"
-        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻）。日记式记忆不要使用第二人称“你”；已知用户称呼时优先使用该称呼，否则使用“他”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
+        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|用户叫李小明，他是我最重要的朋友]。长期记忆的正文必须用第一人称、以“我知道/我清楚”这类口吻自然表达，绝对不要出现“我记得”三个字；且长期记忆绝不能出现“今天、昨天、明天、昨天下午、近日、上周、刚才、现在、刚刚、此刻、凌晨”等任何时间相关词汇，请用“他/用户”等指代而非时间。\n"
+        "- 近期发生过的、带有明显时间属性的事件/感受（第一人称日记式短句）用 [记忆:内容]，此类型可以自然使用“今天、昨天、昨天下午、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
+        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻），直接写正文、不要用“我记得”作为开头。日记式记忆不要使用第二人称“你”；已知用户称呼时优先使用该称呼，否则使用“他”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {
       p +=
@@ -1858,12 +1873,19 @@ class AIManager {
           content = content.replaceFirst(longPrefix, '').trim();
         }
         if (content.isEmpty) continue;
-        // 强制第一人称：以“我”开头，避免出现像“用户叫xxx”这类第三人称口吻。
-        if (!RegExp(r'^(我|我记得|我知道|我了解到|用户告诉我|用户说过|用户是|我的|今天|昨天|我们)',
-                caseSensitive: false)
-            .hasMatch(content)) {
-          content = '我记得$content';
+        // 长期记忆绝对不能出现任何时间相关词汇（用户硬性要求）。“我记得”
+        // 前缀也绝不写入（统一走 _cleanLongMemoryText）。
+        if (type == 'long') {
+          content = _cleanLongMemoryText(content);
         }
+        // 强制第一人称日记：若正文不是以第一人称开头，用“我”衔接（例如
+        // “知道了这件事”→“我知道了这件事”）。但绝不添加“我记得”前缀——
+        // 用户明确要求机器人记忆不写“我记得”。
+        if (!RegExp(r'^(我|我们|咱)', caseSensitive: false).hasMatch(content)) {
+          content = '我$content';
+        }
+        content = content.trim();
+        if (content.isEmpty) continue;
         await db.upsertMemoryItem(
           botId: botId,
           type: type,
@@ -1876,5 +1898,24 @@ class AIManager {
     } catch (e) {
       print('[memory] persist requested memory failed: $e');
     }
+  }
+
+  /// 长期记忆清洗：去掉所有时间相关词，并把“我记得/我记起”开头替换为其后正文，
+  /// 保证长期记忆为稳定的第一人称，且绝不残留时间词。写入与注入路径共用，
+  /// 兜底处理历史遗留的未清洗长期记忆，确保展示给模型的一定符合规则。
+  String _cleanLongMemoryText(String content) {
+    var s = content.trim();
+    s = s.replaceAll(RegExp(r'^(我)?\s*记得\s*[，,:：]?\s*'), '');
+    s = s.replaceAll(
+      RegExp(
+          r'今天上午|今天中午|今天下午|今天早上|今天夜里|今天|昨天下午|昨天早上|昨天夜里|昨天|明天|前天|后天|昨晚|今晚|今早|近日|最近|上周|本周|下周|刚才|刚刚|现在|此刻|之前|以前|几小时前|几天前|几个星期前|一个月前|凌晨|早上|中午|下午|晚上'),
+      '',
+    );
+    s = s.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+    if (s.isNotEmpty &&
+        !RegExp(r'^(我|我们|咱)', caseSensitive: false).hasMatch(s)) {
+      s = '我$s';
+    }
+    return s.trim();
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:ui';
@@ -58,6 +59,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   late AnimationController _bottomBarCtrl;
   bool _hasText = false;
+
+  // ===== 防抖/合并：请求代次 + 待重发队列 =====
+  // 用户连续发送多条时，递增代次让在途请求的渲染结果作废，并把新文本并入
+  // 队列；旧请求返回后若代次过期则拦截，再由 finally 用合并文本统一重发。
+  int _requestGen = 0;
+  String _queuedText = '';
+  bool _queued = false;
+  // 判断一段回复是否已经由“真实厂商流式”产生了增量（用于非流式 provider 的
+  // 模拟打字机托管判断）。
+  bool _hadRealStreamDelta = false;
+
+  // ===== 主动回复调度（前台 UI 层）=====
+  // 后台 isolate 无法使用 AIManager，因此主动回复放在聊天室前台通过 Timer 调度。
+  Timer? _proactiveTimer;
+  // 连续主动回复后用户未应答的次数；达到上限后暂停，等用户下次发言再恢复。
+  int _proactiveUnanswered = 0;
+  final Random _proactiveRng = Random();
   void _msgChanged() {
     if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty);
   }
@@ -91,6 +109,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _loadMsgs();
     _loadBg();
     _loadChatPreferences();
+    _startProactiveReply();
 
     // 底部栏动画控制器
     _bottomBarCtrl = AnimationController(
@@ -105,6 +124,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   void dispose() {
     _streamDisplayTimer?.cancel();
+    _proactiveTimer?.cancel();
+    _proactiveTimer = null;
     _msgC.removeListener(_msgChanged);
     _inputFocus.removeListener(_handleInputFocus);
     _inputFocus.dispose();
@@ -305,13 +326,150 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
+  // ========== 主动回复调度 ==========
+  Future<void> _startProactiveReply() async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    try {
+      final db = DBManager();
+      final enabled = await db.getKV('proactive_reply');
+      if (enabled == 'false') return; // 默认开启
+      final minMin =
+          (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60)
+              .clamp(1, 1440);
+      final maxMin =
+          (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90)
+              .clamp(minMin, 1440);
+      // 恢复此前累积的未应答计数，避免重启页面后“连续 3 次未回”上限被清零。
+      _proactiveUnanswered =
+          (int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ??
+                  0)
+              .clamp(0, 5);
+      _restartProactiveTimer(minMin, maxMin);
+    } catch (e) {
+      debugPrint('[proactive] start failed: $e');
+    }
+  }
+
+  void _restartProactiveTimer(int minMinutes, int maxMinutes) {
+    _proactiveTimer?.cancel();
+    _proactiveTimer = null;
+    if (!mounted) return;
+    final range = maxMinutes - minMinutes;
+    final delayMinutes =
+        minMinutes + (range > 0 ? _proactiveRng.nextInt(range + 1) : 0);
+    final delay = Duration(minutes: delayMinutes.clamp(1, 1440));
+    _proactiveTimer = Timer(delay, _fireProactive);
+  }
+
+  // 用户主动发言：清零未应答计数并重置计时（下次主动回复重新从计时开始）。
+  // 当因“连续 3 次未回”暂停（timer 为空）时，用户一旦发言也通过这里恢复调度。
+  void _onUserInteracted() {
+    _proactiveUnanswered = 0;
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isNotEmpty) {
+      DBManager().setKV('proactive_unanswered_$botId', '0');
+    }
+    _startProactiveReply(); // 重新计时（开关关闭时内部自行跳过）
+  }
+
+  Future<void> _fireProactive() async {
+    _proactiveTimer = null;
+    final botId = _bot['id']?.toString() ?? '';
+    if (!mounted || botId.isEmpty) return;
+    // 连续 3 次主动回复用户都没回 → 暂停；等用户下次发言再由 _onUserInteracted 恢复。
+    if (_proactiveUnanswered >= 3) {
+      if (mounted) GlobalNotice.show('我先安静一会儿，你有话随时喊我~');
+      return;
+    }
+    // 上一个请求还没回完，这次主动回复顺延重排。
+    if (_loading) {
+      final minMin = (int.tryParse(
+                  await DBManager().getKV('proactive_min_minutes') ?? '') ??
+              60)
+          .clamp(1, 1440);
+      final maxMin = (int.tryParse(
+                  await DBManager().getKV('proactive_max_minutes') ?? '') ??
+              90)
+          .clamp(minMin, 1440);
+      _restartProactiveTimer(minMin, maxMin);
+      return;
+    }
+    try {
+      setState(() {
+        _loading = true;
+        _typing = true;
+      });
+      _scrollDown();
+      final now = DateTime.now();
+      final hour = now.hour;
+      final part =
+          hour < 6 ? '夜深了' : (hour < 12 ? '早上好' : (hour < 18 ? '下午好' : '晚上好'));
+      final opener =
+          '（【主动回复】请以你自己的性格，$part，自然地对我说一句简短、真诚的话：可以问候、分享一句此刻的感想或轻轻拉开话题，字数控制在 60 字以内，不要出现“主动回复/指令/角色设置”等词，不要带括号标注。）';
+      final result = await AIManager()
+          .sendMessage(botId: botId, text: opener)
+          .timeout(const Duration(minutes: 5));
+      if (result['success'] == true && mounted) {
+        final aiMsg = <String, dynamic>{
+          'id': result['message_id']?.toString() ??
+              'm_${DateTime.now().millisecondsSinceEpoch}',
+          'bot_id': botId,
+          'role': 'assistant',
+          'content': result['reply']?.toString() ?? '',
+          'sources_json': null,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        setState(() => _msgs.add(aiMsg));
+        final imagePath = result['image_path']?.toString();
+        if (imagePath?.isNotEmpty == true) {
+          setState(() => _msgs.add({
+                'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'image',
+                'content': '',
+                'file_path': imagePath,
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+              }));
+        }
+        // 一次主动回复后：未应答 +1 并持久化，重新计时（下一次若仍无人应答则累加）。
+        _proactiveUnanswered++;
+        DBManager()
+            .setKV('proactive_unanswered_$botId', '$_proactiveUnanswered');
+      }
+    } catch (e, st) {
+      debugPrint('[proactive] fire failed: $e');
+      debugPrint(st.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _typing = false;
+        });
+        _scrollDown();
+      }
+      // 无论成功与否都重排下一轮；若已达上限则下次触发会自动暂停。
+      final minMin = (int.tryParse(
+                  await DBManager().getKV('proactive_min_minutes') ?? '') ??
+              60)
+          .clamp(1, 1440);
+      final maxMin = (int.tryParse(
+                  await DBManager().getKV('proactive_max_minutes') ?? '') ??
+              90)
+          .clamp(minMin, 1440);
+      _restartProactiveTimer(minMin, maxMin);
+    }
+  }
+
   // ========== 发送消息 ==========
   Future<void> _send({
     String? img,
     String? document,
     String? mediaContext,
+    // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
+    bool noUserBubble = false,
   }) async {
-    if (_loading) return;
     final text = _msgC.text.trim();
     if (text.isEmpty &&
         img == null &&
@@ -321,39 +479,50 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       return;
     }
 
+    // 用户主动发言：清零主动回复未应答计数并重置计时。
+    _onUserInteracted();
+
     final botId = _bot['id']?.toString() ?? '';
     final now = DateTime.now().millisecondsSinceEpoch;
-    final msg = <String, dynamic>{
-      'id': 'm_$now',
-      'bot_id': botId,
-      'role': 'user',
-      'type': document != null ? 'document' : (img != null ? 'image' : 'text'),
-      'content': text,
-      'image': img,
-      'file_path': document ?? img,
-      'document_name': document?.split(Platform.pathSeparator).last,
-      'timestamp': now,
-    };
 
-    // 先更新界面，确保点击后立即看到气泡并清空输入框。
-    if (mounted) {
-      setState(() {
-        _loading = true;
-        _typing = true;
-        _msgsLoading = false;
-        _msgs.add(msg);
-        _msgC.clear();
-        _hasText = false;
-      });
-      _scrollDown();
-    }
-
-    try {
+    // ===== 防抖/合并 =====
+    // 上一条请求还在飞（机器人尚未回完）时再发消息：不再像旧实现那样直接丢弃，
+    // 而是作废在途请求的渲染（_requestGen++），把新文本并入待重发队列，先上屏
+    // 气泡并入库存档；等旧请求 finally 结束后用合并文本统一重发一次。
+    if (_loading) {
+      final mergedMsg = <String, dynamic>{
+        'id': 'm_${now}_q',
+        'bot_id': botId,
+        'role': 'user',
+        'type':
+            document != null ? 'document' : (img != null ? 'image' : 'text'),
+        'content': text,
+        'image': img,
+        'file_path': document ?? img,
+        'document_name': document?.split(Platform.pathSeparator).last,
+        'timestamp': now,
+      };
+      if (_queued) {
+        // 已有待重发队列，合并进同一批文本，避免产生多余第三次请求。
+        final prev = _queuedText;
+        _queuedText =
+            text.isEmpty ? prev : (prev.isEmpty ? text : '$prev\n$text');
+      } else {
+        _queuedText = text;
+      }
+      _queued = true;
+      _requestGen++; // 作废在途请求的渲染结果
+      if (mounted) {
+        setState(() {
+          _msgs.add(mergedMsg);
+          _msgC.clear();
+          _hasText = false;
+        });
+        _scrollDown();
+      }
       try {
-        // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
-        // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
         await DBManager().insertMessage({
-          'id': msg['id'],
+          'id': mergedMsg['id'],
           'bot_id': botId,
           'role': 'user',
           'type':
@@ -364,7 +533,67 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'timestamp': now,
         }).timeout(const Duration(seconds: 12));
       } catch (e) {
-        debugPrint('[send] persist user message failed: $e');
+        debugPrint('[send] persist queued user message failed: $e');
+      }
+      return;
+    }
+
+    // 本次请求的代次快照；若请求期间用户又发了新消息（_requestGen 变化），
+    // 渲染前检测到过期则拦截本次结果，交由 finally 用合并文本统一重发。
+    final myGen = _requestGen;
+    // 被合并拦截的过期请求不再落库，避免聊天记录顺序混乱。
+    final persistThisReply = myGen == _requestGen;
+    _hadRealStreamDelta = false; // 每组请求独立判断厂商是否回传真实流式增量
+
+    late final Map<String, dynamic> msg;
+    if (!noUserBubble) {
+      msg = <String, dynamic>{
+        'id': 'm_$now',
+        'bot_id': botId,
+        'role': 'user',
+        'type':
+            document != null ? 'document' : (img != null ? 'image' : 'text'),
+        'content': text,
+        'image': img,
+        'file_path': document ?? img,
+        'document_name': document?.split(Platform.pathSeparator).last,
+        'timestamp': now,
+      };
+
+      // 先更新界面，确保点击后立即看到气泡并清空输入框。
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _typing = true;
+          _msgsLoading = false;
+          _msgs.add(msg);
+          _msgC.clear();
+          _hasText = false;
+        });
+        _scrollDown();
+      }
+    }
+
+    try {
+      if (!noUserBubble) {
+        try {
+          // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
+          // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
+          await DBManager().insertMessage({
+            'id': msg['id'],
+            'bot_id': botId,
+            'role': 'user',
+            'type': document != null
+                ? 'document'
+                : (img == null ? 'text' : 'image'),
+            'content': text,
+            'file_path': document ?? img,
+            'mood': null,
+            'timestamp': now,
+          }).timeout(const Duration(seconds: 12));
+        } catch (e) {
+          debugPrint('[send] persist user message failed: $e');
+        }
       }
       final cm = _bot['chat_model']?.toString().trim() ?? '';
       final localModelId = (await SharedPreferences.getInstance().then(
@@ -389,11 +618,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final history = _msgs
           .where((m) => (m['content'] as String?)?.isNotEmpty == true)
           .map((m) {
-        final isCurrent = m['id'] == msg['id'];
+        final isCurrent = !noUserBubble && m['id'] == msg['id'];
         final content = isCurrent ? modelText : _modelReadableContent(m);
         return {'role': m['role'], 'content': content};
       }).toList();
-      if (preparedContext != null && text.isEmpty) {
+      // 合并重发（noUserBubble）时不新增用户气泡，仅把合并后的完整文本作为
+      // 本次用户请求追加到上下文末尾，机器人统一回复一次。
+      if (noUserBubble || (preparedContext != null && text.isEmpty)) {
         history.add({'role': 'user', 'content': modelText});
       }
 
@@ -461,9 +692,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             botId: botId,
             messages: history,
             imageBase64: imgB64,
+            persistResponse: persistThisReply,
             onDelta: streamingMessage == null
                 ? null
                 : (delta) {
+                    _hadRealStreamDelta = true; // 厂商确实回传了流式增量
                     rawStreamText += delta;
                     final visible = _visibleStreamingText(rawStreamText);
                     if (visible.length > shownStreamText.length) {
@@ -477,6 +710,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       _streamDisplayTimer?.cancel();
       _streamDisplayTimer = null;
+      // 真实 SSE 残留增量冲刷进流式气泡（若厂商回传了流式增量）。
       if (streamingMessage != null && pendingDisplay.isNotEmpty && mounted) {
         final displayMessage = streamingMessage;
         setState(() {
@@ -492,20 +726,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
-        msg['error_log'] = errorLog;
-        msg['error_code'] = result['error_code']?.toString();
-        msg['error_text'] = errorText;
+        if (!noUserBubble) {
+          msg['error_log'] = errorLog;
+          msg['error_code'] = result['error_code']?.toString();
+          msg['error_text'] = errorText;
+        }
         if (mounted) setState(() {});
-        try {
-          await DBManager()
-              .updateMessageError(
-                msg['id'].toString(),
-                errorLog: errorLog,
-                errorCode: result['error_code']?.toString(),
-                errorMessage: errorText,
-              )
-              .timeout(const Duration(seconds: 5));
-        } catch (_) {}
+        if (!noUserBubble) {
+          try {
+            await DBManager()
+                .updateMessageError(
+                  msg['id'].toString(),
+                  errorLog: errorLog,
+                  errorCode: result['error_code']?.toString(),
+                  errorMessage: errorText,
+                )
+                .timeout(const Duration(seconds: 5));
+          } catch (_) {}
+        }
         return;
       }
 
@@ -524,6 +762,67 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       };
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
       // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
+
+      // ===== 防抖/合并：代次拦截 =====
+      // 请求期间用户又发了新消息（_requestGen 变化），本次回复已被合并覆盖：
+      // 不再渲染、也不再落库（落库已由 persistThisReply 控制），交给 finally
+      // 用合并后的文本统一重发一次。
+      if (myGen != _requestGen) {
+        _streamDisplayTimer?.cancel();
+        _streamDisplayTimer = null;
+        if (streamingMessage != null && mounted) {
+          setState(() => _msgs.remove(streamingMessage));
+        }
+        return;
+      }
+
+      // ===== 模拟打字机（流式开启但厂商未回传增量时）=====
+      // 需求：完整回复收到后再用打字机逐字渲染，而不只是依赖厂商 SSE 边生成边显示。
+      // 针对“流式开启、已创建流式气泡，但 provider 整段返回（从未触发 onDelta）”
+      // 的场景：把完整文本喂给字幕定时器逐字上屏，播完后定格为完整内容。
+      final needsTypewriter = streamingMessage != null &&
+          !_hadRealStreamDelta &&
+          !segmentedReply &&
+          content.isNotEmpty;
+      if (needsTypewriter && mounted) {
+        _streamDisplayTimer?.cancel();
+        pendingDisplay = content;
+        shownStreamText = content;
+        final tm = streamingMessage;
+        final speed =
+            (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
+                    50)
+                .clamp(1, 100);
+        final interval = Duration(milliseconds: 30 + ((100 - speed) * 7));
+        final batch = (1 + speed ~/ 18).clamp(1, 6);
+        _streamDisplayTimer = Timer.periodic(interval, (timer) {
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
+          if (pendingDisplay.isEmpty) {
+            timer.cancel();
+            _streamDisplayTimer = null;
+            setState(() {
+              tm['id'] = aiMsg['id'];
+              tm['content'] = content;
+              tm['timestamp'] = aiMsg['timestamp'];
+            });
+            _scrollDown(animated: false);
+            return;
+          }
+          final take =
+              pendingDisplay.length < batch ? pendingDisplay.length : batch;
+          final chunk = pendingDisplay.substring(0, take);
+          pendingDisplay = pendingDisplay.substring(take);
+          setState(() => tm['content'] = '${tm['content']}$chunk');
+          if (pendingDisplay.isEmpty ||
+              tm['content'].toString().length % 80 < batch) {
+            _scrollDown(animated: false);
+          }
+        });
+      }
+
       if (mounted) {
         // 流式气泡已通过 SSE 增量逐字上屏。无论是否开启分段，都保留这个气泡并
         // 直接定格为完整回复——避免“整段文字先消失、再逐句重放”的观感，从而保证
@@ -548,6 +847,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             });
             await _persistSegments(db, aiMsg, result, content,
                 segmentsDelayed: false);
+          } else if (needsTypewriter) {
+            // 模拟打字机正在逐字上屏（provider 整段返回、未触发真实 SSE）。
+            // 这里不动气泡，由打字机定时器播完后再统一定格 id / 时间戳 / 完整内容。
           } else {
             // The bubble has already been updated from real SSE deltas. Keep its
             // in-memory identity but normalize its final text and database ID.
@@ -644,20 +946,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       debugPrint(st.toString());
       final errorText = '请求处理失败：${e.toString()}';
       final errorLog = '${e.toString()}\n${st.toString()}';
-      msg['error_log'] = errorLog;
-      msg['error_code'] = 'local';
-      msg['error_text'] = errorText;
+      if (!noUserBubble) {
+        msg['error_log'] = errorLog;
+        msg['error_code'] = 'local';
+        msg['error_text'] = errorText;
+      }
       if (mounted) setState(() {});
-      try {
-        await DBManager()
-            .updateMessageError(
-              msg['id'].toString(),
-              errorLog: errorLog,
-              errorCode: 'local',
-              errorMessage: errorText,
-            )
-            .timeout(const Duration(seconds: 5));
-      } catch (_) {}
+      if (!noUserBubble) {
+        try {
+          await DBManager()
+              .updateMessageError(
+                msg['id'].toString(),
+                errorLog: errorLog,
+                errorCode: 'local',
+                errorMessage: errorText,
+              )
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {}
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -665,6 +971,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _typing = false;
         });
         _scrollDown();
+      }
+      // ===== 防抖/合并：统一重发 =====
+      // 请求期间用户又发了消息被并入 _queuedText。等待队列后，用合并后的完整
+      // 文本向模型统一请求一次，不再新增用户气泡（用户消息已各自上屏入库）。
+      if (_queued && _queuedText.trim().isNotEmpty && mounted) {
+        final mergedText = _queuedText;
+        _queuedText = '';
+        _queued = false;
+        _msgC.text = mergedText;
+        _requestGen++; // 维持最新代次，使本次重发为唯一有效请求
+        await _send(noUserBubble: true);
       }
     }
   }

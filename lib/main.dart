@@ -618,7 +618,7 @@ class _JellyDockState extends State<JellyDock>
                     return Expanded(
                         child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTapDown: (_) => HapticFeedback.lightImpact(),
+                      onTapDown: (_) => TideHaptics.tap(),
                       onTap: () => widget.onTap(i),
                       child: Center(
                           child: Icon(_icons[i],

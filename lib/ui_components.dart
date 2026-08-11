@@ -28,7 +28,17 @@ class TideHaptics {
   }
 
   static void tap() {
-    if (_enabled) HapticFeedback.lightImpact();
+    if (!_enabled) return;
+    try {
+      // vibrate() 走系统振动器，不依赖 Android 系统“触摸反馈”开关（该开关关闭
+      // 时 lightImpact 会完全静默，这正是用户反馈“开了开关却没震动”的根因）。
+      // 优先用短促振动，失败时再降级为系统光叹触感。
+      HapticFeedback.vibrate().catchError((_) {
+        HapticFeedback.lightImpact();
+      });
+    } catch (_) {
+      HapticFeedback.lightImpact();
+    }
   }
 }
 
