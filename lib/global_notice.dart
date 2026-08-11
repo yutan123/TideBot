@@ -55,6 +55,12 @@ class _GlobalNoticeView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final media = MediaQuery.of(context);
+    final scheme = theme.colorScheme;
+    final surface = color ?? scheme.primary;
+    final foreground =
+        ThemeData.estimateBrightnessForColor(surface) == Brightness.dark
+            ? Colors.white
+            : scheme.onPrimary;
     // 根 Overlay 中的通知位于底部栏和系统手势区上方；键盘出现时继续上移。
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
     return Positioned(
@@ -69,7 +75,9 @@ class _GlobalNoticeView extends StatelessWidget {
           color: Colors.transparent,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: color ?? theme.colorScheme.primary,
+              color: surface,
+              border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: 0.45)),
               borderRadius: BorderRadius.circular(16),
               boxShadow: const [
                 BoxShadow(
@@ -88,15 +96,15 @@ class _GlobalNoticeView extends StatelessWidget {
                       message,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: foreground,
                         fontFamily: 'TideFont',
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.swipe_rounded,
-                      color: Colors.white70, size: 18),
+                  Icon(Icons.swipe_rounded,
+                      color: foreground.withValues(alpha: 0.72), size: 18),
                 ],
               ),
             ),

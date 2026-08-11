@@ -112,9 +112,9 @@ class AIManager {
         persistResponse: persistResponse,
         includeChatHistory: includeChatHistory,
         enableAutoSummary: enableAutoSummary,
-        // Streaming can only safely happen for the final attempt: an earlier
-        // failed SSE stream must never leave partial text in the visible bubble.
-        onDelta: index == attempts.length - 1 ? onDelta : null,
+        // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+        // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+        onDelta: onDelta,
         forcedLocalId: candidate['local']!,
         forcedProviderId: candidate['provider']!,
       );

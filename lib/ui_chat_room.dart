@@ -145,19 +145,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     try {
       final db = DBManager();
       final msgs = await db.queryMessages(_bot['id'] as String, limit: 100);
-      // A quoted message can be older than the current page. Fetch each missing
-      // source once so reply cards stay meaningful after reopening a long chat.
-      final loadedIds =
-          msgs.map((m) => m['id']?.toString()).whereType<String>().toSet();
-      final replyIds = msgs
-          .map((m) => m['reply_to_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty && !loadedIds.contains(id))
-          .toSet();
-      for (final replyId in replyIds) {
-        final source = await db.getMessageById(replyId);
-        if (source != null) msgs.add(source);
-      }
+      // 引用功能已废弃：不再为 reply_to_id 逐条补查历史消息，避免打开长聊天时
+      // 触发大量顺序数据库查询并造成列表首帧卡顿。
       print('_loadMsgs success: got ${msgs.length} messages');
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
       if (mounted) {
@@ -2061,6 +2050,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               CircularProgressIndicator(color: TideTheme.of(context).primary));
     }
     return ListView.builder(
+      key: const PageStorageKey<String>('chat_messages'),
       controller: _scrollC,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: _msgs.length,
