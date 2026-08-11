@@ -1038,7 +1038,9 @@ class AIManager {
           0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
       // 在上下文接近上限前就归档，避免等到模型已被截断才尝试总结。
       final threshold = (maxContext * 3.2).floor();
-      if (totalChars < threshold && textHistory.length < 16) return;
+      // Archive often enough for medium-term diaries to be observable in normal
+      // use, while still avoiding a model request after every message.
+      if (totalChars < threshold && textHistory.length < 8) return;
 
       final cutoff =
           (textHistory.length * 0.60).floor().clamp(1, textHistory.length);
@@ -1090,7 +1092,7 @@ class AIManager {
                       '{"upsert":[{"id":"已有 id 或留空","content":"第一人称正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
                       '规则：\n'
                       '1. content 是单条独立正文，不得标题、编号、心情标签或“重要事件”。\n'
-                      '2. 必须第一人称，语气贴合角色人设；不要出现“用户说”“助手回复”“本次对话”“讨论了”。\n'
+                      '2. 必须第一人称，语气贴合角色人设；不要出现“我记得”“用户说”“用户告诉我”“助手回复”“本次对话”“讨论了”。中期日记可自然使用今天、昨天、近日等时间词。\n'
                       '3. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
                       '4. 已有内容仍正确时不要重复新增；需要修正就对其 id upsert；过时或冲突才 delete。\n'
                       '5. expires_days 为 0 表示不过期，近期事项可填 1~30。无更新时输出 {"upsert":[],"delete":[]}。',

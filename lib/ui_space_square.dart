@@ -542,6 +542,13 @@ class SquarePageState extends State<SquarePage>
       for (var index = 0; index < perDay; index++) {
         final marker = 'bot_post_date_${botId}_$index';
         if (await db.getKV(marker) == dayKey) continue;
+        // Never generate or publish a future slot early. This method runs when
+        // the feed opens, so scheduled time must be checked before model work.
+        final dayStart =
+            DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
+        final slot = (botId.hashCode.abs() + index * 7919) % (24 * 60);
+        final scheduledAt = dayStart + slot * Duration.millisecondsPerMinute;
+        if (DateTime.now().millisecondsSinceEpoch < scheduledAt) continue;
         final res = await AIManager().sendMessage(
           botId: botId,
           text:
@@ -551,11 +558,8 @@ class SquarePageState extends State<SquarePage>
         if (res['success'] != true) continue;
         final content = res['reply']?.toString().trim() ?? '';
         if (content.isEmpty) continue;
-        // 均匀分布在一天内，避免所有机器人同时刻发布，也便于广场按时间排序。
-        final dayStart =
-            DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
-        final slot = (botId.hashCode.abs() + index * 7919) % (24 * 60);
-        final scheduledAt = dayStart + slot * Duration.millisecondsPerMinute;
+        // scheduledAt was calculated before generation so no future post can
+        // enter the feed ahead of its planned local time.
         final postId = 'botpost_${botId}_${dayKey}_$index';
         // 动态本体不含伪造的互动数据——点赞与评论必须来自真实发生的机器人互动。
         await db.insertPost({

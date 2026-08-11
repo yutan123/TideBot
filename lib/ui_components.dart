@@ -9,14 +9,14 @@ import 'theme.dart';
 // ========== 全局弹性点击包装器 ==========
 class TideHaptics {
   TideHaptics._();
-  static bool _enabled = false;
+  static bool _enabled = true;
   static bool _loaded = false;
 
   static Future<void> load() async {
     if (_loaded) return;
     _enabled = (await SharedPreferences.getInstance())
             .getBool('tide_haptics_enabled') ??
-        false;
+        true;
     _loaded = true;
   }
 
@@ -341,42 +341,51 @@ Future<T?> showTideSheet<T>(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.35),
-    builder: (ctx) => GestureDetector(
-      onTap: () => Navigator.pop(ctx),
-      child: Container(
-        height: screenH,
-        color: Colors.transparent,
-        alignment: Alignment.bottomCenter,
-        child: GestureDetector(
-            onTap: () {},
-            child: ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(24)),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  height: sheetH,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                      color:
-                          TideTheme.of(context).surface.withValues(alpha: 0.96),
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(24))),
-                  child: Column(children: [
-                    const SizedBox(height: 8),
-                    Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                            color: Colors.grey.shade300,
-                            borderRadius: BorderRadius.circular(2))),
-                    Expanded(child: child),
-                  ]),
+    builder: (ctx) {
+      final keyboardInset = MediaQuery.viewInsetsOf(ctx).bottom;
+      final availableHeight = screenH - keyboardInset;
+      final effectiveHeight =
+          height == null ? screenH * 0.55 : sheetH.clamp(0.0, availableHeight);
+      return GestureDetector(
+        onTap: () => Navigator.pop(ctx),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          height: availableHeight,
+          color: Colors.transparent,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+              onTap: () {},
+              child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    height: effectiveHeight,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                        color: TideTheme.of(context)
+                            .surface
+                            .withValues(alpha: 0.96),
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(24))),
+                    child: Column(children: [
+                      const SizedBox(height: 8),
+                      Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                              color: Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(2))),
+                      Expanded(child: child),
+                    ]),
+                  ),
                 ),
-              ),
-            )),
-      ),
-    ),
+              )),
+        ),
+      );
+    },
   );
 }
 
