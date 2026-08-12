@@ -15,17 +15,20 @@ class MemoryManagerPage extends StatefulWidget {
 class _MemoryManagerPageState extends State<MemoryManagerPage> {
   List<Map<String, dynamic>> _items = [];
   String _type = 'long';
+  String _frequency = 'once';
+  DateTime? _taskDate;
+  TimeOfDay? _taskTime;
   bool _loading = true;
   String get _label => _type == 'long'
       ? '长期记忆'
-      : _type == 'medium'
-          ? '中期记忆'
-          : '短期记忆';
+      : _type == 'short'
+          ? '短期记忆'
+          : '未来任务';
   IconData get _icon => _type == 'long'
       ? Icons.auto_awesome_rounded
-      : _type == 'medium'
-          ? Icons.bookmark_rounded
-          : Icons.bolt_rounded;
+      : _type == 'short'
+          ? Icons.bolt_rounded
+          : Icons.schedule_rounded;
   @override
   void initState() {
     super.initState();
@@ -33,6 +36,15 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   }
 
   Future<void> _load() async {
+    if (_type == 'future') {
+      final items = await DBManager().querySchedules(widget.botId);
+      if (mounted)
+        setState(() {
+          _items = items;
+          _loading = false;
+        });
+      return;
+    }
     final items = await DBManager().queryMemories(widget.botId, type: _type);
     if (mounted)
       setState(() {
@@ -49,6 +61,134 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   }
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
+    if (_type == 'future' && item != null) {
+      final task = item['prompt']?.toString() ?? item['note']?.toString() ?? '';
+      await TideDialogs.show<void>(
+          context: context,
+          builder: (ctx) => Center(
+              child: Material(
+                  type: MaterialType.transparency,
+                  child: TideDialogs.glassContent(context: ctx, children: [
+                    Text(item['title']?.toString() ?? '未来任务',
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    Text(task,
+                        style: const TextStyle(
+                            fontFamily: 'TideFont', height: 1.5)),
+                    const SizedBox(height: 8),
+                    Text('时间：${item['run_at'] ?? item['time'] ?? ''}',
+                        style: const TextStyle(fontFamily: 'TideFont')),
+                    const SizedBox(height: 14),
+                    TideDialogs.glassButton('关闭',
+                        onTap: () => Navigator.pop(ctx))
+                  ]))));
+      return;
+    }
+    if (_type == 'future') {
+      final title =
+          TextEditingController(text: item?['title']?.toString() ?? '');
+      final prompt = TextEditingController(
+          text: item?['prompt']?.toString() ?? item?['note']?.toString() ?? '');
+      _frequency = 'once';
+      _taskDate = DateTime.now();
+      _taskTime = TimeOfDay.now();
+      final ok = await TideDialogs.show<bool>(
+          context: context,
+          builder: (ctx) => StatefulBuilder(
+              builder: (ctx, setDialog) => Center(
+                  child: Material(
+                      type: MaterialType.transparency,
+                      child: TideDialogs.glassContent(context: ctx, children: [
+                        const Text('添加未来任务',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'TideFont')),
+                        const SizedBox(height: 12),
+                        TextField(
+                            controller: title,
+                            decoration: const InputDecoration(labelText: '标题')),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: prompt,
+                            minLines: 3,
+                            maxLines: 5,
+                            decoration:
+                                const InputDecoration(labelText: '给机器人的任务提示词')),
+                        DropdownButton<String>(
+                            value: _frequency,
+                            isExpanded: true,
+                            items: const [
+                              DropdownMenuItem(
+                                  value: 'daily', child: Text('每天')),
+                              DropdownMenuItem(value: 'once', child: Text('一次'))
+                            ],
+                            onChanged: (v) {
+                              if (v != null) setDialog(() => _frequency = v);
+                            }),
+                        if (_frequency == 'once')
+                          ListTile(
+                              title: Text(_taskDate == null
+                                  ? '选择日期'
+                                  : '${_taskDate!.year}-${_taskDate!.month}-${_taskDate!.day}'),
+                              trailing: const Icon(Icons.calendar_today),
+                              onTap: () async {
+                                final d = await showDatePicker(
+                                    context: ctx,
+                                    firstDate: DateTime.now(),
+                                    lastDate: DateTime.now()
+                                        .add(const Duration(days: 3650)),
+                                    initialDate: _taskDate ?? DateTime.now());
+                                if (d != null) setDialog(() => _taskDate = d);
+                              }),
+                        ListTile(
+                            title: Text(_taskTime == null
+                                ? '选择时间'
+                                : _taskTime!.format(ctx)),
+                            trailing: const Icon(Icons.access_time),
+                            onTap: () async {
+                              final t = await showTimePicker(
+                                  context: ctx,
+                                  initialTime: _taskTime ?? TimeOfDay.now());
+                              if (t != null) setDialog(() => _taskTime = t);
+                            }),
+                        const SizedBox(height: 14),
+                        Row(children: [
+                          Expanded(
+                              child: TideDialogs.glassButton('取消',
+                                  onTap: () => Navigator.pop(ctx))),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: TideDialogs.glassButton('保存',
+                                  onTap: () => Navigator.pop(ctx, true)))
+                        ])
+                      ])))));
+      if (ok == true && prompt.text.trim().isNotEmpty) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await DBManager().insertFutureTask({
+          'id': item?['id'] ?? 'task_$now',
+          'bot_id': widget.botId,
+          'title': title.text.trim().isEmpty ? '未来任务' : title.text.trim(),
+          'note': prompt.text.trim(),
+          'prompt': prompt.text.trim(),
+          'time': now,
+          'run_at': ((_taskDate ?? DateTime.now()).copyWith(
+                  hour: _taskTime?.hour ?? TimeOfDay.now().hour,
+                  minute: _taskTime?.minute ?? TimeOfDay.now().minute))
+              .millisecondsSinceEpoch,
+          'frequency': _frequency,
+          'is_done': 0,
+          'status': 'pending'
+        });
+        await _load();
+      }
+      title.dispose();
+      prompt.dispose();
+      return;
+    }
     final content =
         TextEditingController(text: item?['content']?.toString() ?? '');
     final ok = await TideDialogs.show<bool>(
@@ -154,6 +294,11 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           );
         });
     if (ok == true) {
+      if (_type == 'future') {
+        await DBManager().deleteFutureTask(item['id'].toString());
+        await _load();
+        return;
+      }
       await DBManager().deleteMemory(item['id'].toString());
       await _load();
     }
@@ -184,8 +329,8 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
               children: [
                 for (final entry in const <String, String>{
                   'long': '长期记忆',
-                  'medium': '中期记忆',
                   'short': '短期记忆',
+                  'future': '未来任务',
                 }.entries) ...[
                   Expanded(
                     child: BouncyTap(
@@ -267,8 +412,13 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                                                 CrossAxisAlignment.start,
                                             children: [
                                               Text(
-                                                item['content']?.toString() ??
-                                                    '',
+                                                _type == 'future'
+                                                    ? (item['title']
+                                                            ?.toString() ??
+                                                        '未来任务')
+                                                    : item['content']
+                                                            ?.toString() ??
+                                                        '',
                                                 style: TextStyle(
                                                   height: 1.55,
                                                   fontSize: 15,

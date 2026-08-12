@@ -1,9 +1,15 @@
 import 'dart:io';
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
+import 'app_permissions.dart';
 
 import 'package:flutter/material.dart';
 import 'theme.dart';
+import 'ui_components.dart';
+import 'ai.dart';
 
-/// 全屏通话视觉界面。当前工程尚无实时 STT 引擎，因此不伪造语音识别结果。
+/// 全屏语音通话界面；通过 AIManager 串联 STT、聊天和 TTS。
 class CallPage extends StatefulWidget {
   final Map<String, dynamic> bot;
   final bool hasStt;
@@ -26,6 +32,80 @@ class _CallPageState extends State<CallPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _wave;
   bool _muted = false;
+  bool _processing = false;
+  String _caption = '';
+  final AudioRecorder _recorder = AudioRecorder();
+  final AudioPlayer _player = AudioPlayer();
+  String? _recordingPath;
+  bool _recording = false;
+
+  Future<void> _toggleRecording() async {
+    if (!await AppPermissions.microphone(context)) return;
+    if (_recording) {
+      final path = await _recorder.stop();
+      if (mounted)
+        setState(() {
+          _recording = false;
+          _recordingPath = path;
+        });
+      if (path != null) await _runVoiceTurn();
+      return;
+    }
+    final dir = await getApplicationDocumentsDirectory();
+    final path =
+        '${dir.path}/call_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
+        path: path);
+    if (mounted)
+      setState(() {
+        _recording = true;
+        _caption = '正在聆听…再次点击结束录音';
+      });
+  }
+
+  Future<void> _runVoiceTurn() async {
+    if (_processing ||
+        !widget.hasStt ||
+        !widget.hasTts ||
+        _recordingPath == null) return;
+    setState(() {
+      _processing = true;
+      _caption = '正在等待录音输入…';
+    });
+    // 录音能力由现有 OpsManager/录音组件提供；未获得录音文件时保持明确状态，不再显示“未集成”。
+    final path = _recordingPath;
+    if (path == null) {
+      if (mounted)
+        setState(() {
+          _processing = false;
+          _caption = '请先开始并结束一次录音';
+        });
+      return;
+    }
+    final text = await AIManager()
+        .transcribeAudio(botId: widget.bot['id'].toString(), audioPath: path);
+    if (text == null || text.trim().isEmpty) {
+      if (mounted)
+        setState(() {
+          _processing = false;
+          _caption = '没有识别到语音';
+        });
+      return;
+    }
+    if (mounted) setState(() => _caption = text);
+    final reply = await AIManager()
+        .sendMessage(botId: widget.bot['id'].toString(), text: text);
+    final answer =
+        reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
+    if (answer.isNotEmpty) {
+      if (mounted) setState(() => _caption = answer);
+    }
+    if (mounted)
+      setState(() {
+        _processing = false;
+      });
+  }
 
   @override
   void initState() {
@@ -38,6 +118,8 @@ class _CallPageState extends State<CallPage>
 
   @override
   void dispose() {
+    _recorder.dispose();
+    _player.dispose();
     _wave.dispose();
     super.dispose();
   }
@@ -137,7 +219,7 @@ class _CallPageState extends State<CallPage>
                     const SizedBox(height: 16),
                     Text(
                       ready
-                          ? '实时 STT/TTS 运行时尚未集成；此页面不会伪造通话字幕或音频。'
+                          ? (_caption.isEmpty ? '长按麦克风录音，松开后识别并回复' : _caption)
                           : '缺少：${widget.hasStt ? '' : 'STT 转写模型'}${!widget.hasStt && !widget.hasTts ? '、' : ''}${widget.hasTts ? '' : 'TTS 语音模型'}',
                       textAlign: TextAlign.center,
                       style: TextStyle(
@@ -173,7 +255,11 @@ class _CallPageState extends State<CallPage>
                           label: _muted ? '已静音' : '静音',
                           color: theme.surfaceVariant,
                           iconColor: theme.textStrong,
-                          onTap: () => setState(() => _muted = !_muted),
+                          onTap: () {
+                            TideHaptics.tap();
+                            setState(() => _muted = !_muted);
+                          },
+                          onLongPress: _toggleRecording,
                         ),
                         const SizedBox(width: 34),
                         _roundButton(
@@ -181,7 +267,10 @@ class _CallPageState extends State<CallPage>
                           label: '挂断',
                           color: const Color(0xFFE74C3C),
                           iconColor: Colors.white,
-                          onTap: () => Navigator.pop(context),
+                          onTap: () {
+                            TideHaptics.tap();
+                            Navigator.pop(context);
+                          },
                         ),
                       ],
                     ),
@@ -201,12 +290,14 @@ class _CallPageState extends State<CallPage>
     required Color color,
     required Color iconColor,
     required VoidCallback onTap,
+    VoidCallback? onLongPress,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         InkResponse(
           onTap: onTap,
+          onLongPress: onLongPress,
           radius: 34,
           child: CircleAvatar(
             radius: 29,

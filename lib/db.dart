@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 14,
+      version: 15,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -82,7 +82,7 @@ class DBManager {
         ''');
         await db.execute('''
           CREATE TABLE schedule_tasks (
-            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER,
+            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER, frequency TEXT DEFAULT 'once', prompt TEXT DEFAULT '', run_at INTEGER, status TEXT DEFAULT 'pending',
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
@@ -267,6 +267,22 @@ class DBManager {
           } catch (_) {}
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
+        }
+        if (oldVersion < 15) {
+          for (final column in [
+            "frequency TEXT DEFAULT 'once'",
+            "prompt TEXT DEFAULT ''",
+            'run_at INTEGER',
+            "status TEXT DEFAULT 'pending'"
+          ]) {
+            try {
+              await db.execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
+            } catch (_) {}
+          }
+          try {
+            await db.update('memories', {'type': 'long'},
+                where: 'type = ?', whereArgs: ['medium']);
+          } catch (_) {}
         }
         if (oldVersion < 14) {
           await db.execute('''
@@ -612,6 +628,30 @@ class DBManager {
         limit: limit);
   }
 
+  Future<void> insertFutureTask(Map<String, dynamic> task) async {
+    final db = await database;
+    await db.insert('schedule_tasks', task,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteFutureTask(String id) async {
+    final db = await database;
+    await db.delete('schedule_tasks', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> updateFutureTask(String id, Map<String, dynamic> values) async {
+    final db = await database;
+    await db.update('schedule_tasks', values, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Map<String, dynamic>>> dueFutureTasks(int now) async {
+    final db = await database;
+    return db.query('schedule_tasks',
+        where: 'run_at <= ? AND status = ?',
+        whereArgs: [now, 'pending'],
+        orderBy: 'run_at ASC');
+  }
+
   // 查询记忆 (memories 表)
   Future<List<Map<String, dynamic>>> queryMemories(String botId,
       {String? type, int? limit, bool includeExpired = false}) async {
@@ -706,7 +746,7 @@ class DBManager {
         'timestamp': now,
       });
     }
-    const caps = {'long': 60, 'medium': 80, 'short': 100};
+    const caps = {'long': 60, 'short': 100};
     final cap = caps[type] ?? 80;
     final rows = await queryMemories(botId, type: type);
     if (rows.length > cap) {
@@ -737,10 +777,9 @@ class DBManager {
   // 新接口：insertProvider(name, url, key)
   Future<void> insertProviderNew(String name, String url, String apiKey) async {
     final existing = await getProvidersByType('chat');
-    // 清空旧 chat 类型 provider，只保留一条
-    existing.clear();
+    // 新配置追加保存，不覆盖已有同名 provider
     existing.add({
-      'id': 'provider_chat_0',
+      'id': 'provider_chat_${DateTime.now().microsecondsSinceEpoch}',
       'type': 'chat',
       'name': name,
       'base_url': url,

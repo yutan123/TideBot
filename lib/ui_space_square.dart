@@ -106,7 +106,7 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final mem = await db.queryMemories(_botId, type: 'medium', limit: 50);
+      final mem = await db.queryMemories(_botId, type: 'short', limit: 50);
       final messages = await db.queryMessages(_botId, limit: 30);
       final latestMood = messages.reversed.firstWhere(
         (m) =>

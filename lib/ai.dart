@@ -274,9 +274,6 @@ class AIManager {
               'content': _cleanLongMemoryText(it['content']?.toString() ?? ''),
             })
         .toList();
-    final mediumMemories = activeGame == null
-        ? await db.queryMemories(botId, type: 'medium', limit: 6)
-        : <Map<String, dynamic>>[];
     final shortMemories = activeGame == null
         ? await db.queryMemories(botId, type: 'short', limit: 8)
         : <Map<String, dynamic>>[];
@@ -293,7 +290,7 @@ class AIManager {
     }
 
     final longMemoryContext = memoryLines(longMemories, 1200);
-    final mediumMemoryContext = memoryLines(mediumMemories, 800);
+    const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final toolContext = allowTools ? await _buildToolContext(db) : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
@@ -1078,7 +1075,7 @@ class AIManager {
       if (baseUrl.isEmpty) return;
       // 采用“按条更新”而非清空重建：每条已有日记都提供稳定 ID，
       // 模型只需返回新增、更新或删除操作。解析失败时旧记忆会完整保留。
-      final existingMemories = await db.queryMemories(botId, type: 'medium');
+      final existingMemories = await db.queryMemories(botId, type: 'short');
       final existingText = existingMemories.isEmpty
           ? '（目前还没有任何日记）'
           : existingMemories
@@ -1165,7 +1162,7 @@ class AIManager {
         await db.upsertMemoryItem(
           botId: botId,
           id: id,
-          type: 'medium',
+          type: 'short',
           content: content,
           category: safeCategory,
           importance: importance,

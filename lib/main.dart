@@ -18,6 +18,7 @@ import 'db.dart';
 import 'global_notice.dart';
 import 'ops.dart';
 import 'ota_update.dart';
+import 'ai.dart';
 import 'daily_launch_animation.dart';
 
 final TideTheme tideTheme = TideTheme();
@@ -86,12 +87,46 @@ Future<void> _initPersistentService({
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) {
-  // This callback runs in the background isolate. Its signature must remain
-  // compatible with flutter_background_service or Android can terminate it.
   service.on('stopService').listen((_) async {
-    if (service is AndroidServiceInstance) {
-      await service.stopSelf();
-    }
+    if (service is AndroidServiceInstance) await service.stopSelf();
+  });
+  Timer.periodic(const Duration(minutes: 1), (_) async {
+    try {
+      final due = await DBManager()
+          .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
+      for (final task in due) {
+        final id = task['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        await DBManager().updateFutureTask(id, {'status': 'running'});
+        final botId = task['bot_id']?.toString() ?? '';
+        final prompt =
+            task['prompt']?.toString() ?? task['note']?.toString() ?? '';
+        if (botId.isEmpty || prompt.isEmpty) continue;
+        try {
+          final result = await AIManager().sendMessage(
+              botId: botId,
+              text: '这是一个定时任务，请完成：$prompt',
+              persistResponse: true);
+          final answer = result['reply']?.toString() ?? '';
+          await OpsManager().showSystemNotification(
+              id: id.hashCode,
+              title: task['title']?.toString() ?? '未来任务完成',
+              body: answer.isEmpty ? '任务已执行' : answer,
+              botId: botId);
+          if (task['frequency']?.toString() == 'daily') {
+            final next = DateTime.now()
+                .add(const Duration(days: 1))
+                .millisecondsSinceEpoch;
+            await DBManager()
+                .updateFutureTask(id, {'run_at': next, 'status': 'pending'});
+          } else {
+            await DBManager().deleteFutureTask(id);
+          }
+        } catch (_) {
+          await DBManager().updateFutureTask(id, {'status': 'pending'});
+        }
+      }
+    } catch (_) {}
   });
 }
 

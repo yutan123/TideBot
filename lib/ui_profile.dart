@@ -1607,7 +1607,15 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   Future<void> _saveList() async {
+    for (var i = 0; i < _providers.length; i++) {
+      _providers[i]['id'] ??=
+          'provider_${DateTime.now().microsecondsSinceEpoch}_$i';
+    }
     await DBManager().insertKV('provider_list', jsonEncode(_providers));
+    for (var i = 0; i < _ttsProviders.length; i++) {
+      _ttsProviders[i]['id'] ??=
+          'tts_${DateTime.now().microsecondsSinceEpoch}_$i';
+    }
     await DBManager().insertKV('tts_provider_list', jsonEncode(_ttsProviders));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1789,8 +1797,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'key': kCtrl.text.trim(),
                           'model': model
                         };
-                        final idx = _providers
-                            .indexWhere((e) => e['name'] == p['name']);
+                        final idx =
+                            _providers.indexWhere((e) => e['id'] == p['id']);
                         if (idx >= 0) {
                           _providers[idx] = p;
                         } else {
@@ -1864,8 +1872,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'model': model,
                           'voice': vCtrl.text.trim()
                         };
-                        final i = _ttsProviders
-                            .indexWhere((e) => e['name'] == p['name']);
+                        final i =
+                            _ttsProviders.indexWhere((e) => e['id'] == p['id']);
                         if (i >= 0) {
                           _ttsProviders[i] = p;
                         } else {

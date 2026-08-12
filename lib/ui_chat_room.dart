@@ -379,7 +379,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (!mounted || botId.isEmpty) return;
     // 连续 3 次主动回复用户都没回 → 暂停；等用户下次发言再由 _onUserInteracted 恢复。
     if (_proactiveUnanswered >= 3) {
-      if (mounted) GlobalNotice.show('我先安静一会儿，你有话随时喊我~');
+      // 连续未回复达到上限后静默暂停，不打扰用户；下次用户发言时恢复。
       return;
     }
     // 上一个请求还没回完，这次主动回复顺延重排。
@@ -405,8 +405,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final hour = now.hour;
       final part =
           hour < 6 ? '夜深了' : (hour < 12 ? '早上好' : (hour < 18 ? '下午好' : '晚上好'));
+      final recent = _msgs.reversed
+          .take(8)
+          .map((m) =>
+              '${m['role'] == 'user' ? '我' : _bot['name']}: ${m['content']}')
+          .join('\n');
       final opener =
-          '（【主动回复】请以你自己的性格，$part，自然地对我说一句简短、真诚的话：可以问候、分享一句此刻的感想或轻轻拉开话题，字数控制在 60 字以内，不要出现“主动回复/指令/角色设置”等词，不要带括号标注。）';
+          '【主动回复】$part。请严格遵循你的系统人格、说话方式和分段习惯。根据最近对话决定：未结束就自然接着聊，已结束就开启一个合适的新话题。不要提及主动回复、指令或角色设置。回复分成 1-3 个短句，每句不超过 28 字，总字数不超过 80 字。最近对话：\n$recent';
       final result = await AIManager()
           .sendMessage(botId: botId, text: opener)
           .timeout(const Duration(minutes: 5));
@@ -1209,6 +1214,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   // ========== 图片预览 ==========
+  Future<void> _saveImageToGallery(String path) async {
+    try {
+      final permission = await Permission.photos.request();
+      if (!permission.isGranted && !permission.isLimited) {
+        GlobalNotice.show('没有相册保存权限');
+        return;
+      }
+      final dir = Directory('/storage/emulated/0/Pictures/TideBot');
+      await dir.create(recursive: true);
+      final ext = path.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+      final target = File(
+          '${dir.path}/tidebot_${DateTime.now().millisecondsSinceEpoch}.$ext');
+      await File(path).copy(target.path);
+      GlobalNotice.show('图片已保存到手机相册');
+    } catch (e) {
+      GlobalNotice.show('保存图片失败');
+    }
+  }
+
   void _previewImg(String path) {
     Navigator.push(
         context,
@@ -1218,6 +1242,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 appBar: AppBar(
                     backgroundColor: Colors.transparent,
                     elevation: 0,
+                    actions: [
+                      IconButton(
+                          onPressed: () => _saveImageToGallery(path),
+                          icon: const Icon(Icons.download_rounded,
+                              color: Colors.white),
+                          tooltip: '保存到相册')
+                    ],
                     leading: GestureDetector(
                         onTap: () => Navigator.pop(context),
                         child: const Icon(Icons.close, color: Colors.white))),
