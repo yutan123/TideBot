@@ -15,7 +15,7 @@ class MemoryManagerPage extends StatefulWidget {
 class _MemoryManagerPageState extends State<MemoryManagerPage> {
   List<Map<String, dynamic>> _items = [];
   String _type = 'long';
-  String _frequency = 'once';
+  String _frequency = 'daily';
   DateTime? _taskDate;
   TimeOfDay? _taskTime;
   bool _loading = true;
@@ -60,6 +60,209 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
     return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
   }
 
+  /// 自定义日期选择器（避免使用系统原生 showDatePicker）。
+  /// 通过年/月步进 + 当月日期网格选择，完全由 TideDialogs 构建。
+  Future<DateTime?> _pickDate(BuildContext ctx) async {
+    final theme = TideTheme.of(ctx);
+    var year = _taskDate?.year ?? DateTime.now().year;
+    var month = _taskDate?.month ?? DateTime.now().month;
+    var day = _taskDate?.day ?? DateTime.now().day;
+    return await showTideSheet<DateTime>(
+      context: ctx,
+      height: 440,
+      child: StatefulBuilder(builder: (ctx, setDialog) {
+        final daysInMonth = DateTime(year, month + 1, 0).day;
+        final firstWeekday = DateTime(year, month, 1).weekday;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+          children: [
+            const Text('选择日期',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 6),
+            // 年月步进
+            Row(children: [
+              IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded),
+                  onPressed: () => setDialog(() {
+                        if (month == 1) {
+                          month = 12;
+                          year--;
+                        } else {
+                          month--;
+                        }
+                        if (day > DateTime(year, month + 1, 0).day) {
+                          day = DateTime(year, month + 1, 0).day;
+                        }
+                      })),
+              Expanded(
+                  child: Center(
+                      child: Text('$year 年 $month 月',
+                          style: TextStyle(
+                              color: theme.textStrong,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont')))),
+              IconButton(
+                  icon: const Icon(Icons.chevron_right_rounded),
+                  onPressed: () => setDialog(() {
+                        if (month == 12) {
+                          month = 1;
+                          year++;
+                        } else {
+                          month++;
+                        }
+                        if (day > DateTime(year, month + 1, 0).day) {
+                          day = DateTime(year, month + 1, 0).day;
+                        }
+                      })),
+            ]),
+            const SizedBox(height: 4),
+            // 星期表头
+            Row(children: [
+              for (final w in const ['一', '二', '三', '四', '五', '六', '日'])
+                Expanded(
+                    child: Center(
+                        child: Text(w,
+                            style: TextStyle(
+                                color: theme.textWeak,
+                                fontSize: 12,
+                                fontFamily: 'TideFont')))),
+            ]),
+            const SizedBox(height: 6),
+            // 日期网格（7 列）
+            GridView.count(
+              crossAxisCount: 7,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 4,
+              crossAxisSpacing: 4,
+              children: [
+                for (var i = 0; i < firstWeekday - 1; i++) const SizedBox(),
+                for (var d = 1; d <= daysInMonth; d++)
+                  GestureDetector(
+                    onTap: () => Navigator.pop(ctx, DateTime(year, month, d)),
+                    child: Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: d == day ? theme.primary : theme.surfaceVariant,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text('$d',
+                          style: TextStyle(
+                              color: d == day ? Colors.white : theme.textStrong,
+                              fontFamily: 'TideFont')),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TideDialogs.glassButton('确定',
+                onTap: () => Navigator.pop(ctx, DateTime(year, month, day))),
+          ],
+        );
+      }),
+    );
+  }
+
+  /// 自定义时间选择器（避免使用系统原生 showTimePicker）。
+  /// 用小时/分钟网格选择。
+  Future<TimeOfDay?> _pickTime(BuildContext ctx) async {
+    final theme = TideTheme.of(ctx);
+    var hour = _taskTime?.hour ?? DateTime.now().hour;
+    var minute = _taskTime?.minute ?? 0;
+    return await showTideSheet<TimeOfDay>(
+      context: ctx,
+      height: 440,
+      child: StatefulBuilder(builder: (ctx, setDialog) {
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+          children: [
+            const Text('选择时间',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 8),
+            Text(
+                '${hour.toString().padLeft(2, '0')} : ${minute.toString().padLeft(2, '0')}',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: theme.primary,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 10),
+            const Text('小时',
+                style: TextStyle(
+                    color: Colors.grey, fontSize: 12, fontFamily: 'TideFont')),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var h = 0; h < 24; h++)
+                  GestureDetector(
+                    onTap: () => setDialog(() => hour = h),
+                    child: Container(
+                      width: 40,
+                      height: 36,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        color: h == hour ? theme.primary : theme.surfaceVariant,
+                      ),
+                      child: Text('$h',
+                          style: TextStyle(
+                              color:
+                                  h == hour ? Colors.white : theme.textStrong,
+                              fontFamily: 'TideFont')),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text('分钟',
+                style: TextStyle(
+                    color: Colors.grey, fontSize: 12, fontFamily: 'TideFont')),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var m = 0; m < 60; m += 5)
+                  GestureDetector(
+                    onTap: () => setDialog(() => minute = m),
+                    child: Container(
+                      width: 44,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        color:
+                            m == minute ? theme.primary : theme.surfaceVariant,
+                      ),
+                      child: Text('$m',
+                          style: TextStyle(
+                              color:
+                                  m == minute ? Colors.white : theme.textStrong,
+                              fontSize: 13,
+                              fontFamily: 'TideFont')),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TideDialogs.glassButton('确定',
+                onTap: () =>
+                    Navigator.pop(ctx, TimeOfDay(hour: hour, minute: minute))),
+          ],
+        );
+      }),
+    );
+  }
+
   Future<void> _edit([Map<String, dynamic>? item]) async {
     if (_type == 'future' && item != null) {
       final task = item['prompt']?.toString() ?? item['note']?.toString() ?? '';
@@ -92,7 +295,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           TextEditingController(text: item?['title']?.toString() ?? '');
       final prompt = TextEditingController(
           text: item?['prompt']?.toString() ?? item?['note']?.toString() ?? '');
-      _frequency = 'once';
+      _frequency = 'daily';
       _taskDate = DateTime.now();
       _taskTime = TimeOfDay.now();
       final ok = await TideDialogs.show<bool>(
@@ -118,41 +321,78 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                             maxLines: 5,
                             decoration:
                                 const InputDecoration(labelText: '给机器人的任务提示词')),
-                        DropdownButton<String>(
-                            value: _frequency,
-                            isExpanded: true,
-                            items: const [
-                              DropdownMenuItem(
-                                  value: 'daily', child: Text('每天')),
-                              DropdownMenuItem(value: 'once', child: Text('一次'))
-                            ],
-                            onChanged: (v) {
-                              if (v != null) setDialog(() => _frequency = v);
+                        const SizedBox(height: 10),
+                        // 自定义频率选择器（非系统原生）
+                        ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('执行频率',
+                                style: TextStyle(fontFamily: 'TideFont')),
+                            trailing: Text(_frequency == 'daily' ? '每天' : '一次',
+                                style: TextStyle(
+                                    color: TideTheme.of(ctx).primary,
+                                    fontFamily: 'TideFont')),
+                            onTap: () async {
+                              final picked = await showTideSheet<String>(
+                                context: ctx,
+                                height: 320,
+                                child: ListView(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                                  children: [
+                                    const Text('选择执行频率',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 18,
+                                            fontFamily: 'TideFont')),
+                                    const SizedBox(height: 8),
+                                    for (final opt in const [
+                                      ('daily', '每天'),
+                                      ('once', '一次')
+                                    ])
+                                      ListTile(
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(14)),
+                                        title: Text(opt.$2,
+                                            style: const TextStyle(
+                                                fontFamily: 'TideFont')),
+                                        trailing: _frequency == opt.$1
+                                            ? Icon(Icons.check_rounded,
+                                                color:
+                                                    TideTheme.of(ctx).primary)
+                                            : null,
+                                        onTap: () => Navigator.pop(ctx, opt.$1),
+                                      ),
+                                  ],
+                                ),
+                              );
+                              if (picked != null)
+                                setDialog(() => _frequency = picked);
                             }),
                         if (_frequency == 'once')
                           ListTile(
-                              title: Text(_taskDate == null
-                                  ? '选择日期'
-                                  : '${_taskDate!.year}-${_taskDate!.month}-${_taskDate!.day}'),
-                              trailing: const Icon(Icons.calendar_today),
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('日期',
+                                  style: TextStyle(fontFamily: 'TideFont')),
+                              trailing: Text(
+                                  '${_taskDate!.year}-${_taskDate!.month.toString().padLeft(2, '0')}-${_taskDate!.day.toString().padLeft(2, '0')}',
+                                  style: TextStyle(
+                                      color: TideTheme.of(ctx).primary,
+                                      fontFamily: 'TideFont')),
                               onTap: () async {
-                                final d = await showDatePicker(
-                                    context: ctx,
-                                    firstDate: DateTime.now(),
-                                    lastDate: DateTime.now()
-                                        .add(const Duration(days: 3650)),
-                                    initialDate: _taskDate ?? DateTime.now());
+                                final d = await _pickDate(ctx);
                                 if (d != null) setDialog(() => _taskDate = d);
                               }),
                         ListTile(
-                            title: Text(_taskTime == null
-                                ? '选择时间'
-                                : _taskTime!.format(ctx)),
-                            trailing: const Icon(Icons.access_time),
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('时间',
+                                style: TextStyle(fontFamily: 'TideFont')),
+                            trailing: Text(_taskTime!.format(ctx),
+                                style: TextStyle(
+                                    color: TideTheme.of(ctx).primary,
+                                    fontFamily: 'TideFont')),
                             onTap: () async {
-                              final t = await showTimePicker(
-                                  context: ctx,
-                                  initialTime: _taskTime ?? TimeOfDay.now());
+                              final t = await _pickTime(ctx);
                               if (t != null) setDialog(() => _taskTime = t);
                             }),
                         const SizedBox(height: 14),
@@ -309,9 +549,9 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
     final theme = TideTheme.of(context);
     final accent = _type == 'long'
         ? theme.primary
-        : _type == 'medium'
-            ? const Color(0xFF8B7CF6)
-            : const Color(0xFFF09B5D);
+        : _type == 'short'
+            ? const Color(0xFFF09B5D)
+            : const Color(0xFF8B7CF6);
     return Scaffold(
         backgroundColor: theme.bgColor,
         appBar: AppBar(

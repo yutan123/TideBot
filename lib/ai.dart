@@ -96,17 +96,21 @@ class AIManager {
     // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
     // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
     final primary = {'local': primaryLocal, 'provider': primaryRemote};
-    final backup = {
-      'local': backupLocal,
-      'provider': backupRemote.isNotEmpty ? backupRemote : primaryRemote,
-    };
+    final backup = {'local': backupLocal, 'provider': backupRemote};
+    bool configured(Map<String, String> candidate) =>
+        candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
+    // Never attempt an empty primary. A configured backup must be usable even
+    // when the bot has no primary model selected.
     final attempts = <Map<String, String>>[
-      primary,
-      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty) backup,
-      if (backupLocal.isNotEmpty || backupRemote.isNotEmpty) backup,
-      if (backupLocal.isEmpty && backupRemote.isEmpty) primary,
-      if (backupLocal.isEmpty && backupRemote.isEmpty) primary,
-    ].take(3).toList();
+      if (configured(primary)) primary,
+      if (configured(backup)) backup,
+      if (configured(backup)) backup,
+      if (configured(primary) && !configured(backup)) primary,
+      if (configured(primary) && !configured(backup)) primary,
+    ];
+    if (attempts.isEmpty) {
+      return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
+    }
 
     Map<String, dynamic>? lastFailure;
     for (var index = 0; index < attempts.length; index++) {
@@ -709,8 +713,15 @@ class AIManager {
           }
 
           final ttsModel = bot['tts_model'];
-          if (ttsModel != null && ttsModel.toString().isNotEmpty) {
-            // fire-and-forget：后台生成语音，成功后单独把该气泡升级为 audio 类型（replace 覆盖同 id）
+          final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
+          final voiceChance =
+              (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
+                  .clamp(1, 100);
+          if (voiceEnabled &&
+              ttsModel != null &&
+              ttsModel.toString().isNotEmpty &&
+              Random().nextInt(100) < voiceChance) {
+            // TTS failures intentionally keep the original text message unchanged.
             unawaited(() async {
               final audioPath =
                   await _generateTTS(replyText, ttsModel.toString());
@@ -1038,7 +1049,7 @@ class AIManager {
   ///
   /// 机器人的记忆是"第一人称日记"，不是对话摘要（不写"本次对话讨论了..."）。
   /// 模型须返回 JSON 数组，每一条是机器人第一人称记录的真实事件/感受的简短句子，
-  /// 且每条都是独立条目（无标题、不合并成一段长文），由应用端逐条落库到 medium。
+  /// 且每条都是独立条目（无标题、不合并成一段长文），由应用端逐条落库到短期记忆。
   Future<void> _summarizeHistoryIfNeeded({
     required Map<String, dynamic> bot,
     required String botId,
@@ -1103,14 +1114,14 @@ class AIManager {
               'messages': [
                 {
                   'role': 'system',
-                  'content': '你正在以自己的身份维护记忆日记。请依据人设和称呼，用第一人称自然记录，不要写成客服摘要。'
+                  'content': '你正在以自己的身份维护记忆日记。请依据人设和称呼自然地记录，不要写成客服摘要。'
                       '必须只输出一个 JSON 对象，格式：'
-                      '{"upsert":[{"id":"已有 id 或留空","content":"第一人称正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
+                      '{"upsert":[{"id":"已有 id 或留空","content":"记忆正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
                       '规则：\n'
                       '1. content 是单条独立正文，不得标题、编号、心情标签或“重要事件”。\n'
-                      '2. 必须第一人称，语气贴合角色人设；不要出现“我记得”“用户说”“用户告诉我”“助手回复”“本次对话”“讨论了”。中期日记可自然使用今天、昨天、近日等时间词。\n'
+                      '2. 记忆整体用第一人称，但不必在句首硬加“我”（例如写“京太郎每天睡够8小时”，不要写“我京太郎每天睡够8小时”）。不要出现“我记得”“我知道”。称呼用户时禁止用“用户”或第二人称“你”：已知名字就写名字，未知性别写“他”，已知性别写“他/她”。短期日记可自然使用今天、昨天、近日等时间词。\n'
                       '3. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
-                      '4. 已有内容仍正确时不要重复新增；需要修正就对其 id upsert；过时或冲突才 delete。\n'
+                      '4. 已有记忆仍正确时不要重复新增（去重）；需要修正就对其 id upsert；过时或冲突才 delete。允许添加新记忆。\n'
                       '5. expires_days 为 0 表示不过期，近期事项可填 1~30。无更新时输出 {"upsert":[],"delete":[]}。',
                 },
                 {'role': 'user', 'content': userPayload},
@@ -1491,7 +1502,11 @@ class AIManager {
     final baseUrl = (provider['base_url']?.toString() ?? '')
         .replaceFirst(RegExp(r'/+$'), '');
     if (baseUrl.isEmpty) return null;
-    final style = await db.getKV('bot_image_style') ?? '写实';
+    // “不选择”或空风格时不给生图模型任何风格约束，让模型自行决定；
+    // 只有填写了具体风格才拼进 prompt。
+    final styleRaw = (await db.getKV('bot_image_style') ?? '').trim();
+    final styleSuffix =
+        (styleRaw.isEmpty || styleRaw == '不选择') ? '' : '，画面风格：$styleRaw。';
     try {
       final response = await http
           .post(
@@ -1502,7 +1517,7 @@ class AIManager {
             },
             body: jsonEncode({
               'model': provider['model'],
-              'prompt': '$prompt。画面风格：$style。',
+              'prompt': '$prompt$styleSuffix',
               'n': 1,
               'size': '1024x1024'
             }),
@@ -1780,9 +1795,11 @@ class AIManager {
   Future<String> _buildToolContext(DBManager db) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
-      final style = await db.getKV('bot_image_style') ?? '写实';
-      parts.add(
-          '【已授权工具：生图】当用户明确需要图片时，可建议使用生图；所有图片必须采用“$style”风格。不要声称已生成不存在的图片。');
+      final style = (await db.getKV('bot_image_style') ?? '写实').trim();
+      final styleRule = style.isEmpty || style == '不选择'
+          ? '图片风格由你根据用户需求自行决定。'
+          : '所有图片必须采用“$style”风格。';
+      parts.add('【已授权工具：生图】当用户明确需要图片时，可建议使用生图；$styleRule 不要声称已生成不存在的图片。');
     }
     if (await db.getKV('web_search_enabled') == 'true') {
       final provider = _normalizeSearchProvider(
@@ -1804,14 +1821,17 @@ class AIManager {
   }
 
   // 构建核心防御护栏与游戏机制注入
+  Future<String?> generateTTS(String text, String providerId) =>
+      _generateTTS(text, providerId);
+
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
         "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
-        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|用户叫李小明，他是我最重要的朋友]。长期记忆的正文必须用第一人称、以“我知道/我清楚”这类口吻自然表达，绝对不要出现“我记得”三个字；且长期记忆绝不能出现“今天、昨天、明天、昨天下午、近日、上周、刚才、现在、刚刚、此刻、凌晨”等任何时间相关词汇，请用“他/用户”等指代而非时间。\n"
-        "- 近期发生过的、带有明显时间属性的事件/感受（第一人称日记式短句）用 [记忆:内容]，此类型可以自然使用“今天、昨天、昨天下午、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
-        "一条记忆一个标签，多条则连续输出；内容务必用第一人称（以“我”的口吻），直接写正文、不要用“我记得”作为开头。日记式记忆不要使用第二人称“你”；已知用户称呼时优先使用该称呼，否则使用“他”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
+        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|京太郎每天睡够8小时]。长期记忆正文要自然、稳定，绝对不要出现“我记得”“我知道”这类口头语；也绝不能出现“今天、昨天、明天、近日、上周、刚才、现在”等任何时间相关词汇。称呼用户时，若已知道对方的名字/称呼就必须用那个称呼（如“京太郎”），绝不能用“用户”这两个字。\n"
+        "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
+        "一条记忆一个标签，多条则连续输出；记忆整体用第一人称写，但不必在句首硬加“我”（例如直接写“京太郎每天睡够8小时”而不是“我京太郎每天睡够8小时”）。称呼用户时不要用第二人称“你”，也禁止出现“用户”这个词：已知用户的名字就写名字，不知道性别就写“他”，从聊天中推断出性别后写“他/她”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {
       p +=
@@ -1875,12 +1895,10 @@ class AIManager {
         if (type == 'long') {
           content = _cleanLongMemoryText(content);
         }
-        // 强制第一人称日记：若正文不是以第一人称开头，用“我”衔接（例如
-        // “知道了这件事”→“我知道了这件事”）。但绝不添加“我记得”前缀——
-        // 用户明确要求机器人记忆不写“我记得”。
-        if (!RegExp(r'^(我|我们|咱)', caseSensitive: false).hasMatch(content)) {
-          content = '我$content';
-        }
+        // 记忆采用第一人称，但不强制以“我”开头：例如“京太郎每天睡够8小时”
+        // 就是正确写法。若模型写出了“我京太郎...”，去掉误加的“我”，避免把
+        // 第三人称称呼误当成机器人自己的名字。绝不添加“我记得”前缀。
+        content = _stripLooseWo(content);
         content = content.trim();
         if (content.isEmpty) continue;
         await db.upsertMemoryItem(
@@ -1909,10 +1927,77 @@ class AIManager {
       '',
     );
     s = s.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
-    if (s.isNotEmpty &&
-        !RegExp(r'^(我|我们|咱)', caseSensitive: false).hasMatch(s)) {
-      s = '我$s';
-    }
+    // 不强制以“我”开头。若模型写出了“我京太郎...”，去掉误加的“我”。
+    s = _stripLooseWo(s);
     return s.trim();
+  }
+
+  /// 去掉记忆正文前被模型误加的“我”，避免“我京太郎…”。只会在“我”之后
+  /// 直接跟着一个疑似人名/称呼（非常见第一人称搭配词）时移除；而“我今天
+  /// 很高兴”“我觉得…”等正确的第一人称写法会被保留。
+  String _stripLooseWo(String s) {
+    // 常见第一人称后续词，遇到这些就说明“我”是真实主语，不能删除。
+    const keepList = [
+      '今天',
+      '今天上午',
+      '今天中午',
+      '今天下午',
+      '今天早上',
+      '今天夜里',
+      '昨天',
+      '明天',
+      '前天',
+      '后天',
+      '昨晚',
+      '记得',
+      '觉得',
+      '想',
+      '会',
+      '要',
+      '是',
+      '爱',
+      '喜欢',
+      '希望',
+      '知道',
+      '认为',
+      '正在',
+      '已经',
+      '刚',
+      '最近',
+      '现在',
+      '能',
+      '可以',
+      '应该',
+      '很',
+      '真的',
+      '有点',
+      '有些',
+      '其实',
+      '也',
+      '都',
+      '还',
+      '总',
+      '常',
+      '曾经',
+      '终于',
+      '忽然',
+      '突然',
+      '打算',
+      '准备',
+      '决定',
+      '答应',
+      '保证',
+      '没有',
+      '不是',
+      '不会',
+      '不想',
+      '说不出',
+      '很好',
+      '很累',
+      '很开心'
+    ];
+    final keep = keepList.map((w) => RegExp.escape(w)).join('|');
+    final re = RegExp('^我(?=[\\u4e00-\\u9fa5]{2})(?!$keep)');
+    return s.replaceAll(re, '');
   }
 }

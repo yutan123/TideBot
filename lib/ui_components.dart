@@ -27,8 +27,16 @@ class TideHaptics {
         .setBool('tide_haptics_enabled', value);
   }
 
+  static const MethodChannel _channel = MethodChannel('tidebot.native.channel');
+
   static void tap() {
     if (!_enabled) return;
+    // Use Android's Vibrator directly. Flutter haptic feedback remains a fallback
+    // for platforms without the native TideBot channel.
+    _channel.invokeMethod<bool>('vibrate', {
+      'duration': 24,
+      'amplitude': 180,
+    }).catchError((_) => false);
     HapticFeedback.mediumImpact().catchError((_) => HapticFeedback.vibrate());
   }
 }

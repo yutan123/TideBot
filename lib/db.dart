@@ -834,7 +834,9 @@ class DBManager {
       for (var e in decoded) {
         final m = e as Map<String, dynamic>;
         result.add({
-          'id': 'p_${m['name']}',
+          'id': m['id']?.toString().isNotEmpty == true
+              ? m['id'].toString()
+              : 'legacy_p_${m['name']}_${m['url']}_${m['model']}',
           'type': 'chat',
           'name': m['name'] ?? '',
           'base_url': m['url'] ?? '',
@@ -866,7 +868,9 @@ class DBManager {
       for (var e in decoded) {
         final m = e as Map<String, dynamic>;
         result.add({
-          'id': 'ts_${m['name']}',
+          'id': m['id']?.toString().isNotEmpty == true
+              ? m['id'].toString()
+              : 'ts_${m['name']}',
           'type': 'tts',
           'name': m['name'] ?? '',
           'base_url': m['url'] ?? '',

@@ -64,6 +64,10 @@ class _CreateBotPageState extends State<CreateBotPage> {
       } else {
         data['id'] = 'bot_${DateTime.now().millisecondsSinceEpoch}';
         data['created_at'] = DateTime.now().millisecondsSinceEpoch;
+        final providers = await DBManager().queryChatProviders();
+        if (providers.isNotEmpty) {
+          data['chat_model'] = providers.first['id']?.toString() ?? '';
+        }
         await DBManager().insertBot(data);
       }
       if (mounted) Navigator.pop(context, true);

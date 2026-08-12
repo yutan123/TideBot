@@ -8,6 +8,11 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+
 import android.graphics.pdf.PdfRenderer
 import android.provider.AlarmClock
 import androidx.annotation.NonNull
@@ -45,6 +50,31 @@ class MainActivity: FlutterActivity() {
                         startActivity(intent)
                         result.success(true)
                     } else {
+                        result.success(false)
+                    }
+                }
+                "vibrate" -> {
+                    val duration = (call.argument<Int>("duration") ?: 24).toLong().coerceIn(1L, 500L)
+                    val amplitude = (call.argument<Int>("amplitude") ?: 180).coerceIn(1, 255)
+                    try {
+                        val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+                        } else {
+                            @Suppress("DEPRECATION")
+                            getSystemService(VIBRATOR_SERVICE) as Vibrator
+                        }
+                        if (vibrator?.hasVibrator() != true) {
+                            result.success(false)
+                        } else {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator.vibrate(duration)
+                            }
+                            result.success(true)
+                        }
+                    } catch (_: Exception) {
                         result.success(false)
                     }
                 }

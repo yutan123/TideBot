@@ -66,9 +66,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   int _requestGen = 0;
   String _queuedText = '';
   bool _queued = false;
-  // 判断一段回复是否已经由“真实厂商流式”产生了增量（用于非流式 provider 的
-  // 模拟打字机托管判断）。
-  bool _hadRealStreamDelta = false;
 
   // ===== 主动回复调度（前台 UI 层）=====
   // 后台 isolate 无法使用 AIManager，因此主动回复放在聊天室前台通过 Timer 调度。
@@ -218,40 +215,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Timer? _streamDisplayTimer;
 
-  /// Removes model-side protocol fragments before they can reach a streaming
-  /// bubble. Keep incomplete `[` / `<` fragments buffered: a label can arrive
-  /// across several SSE chunks, so filtering each chunk independently leaks it.
-  String _visibleStreamingText(String raw, {bool finalChunk = false}) {
-    var text = raw
-        .replaceAll(
-            RegExp(
-                r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
-                caseSensitive: false),
-            '')
-        .replaceAll(
-            RegExp(
-                r'<\|?\s*DSML\s*\|?\s*invoke[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*invoke\s*>',
-                caseSensitive: false),
-            '')
-        .replaceAll(
-            RegExp(
-                r'\[(?:心情|发送时间|现实时间(?:附注)?|工具|贴纸|表情包|表情|记忆|类型|sticker(?:[_ -]?type)?)\s*[:：][^\]]*\]',
-                caseSensitive: false),
-            '');
-
-    if (!finalChunk) {
-      final bracket = text.lastIndexOf('[');
-      final closingBracket = text.lastIndexOf(']');
-      final angle = text.lastIndexOf('<');
-      final closingAngle = text.lastIndexOf('>');
-      final cutAt = bracket > closingBracket
-          ? bracket
-          : (angle > closingAngle ? angle : -1);
-      if (cutAt >= 0) text = text.substring(0, cutAt);
-    }
-    return text;
-  }
-
   List<String> _splitReplySegments(String content) {
     final matches = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
         .allMatches(content)
@@ -262,30 +225,31 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   /// 分段回复的句间自然等待。
-  /// 默认 400–1000ms（按句长适度伸缩，句长越长等待略长，模拟真人打字阅读节奏）；
-  /// 若用户在设置中开启了自定义随机延迟，则用自定义区间覆盖默认值。
+  /// 基础延迟固定 500–1000ms（每句随机，模拟真人打字/阅读节奏）。
+  /// 若用户在设置中开启了全局随机延迟（random_reply_delay_enabled），则在
+  /// 基础延迟之上再叠加一段自定义随机延迟。
   Future<void> _applyRandomReplyDelay(DBManager db) async {
-    var minMs = 400;
-    var maxMs = 1000;
+    // 基础分段延迟：500–1000ms。
+    final baseMs = 500 + DateTime.now().microsecond.remainder(1000 - 500 + 1);
+    var totalMs = baseMs;
     final enabled = await db.getKV('random_reply_delay_enabled') == 'true';
     if (enabled) {
-      final minS = int.tryParse(
+      var minS = int.tryParse(
               await db.getKV('random_reply_delay_min_seconds') ?? '') ??
           0;
-      final maxS = int.tryParse(
+      var maxS = int.tryParse(
               await db.getKV('random_reply_delay_max_seconds') ?? '') ??
           2;
-      minMs = (minS.clamp(0, 60)) * 1000;
-      maxMs = (maxS.clamp(minS, 60)) * 1000;
-      if (maxMs == 0) maxMs = minMs + 1;
-      final delay =
-          minMs + DateTime.now().microsecond.remainder(maxMs - minMs + 1);
-      if (delay > 0) await Future<void>.delayed(Duration(milliseconds: delay));
-      return;
+      final extraMin = (minS.clamp(0, 60)) * 1000;
+      var extraMax = (maxS.clamp(minS, 60)) * 1000;
+      if (extraMax < extraMin) extraMax = extraMin;
+      final extraDelay = extraMin +
+          DateTime.now().microsecond.remainder(extraMax - extraMin + 1);
+      totalMs += extraDelay;
     }
-    // 默认模式：400–1000ms 之间随机，保证分段句间的自然节奏。
-    final delayMs = 400 + DateTime.now().microsecond.remainder(1000 - 400 + 1);
-    await Future<void>.delayed(Duration(milliseconds: delayMs));
+    if (totalMs > 0) {
+      await Future<void>.delayed(Duration(milliseconds: totalMs));
+    }
   }
 
   /// 流式已把完整文本展示在屏上时，只需按句落库（供重新进入后呈现分段）。
@@ -548,7 +512,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final myGen = _requestGen;
     // 被合并拦截的过期请求不再落库，避免聊天记录顺序混乱。
     final persistThisReply = myGen == _requestGen;
-    _hadRealStreamDelta = false; // 每组请求独立判断厂商是否回传真实流式增量
 
     late final Map<String, dynamic> msg;
     if (!noUserBubble) {
@@ -647,8 +610,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 再按句落库并依次展示，不能因为开启分段就把流式功能关闭。
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
-      var rawStreamText = '';
-      var shownStreamText = '';
       var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
@@ -701,29 +662,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             onDelta: streamingMessage == null
                 ? null
                 : (delta) {
-                    _hadRealStreamDelta = true; // 厂商确实回传了流式增量
-                    rawStreamText += delta;
-                    final visible = _visibleStreamingText(rawStreamText);
-                    if (visible.length > shownStreamText.length) {
-                      pendingDisplay +=
-                          visible.substring(shownStreamText.length);
-                      shownStreamText = visible;
-                    }
+                    // 用户要求“服务商完整回复后再前端打字机渲染”：这里不把 SSE 增量
+                    // 实时送上前端，完整内容在 result 返回后统一交给下方打字机定时器
+                    // 渲染，避免边生成边显示。onDelta 仅用于维持请求的流式连接。
                   },
           )
           .timeout(requestTimeout);
 
       _streamDisplayTimer?.cancel();
       _streamDisplayTimer = null;
-      // 真实 SSE 残留增量冲刷进流式气泡（若厂商回传了流式增量）。
-      if (streamingMessage != null && pendingDisplay.isNotEmpty && mounted) {
-        final displayMessage = streamingMessage;
-        setState(() {
-          displayMessage['content'] =
-              '${displayMessage['content']}$pendingDisplay';
-          pendingDisplay = '';
-        });
-      }
 
       if (result['success'] != true) {
         if (streamingMessage != null && mounted) {
@@ -781,18 +728,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         return;
       }
 
-      // ===== 模拟打字机（流式开启但厂商未回传增量时）=====
-      // 需求：完整回复收到后再用打字机逐字渲染，而不只是依赖厂商 SSE 边生成边显示。
-      // 针对“流式开启、已创建流式气泡，但 provider 整段返回（从未触发 onDelta）”
-      // 的场景：把完整文本喂给字幕定时器逐字上屏，播完后定格为完整内容。
-      final needsTypewriter = streamingMessage != null &&
-          !_hadRealStreamDelta &&
-          !segmentedReply &&
-          content.isNotEmpty;
+      // ===== 模拟打字机（流式开启、非分段）=====
+      // 用户需求：无论厂商是否回传 SSE 增量，前端都等服务商完整回复后再用打字机
+      // 逐字渲染，而不是边生成边显示。完整 content 收到后统一喂给字幕定时器上屏，
+      // 播完后定格为完整内容。
+      final needsTypewriter =
+          streamingMessage != null && !segmentedReply && content.isNotEmpty;
       if (needsTypewriter && mounted) {
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
-        shownStreamText = content;
         final tm = streamingMessage;
         final speed =
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
@@ -834,22 +778,27 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         // 开启分段后流水输出依旧正常生效。分段的落库与句间节奏仍在分支内处理。
         if (streamingMessage != null) {
           if (segmentedReply) {
-            // 结束流式后立即用独立句子气泡替换占位气泡，保证首次显示与重进页面一致。
+            // 分段开启：先移除流式占位气泡，首句立即出现，之后每句随机延迟
+            // 0.5–1s（配合全局随机延迟叠加）逐条上屏，并逐句落库。
+            _streamDisplayTimer?.cancel();
+            _streamDisplayTimer = null;
             final segments = _splitReplySegments(content);
             final baseTimestamp = aiMsg['timestamp'] as int;
-            final displaySegments = <Map<String, dynamic>>[];
+            if (mounted) {
+              setState(() => _msgs.remove(streamingMessage));
+            }
             for (var index = 0; index < segments.length; index++) {
-              displaySegments.add(Map<String, dynamic>.from(aiMsg)
+              if (index > 0) await _applyRandomReplyDelay(db);
+              if (!mounted) return;
+              final segMsg = Map<String, dynamic>.from(aiMsg)
                 ..['id'] = index == 0
                     ? aiMsg['id'].toString()
                     : '${aiMsg['id']}_segment_$index'
                 ..['content'] = segments[index]
-                ..['timestamp'] = baseTimestamp + index);
+                ..['timestamp'] = baseTimestamp + index;
+              setState(() => _msgs.add(segMsg));
+              _scrollDown();
             }
-            setState(() {
-              _msgs.remove(streamingMessage);
-              _msgs.addAll(displaySegments);
-            });
             await _persistSegments(db, aiMsg, result, content,
                 segmentsDelayed: false);
           } else if (needsTypewriter) {

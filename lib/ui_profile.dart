@@ -706,9 +706,13 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _webSearch = false;
   bool _showSearchSources = false;
   bool _stickers = false;
+  bool _voiceReply = false;
   String _imageStyle = '写实';
   String _searchProvider = 'Tavily';
   int _stickerChance = 50;
+  int _voiceReplyChance = 50;
+  final TextEditingController _voiceReplyChanceController =
+      TextEditingController(text: '50');
   final TextEditingController _searchKeyController = TextEditingController();
   bool _showSearchKey = false;
   final TextEditingController _stickerChanceController =
@@ -765,6 +769,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final searchProvider = await db.getKV('web_search_provider');
     final searchKey = await db.getKV('web_search_api_key');
     final stickers = await db.getKV('bot_stickers_enabled');
+    final voiceReply = await db.getKV('voice_reply_enabled');
+    final voiceReplyChance =
+        int.tryParse(await db.getKV('voice_reply_chance') ?? '');
     final stickerChance =
         int.tryParse(await db.getKV('bot_sticker_chance') ?? '');
     final botPostsPerDay =
@@ -789,14 +796,18 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _botPosts = botPosts == 'true';
       _lifeSchedule = lifeSchedule != 'false';
       _imageGeneration = imageGeneration != 'false';
-      _imageStyle =
-          ['写实', '动漫', '科幻', '自定义'].contains(imageStyle) ? imageStyle! : '写实';
+      // 自定义风格是任意文本（如“水彩插画”），不能只按预设白名单判定；
+      // 只有真正为空时才回退到默认的“写实”。
+      _imageStyle = imageStyle?.trim().isNotEmpty == true ? imageStyle! : '写实';
       _webSearch = webSearch == 'true';
       _showSearchSources = showSearchSources == 'true';
       _searchProvider = _displaySearchProvider(
           searchProvider?.isNotEmpty == true ? searchProvider! : '');
       _searchKeyController.text = searchKey ?? '';
       _stickers = stickers == 'true';
+      _voiceReply = voiceReply == 'true';
+      _voiceReplyChance = (voiceReplyChance ?? 50).clamp(1, 100);
+      _voiceReplyChanceController.text = _voiceReplyChance.toString();
       _stickerChance = (stickerChance ?? 50).clamp(1, 100);
       _stickerChanceController.text = _stickerChance.toString();
       _botPostsPerDayController.text =
@@ -818,6 +829,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     _proactiveMaxController.dispose();
     _botPostsPerDayController.dispose();
     _searchKeyController.dispose();
+    _voiceReplyChanceController.dispose();
     _stickerChanceController.dispose();
     super.dispose();
   }
@@ -1278,10 +1290,57 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                         theme: theme,
                         label: '默认生图风格',
                         value: _imageStyle,
-                        options: const ['写实', '动漫', '科幻', '自定义'],
+                        options: const ['写实', '动漫', '科幻', '不选择', '自定义'],
                         icon:
                             Icon(Icons.palette_outlined, color: theme.primary),
-                        onPick: (value) {
+                        onPick: (value) async {
+                          if (value == '自定义') {
+                            final controller = TextEditingController(
+                                text: _imageStyle == '自定义' ? '' : _imageStyle);
+                            final custom = await TideDialogs.show<String>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: Colors.transparent,
+                                contentPadding: EdgeInsets.zero,
+                                content: TideDialogs.glassContent(
+                                  context: ctx,
+                                  children: [
+                                    const Text('自定义生图风格',
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w700,
+                                            fontFamily: 'TideFont')),
+                                    const SizedBox(height: 12),
+                                    TextField(
+                                      controller: controller,
+                                      autofocus: true,
+                                      decoration: const InputDecoration(
+                                          hintText: '例如：水彩插画、赛博朋克、胶片摄影'),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Row(children: [
+                                      Expanded(
+                                        child: TideDialogs.glassButton('取消',
+                                            onTap: () => Navigator.pop(ctx)),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TideDialogs.glassButton('保存',
+                                            onTap: () => Navigator.pop(
+                                                ctx, controller.text.trim())),
+                                      ),
+                                    ]),
+                                  ],
+                                ),
+                              ),
+                            );
+                            controller.dispose();
+                            if (custom == null || custom.isEmpty) return;
+                            if (!mounted) return;
+                            setState(() => _imageStyle = custom);
+                            _save('bot_image_style', custom);
+                            return;
+                          }
                           setState(() => _imageStyle = value);
                           _save('bot_image_style', value);
                         },
@@ -1294,6 +1353,40 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
           FrostCard(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(children: [
+              _settingSwitch(
+                theme: theme,
+                title: '语音回复',
+                help: '默认关闭。命中概率时，机器人会尝试生成语音；失败时仍只显示原文本。',
+                value: _voiceReply,
+                onChanged: (v) {
+                  setState(() => _voiceReply = v);
+                  _save('voice_reply_enabled', '$v');
+                },
+                child: _voiceReply
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                        child: TextField(
+                          controller: _voiceReplyChanceController,
+                          keyboardType: TextInputType.number,
+                          style: TextStyle(
+                              color: theme.textStrong, fontFamily: 'TideFont'),
+                          decoration: _roundInput(theme,
+                              label: '随机语音回复概率（1–100）',
+                              icon: Icon(Icons.record_voice_over_rounded,
+                                  color: theme.primary)),
+                          onChanged: (value) {
+                            final chance = int.tryParse(value);
+                            if (chance != null &&
+                                chance >= 1 &&
+                                chance <= 100) {
+                              _voiceReplyChance = chance;
+                              _save('voice_reply_chance', '$chance');
+                            }
+                          },
+                        ),
+                      )
+                    : null,
+              ),
               _settingSwitch(
                 theme: theme,
                 title: '机器人发送表情包',
@@ -1795,15 +1888,11 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'name': nCtrl.text.trim(),
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
-                          'model': model
+                          'model': model,
+                          'id':
+                              'provider_${DateTime.now().microsecondsSinceEpoch}',
                         };
-                        final idx =
-                            _providers.indexWhere((e) => e['id'] == p['id']);
-                        if (idx >= 0) {
-                          _providers[idx] = p;
-                        } else {
-                          _providers.add(p);
-                        }
+                        _providers.add(p);
                       });
                       Navigator.pop(ctx);
                       _saveList();
@@ -1870,15 +1959,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
                           'model': model,
-                          'voice': vCtrl.text.trim()
+                          'voice': vCtrl.text.trim(),
+                          'id': 'tts_${DateTime.now().microsecondsSinceEpoch}',
                         };
-                        final i =
-                            _ttsProviders.indexWhere((e) => e['id'] == p['id']);
-                        if (i >= 0) {
-                          _ttsProviders[i] = p;
-                        } else {
-                          _ttsProviders.add(p);
-                        }
+                        _ttsProviders.add(p);
                       });
                       Navigator.pop(ctx);
                       _saveList();
@@ -1888,26 +1972,39 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   Widget _f(String label, TextEditingController c, {bool obscure = false}) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: 13,
-                color: TideTheme.of(context).textWeak,
-                fontFamily: 'TideFont')),
-        const SizedBox(height: 4),
-        Container(
-            decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: TideTheme.of(context).surfaceVariant),
-            child: TextField(
-                controller: c,
-                obscureText: obscure,
-                style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
-                decoration: const InputDecoration(
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: InputBorder.none)))
-      ]);
+      StatefulBuilder(builder: (context, setFieldState) {
+        var hidden = obscure;
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              style: TextStyle(
+                  fontSize: 13,
+                  color: TideTheme.of(context).textWeak,
+                  fontFamily: 'TideFont')),
+          const SizedBox(height: 4),
+          Container(
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: TideTheme.of(context).surfaceVariant),
+              child: TextField(
+                  controller: c,
+                  obscureText: hidden,
+                  style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
+                  decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      border: InputBorder.none,
+                      suffixIcon: obscure
+                          ? IconButton(
+                              tooltip: hidden ? '显示 API Key' : '隐藏 API Key',
+                              icon: Icon(hidden
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined),
+                              onPressed: () =>
+                                  setFieldState(() => hidden = !hidden),
+                            )
+                          : null)))
+        ]);
+      });
   void _editProvider(Map<String, dynamic> p) {
     final nCtrl = TextEditingController(text: p['name']);
     final uCtrl = TextEditingController(text: p['url']);
