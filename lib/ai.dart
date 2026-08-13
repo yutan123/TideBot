@@ -199,16 +199,21 @@ class AIManager {
         final ts = DateTime.now().millisecondsSinceEpoch;
         final messageId = 'msg_a_${ts + 1}';
         if (persistResponse) {
-          await db.insertChatMessage({
-            'id': messageId,
-            'bot_id': botId,
-            'role': 'assistant',
-            'type': 'text',
-            'content': reply,
-            'file_path': null,
-            'mood': localMood,
-            'timestamp': ts + 1,
-          });
+          final segmented =
+              await db.getKV('segmented_reply_enabled') != 'false';
+          final parts = segmented ? _replySegments(reply) : <String>[reply];
+          for (var index = 0; index < parts.length; index++) {
+            await db.insertChatMessage({
+              'id': index == 0 ? messageId : '${messageId}_segment_$index',
+              'bot_id': botId,
+              'role': 'assistant',
+              'type': 'text',
+              'content': parts[index],
+              'file_path': null,
+              'mood': localMood,
+              'timestamp': ts + 1 + index,
+            });
+          }
         }
         return {
           'success': true,
@@ -646,9 +651,11 @@ class AIManager {
         final msgId = 'msg_a_${ts + 1}';
         Map<String, dynamic>? sticker;
         if (persistResponse &&
+            !RegExp(r'\[(?:表情包|贴纸)\s*[:：]', caseSensitive: false)
+                .hasMatch(replyText) &&
             await db.getKV('bot_stickers_enabled') == 'true') {
           final chance =
-              (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 50)
+              (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 100)
                   .clamp(1, 100);
           if (Random().nextInt(100) < chance) {
             final candidates = await db.queryStickers(emotion: mood);
@@ -713,7 +720,7 @@ class AIManager {
 
           if (sticker != null) {
             await db.insertChatMessage({
-              'id': 'msg_s_${ts + 3}',
+              'id': 'msg_s_${ts + 2 + segments.length}',
               'bot_id': botId,
               'role': 'assistant',
               'type': 'sticker',
@@ -721,7 +728,7 @@ class AIManager {
               'content': '',
               'file_path': sticker['file_path']?.toString(),
               'mood': mood,
-              'timestamp': ts + 3,
+              'timestamp': ts + 2 + segments.length,
             });
           }
 
@@ -734,6 +741,8 @@ class AIManager {
               ttsModel != null &&
               ttsModel.toString().isNotEmpty &&
               Random().nextInt(100) < voiceChance) {
+            AppLogService.instance.add('TTS',
+                '准备请求语音模型：${ttsModel.toString()}，文本 ${replyText.length} 字');
             // TTS failures intentionally keep the original text message unchanged.
             unawaited(() async {
               final audioPath =
@@ -982,7 +991,12 @@ class AIManager {
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
       if (baseUrl.isEmpty || model.isEmpty) return null;
 
-      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com');
+      final providerName = (provider['name'] ?? '').toString().toLowerCase();
+      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com') ||
+          providerName.contains('百炼') ||
+          providerName.contains('dashscope') ||
+          model.toLowerCase().contains('sambert') ||
+          model.toLowerCase().contains('cosyvoice');
       if (isDashScope) {
         return await _transcribeDashScope(
             provider: provider, model: model, audioPath: audioPath);
@@ -1097,7 +1111,12 @@ class AIManager {
     }
 
     try {
-      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com');
+      final providerName = (provider['name'] ?? '').toString().toLowerCase();
+      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com') ||
+          providerName.contains('百炼') ||
+          providerName.contains('dashscope') ||
+          model.toLowerCase().contains('sambert') ||
+          model.toLowerCase().contains('cosyvoice');
       final endpoint = isDashScope
           ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
           : '$baseUrl/audio/speech';
@@ -1194,7 +1213,7 @@ class AIManager {
       final threshold = (maxContext * 3.2).floor();
       // Archive often enough for medium-term diaries to be observable in normal
       // use, while still avoiding a model request after every message.
-      if (totalChars < threshold && textHistory.length < 8) return;
+      if (totalChars < threshold && textHistory.length < 4) return;
 
       final cutoff =
           (textHistory.length * 0.60).floor().clamp(1, textHistory.length);
@@ -1258,7 +1277,11 @@ class AIManager {
             }),
           )
           .timeout(const Duration(seconds: 50));
-      if (response.statusCode != 200) return;
+      if (response.statusCode != 200) {
+        AppLogService.instance
+            .add('DIARY', '日记归档失败：HTTP ${response.statusCode}');
+        return;
+      }
       String bodyText = utf8.decode(response.bodyBytes).trim();
       final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```');
       final fenceMatch = fence.firstMatch(bodyText);
@@ -1328,6 +1351,8 @@ class AIManager {
       // 即使模型判断无需变更，也标记本段已审阅，避免重复消耗请求。
       if (changed || (upserts.isEmpty && deletes.isEmpty)) {
         await db.setKV(summaryKey, endTimestamp);
+        AppLogService.instance
+            .add('DIARY', changed ? '已写入或更新机器人日记' : '已检查聊天，本次无需新增日记');
       }
     } catch (e) {
       print('[memory] auto summary failed: $e');

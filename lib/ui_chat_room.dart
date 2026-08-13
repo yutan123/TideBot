@@ -59,6 +59,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   late AnimationController _bottomBarCtrl;
   bool _hasText = false;
+  // Attachment is staged beside the composer and sent only after explicit confirmation.
+  String? _pendingImage;
+  String? _pendingDocument;
+  String? _pendingMediaContext;
 
   // ===== 防抖/合并：请求代次 + 待重发队列 =====
   // 用户连续发送多条时，递增代次让在途请求的渲染结果作废，并把新文本并入
@@ -284,91 +288,62 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  /// 在任何 UI 动画开始前完整写入分段回复。页面离开或应用转后台不会中断落库。
-  Future<bool> _persistSegments(
-    DBManager db,
-    Map<String, dynamic> aiMsg,
-    Map<String, dynamic> result,
-    String content,
-  ) async {
-    final segments = _splitReplySegments(content);
-    final baseTimestamp = aiMsg['timestamp'] as int;
-    final botId = _bot['id']?.toString() ?? '';
-    try {
-      for (var index = 0; index < segments.length; index++) {
-        final segId = index == 0
-            ? aiMsg['id'].toString()
-            : '${aiMsg['id']}_segment_$index';
-        await db.insertChatMessage({
-          'id': segId,
-          'bot_id': botId,
-          'role': 'assistant',
-          'type': 'text',
-          'content': segments[index],
-          'mood': result['mood'],
-          'sources_json':
-              result['sources'] == null ? null : jsonEncode(result['sources']),
-          'timestamp': baseTimestamp + index,
-        });
-      }
-      return true;
-    } catch (e) {
-      debugPrint('[send] persist segments failed: $e');
-      return false;
-    }
-  }
-
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
   // ========== 主动回复调度 ==========
+  String get _proactiveDueKey => 'proactive_due_at_${_bot['id']}';
   Future<void> _startProactiveReply() async {
     final botId = _bot['id']?.toString() ?? '';
     if (botId.isEmpty) return;
     try {
       final db = DBManager();
-      final enabled = await db.getKV('proactive_reply');
-      if (enabled == 'false') return; // 默认开启
+      if (await db.getKV('proactive_reply') == 'false') return;
       final minMin =
           (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60)
               .clamp(1, 1440);
       final maxMin =
           (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90)
               .clamp(minMin, 1440);
-      // 恢复此前累积的未应答计数，避免重启页面后“连续 3 次未回”上限被清零。
       _proactiveUnanswered =
           (int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ??
                   0)
               .clamp(0, 5);
-      _restartProactiveTimer(minMin, maxMin);
+      final dueAt = int.tryParse(await db.getKV(_proactiveDueKey) ?? '');
+      _scheduleProactive(minMin, maxMin, dueAt: dueAt);
     } catch (e) {
       debugPrint('[proactive] start failed: $e');
     }
   }
 
-  void _restartProactiveTimer(int minMinutes, int maxMinutes) {
+  void _scheduleProactive(int minMinutes, int maxMinutes, {int? dueAt}) {
     _proactiveTimer?.cancel();
-    _proactiveTimer = null;
-    if (!mounted) return;
+    if (!mounted || _proactiveUnanswered >= 3) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
     final range = maxMinutes - minMinutes;
-    final delayMinutes =
-        minMinutes + (range > 0 ? _proactiveRng.nextInt(range + 1) : 0);
-    final delay = Duration(minutes: delayMinutes.clamp(1, 1440));
-    _proactiveTimer = Timer(delay, _fireProactive);
+    final target = dueAt ??
+        now +
+            Duration(
+                    minutes: minMinutes +
+                        (range > 0 ? _proactiveRng.nextInt(range + 1) : 0))
+                .inMilliseconds;
+    DBManager().setKV(_proactiveDueKey, '$target');
+    _proactiveTimer = Timer(
+        Duration(milliseconds: (target - now).clamp(0, 604800000)),
+        _fireProactive);
   }
 
-  // 用户主动发言：清零未应答计数并重置计时（下次主动回复重新从计时开始）。
-  // 当因“连续 3 次未回”暂停（timer 为空）时，用户一旦发言也通过这里恢复调度。
+  void _restartProactiveTimer(int minMinutes, int maxMinutes) =>
+      _scheduleProactive(minMinutes, maxMinutes);
   void _onUserInteracted() {
     _proactiveUnanswered = 0;
     final botId = _bot['id']?.toString() ?? '';
-    if (botId.isNotEmpty) {
-      DBManager().setKV('proactive_unanswered_$botId', '0');
-    }
-    _startProactiveReply(); // 重新计时（开关关闭时内部自行跳过）
+    if (botId.isNotEmpty) DBManager().setKV('proactive_unanswered_$botId', '0');
+    _startProactiveReply();
   }
 
   Future<void> _fireProactive() async {
     _proactiveTimer = null;
+    DBManager().setKV(_proactiveDueKey, '');
     final botId = _bot['id']?.toString() ?? '';
     if (!mounted || botId.isEmpty) return;
     // 连续 3 次主动回复用户都没回 → 暂停；等用户下次发言再由 _onUserInteracted 恢复。
@@ -470,6 +445,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     bool noUserBubble = false,
   }) async {
     final text = _msgC.text.trim();
+    img ??= _pendingImage;
+    document ??= _pendingDocument;
+    mediaContext ??= _pendingMediaContext;
     if (text.isEmpty &&
         img == null &&
         document == null &&
@@ -689,12 +667,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             messages: history,
             imageBase64: imgB64,
             persistResponse: persistThisReply,
-            onDelta: streamingMessage == null
-                ? null
-                : (delta) {
-                    // SSE 文本进入显示缓冲，由定时器批量上屏，避免每个 token 都触发重绘。
-                    pendingDisplay += delta;
-                  },
+            // UI intentionally waits for the complete, protocol-filtered response.
+            // Raw provider deltas can contain internal mood/tool tags.
+            onDelta: null,
           )
           .timeout(requestTimeout);
 
@@ -760,10 +735,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 用户需求：无论厂商是否回传 SSE 增量，前端都等服务商完整回复后再用打字机
       // 逐字渲染，而不是边生成边显示。完整 content 收到后统一喂给字幕定时器上屏，
       // 播完后定格为完整内容。
-      final needsTypewriter = streamingMessage != null &&
-          !segmentedReply &&
-          content.isNotEmpty &&
-          pendingDisplay.isEmpty;
+      final needsTypewriter =
+          streamingMessage != null && !segmentedReply && content.isNotEmpty;
       if (needsTypewriter && mounted) {
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
@@ -814,7 +787,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             _streamDisplayTimer = null;
             final segments = _splitReplySegments(content);
             final baseTimestamp = aiMsg['timestamp'] as int;
-            await _persistSegments(db, aiMsg, result, content);
+            // AIManager already persisted all segments before this UI-only animation.
             if (!mounted) return;
             setState(() => _msgs.remove(streamingMessage));
             for (var index = 0; index < segments.length; index++) {
@@ -844,8 +817,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
           final baseTimestamp = aiMsg['timestamp'] as int;
-          final persisted = await _persistSegments(db, aiMsg, result, content);
-          // 分段已完整落库；下面的延迟只影响当前前台的展示节奏。
+          // Below delays affect only the visible foreground animation.
           for (var index = 0; index < segments.length; index++) {
             // 句间自然等待：首句立即上屏（保证响应感），之后每句间 400–1000ms。
             if (index > 0) await _applyRandomReplyDelay(db);
@@ -859,10 +831,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ..['timestamp'] = baseTimestamp + index;
             setState(() => _msgs.add(segmentMessage));
             _scrollDown();
-          }
-          if (!persisted) {
-            debugPrint(
-                '[send] segmented persistence incomplete; original reply retained');
           }
         } else {
           await _applyRandomReplyDelay(db);
@@ -1058,39 +1026,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  Future<void> _sendVideo(String path) async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-    try {
-      final prepared = await MediaPreprocessor().prepareVideo(path);
-      if (prepared['error'] != null) {
-        throw StateError(prepared['error'].toString());
-      }
-      final frames = (prepared['frames'] as List? ?? [])
-          .map((e) => e.toString())
-          .where((e) => e.isNotEmpty)
-          .toList();
-      final visual = await AIManager().describeImagesForBot(
-        botId: botId,
-        imagePaths: frames,
-        userText: _msgC.text.trim(),
-      );
-      final audioPath = prepared['audioPath']?.toString() ?? '';
-      final transcript = audioPath.isEmpty
-          ? '[视频未检测到可转写音轨]'
-          : (await AIManager().transcribeAudio(
-                botId: botId,
-                audioPath: audioPath,
-              ) ??
-              '[未配置 STT 模型或转写失败；已保留视频音轨但无法转换为文字]');
-      final context = '$visual\\n\\n[视频音频转写]\\n$transcript';
-      await _send(document: path, mediaContext: context);
-    } catch (e) {
-      if (!mounted) return;
-      GlobalNotice.show('视频预处理失败：$e', color: const Color(0xFFE74C3C));
-    }
-  }
-
   // ========== 选择图片/文件 ==========
   void _pickMedia() async {
     final r = await showTideSheet<String>(
@@ -1112,7 +1047,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (r == 'img') {
       if (!await AppPermissions.photos(context, feature: '选择图片')) return;
       final p = await ImagePicker().pickImage(source: ImageSource.gallery);
-      if (p != null) _send(img: await _fixHeic(p.path));
+      if (p != null) {
+        final fixed = await _fixHeic(p.path);
+        if (mounted) setState(() => _pendingImage = fixed);
+      }
     } else if (r == 'file') {
       try {
         await Permission.storage.request();
@@ -1125,9 +1063,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       const videoExtensions = {'mp4', 'm4v', 'mov', 'webm', '3gp'};
       const audioExtensions = {'m4a', 'mp3', 'wav', 'aac', 'ogg', 'opus'};
       if (imageExtensions.contains(extension)) {
-        await _send(img: path);
+        if (mounted) setState(() => _pendingImage = path);
       } else if (videoExtensions.contains(extension)) {
-        await _sendVideo(path);
+        if (mounted) setState(() => _pendingDocument = path);
       } else if (audioExtensions.contains(extension)) {
         final transcript = await AIManager().transcribeAudio(
           botId: _bot['id']?.toString() ?? '',
@@ -1140,7 +1078,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               : '[音频转写]\\n$transcript',
         );
       } else {
-        await _send(document: path);
+        if (mounted) setState(() => _pendingDocument = path);
       }
     }
   }
@@ -2665,19 +2603,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             .animate(CurvedAnimation(
                 parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
             child: BackdropFilter(
-              filter: ImageFilter.blur(
-                  sigmaX: _hasBg ? 20 : 0, sigmaY: _hasBg ? 20 : 0),
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: _hasBg
                       ? theme.glass.withValues(alpha: 0.72)
-                      : theme.surfaceVariant,
+                      : theme.surfaceVariant.withValues(alpha: 0.76),
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: Colors.transparent),
                   boxShadow: theme.isDark
@@ -2697,6 +2634,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       icon: Icon(Icons.add_rounded,
                           size: 24, color: theme.iconMuted),
                     ),
+                    if (_pendingImage != null || _pendingDocument != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: InputChip(
+                          avatar: Icon(
+                              _pendingImage != null
+                                  ? Icons.image_rounded
+                                  : Icons.attach_file_rounded,
+                              size: 18),
+                          label: SizedBox(
+                              width: 82,
+                              child: Text(
+                                  (_pendingImage ?? _pendingDocument!)
+                                      .split(Platform.pathSeparator)
+                                      .last,
+                                  overflow: TextOverflow.ellipsis)),
+                          onDeleted: () => setState(() {
+                            _pendingImage = null;
+                            _pendingDocument = null;
+                            _pendingMediaContext = null;
+                          }),
+                        ),
+                      ),
                     Expanded(
                       child: TextField(
                         focusNode: _inputFocus,
@@ -2734,15 +2694,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       child: IconButton(
                         tooltip: '发送',
                         splashRadius: 24,
-                        onPressed: _loading ? null : _send,
+                        onPressed: _send,
                         icon: AnimatedContainer(
                           duration: const Duration(milliseconds: 160),
                           width: 32,
                           height: 32,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: theme.primary
-                                .withValues(alpha: _hasText ? 1 : 0.48),
+                            color: theme.primary.withValues(
+                                alpha: (_hasText ||
+                                        _pendingImage != null ||
+                                        _pendingDocument != null)
+                                    ? 1
+                                    : 0.48),
                             boxShadow: [
                               BoxShadow(
                                   color: theme.primary.withValues(

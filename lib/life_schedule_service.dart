@@ -151,14 +151,25 @@ class LifeScheduleService {
       skipLifeState: true,
       allowTools: false,
     );
-    if (result['success'] != true) return old;
+    if (result['success'] != true) {
+      AppLogService.instance
+          .add('SCHEDULE', '日程生成失败 $key：${result['error'] ?? '模型请求失败'}');
+      return old;
+    }
     final text = result['reply']?.toString() ?? '';
     final start = text.indexOf('{');
     final end = text.lastIndexOf('}');
-    if (start < 0 || end <= start) return old;
+    if (start < 0 || end <= start) {
+      AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：模型未返回有效 JSON，保留旧日程');
+      return old;
+    }
     try {
       final payload = jsonDecode(text.substring(start, end + 1));
-      if (payload is! Map || payload['timeline'] is! List) return old;
+      if (payload is! Map || payload['timeline'] is! List) {
+        AppLogService.instance
+            .add('SCHEDULE', '日程生成失败 $key：JSON 缺少 timeline，保留旧日程');
+        return old;
+      }
       final timeline = (payload['timeline'] as List)
           .whereType<Map>()
           .map<Map<String, dynamic>>((e) => <String, dynamic>{
@@ -172,7 +183,10 @@ class LifeScheduleService {
           .take(5)
           .toList();
       final outfit = payload['outfit']?.toString().trim() ?? '';
-      if (timeline.length < 2 || outfit.isEmpty) return old;
+      if (timeline.length < 2 || outfit.isEmpty) {
+        AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：时间线或穿搭不完整，保留旧日程');
+        return old;
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       final row = <String, dynamic>{
         'id': old?['id'] ?? 'life_${botId}_$key',
@@ -191,10 +205,15 @@ class LifeScheduleService {
         'updated_at': now,
       };
       await db.upsertLifeSchedule(row);
+      final details = timeline
+          .map((e) =>
+              '${e['time']} ${e['activity']}${e['rigid'] == true ? '（刚性）' : ''}')
+          .join('；');
       AppLogService.instance.add('SCHEDULE',
-          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，时间线${timeline.length}条');
+          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，穿搭=${row['outfit']}。时间线：$details');
       return row;
-    } catch (_) {
+    } catch (e) {
+      AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：JSON 解析异常 $e，保留旧日程');
       return old;
     }
   }
