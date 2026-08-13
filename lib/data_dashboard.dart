@@ -33,7 +33,9 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   DateTime _dayStart(DateTime d) => DateTime(d.year, d.month, d.day);
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 仅首次进入显示加载态；切换范围时保留当前图表，避免整页闪成空白。
+    if (_tokenSeries.isEmpty && _replySeries.isEmpty)
+      setState(() => _loading = true);
     final db = await DBManager().database;
     final now = DateTime.now();
     final startMs = _dayStart(now.subtract(Duration(days: _rangeDays - 1)))
@@ -185,7 +187,7 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     Widget chip(String label, int days) => BouncyTap(
           onTap: () {
             if (_rangeDays == days) return;
-            _rangeDays = days;
+            setState(() => _rangeDays = days);
             _load();
           },
           child: Container(
@@ -216,23 +218,36 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   }
 
   Widget _summarySection(TideTheme theme) {
-    final rows = <(IconData, String, int)>[
-      (Icons.today_rounded, '当天消耗 Token', _todayTokens),
-      (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens),
-      (Icons.bolt_rounded, '累计消耗 Token', _totalTokens),
-      (Icons.forum_rounded, '当天机器人回复', _todayReplies),
-      (Icons.date_range_rounded, '本月机器人回复', _monthReplies),
-      (Icons.chat_bubble_rounded, '累计机器人回复', _totalReplies),
-    ];
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: rows
-          .map((row) => SizedBox(
-              width: (MediaQuery.of(context).size.width - 44) / 2,
-              child: _summaryCard(theme, row.$1, row.$2, row.$3)))
-          .toList(),
-    );
+    Widget column(
+            String heading, Color color, List<(IconData, String, int)> rows) =>
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 8),
+                child: Text(heading,
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontWeight: FontWeight.w700,
+                        color: color))),
+            ...rows.map((row) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _summaryCard(theme, row.$1, row.$2, row.$3))),
+          ]),
+        );
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      column('Token 消耗', theme.primary, [
+        (Icons.today_rounded, '当天', _todayTokens),
+        (Icons.calendar_month_rounded, '本月', _monthTokens),
+        (Icons.bolt_rounded, '当前区间', _totalTokens),
+      ]),
+      const SizedBox(width: 10),
+      column('机器人回复', const Color(0xFFB05E91), [
+        (Icons.forum_rounded, '当天', _todayReplies),
+        (Icons.date_range_rounded, '本月', _monthReplies),
+        (Icons.chat_bubble_rounded, '当前区间', _totalReplies),
+      ]),
+    ]);
   }
 
   Widget _summaryCard(TideTheme theme, IconData icon, String label, int value) {
@@ -324,11 +339,14 @@ class _ChartCard extends StatelessWidget {
               builder: (_, progress, __) => GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTapUp: (details) {
-                  if (series.length < 2) return;
+                  if (series.isEmpty) return;
                   final box = context.findRenderObject() as RenderBox?;
-                  final width = box?.size.width ?? 1;
-                  final index =
-                      ((details.localPosition.dx / width) * (series.length - 1))
+                  final chartWidth = box?.size.width ?? 1;
+                  final index = series.length == 1
+                      ? 0
+                      : ((details.localPosition.dx.clamp(0, chartWidth) /
+                                  chartWidth) *
+                              (series.length - 1))
                           .round()
                           .clamp(0, series.length - 1);
                   onSelect(index);
@@ -426,9 +444,29 @@ class _LineChartPainter extends CustomPainter {
         ..color = color.withValues(alpha: 0.12)
         ..style = PaintingStyle.fill,
     );
+    if (selectedIndex != null &&
+        selectedIndex! >= 0 &&
+        selectedIndex! < series.length) {
+      final i = selectedIndex!;
+      final x = series.length == 1
+          ? size.width / 2
+          : size.width * i / (series.length - 1);
+      final y =
+          size.height - (series[i] / maxY) * (size.height - 16) * progress - 8;
+      final cross = Paint()
+        ..color = color.withValues(alpha: 0.62)
+        ..strokeWidth = 1;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), cross);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), cross);
+      canvas.drawCircle(Offset(x, y), 4.5, Paint()..color = color);
+      canvas.drawCircle(Offset(x, y), 2, Paint()..color = Colors.white);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _LineChartPainter old) =>
-      old.series != series || old.color != color;
+      old.series != series ||
+      old.color != color ||
+      old.selectedIndex != selectedIndex ||
+      old.progress != progress;
 }

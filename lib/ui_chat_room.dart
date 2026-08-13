@@ -385,6 +385,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final result = await AIManager()
           .sendMessage(botId: botId, text: opener)
           .timeout(const Duration(minutes: 5));
+      if (result['success'] == true && result['silent'] == true) {
+        // 模型自行选择不打扰：不写空消息，也不记作未回应，重新持久化安排下次。
+        final minMin = (int.tryParse(
+                    await DBManager().getKV('proactive_min_minutes') ?? '') ??
+                60)
+            .clamp(1, 1440);
+        final maxMin = (int.tryParse(
+                    await DBManager().getKV('proactive_max_minutes') ?? '') ??
+                90)
+            .clamp(minMin, 1440);
+        _restartProactiveTimer(minMin, maxMin);
+        return;
+      }
       if (result['success'] == true && mounted) {
         final aiMsg = <String, dynamic>{
           'id': result['message_id']?.toString() ??
@@ -866,13 +879,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           // sticker 已由 AIManager 落库；content 只用于内部分类，不能作为
           // 可见正文展示，避免把“开心/表情包类型”等协议泄漏给用户。
           setState(() => _msgs.add({
-                'id': 'msg_s_${(aiMsg['timestamp'] as int) + 2}',
+                'id': 'msg_s_${(aiMsg['timestamp'] as int) + 1000}',
                 'bot_id': botId,
                 'role': 'assistant',
                 'type': 'sticker',
                 'content': '',
                 'file_path': sticker['file_path']?.toString(),
-                'timestamp': (aiMsg['timestamp'] as int) + 2,
+                'timestamp': (aiMsg['timestamp'] as int) + 1000,
               }));
           _scrollDown();
         }

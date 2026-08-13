@@ -64,7 +64,7 @@ class _GlobalNoticeView extends StatelessWidget {
     // 根 Overlay 中的通知位于底部栏和系统手势区上方；键盘出现时继续上移。
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
     // 对齐原生 SnackBar 的紧凑体量：窄内边距、小圆角、单行文案、可横滑 + 关闭。
-    final maxWidth = media.size.width > 540 ? 480.0 : media.size.width - 32;
+    final maxWidth = media.size.width > 540 ? 560.0 : media.size.width - 16;
     return Positioned(
       bottom: bottomInset,
       left: 0,
@@ -82,7 +82,7 @@ class _GlobalNoticeView extends StatelessWidget {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: surface,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                   boxShadow: const [
                     BoxShadow(
                       color: Color(0x22000000),
@@ -93,7 +93,7 @@ class _GlobalNoticeView extends StatelessWidget {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.only(
-                      left: 18, right: 6, top: 4, bottom: 4),
+                      left: 16, right: 4, top: 6, bottom: 6),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [

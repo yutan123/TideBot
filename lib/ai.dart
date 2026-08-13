@@ -752,10 +752,19 @@ class AIManager {
           final voiceChance =
               (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
                   .clamp(1, 100);
+          final voiceRoll = Random().nextInt(100);
+          if (!voiceEnabled) {
+            AppLogService.instance.add('TTS', '本轮未请求：语音回复开关关闭');
+          } else if (ttsModel == null || ttsModel.toString().isEmpty) {
+            AppLogService.instance.add('TTS', '本轮未请求：机器人未绑定 TTS 模型');
+          } else if (voiceRoll >= voiceChance) {
+            AppLogService.instance.add(
+                'TTS', '本轮未请求：语音概率未命中（${voiceRoll + 1}/100，设定 $voiceChance%）');
+          }
           if (voiceEnabled &&
               ttsModel != null &&
               ttsModel.toString().isNotEmpty &&
-              Random().nextInt(100) < voiceChance) {
+              voiceRoll < voiceChance) {
             AppLogService.instance.add('TTS',
                 '准备请求语音模型：${ttsModel.toString()}，文本 ${replyText.length} 字');
             // TTS failures intentionally keep the original text message unchanged.
@@ -997,7 +1006,10 @@ class AIManager {
       if (providerId.isEmpty || !await File(audioPath).exists()) return null;
 
       final provider = await DBManager().getChatProviderById(providerId);
-      if (provider == null) return null;
+      if (provider == null) {
+        AppLogService.instance.add('TTS', '语音合成未请求：找不到绑定的 TTS 服务商 $providerId');
+        return null;
+      }
       final baseUrl = provider['base_url']
               ?.toString()
               .trim()
@@ -1135,6 +1147,8 @@ class AIManager {
       final endpoint = isDashScope
           ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
           : '$baseUrl/audio/speech';
+      AppLogService.instance.add('TTS',
+          '请求语音：provider=${provider['name'] ?? providerId}，model=$model，dashscope=$isDashScope，endpoint=$endpoint，文本 ${text.length} 字');
       final res = await http
           .post(
             Uri.parse(endpoint),
@@ -1151,6 +1165,8 @@ class AIManager {
                 : {'model': model, 'input': text, 'voice': voice}),
           )
           .timeout(const Duration(seconds: 30));
+      AppLogService.instance.add('TTS',
+          '语音服务响应 HTTP ${res.statusCode}，content-type=${res.headers['content-type'] ?? 'unknown'}');
       if (res.statusCode < 200 ||
           res.statusCode >= 300 ||
           res.bodyBytes.isEmpty) {
@@ -1197,7 +1213,8 @@ class AIManager {
       final path =
           '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
       await File(path).writeAsBytes(bytes);
-      AppLogService.instance.add('TTS', '语音合成成功：${text.length} 字');
+      AppLogService.instance.add(
+          'TTS', '语音合成成功：${text.length} 字，${bytes.length} bytes，已保存 $path');
       return path;
     } catch (e) {
       AppLogService.instance.add('TTS', '语音合成异常：$e');
@@ -2082,10 +2099,12 @@ class AIManager {
       final candidates = await db.queryStickers(emotion: emotion);
       final available =
           candidates.isEmpty ? await db.queryStickers() : candidates;
+      final selected = available.isEmpty ? null : available.first;
       return {
         'result': {
-          'ok': available.isNotEmpty,
-          'message': available.isEmpty ? '没有可用表情包。' : '表情包已选定。',
+          'ok': selected != null,
+          'sticker_path': selected?['file_path']?.toString(),
+          'message': selected == null ? '没有可用表情包。' : '表情包已选定。',
         }
       };
     }
@@ -2116,7 +2135,7 @@ class AIManager {
       final emotions = await db.stickerEmotions();
       if (emotions.isNotEmpty) {
         parts.add(
-            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。若要在回复时附带表情包，必须在回复末尾另起一行单独输出机器指令 [表情包:情绪]，只能选择上列情绪之一，不能虚构素材。该指令是内部协议，绝不能在聊天正文里写出"表情包"、"表情包类型"、"type"等字样。');
+            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。如需发送表情包，调用 send_sticker 工具；不要在正文输出任何贴纸、表情包或内部协议。');
       }
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
