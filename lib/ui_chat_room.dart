@@ -707,6 +707,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         return;
       }
 
+      if (result['silent'] == true) {
+        _streamDisplayTimer?.cancel();
+        _streamDisplayTimer = null;
+        if (streamingMessage != null && mounted)
+          setState(() => _msgs.remove(streamingMessage));
+        return;
+      }
       final content = (result['reply']?.toString() ?? '').trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
@@ -2604,11 +2611,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return SafeArea(
       top: false,
       child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero)
+        position: Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
             .animate(CurvedAnimation(
                 parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
             child: BackdropFilter(

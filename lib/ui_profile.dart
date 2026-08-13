@@ -677,6 +677,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _showTime = true;
   bool _showAvatar = false;
   bool _streaming = true;
+  bool _adaptiveSilence = true;
   bool _segmentedReply = true;
   bool _randomReplyDelay = false;
   bool _timeAwareness = true;
@@ -736,6 +737,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final stream =
         await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
     final segmentedReply = await db.getKV('segmented_reply_enabled');
+    final adaptiveSilence = await db.getKV('adaptive_silence_enabled');
     final randomReplyDelay = await db.getKV('random_reply_delay_enabled');
     final replyDelayMin = await db.getKV('random_reply_delay_min_seconds');
     final replyDelayMax = await db.getKV('random_reply_delay_max_seconds');
@@ -743,6 +745,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
     final lifeSchedule = await db.getKV('life_schedule_enabled');
+    if (mounted) setState(() => _adaptiveSilence = adaptiveSilence != 'false');
     final imageGeneration = await db.getKV('bot_image_generation_enabled');
     final imageStyle = await db.getKV('bot_image_style');
     final webSearch = await db.getKV('web_search_enabled');
@@ -1127,6 +1130,16 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                 onChanged: (v) {
                   setState(() => _timeAwareness = v);
                   _save('time_awareness', '$v');
+                },
+              ),
+              _settingSwitch(
+                theme: theme,
+                title: '适时沉默',
+                help: '默认开启。模型会在自然结束、明确无需回复等安全情境自行调用沉默工具；关闭后不会提供该工具。',
+                value: _adaptiveSilence,
+                onChanged: (v) {
+                  setState(() => _adaptiveSilence = v);
+                  _save('adaptive_silence_enabled', '$v');
                 },
               ),
               _settingSwitch(

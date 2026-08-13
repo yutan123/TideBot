@@ -33,13 +33,27 @@ class ChatListPageState extends State<ChatListPage> {
     for (var b in bots) {
       // 取该机器人「最新」一条消息作聊天列表预览（按时间倒序取首条）。
       final msgs = await DBManager()
-          .queryMessages(b['id'] as String, limit: 1, descending: true);
+          .queryMessages(b['id'] as String, limit: 30, descending: true);
       String preview = '';
       int lastTime =
           (b['last_msg_time'] as int?) ?? (b['created_at'] as int?) ?? 0;
       if (msgs.isNotEmpty) {
-        preview =
-            (msgs.first['content'] as String?)?.replaceAll('\n', ' ') ?? '';
+        final chosen = msgs.firstWhere(
+            (m) => m['type']?.toString() != 'sticker',
+            orElse: () => msgs.first);
+        final type = chosen['type']?.toString() ?? 'text';
+        final raw =
+            chosen['content']?.toString().replaceAll('\n', ' ').trim() ?? '';
+        preview = raw.isNotEmpty
+            ? raw
+            : switch (type) {
+                'image' => '[图片]',
+                'audio' => '[语音]',
+                'video' => '[视频]',
+                'document' || 'file' => '[文件]',
+                'sticker' => '[表情包]',
+                _ => '[消息]',
+              };
         if (preview.length > 25) preview = '${preview.substring(0, 25)}...';
         lastTime = msgs.first['timestamp'] as int? ?? lastTime;
       }

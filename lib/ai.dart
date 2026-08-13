@@ -449,6 +449,7 @@ class AIManager {
       });
       String replyText = '';
       String? generatedImagePath;
+      var toolSilenced = false;
       Map usage = const {};
       String errorBody = '';
       int statusCode;
@@ -555,7 +556,8 @@ class AIManager {
                     replyTextCallback: (t) => replyText = t,
                     usageCallback: (u) => usage = u,
                     searchSourcesSetter: (l) => searchSources = l,
-                    generatedImageSetter: (p) => generatedImagePath = p);
+                    generatedImageSetter: (p) => generatedImagePath = p,
+                    silenceSetter: () => toolSilenced = true);
               }
             }
           }
@@ -604,11 +606,13 @@ class AIManager {
                   replyTextCallback: (t) => replyText = t,
                   usageCallback: (u) => usage = u,
                   searchSourcesSetter: (l) => searchSources = l,
-                  generatedImageSetter: (p) => generatedImagePath = p);
+                  generatedImageSetter: (p) => generatedImagePath = p,
+                  silenceSetter: () => toolSilenced = true);
             }
           }
         }
       }
+      if (toolSilenced) replyText = '';
       print('[ai] response status=$statusCode');
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
       AppLogService.instance.add('RESPONSE',
@@ -642,6 +646,12 @@ class AIManager {
           ));
         }
 
+        // 适时沉默是模型主动调用的原生工具，不是文本标记过滤。
+        // 成功静默不产生气泡、贴纸、语音或空 assistant 历史记录。
+        if (toolSilenced) {
+          AppLogService.instance.add('SILENCE', '机器人通过工具选择本轮不回复');
+          return {'success': true, 'silent': true, 'reply': ''};
+        }
         // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
         String mood = _extractMood(replyText);
         // 先抽取模型主动要求记住的信息，再剥离可见文本，避免把它们留在气泡里。
@@ -1731,6 +1741,7 @@ class AIManager {
     required void Function(Map) usageCallback,
     required void Function(List<Map<String, String>>) searchSourcesSetter,
     required void Function(String) generatedImageSetter,
+    required void Function() silenceSetter,
   }) async {
     for (final call in calls) {
       final result = await _executeNativeToolCall(
@@ -1747,6 +1758,10 @@ class AIManager {
         );
       }
       final toolResult = result['result'];
+      if (toolResult is Map && toolResult['silent'] == true) {
+        silenceSetter();
+        return;
+      }
       if (toolResult is Map &&
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
@@ -1863,6 +1878,10 @@ class AIManager {
         },
       });
     }
+    if ((await db.getKV('adaptive_silence_enabled')) != 'false') {
+      tools.add(_adaptiveSilenceToolSchema());
+    }
+    tools.add(_diaryToolSchema());
     if (await db.getKV('bot_stickers_enabled') == 'true' &&
         (await db.stickerEmotions()).isNotEmpty) {
       tools.add({
@@ -1884,6 +1903,35 @@ class AIManager {
     return tools;
   }
 
+  Map<String, dynamic> _adaptiveSilenceToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'choose_silence',
+          'description':
+              '仅在用户明确不希望回复、对话自然结束且无需回应，或主动问候判断不宜打扰时调用。调用后本轮不会发送任何文字。绝不可用于求助、悲伤、愤怒、困惑、危机、提问或任何需要回应的情况；绝不可作为惩罚、冷暴力、控制或施压。',
+          'parameters': {
+            'type': 'object',
+            'properties': {},
+            'additionalProperties': false
+          },
+        },
+      };
+  Map<String, dynamic> _diaryToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'write_diary',
+          'description':
+              '当你认为本轮对话有值得保存的日记式经历、感受或事件时，写入自己的日记。只在确有内容时调用；日记不会作为聊天正文发送。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'entry': {'type': 'string', 'description': '第一人称、简洁具体的日记记录'}
+            },
+            'required': ['entry'],
+            'additionalProperties': false
+          },
+        },
+      };
   Map<String, dynamic> _imageToolSchema() => {
         'type': 'function',
         'function': {
@@ -1919,6 +1967,30 @@ class AIManager {
     } catch (_) {
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
+      };
+    }
+    if (name == 'choose_silence') {
+      return {
+        'result': {'ok': true, 'silent': true}
+      };
+    }
+    if (name == 'write_diary') {
+      final entry = args['entry']?.toString().trim() ?? '';
+      if (entry.isEmpty)
+        return {
+          'result': {'ok': false, 'error': '缺少日记内容'}
+        };
+      await db.upsertMemoryItem(
+          botId: botId,
+          type: 'short',
+          content: entry,
+          title: '日记',
+          category: 'diary',
+          importance: 3);
+      AppLogService.instance
+          .add('DIARY', '机器人通过 write_diary 工具写入日记：${entry.length} 字');
+      return {
+        'result': {'ok': true, 'message': '日记已安全写入，不要在聊天中复述日记正文。'}
       };
     }
     if (name == 'web_search') {
@@ -2260,6 +2332,8 @@ class AIManager {
       p +=
           "\n【游戏规则】：你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-3）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
     }
+    p +=
+        '\n【适时沉默】当 choose_silence 工具可用时，你可在用户明确暂不希望回复、对话自然结束且不需回应、或主动问候不宜打扰时调用它；调用后不要输出文本。不得在求助、悲伤、愤怒、困惑、危机、提问或任何需要回应时调用，绝不可作为惩罚、冷暴力、控制或施压。\n【日记】你拥有 write_diary 工具。遇到值得保留的经历、感受或事件时可按需调用，把日记写入工具；绝不把日记正文当作聊天消息发送。';
     return p;
   }
 
