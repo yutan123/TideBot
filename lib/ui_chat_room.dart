@@ -21,6 +21,7 @@ import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
+import 'emotion_state_service.dart';
 import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -460,6 +461,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _onUserInteracted();
 
     final botId = _bot['id']?.toString() ?? '';
+    unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
     final now = DateTime.now().millisecondsSinceEpoch;
 
     // ===== 防抖/合并 =====
@@ -544,6 +546,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _msgsLoading = false;
           _msgs.add(msg);
           _msgC.clear();
+          _pendingImage = null;
+          _pendingDocument = null;
+          _pendingMediaContext = null;
           _hasText = false;
         });
         _scrollDown();

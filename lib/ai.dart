@@ -12,6 +12,7 @@ import 'media_preprocessor.dart';
 import 'ops.dart';
 import 'app_state.dart';
 import 'app_log_service.dart';
+import 'emotion_state_service.dart';
 import 'local_llama.dart';
 
 class AIManager {
@@ -175,7 +176,8 @@ class AIManager {
           {
             'role': 'system',
             'content': _buildSystemPrompt(bot, activeGame) +
-                (skipLifeState ? '' : await _lifeStateContext(botId)),
+                (skipLifeState ? '' : await _lifeStateContext(botId)) +
+                await EmotionStateService.instance.promptContext(botId),
           },
         ];
         for (final msg in history.take(20)) {
@@ -310,8 +312,11 @@ class AIManager {
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final toolContext = allowTools ? await _buildToolContext(db) : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
+    final emotionContext =
+        await EmotionStateService.instance.promptContext(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         lifeContext +
+        emotionContext +
         (longMemoryContext.isEmpty
             ? ''
             : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
