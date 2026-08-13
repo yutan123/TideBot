@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'ai.dart';
 import 'theme.dart';
+import 'global_notice.dart';
 
 /// Shared game room. A room is always bound to the bot chosen on the square.
 class GameArenaPage extends StatefulWidget {
@@ -511,10 +512,7 @@ class _GameArenaPageState extends State<GameArenaPage> {
 
   void _showPokerNotice(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(text, style: const TextStyle(fontFamily: 'TideFont')),
-      behavior: SnackBarBehavior.floating,
-    ));
+    GlobalNotice.show(text);
   }
 
   Future<void> _playSelectedPoker() async {

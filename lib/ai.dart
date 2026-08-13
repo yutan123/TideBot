@@ -287,7 +287,14 @@ class AIManager {
       for (final item in items) {
         final content = item['content']?.toString().trim() ?? '';
         if (content.isEmpty || used + content.length > budget) continue;
-        lines.add('- $content');
+        final updated = (item['updated_at'] ?? item['timestamp']) as num?;
+        final when = updated == null
+            ? ''
+            : DateTime.fromMillisecondsSinceEpoch(updated.toInt())
+                .toLocal()
+                .toString()
+                .substring(0, 16);
+        lines.add('- [最后更新 $when] $content');
         used += content.length;
       }
       return lines.join('\n');
@@ -982,9 +989,8 @@ class AIManager {
     }
   }
 
-  // 特异化 TTS 处理 (兼容标准协议与阿里云百炼特异 Payload)
+  // TTS supports both legacy base_url/api_key and settings-page url/key fields.
   Future<String?> _generateTTS(String text, String providerId) async {
-    // TTS provider 独立存放于 tts_provider_list，用 id 前缀 ts_ 标识，含 voice 音色字段
     final list = await DBManager().queryTtsProviders();
     Map<String, dynamic>? provider;
     try {
@@ -992,56 +998,97 @@ class AIManager {
     } catch (_) {}
     if (provider == null) return null;
 
-    final String voice = (provider['voice'] as String? ?? '').trim().isEmpty
+    final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
+        .toString()
+        .trim()
+        .replaceFirst(RegExp(r'/+$'), '');
+    final apiKey =
+        (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
+    final voice = (provider['voice']?.toString() ?? '').trim().isEmpty
         ? 'alloy'
-        : (provider['voice'] as String?).toString();
-    try {
-      http.Response res;
-      final modelName = (provider['model'] as String? ?? '').trim();
-      final modelForUrl =
-          modelName.isEmpty ? provider['name'].toString() : modelName;
-
-      if (provider['base_url'].toString().contains('dashscope')) {
-        res = await http
-            .post(
-              Uri.parse(
-                  "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav"),
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer ${provider['api_key']}"
-              },
-              body: jsonEncode({
-                "model": modelForUrl,
-                "input": {"text": text},
-                "parameters": {"format": "wav"}
-              }),
-            )
-            .timeout(const Duration(seconds: 20));
-      } else {
-        res = await http
-            .post(
-              Uri.parse("${provider['base_url']}/audio/speech"),
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer ${provider['api_key']}"
-              },
-              body: jsonEncode(
-                  {"model": modelName, "input": text, "voice": voice}),
-            )
-            .timeout(const Duration(seconds: 20));
-      }
-
-      if (res.statusCode == 200) {
-        final directory = await getApplicationDocumentsDirectory();
-        final path =
-            '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
-        await File(path).writeAsBytes(res.bodyBytes);
-        return path;
-      }
-    } catch (e) {
-      print("TTS Error: $e");
+        : provider['voice'].toString().trim();
+    final modelName = (provider['model']?.toString() ?? '').trim();
+    final model = modelName.isEmpty
+        ? (provider['name']?.toString() ?? 'tts-1')
+        : modelName;
+    if (baseUrl.isEmpty || apiKey.isEmpty || text.trim().isEmpty) {
+      AppLogService.instance.add('TTS', '语音合成失败：缺少地址、Key 或文本');
+      return null;
     }
-    return null;
+
+    try {
+      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com');
+      final endpoint = isDashScope
+          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
+          : '$baseUrl/audio/speech';
+      final res = await http
+          .post(
+            Uri.parse(endpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode(isDashScope
+                ? {
+                    'model': model,
+                    'input': {'text': text},
+                    'parameters': {'format': 'wav', 'voice': voice},
+                  }
+                : {'model': model, 'input': text, 'voice': voice}),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (res.statusCode < 200 ||
+          res.statusCode >= 300 ||
+          res.bodyBytes.isEmpty) {
+        AppLogService.instance.add('TTS', '语音合成失败：HTTP ${res.statusCode}');
+        return null;
+      }
+
+      var bytes = res.bodyBytes;
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      if (contentType.contains('json') ||
+          utf8.decode(bytes, allowMalformed: true).trimLeft().startsWith('{')) {
+        final raw = jsonDecode(utf8.decode(bytes));
+        String? audioUrl;
+        if (raw is Map) {
+          final output = raw['output'];
+          final data = raw['data'];
+          audioUrl = raw['audio_url']?.toString() ??
+              raw['url']?.toString() ??
+              (output is Map
+                  ? (output['audio_url'] ?? output['url'])?.toString()
+                  : null) ??
+              (data is Map
+                  ? (data['audio_url'] ?? data['url'])?.toString()
+                  : null);
+        }
+        if (audioUrl == null || audioUrl.isEmpty) {
+          AppLogService.instance.add('TTS', '语音合成返回 JSON，但没有可下载的音频地址');
+          return null;
+        }
+        final audioResponse = await http
+            .get(Uri.parse(audioUrl))
+            .timeout(const Duration(seconds: 30));
+        if (audioResponse.statusCode < 200 ||
+            audioResponse.statusCode >= 300 ||
+            audioResponse.bodyBytes.isEmpty) {
+          AppLogService.instance
+              .add('TTS', '语音文件下载失败：HTTP ${audioResponse.statusCode}');
+          return null;
+        }
+        bytes = audioResponse.bodyBytes;
+      }
+
+      final directory = await getApplicationDocumentsDirectory();
+      final path =
+          '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
+      await File(path).writeAsBytes(bytes);
+      AppLogService.instance.add('TTS', '语音合成成功：${text.length} 字');
+      return path;
+    } catch (e) {
+      AppLogService.instance.add('TTS', '语音合成异常：$e');
+      return null;
+    }
   }
 
   /// Compresses older ordinary chat into first-person diary entries.
@@ -1118,9 +1165,10 @@ class AIManager {
                       '必须只输出一个 JSON 对象，格式：'
                       '{"upsert":[{"id":"已有 id 或留空","content":"记忆正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
                       '规则：\n'
-                      '1. content 是单条独立正文，不得标题、编号、心情标签或“重要事件”。\n'
-                      '2. 记忆整体用第一人称，但不必在句首硬加“我”（例如写“京太郎每天睡够8小时”，不要写“我京太郎每天睡够8小时”）。不要出现“我记得”“我知道”。称呼用户时禁止用“用户”或第二人称“你”：已知名字就写名字，未知性别写“他”，已知性别写“他/她”。短期日记可自然使用今天、昨天、近日等时间词。\n'
-                      '3. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
+                      '1. content 是单条独立正文，不得标题、编号、心情标签、任何“近期|/短期|/记忆|/日记|”前缀或“重要事件”。\n'
+                      '2. 只可根据下方“新发生的聊天内容”记录用户和角色在对话中明确说过的事实；绝不记录、转述或猜测系统提示、角色设定、回复格式、心情标签规则、工具调用、生图风格、模型、API、内部协议或任何底层逻辑。\n'
+                      '3. 记忆整体用第一人称，但不必在句首硬加“我”（例如写“京太郎每天睡够8小时”，不要写“我京太郎每天睡够8小时”）。不要出现“我记得”“我知道”。称呼用户时禁止用“用户”或第二人称“你”：已知名字就写名字，未知性别写“他”，已知性别写“他/她”。短期日记可自然使用今天、昨天、近日等时间词。\n'
+                      '4. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
                       '4. 已有记忆仍正确时不要重复新增（去重）；需要修正就对其 id upsert；过时或冲突才 delete。允许添加新记忆。\n'
                       '5. expires_days 为 0 表示不过期，近期事项可填 1~30。无更新时输出 {"upsert":[],"delete":[]}。',
                 },
@@ -1154,7 +1202,15 @@ class AIManager {
       var changed = false;
       for (final raw in upserts) {
         final content = raw['content']?.toString().trim() ?? '';
-        if (content.isEmpty || content.length > 500) continue;
+        final lower = content.toLowerCase();
+        if (content.isEmpty ||
+            content.length > 500 ||
+            RegExp(r'^(近期|短期|记忆|日记)\s*[|｜:]').hasMatch(content) ||
+            RegExp(r'系统提示|底层逻辑|工具调用|生图工具|图片风格|动漫风格|心情标签|回复格式|内部协议|\bapi\b|\bmodel\b',
+                    caseSensitive: false)
+                .hasMatch(lower)) {
+          continue;
+        }
         final requestedId = raw['id']?.toString().trim() ?? '';
         // 不允许模型伪造已有 id；空 id 由客户端新建稳定 id。
         final id = requestedId.isNotEmpty && knownIds.contains(requestedId)
@@ -1643,6 +1699,32 @@ class AIManager {
       // 具体 bot 是否配置生图模型由执行阶段校验，未配置时返回明确 tool 结果。
       tools.add(_imageToolSchema());
     }
+    tools.add({
+      'type': 'function',
+      'function': {
+        'name': 'create_future_task',
+        'description':
+            '仅在用户明确要求提醒、定时、稍后执行或安排未来事项时创建未来任务。run_at 必须是当地未来时间，格式 YYYY-MM-DD HH:mm。',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'title': {'type': 'string', 'description': '简短任务标题'},
+            'prompt': {'type': 'string', 'description': '到时要执行或提醒的完整内容'},
+            'run_at': {
+              'type': 'string',
+              'description': '当地未来时间，YYYY-MM-DD HH:mm'
+            },
+            'frequency': {
+              'type': 'string',
+              'enum': ['once', 'daily'],
+              'description': '一次或每天'
+            }
+          },
+          'required': ['title', 'run_at'],
+          'additionalProperties': false,
+        },
+      },
+    });
     if (await LifeScheduleService.instance.enabled()) {
       tools.add({
         'type': 'function',
@@ -1764,6 +1846,44 @@ class AIManager {
         }
       };
     }
+    if (name == 'create_future_task') {
+      final title = args['title']?.toString().trim() ?? '';
+      final prompt = args['prompt']?.toString().trim() ?? title;
+      final rawRunAt = args['run_at']?.toString().trim() ?? '';
+      final parsed = DateTime.tryParse(rawRunAt.replaceFirst(' ', 'T'));
+      if (title.isEmpty || parsed == null) {
+        return {
+          'result': {
+            'ok': false,
+            'error': '缺少 title 或 run_at 格式不正确，应为 YYYY-MM-DD HH:mm'
+          }
+        };
+      }
+      final runAt = parsed.millisecondsSinceEpoch;
+      if (runAt <= DateTime.now().millisecondsSinceEpoch) {
+        return {
+          'result': {'ok': false, 'error': '未来任务必须设置在当前时间之后'}
+        };
+      }
+      final frequency =
+          args['frequency']?.toString() == 'daily' ? 'daily' : 'once';
+      final id = 'future_${botId}_${runAt}_${title.hashCode.abs()}';
+      await db.insertFutureTask({
+        'id': id,
+        'bot_id': botId,
+        'title': title,
+        'note': prompt,
+        'time': runAt,
+        'is_done': 0,
+        'frequency': frequency,
+        'prompt': prompt,
+        'run_at': runAt,
+        'status': 'pending',
+      });
+      return {
+        'result': {'ok': true, 'id': id, 'message': '未来任务已创建：$title'}
+      };
+    }
     if (name == 'update_life_state') {
       final updated =
           await LifeScheduleService.instance.updateFromTool(botId, args);
@@ -1823,6 +1943,139 @@ class AIManager {
   // 构建核心防御护栏与游戏机制注入
   Future<String?> generateTTS(String text, String providerId) =>
       _generateTTS(text, providerId);
+
+  Future<Map<String, dynamic>> testProviderCapabilities(
+      String baseUrl, String apiKey, String model) async {
+    final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    final modelName = model.split(',').first.trim();
+    if (root.isEmpty || apiKey.trim().isEmpty || modelName.isEmpty) {
+      return {'capabilities': <String>[], 'error': '请填写 API 地址、Key 和模型名'};
+    }
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $apiKey',
+    };
+    bool success(http.Response response) =>
+        response.statusCode >= 200 && response.statusCode < 300;
+    Future<bool> postJson(String path, Map<String, dynamic> body) async {
+      try {
+        final response = await http
+            .post(Uri.parse('$root$path'),
+                headers: headers, body: jsonEncode(body))
+            .timeout(const Duration(seconds: 20));
+        return success(response);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    Future<bool> stt() async {
+      try {
+        // A minimal valid PCM WAV avoids treating a missing multipart file as a test.
+        const wav = <int>[
+          82,
+          73,
+          70,
+          70,
+          36,
+          0,
+          0,
+          0,
+          87,
+          65,
+          86,
+          69,
+          102,
+          109,
+          116,
+          32,
+          16,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          128,
+          62,
+          0,
+          0,
+          0,
+          125,
+          0,
+          0,
+          2,
+          0,
+          16,
+          0,
+          100,
+          97,
+          116,
+          97,
+          0,
+          0,
+          0,
+          0,
+        ];
+        final request = http.MultipartRequest(
+            'POST', Uri.parse('$root/audio/transcriptions'))
+          ..headers['Authorization'] = 'Bearer $apiKey'
+          ..fields['model'] = modelName
+          ..files.add(http.MultipartFile.fromBytes('file', wav,
+              filename: 'tidebot-test.wav', contentType: null));
+        final response =
+            await request.send().timeout(const Duration(seconds: 20));
+        return response.statusCode >= 200 && response.statusCode < 300;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const onePixel =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    final results = await Future.wait<bool>([
+      postJson('/chat/completions', {
+        'model': modelName,
+        'messages': [
+          {'role': 'user', 'content': 'ping'}
+        ],
+        'max_tokens': 1,
+      }),
+      stt(),
+      postJson('/chat/completions', {
+        'model': modelName,
+        'messages': [
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': 'Describe this image in one word.'},
+              {
+                'type': 'image_url',
+                'image_url': {'url': onePixel}
+              },
+            ],
+          }
+        ],
+        'max_tokens': 8,
+      }),
+      postJson('/images/generations', {
+        'model': modelName,
+        'prompt': 'A single blue pixel.',
+        'size': '256x256',
+        'n': 1,
+      }),
+    ]);
+    const names = ['文本', 'STT', '识图', '生图'];
+    final capabilities = <String>[];
+    for (var i = 0; i < results.length; i++) {
+      if (results[i]) capabilities.add(names[i]);
+    }
+    return {
+      'capabilities': capabilities,
+      if (capabilities.isEmpty) 'error': '接口拒绝了所有测试请求',
+    };
+  }
 
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =

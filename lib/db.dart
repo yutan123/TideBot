@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 15,
+      version: 16,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -76,7 +76,7 @@ class DBManager {
           CREATE TABLE memories (
             id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
             content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
-            expires_at INTEGER, timestamp INTEGER,
+            expires_at INTEGER, timestamp INTEGER, updated_at INTEGER,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
         ''');
@@ -267,6 +267,14 @@ class DBManager {
           } catch (_) {}
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
+        }
+        if (oldVersion < 16) {
+          try {
+            await db
+                .execute('ALTER TABLE memories ADD COLUMN updated_at INTEGER');
+          } catch (_) {}
+          await db.execute(
+              'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL');
         }
         if (oldVersion < 15) {
           for (final column in [
@@ -723,6 +731,7 @@ class DBManager {
         'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
+        'updated_at': now,
       });
     } else if (duplicate != null) {
       await updateMemory(duplicate['id'].toString(), {
@@ -732,6 +741,7 @@ class DBManager {
         'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
+        'updated_at': now,
       });
     } else {
       await insertMemory({
@@ -744,6 +754,7 @@ class DBManager {
         'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
+        'updated_at': now,
       });
     }
     const caps = {'long': 60, 'short': 100};

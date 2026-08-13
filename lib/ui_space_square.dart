@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
+import 'global_notice.dart';
 import 'db.dart';
 import 'theme.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
-import 'global_notice.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -63,15 +63,19 @@ class _SpacePageState extends State<SpacePage> {
     }
     setState(() => _diaryAutoScrolling = true);
     _diaryTimer?.cancel();
-    _diaryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _diaryTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (!mounted || !_diaryScrollController.hasClients) return;
-      _diaryScrollIndex = (_diaryScrollIndex + 1) % _memories.length;
-      final maxExtent = _diaryScrollController.position.maxScrollExtent;
-      final target = _memories.length <= 1
-          ? 0.0
-          : maxExtent * _diaryScrollIndex / (_memories.length - 1);
-      _diaryScrollController.animateTo(target,
-          duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+      final position = _diaryScrollController.position;
+      if (position.pixels >= position.maxScrollExtent - 2) {
+        _diaryScrollController.animateTo(0,
+            duration: const Duration(milliseconds: 450),
+            curve: Curves.easeInOut);
+      } else {
+        _diaryScrollController.animateTo(
+            (position.pixels + 72).clamp(0.0, position.maxScrollExtent),
+            duration: const Duration(milliseconds: 450),
+            curve: Curves.easeInOut);
+      }
     });
   }
 
@@ -106,7 +110,11 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final mem = await db.queryMemories(_botId, type: 'short', limit: 50);
+      final shortMemories =
+          await db.queryMemories(_botId, type: 'short', limit: 50);
+      final longMemories =
+          await db.queryMemories(_botId, type: 'long', limit: 50);
+      final mem = [...shortMemories, ...longMemories];
       final messages = await db.queryMessages(_botId, limit: 30);
       final latestMood = messages.reversed.firstWhere(
         (m) =>
@@ -241,6 +249,10 @@ class _SpacePageState extends State<SpacePage> {
                           else
                             GestureDetector(
                               onTap: _toggleDiaryAutoScroll,
+                              onPanDown: (_) {
+                                if (_diaryAutoScrolling)
+                                  _toggleDiaryAutoScroll();
+                              },
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -248,8 +260,7 @@ class _SpacePageState extends State<SpacePage> {
                                     height: 196,
                                     child: ListView.separated(
                                       controller: _diaryScrollController,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
+                                      physics: const BouncingScrollPhysics(),
                                       padding: EdgeInsets.zero,
                                       itemCount: _memories.length,
                                       separatorBuilder: (_, __) => Divider(
@@ -730,12 +741,9 @@ class SquarePageState extends State<SquarePage>
         '用户分享了一条动态。作者：${f['user'] ?? '匿名'}；发布时间：${formatTime(f['timestamp'] ?? now)}；内容：${f['content'] ?? ''}；${(f['image']?.toString().isNotEmpty == true) ? '动态附有一张图片。' : ''} 请针对这条动态自然回应。';
     final reply = await AIManager().sendMessage(botId: botId, text: readable);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-          reply['success'] == true ? '动态已发送，机器人已回复' : '动态已发送；机器人回复失败，可在聊天页重试',
-          style: const TextStyle(fontFamily: 'TideFont')),
-      behavior: SnackBarBehavior.floating,
-    ));
+    GlobalNotice.show(
+        reply['success'] == true ? '动态已发送，机器人已回复' : '动态已发送；机器人回复失败，可在聊天页重试',
+        color: reply['success'] == true ? null : const Color(0xFFE74C3C));
   }
 
   void publishFeed() {
@@ -1094,8 +1102,7 @@ class SquarePageState extends State<SquarePage>
     final bots = await DBManager().queryBots();
     if (!mounted) return;
     if (bots.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('请先创建机器人', style: TextStyle(fontFamily: 'TideFont'))));
+      GlobalNotice.show('请先创建机器人', color: const Color(0xFFE74C3C));
       return;
     }
     final theme = TideTheme.of(context);
@@ -1428,10 +1435,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
               ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
           _sendingComment = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('评论发送失败，请重试', style: TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating,
-        ));
+        GlobalNotice.show('评论发送失败，请重试', color: const Color(0xFFE74C3C));
       }
     }
   }

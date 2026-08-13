@@ -240,32 +240,21 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     } on StateError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text(e.message, style: const TextStyle(fontFamily: 'TideFont')),
-          backgroundColor: const Color(0xFFE74C3C),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
+      TideHaptics.error();
       return;
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content:
-            Text('导出失败：$e', style: const TextStyle(fontFamily: 'TideFont')),
-        backgroundColor: const Color(0xFFE74C3C),
-        behavior: SnackBarBehavior.floating,
-      ));
+      GlobalNotice.show('导出失败：$e', color: const Color(0xFFE74C3C));
+      TideHaptics.error();
       return;
     }
     if (!mounted || cancelled) return;
     if (targetPath != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已导出到系统下载目录：$targetPath',
-              style: const TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show('已导出到系统下载目录：$targetPath');
+      TideHaptics.confirm();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('已取消导出', style: TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show('已取消导出');
     }
   }
 
@@ -279,15 +268,13 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       final count = await DBManager().importBotChat(botId, path);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已导入 $count 条聊天记录',
-              style: const TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show('已导入 $count 条聊天记录');
+      TideHaptics.confirm();
     } on FormatException catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(e.message,
-                style: const TextStyle(fontFamily: 'TideFont'))));
+      if (mounted) {
+        GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
+        TideHaptics.error();
+      }
     }
   }
 
@@ -437,10 +424,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ])));
         break;
       default:
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${s['title']}功能开发中...',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            behavior: SnackBarBehavior.floating));
+        GlobalNotice.show('${s['title']}功能开发中...');
     }
   }
 
@@ -649,11 +633,8 @@ class _ProfilePageState extends State<ProfilePage> {
         await File(path).copy(dest);
         await tide.setChatBg(dest);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content:
-                  Text('聊天背景已更新', style: TextStyle(fontFamily: 'TideFont')),
-              backgroundColor: Color(0xFF34C759),
-              behavior: SnackBarBehavior.floating));
+          GlobalNotice.show('聊天背景已更新', color: const Color(0xFF34C759));
+          TideHaptics.confirm();
         }
       }
     } catch (_) {}
@@ -1711,10 +1692,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     }
     await DBManager().insertKV('tts_provider_list', jsonEncode(_ttsProviders));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('已保存', style: TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: TideTheme.of(context).primary));
+      GlobalNotice.show('已保存', color: TideTheme.of(context).primary);
+      TideHaptics.confirm();
     }
   }
 
@@ -1876,12 +1855,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       if (raw.contains(',') || raw.contains('，')) {
                         final parts = raw.split(RegExp('[，,]'));
                         if (parts.isNotEmpty) model = parts.first.trim();
-                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                            content: Text('只能填一个模型，已按「$model」保存',
-                                style: const TextStyle(fontFamily: 'TideFont')),
-                            behavior: SnackBarBehavior.floating,
-                            backgroundColor: const Color(0xFFE74C3C),
-                            duration: const Duration(seconds: 2)));
+                        GlobalNotice.show('只能填一个模型，已按「$model」保存',
+                            color: const Color(0xFFE74C3C));
+                        TideHaptics.warning();
                       }
                       setState(() {
                         final p = {
@@ -1946,12 +1922,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       if (model.contains(',') || model.contains('，')) {
                         final parts = model.split(RegExp('[，,]'));
                         if (parts.isNotEmpty) model = parts.first.trim();
-                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                            content: Text('只能填一个模型，已按「$model」保存',
-                                style: const TextStyle(fontFamily: 'TideFont')),
-                            behavior: SnackBarBehavior.floating,
-                            backgroundColor: const Color(0xFFE74C3C),
-                            duration: const Duration(seconds: 2)));
+                        GlobalNotice.show('只能填一个模型，已按「$model」保存',
+                            color: const Color(0xFFE74C3C));
+                        TideHaptics.warning();
                       }
                       setState(() {
                         final p = {
@@ -2097,32 +2070,38 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   Future<void> _testProvider(Map<String, dynamic> p) async {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('测试中...', style: TextStyle(fontFamily: 'TideFont')),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating));
-    }
+    GlobalNotice.show('正在并行测试文本、语音识别、识图与生图能力...');
     try {
-      final ms = await AIManager().testConnection(
-          p['url'] ?? '',
-          p['key'] ?? '',
-          (p['model'] as String?)?.split(',').first.trim() ?? '');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('连接成功！${ms}ms',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            backgroundColor: const Color(0xFF34C759),
-            behavior: SnackBarBehavior.floating));
+      final result = await AIManager().testProviderCapabilities(
+        p['url']?.toString() ?? '',
+        p['key']?.toString() ?? '',
+        p['model']?.toString() ?? '',
+      );
+      final capabilities = (result['capabilities'] as List? ?? const [])
+          .map((item) => item.toString())
+          .join('、');
+      if (capabilities.isEmpty) {
+        GlobalNotice.show('全部能力测试失败：${result['error'] ?? '请检查模型与接口'}',
+            color: const Color(0xFFE74C3C));
+      } else {
+        GlobalNotice.show('测试通过：$capabilities', color: const Color(0xFF34C759));
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('连接失败: $e',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            backgroundColor: const Color(0xFFE74C3C),
-            behavior: SnackBarBehavior.floating));
-      }
+      GlobalNotice.show('测试失败：$e', color: const Color(0xFFE74C3C));
+    }
+  }
+
+  Future<void> _testTtsProvider(Map<String, dynamic> p) async {
+    GlobalNotice.show('正在测试 TTS...');
+    final path = await AIManager().generateTTS(
+      '这是一段 TideBot 语音测试。',
+      p['id']?.toString() ?? '',
+    );
+    if (path == null || path.isEmpty) {
+      GlobalNotice.show('TTS 测试失败，请检查地址、模型、音色和 API Key',
+          color: const Color(0xFFE74C3C));
+    } else {
+      GlobalNotice.show('TTS 测试成功，已生成测试音频', color: const Color(0xFF34C759));
     }
   }
 
@@ -2299,6 +2278,29 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                                     fontSize: 16,
                                                     fontWeight: FontWeight.w600,
                                                     fontFamily: 'TideFont'))),
+                                        BouncyTap(
+                                            onTap: () => _testTtsProvider(p),
+                                            child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 10,
+                                                        vertical: 4),
+                                                decoration: BoxDecoration(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
+                                                    color: TideTheme.of(context)
+                                                        .primary
+                                                        .withValues(
+                                                            alpha: 0.15)),
+                                                child: Text('测试',
+                                                    style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: TideTheme.of(
+                                                                context)
+                                                            .primary,
+                                                        fontFamily:
+                                                            'TideFont')))),
                                         const SizedBox(width: 8),
                                         BouncyTap(
                                             onTap: () =>
@@ -2419,12 +2421,9 @@ class _LocalModelPageState extends State<LocalModelPage> {
         model['installed'] = false;
         model['verificationError'] = e.toString();
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('模型下载完成，但加载验证失败：$e',
-            style: const TextStyle(fontFamily: 'TideFont')),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 8),
-      ));
+      GlobalNotice.show('模型下载完成，但加载验证失败：$e',
+          color: const Color(0xFFE74C3C), duration: const Duration(seconds: 8));
+      TideHaptics.error();
       return false;
     }
   }
@@ -2450,11 +2449,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
       setState(() => model['downloading'] = false);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('已暂停下载，进度已保留，点击「下载」可继续',
-            style: TextStyle(fontFamily: 'TideFont')),
-        backgroundColor: Color(0xFF17A2B8),
-        behavior: SnackBarBehavior.floating));
+    GlobalNotice.show('已暂停下载，进度已保留，点击「下载」可继续', color: const Color(0xFF17A2B8));
+    TideHaptics.selection();
   }
 
   Future<void> _deleteModel(int index) async {
@@ -2508,9 +2504,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
       model['totalBytes'] = 0;
       model['progress'] = 0.0;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('本地模型已删除')),
-    );
+    GlobalNotice.show('本地模型已删除');
+    TideHaptics.confirm();
   }
 
   @override
@@ -2557,9 +2552,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
     final m = _models[idx];
     final url = (m['url'] as String).trim();
     if (url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('暂无可用下载链接', style: TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show('暂无可用下载链接', color: const Color(0xFFE74C3C));
+      TideHaptics.warning();
       return;
     }
     final id = m['id'] as String;

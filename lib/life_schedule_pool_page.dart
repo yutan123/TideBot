@@ -30,83 +30,94 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
 
   Future<void> _add(String key) async {
     final controller = TextEditingController();
-    final value = await showTideSheet<String>(
+    final value = await TideDialogs.show<String>(
       context: context,
-      height: 300,
-      child: Builder(builder: (sheetContext) {
-        final theme = TideTheme.of(sheetContext);
-        // showTideSheet 已通过 MediaQuery.viewInsets 收缩整张面板并整体上移，
-        // 这里不能再叠加 AnimatedPadding(viewInsets)，否则双份键盘避让会挤压布局。
-        // 改为 SingleChildScrollView，键盘弹出导致空间不足时允许内部滚动。
-        return SingleChildScrollView(
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
           padding: EdgeInsets.only(
-              bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('添加${_labels[key]}',
-                    style: TextStyle(
+            left: 24,
+            right: 24,
+            bottom: MediaQuery.viewInsetsOf(dialogContext).bottom,
+          ),
+          child: Center(
+            child: Material(
+              type: MaterialType.transparency,
+              child: SingleChildScrollView(
+                child: TideDialogs.glassContent(
+                  context: dialogContext,
+                  children: [
+                    Text(
+                      '添加${_labels[key]}',
+                      style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
                         color: theme.textStrong,
-                        fontFamily: 'TideFont')),
-                const SizedBox(height: 18),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  onSubmitted: (_) =>
-                      Navigator.pop(context, controller.text.trim()),
-                  decoration: InputDecoration(
-                    hintText: '输入内容',
-                    hintStyle: TextStyle(
-                        color: theme.textFaint, fontFamily: 'TideFont'),
-                    filled: true,
-                    fillColor: theme.surfaceVariant,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: theme.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: theme.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: theme.primary, width: 1.4),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TideDialogs.glassButton(
-                        '取消',
-                        onTap: () => Navigator.pop(context),
-                        color: theme.surfaceVariant,
-                        textColor: theme.textStrong,
+                        fontFamily: 'TideFont',
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TideDialogs.glassButton(
-                        '添加',
-                        onTap: () =>
-                            Navigator.pop(context, controller.text.trim()),
-                        color: theme.primary,
+                    const SizedBox(height: 18),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      onSubmitted: (_) =>
+                          Navigator.pop(dialogContext, controller.text.trim()),
+                      decoration: InputDecoration(
+                        hintText: '输入内容',
+                        hintStyle: TextStyle(
+                          color: theme.textFaint,
+                          fontFamily: 'TideFont',
+                        ),
+                        filled: true,
+                        fillColor: theme.surfaceVariant,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: theme.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: theme.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide:
+                              BorderSide(color: theme.primary, width: 1.4),
+                        ),
                       ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TideDialogs.glassButton(
+                            '取消',
+                            onTap: () => Navigator.pop(dialogContext),
+                            color: theme.surfaceVariant,
+                            textColor: theme.textStrong,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TideDialogs.glassButton(
+                            '添加',
+                            onTap: () => Navigator.pop(
+                              dialogContext,
+                              controller.text.trim(),
+                            ),
+                            color: theme.primary,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         );
-      }),
+      },
     );
     controller.dispose();
     if (value == null || value.isEmpty || _pools[key]!.contains(value)) return;

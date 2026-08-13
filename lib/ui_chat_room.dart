@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'global_notice.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
@@ -19,7 +20,6 @@ import 'ai.dart';
 import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
-import 'global_notice.dart';
 import 'media_preprocessor.dart';
 import 'ui_call.dart';
 
@@ -252,24 +252,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  /// 流式已把完整文本展示在屏上时，只需按句落库（供重新进入后呈现分段）。
-  /// 此时不再重播放逐句气泡，避免“文字消失再出现”的观感，保证流水输出持续有效。
-  Future<void> _persistSegments(
+  /// 在任何 UI 动画开始前完整写入分段回复。页面离开或应用转后台不会中断落库。
+  Future<bool> _persistSegments(
     DBManager db,
     Map<String, dynamic> aiMsg,
     Map<String, dynamic> result,
-    String content, {
-    bool segmentsDelayed = true,
-  }) async {
+    String content,
+  ) async {
     final segments = _splitReplySegments(content);
     final baseTimestamp = aiMsg['timestamp'] as int;
     final botId = _bot['id']?.toString() ?? '';
-    for (var index = 0; index < segments.length; index++) {
-      if (index > 0 && segmentsDelayed) await _applyRandomReplyDelay(db);
-      if (!mounted) return;
-      final segId =
-          index == 0 ? aiMsg['id'].toString() : '${aiMsg['id']}_segment_$index';
-      try {
+    try {
+      for (var index = 0; index < segments.length; index++) {
+        final segId = index == 0
+            ? aiMsg['id'].toString()
+            : '${aiMsg['id']}_segment_$index';
         await db.insertChatMessage({
           'id': segId,
           'bot_id': botId,
@@ -281,10 +278,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               result['sources'] == null ? null : jsonEncode(result['sources']),
           'timestamp': baseTimestamp + index,
         });
-      } catch (e) {
-        debugPrint('[send] persist stream segment failed: $e');
-        break;
       }
+      return true;
+    } catch (e) {
+      debugPrint('[send] persist segments failed: $e');
+      return false;
     }
   }
 
@@ -662,17 +660,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             onDelta: streamingMessage == null
                 ? null
                 : (delta) {
-                    // 用户要求“服务商完整回复后再前端打字机渲染”：这里不把 SSE 增量
-                    // 实时送上前端，完整内容在 result 返回后统一交给下方打字机定时器
-                    // 渲染，避免边生成边显示。onDelta 仅用于维持请求的流式连接。
+                    // SSE 文本进入显示缓冲，由定时器批量上屏，避免每个 token 都触发重绘。
+                    pendingDisplay += delta;
                   },
           )
           .timeout(requestTimeout);
 
-      _streamDisplayTimer?.cancel();
-      _streamDisplayTimer = null;
-
       if (result['success'] != true) {
+        _streamDisplayTimer?.cancel();
+        _streamDisplayTimer = null;
         if (streamingMessage != null && mounted) {
           setState(() => _msgs.remove(streamingMessage));
         }
@@ -732,8 +728,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 用户需求：无论厂商是否回传 SSE 增量，前端都等服务商完整回复后再用打字机
       // 逐字渲染，而不是边生成边显示。完整 content 收到后统一喂给字幕定时器上屏，
       // 播完后定格为完整内容。
-      final needsTypewriter =
-          streamingMessage != null && !segmentedReply && content.isNotEmpty;
+      final needsTypewriter = streamingMessage != null &&
+          !segmentedReply &&
+          content.isNotEmpty &&
+          pendingDisplay.isEmpty;
       if (needsTypewriter && mounted) {
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
@@ -784,9 +782,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             _streamDisplayTimer = null;
             final segments = _splitReplySegments(content);
             final baseTimestamp = aiMsg['timestamp'] as int;
-            if (mounted) {
-              setState(() => _msgs.remove(streamingMessage));
-            }
+            await _persistSegments(db, aiMsg, result, content);
+            if (!mounted) return;
+            setState(() => _msgs.remove(streamingMessage));
             for (var index = 0; index < segments.length; index++) {
               if (index > 0) await _applyRandomReplyDelay(db);
               if (!mounted) return;
@@ -799,8 +797,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               setState(() => _msgs.add(segMsg));
               _scrollDown();
             }
-            await _persistSegments(db, aiMsg, result, content,
-                segmentsDelayed: false);
           } else if (needsTypewriter) {
             // 模拟打字机正在逐字上屏（provider 整段返回、未触发真实 SSE）。
             // 这里不动气泡，由打字机定时器播完后再统一定格 id / 时间戳 / 完整内容。
@@ -815,35 +811,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           }
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
-          // 先完整写入分段副本，再删除整段原稿。旧逻辑先删后写，页面退出、
-          // 异常或数据库短暂失败时会导致回复整段消失。
           final baseTimestamp = aiMsg['timestamp'] as int;
-          var persisted = true;
-          for (var index = 0; index < segments.length; index++) {
-            final segId = index == 0
-                ? aiMsg['id'].toString()
-                : '${aiMsg['id']}_segment_$index';
-            try {
-              await db.insertChatMessage({
-                'id': segId,
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'text',
-                'content': segments[index],
-                'mood': result['mood'],
-                'sources_json': result['sources'] == null
-                    ? null
-                    : jsonEncode(result['sources']),
-                'timestamp': baseTimestamp + index,
-              });
-            } catch (e) {
-              persisted = false;
-              debugPrint('[send] persist segment failed: $e');
-              break;
-            }
-          }
-          // 首段使用同一 ID 覆盖原稿；全部成功后原稿已经不再存在，不要额外删除。
-          // 若任何段失败，保留原稿，优先保证退出后聊天记录不丢。
+          final persisted = await _persistSegments(db, aiMsg, result, content);
+          // 分段已完整落库；下面的延迟只影响当前前台的展示节奏。
           for (var index = 0; index < segments.length; index++) {
             // 句间自然等待：首句立即上屏（保证响应感），之后每句间 400–1000ms。
             if (index > 0) await _applyRandomReplyDelay(db);
@@ -1051,12 +1021,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _isRecording = false;
           _recSecs = 0;
         });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('[X] 录音不可用：$e',
-              style: const TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFFE74C3C),
-        ));
+        GlobalNotice.show('[X] 录音不可用：$e', color: const Color(0xFFE74C3C));
       }
     }
   }
@@ -1090,10 +1055,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       await _send(document: path, mediaContext: context);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('视频预处理失败：$e'),
-        behavior: SnackBarBehavior.floating,
-      ));
+      GlobalNotice.show('视频预处理失败：$e', color: const Color(0xFFE74C3C));
     }
   }
 

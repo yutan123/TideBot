@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'global_notice.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -99,8 +100,7 @@ class OtaUpdate {
       await _channel.invokeMethod('installApk', {'path': file.path});
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('更新下载失败：$e')));
+        GlobalNotice.show('更新下载失败：$e', color: const Color(0xFFE74C3C));
       }
     }
   }

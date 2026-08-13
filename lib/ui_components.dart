@@ -29,16 +29,21 @@ class TideHaptics {
 
   static const MethodChannel _channel = MethodChannel('tidebot.native.channel');
 
-  static void tap() {
+  static void _impact(int duration, int amplitude, Future<void> fallback) {
     if (!_enabled) return;
-    // Use Android's Vibrator directly. Flutter haptic feedback remains a fallback
-    // for platforms without the native TideBot channel.
     _channel.invokeMethod<bool>('vibrate', {
-      'duration': 24,
-      'amplitude': 180,
+      'duration': duration,
+      'amplitude': amplitude,
     }).catchError((_) => false);
-    HapticFeedback.mediumImpact().catchError((_) => HapticFeedback.vibrate());
+    fallback.catchError((_) => HapticFeedback.vibrate());
   }
+
+  static void tap() => _impact(18, 105, HapticFeedback.selectionClick());
+  static void selection() => _impact(16, 90, HapticFeedback.selectionClick());
+  static void confirm() => _impact(30, 145, HapticFeedback.lightImpact());
+  static void warning() => _impact(44, 175, HapticFeedback.mediumImpact());
+  static void error() => _impact(70, 220, HapticFeedback.heavyImpact());
+  static void longPress() => _impact(38, 155, HapticFeedback.mediumImpact());
 }
 
 class BouncyTap extends StatefulWidget {

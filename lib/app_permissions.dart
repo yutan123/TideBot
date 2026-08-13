@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'global_notice.dart';
 
 /// Android runtime permission gateway.
 /// ImagePicker's Android photo picker can work without broad storage access on
@@ -38,14 +39,12 @@ class AppPermissions {
 
   static void _showDenied(
       BuildContext context, String message, bool permanentlyDenied) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(permanentlyDenied ? '$message，请在系统设置中开启' : message,
-          style: const TextStyle(fontFamily: 'TideFont')),
-      action: permanentlyDenied
-          ? const SnackBarAction(label: '去设置', onPressed: openAppSettings)
-          : null,
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: const Color(0xFFE74C3C),
-    ));
+    GlobalNotice.show(
+      permanentlyDenied ? '$message，请在系统设置中开启' : message,
+      color: const Color(0xFFE74C3C),
+    );
+    if (permanentlyDenied) {
+      openAppSettings();
+    }
   }
 }

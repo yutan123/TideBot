@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'db.dart';
 import 'ui_components.dart';
+import 'global_notice.dart';
 import 'theme.dart';
 
 class CreateBotPage extends StatefulWidget {
@@ -45,9 +46,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
   void _save() async {
     final name = _nameC.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('名字不能为空', style: TextStyle(fontFamily: 'TideFont')),
-          behavior: SnackBarBehavior.floating));
+      GlobalNotice.show('名字不能为空', color: const Color(0xFFE74C3C));
       return;
     }
     final basePrompt = _styleC.text.trim();
@@ -73,10 +72,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('保存失败: $e',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            behavior: SnackBarBehavior.floating));
+        GlobalNotice.show('保存失败: $e', color: const Color(0xFFE74C3C));
       }
     }
   }
@@ -95,11 +91,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
       }
       if (!granted) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('需要相册权限才能选择头像',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Color(0xFFE74C3C)));
+          GlobalNotice.show('需要相册权限才能选择头像', color: const Color(0xFFE74C3C));
         }
         return;
       }

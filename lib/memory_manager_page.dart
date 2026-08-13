@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'db.dart';
 import 'theme.dart';
 import 'ui_components.dart';
+import 'global_notice.dart';
 
 class MemoryManagerPage extends StatefulWidget {
   final String botId;
@@ -16,8 +17,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   List<Map<String, dynamic>> _items = [];
   String _type = 'long';
   String _frequency = 'daily';
-  DateTime? _taskDate;
-  TimeOfDay? _taskTime;
+  // Future tasks use an explicit, editable YYYY-MM-DD HH:mm input.
   bool _loading = true;
   String get _label => _type == 'long'
       ? '长期记忆'
@@ -60,8 +60,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
     return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
   }
 
-  /// 自定义日期选择器（避免使用系统原生 showDatePicker）。
-  /// 通过年/月步进 + 当月日期网格选择，完全由 TideDialogs 构建。
+  /* Legacy date/time picker implementation retained below temporarily.
   Future<DateTime?> _pickDate(BuildContext ctx) async {
     final theme = TideTheme.of(ctx);
     var year = _taskDate?.year ?? DateTime.now().year;
@@ -262,6 +261,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
       }),
     );
   }
+  */
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
     if (_type == 'future' && item != null) {
@@ -295,9 +295,15 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           TextEditingController(text: item?['title']?.toString() ?? '');
       final prompt = TextEditingController(
           text: item?['prompt']?.toString() ?? item?['note']?.toString() ?? '');
-      _frequency = 'daily';
-      _taskDate = DateTime.now();
-      _taskTime = TimeOfDay.now();
+      final runAt = (item?['run_at'] as num?)?.toInt() ??
+          (item?['time'] as num?)?.toInt() ??
+          DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch;
+      final timeText = TextEditingController(
+          text: DateTime.fromMillisecondsSinceEpoch(runAt)
+              .toLocal()
+              .toString()
+              .substring(0, 16));
+      _frequency = item?['frequency']?.toString() ?? 'once';
       final ok = await TideDialogs.show<bool>(
           context: context,
           builder: (ctx) => StatefulBuilder(
@@ -369,32 +375,13 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               if (picked != null)
                                 setDialog(() => _frequency = picked);
                             }),
-                        if (_frequency == 'once')
-                          ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: const Text('日期',
-                                  style: TextStyle(fontFamily: 'TideFont')),
-                              trailing: Text(
-                                  '${_taskDate!.year}-${_taskDate!.month.toString().padLeft(2, '0')}-${_taskDate!.day.toString().padLeft(2, '0')}',
-                                  style: TextStyle(
-                                      color: TideTheme.of(ctx).primary,
-                                      fontFamily: 'TideFont')),
-                              onTap: () async {
-                                final d = await _pickDate(ctx);
-                                if (d != null) setDialog(() => _taskDate = d);
-                              }),
-                        ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('时间',
-                                style: TextStyle(fontFamily: 'TideFont')),
-                            trailing: Text(_taskTime!.format(ctx),
-                                style: TextStyle(
-                                    color: TideTheme.of(ctx).primary,
-                                    fontFamily: 'TideFont')),
-                            onTap: () async {
-                              final t = await _pickTime(ctx);
-                              if (t != null) setDialog(() => _taskTime = t);
-                            }),
+                        TextField(
+                            controller: timeText,
+                            keyboardType: TextInputType.datetime,
+                            decoration: const InputDecoration(
+                              labelText: '执行时间',
+                              hintText: 'YYYY-MM-DD HH:mm',
+                            )),
                         const SizedBox(height: 14),
                         Row(children: [
                           Expanded(
@@ -407,6 +394,20 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                         ])
                       ])))));
       if (ok == true && prompt.text.trim().isNotEmpty) {
+        final parsedRunAt =
+            DateTime.tryParse(timeText.text.trim().replaceFirst(' ', 'T'));
+        if (parsedRunAt == null ||
+            parsedRunAt.millisecondsSinceEpoch <=
+                DateTime.now().millisecondsSinceEpoch) {
+          if (mounted) {
+            GlobalNotice.show('请输入当前时间之后的 YYYY-MM-DD HH:mm',
+                color: const Color(0xFFE74C3C));
+          }
+          title.dispose();
+          prompt.dispose();
+          timeText.dispose();
+          return;
+        }
         final now = DateTime.now().millisecondsSinceEpoch;
         await DBManager().insertFutureTask({
           'id': item?['id'] ?? 'task_$now',
@@ -415,10 +416,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           'note': prompt.text.trim(),
           'prompt': prompt.text.trim(),
           'time': now,
-          'run_at': ((_taskDate ?? DateTime.now()).copyWith(
-                  hour: _taskTime?.hour ?? TimeOfDay.now().hour,
-                  minute: _taskTime?.minute ?? TimeOfDay.now().minute))
-              .millisecondsSinceEpoch,
+          'run_at': parsedRunAt.millisecondsSinceEpoch,
           'frequency': _frequency,
           'is_done': 0,
           'status': 'pending'
@@ -427,6 +425,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
       }
       title.dispose();
       prompt.dispose();
+      timeText.dispose();
       return;
     }
     final content =
