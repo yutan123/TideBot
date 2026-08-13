@@ -162,7 +162,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     print('_loadMsgs called with bot ID: ${_bot['id']}');
     try {
       final db = DBManager();
-      final msgs = await db.queryMessages(_bot['id'] as String, limit: 100);
+      // 不要用 limit 截断历史：导出记录里明明存在，但前端只加载最近 100 条，
+      // 导致打开长聊天后大量消息“消失”。这里拿全量，UI 侧用 reverse 只渲染最近一段。
+      final msgs = await db.queryMessages(_bot['id'] as String);
       // 引用功能已废弃：不再为 reply_to_id 逐条补查历史消息，避免打开长聊天时
       // 触发大量顺序数据库查询并造成列表首帧卡顿。
       print('_loadMsgs success: got ${msgs.length} messages');

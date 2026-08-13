@@ -298,11 +298,15 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
       final runAt = (item?['run_at'] as num?)?.toInt() ??
           (item?['time'] as num?)?.toInt() ??
           DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch;
+      final runAtLocal = DateTime.fromMillisecondsSinceEpoch(runAt).toLocal();
+      // 频率分离：每天只填时间，一次填日期 + 时间两个框。
+      final dateText = TextEditingController(
+          text: '${runAtLocal.year.toString().padLeft(4, '0')}-'
+              '${runAtLocal.month.toString().padLeft(2, '0')}-'
+              '${runAtLocal.day.toString().padLeft(2, '0')}');
       final timeText = TextEditingController(
-          text: DateTime.fromMillisecondsSinceEpoch(runAt)
-              .toLocal()
-              .toString()
-              .substring(0, 16));
+          text: '${runAtLocal.hour.toString().padLeft(2, '0')}:'
+              '${runAtLocal.minute.toString().padLeft(2, '0')}');
       _frequency = item?['frequency']?.toString() ?? 'once';
       final ok = await TideDialogs.show<bool>(
           context: context,
@@ -375,13 +379,32 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               if (picked != null)
                                 setDialog(() => _frequency = picked);
                             }),
-                        TextField(
-                            controller: timeText,
-                            keyboardType: TextInputType.datetime,
-                            decoration: const InputDecoration(
-                              labelText: '执行时间',
-                              hintText: 'YYYY-MM-DD HH:mm',
-                            )),
+                        // 动态表单：每天只填时间；一次显示日期 + 时间两个独立输入框。
+                        if (_frequency == 'daily')
+                          TextField(
+                              controller: timeText,
+                              keyboardType: TextInputType.datetime,
+                              decoration: const InputDecoration(
+                                labelText: '每天执行时间',
+                                hintText: 'HH:mm',
+                              ))
+                        else ...[
+                          TextField(
+                              controller: dateText,
+                              keyboardType: TextInputType.datetime,
+                              decoration: const InputDecoration(
+                                labelText: '执行日期',
+                                hintText: 'YYYY-MM-DD',
+                              )),
+                          const SizedBox(height: 10),
+                          TextField(
+                              controller: timeText,
+                              keyboardType: TextInputType.datetime,
+                              decoration: const InputDecoration(
+                                labelText: '执行时间',
+                                hintText: 'HH:mm',
+                              )),
+                        ],
                         const SizedBox(height: 14),
                         Row(children: [
                           Expanded(
@@ -394,21 +417,38 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                         ])
                       ])))));
       if (ok == true && prompt.text.trim().isNotEmpty) {
-        final parsedRunAt =
-            DateTime.tryParse(timeText.text.trim().replaceFirst(' ', 'T'));
+        final t = timeText.text.trim();
+        DateTime? parsedRunAt;
+        if (_frequency == 'daily') {
+          // 每天：把 HH:mm 拼到今天（仅用于校验合法且时刻有效），实际按每日触发。
+          parsedRunAt = DateTime.tryParse(
+              '${DateTime.now().toString().substring(0, 10)}T$t');
+        } else {
+          parsedRunAt = DateTime.tryParse(
+              '${dateText.text.trim()}T$t'.replaceFirst(' ', 'T'));
+        }
         if (parsedRunAt == null ||
-            parsedRunAt.millisecondsSinceEpoch <=
-                DateTime.now().millisecondsSinceEpoch) {
+            (_frequency != 'daily' &&
+                parsedRunAt.millisecondsSinceEpoch <=
+                    DateTime.now().millisecondsSinceEpoch)) {
           if (mounted) {
-            GlobalNotice.show('请输入当前时间之后的 YYYY-MM-DD HH:mm',
+            GlobalNotice.show(
+                _frequency == 'daily'
+                    ? '请输入有效的 HH:mm 时间'
+                    : '请输入当前时间之后的日期和 HH:mm 时间',
                 color: const Color(0xFFE74C3C));
           }
           title.dispose();
           prompt.dispose();
+          dateText.dispose();
           timeText.dispose();
           return;
         }
         final now = DateTime.now().millisecondsSinceEpoch;
+        // 每日任务把 run_at 归一为「今天该时刻」的时间戳；每天任务在第二天零点后顺延。
+        final effectiveRunAt = _frequency == 'daily'
+            ? parsedRunAt.millisecondsSinceEpoch
+            : parsedRunAt.millisecondsSinceEpoch;
         await DBManager().insertFutureTask({
           'id': item?['id'] ?? 'task_$now',
           'bot_id': widget.botId,
@@ -416,7 +456,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           'note': prompt.text.trim(),
           'prompt': prompt.text.trim(),
           'time': now,
-          'run_at': parsedRunAt.millisecondsSinceEpoch,
+          'run_at': effectiveRunAt,
           'frequency': _frequency,
           'is_done': 0,
           'status': 'pending'
@@ -425,6 +465,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
       }
       title.dispose();
       prompt.dispose();
+      dateText.dispose();
       timeText.dispose();
       return;
     }
@@ -626,71 +667,62 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                                   color: theme.textFaint,
                                   fontSize: 12))
                         ]))
-                      : RefreshIndicator(
-                          color: accent,
-                          onRefresh: _load,
-                          child: ListView.builder(
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                              itemCount: _items.length,
-                              itemBuilder: (_, i) {
-                                final item = _items[i];
-                                return InkWell(
-                                  borderRadius: BorderRadius.circular(12),
-                                  onTap: () => _edit(item),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14, horizontal: 4),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                _type == 'future'
-                                                    ? (item['title']
-                                                            ?.toString() ??
-                                                        '未来任务')
-                                                    : item['content']
-                                                            ?.toString() ??
-                                                        '',
-                                                style: TextStyle(
-                                                  height: 1.55,
-                                                  fontSize: 15,
-                                                  color: theme.textStrong,
-                                                  fontFamily: 'TideFont',
-                                                ),
-                                              ),
-                                              const SizedBox(height: 5),
-                                              Text(
-                                                _date(item['timestamp']),
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: theme.textFaint,
-                                                  fontFamily: 'TideFont',
-                                                ),
-                                              ),
-                                            ],
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                          itemCount: _items.length,
+                          itemBuilder: (_, i) {
+                            final item = _items[i];
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => _edit(item),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14, horizontal: 4),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _type == 'future'
+                                                ? (item['title']?.toString() ??
+                                                    '未来任务')
+                                                : item['content']?.toString() ??
+                                                    '',
+                                            style: TextStyle(
+                                              height: 1.55,
+                                              fontSize: 15,
+                                              color: theme.textStrong,
+                                              fontFamily: 'TideFont',
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        IconButton(
-                                          tooltip: '删除',
-                                          onPressed: () => _delete(item),
-                                          icon: Icon(
-                                              Icons.delete_outline_rounded,
-                                              size: 19,
-                                              color: theme.textFaint),
-                                        ),
-                                      ],
+                                          const SizedBox(height: 5),
+                                          Text(
+                                            _date(item['timestamp']),
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: theme.textFaint,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                );
-                              })))
+                                    const SizedBox(width: 4),
+                                    IconButton(
+                                      tooltip: '删除',
+                                      onPressed: () => _delete(item),
+                                      icon: Icon(Icons.delete_outline_rounded,
+                                          size: 19, color: theme.textFaint),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }))
         ]));
   }
 }

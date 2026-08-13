@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -29,8 +30,8 @@ class _SpacePageState extends State<SpacePage> {
   List<Map<String, dynamic>> _memories = [];
   final ScrollController _diaryScrollController = ScrollController();
   Timer? _diaryTimer;
-  bool _diaryAutoScrolling = false;
   int _diaryScrollIndex = 0;
+  int _diaryVisibleStart = 0;
   bool _loading = true;
   final Map<String, IconData> _moodIcons = {
     'smile': Icons.sentiment_satisfied_rounded,
@@ -54,29 +55,30 @@ class _SpacePageState extends State<SpacePage> {
     super.dispose();
   }
 
+  // 日记按三条一屏循环滚动：短期在上、长期在下，短期结束后接长期再转回短期，
+  // 打开空间页面即自动滚动，无需手动开启。用户点按可临时暂停/继续。
+  void _startDiaryAutoScroll() {
+    if (_memories.isEmpty || _diaryTimer != null) return;
+    _diaryTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) {
+        _diaryTimer?.cancel();
+        _diaryTimer = null;
+        return;
+      }
+      // 每次前进一条，取模实现短期→长期→短期的无缝循环。
+      final next = (_diaryVisibleStart + 1) % _memories.length;
+      setState(() => _diaryVisibleStart = next);
+    });
+  }
+
   void _toggleDiaryAutoScroll() {
     if (_memories.length < 2) return;
-    if (_diaryAutoScrolling) {
+    if (_diaryTimer != null) {
       _diaryTimer?.cancel();
-      setState(() => _diaryAutoScrolling = false);
+      _diaryTimer = null;
       return;
     }
-    setState(() => _diaryAutoScrolling = true);
-    _diaryTimer?.cancel();
-    _diaryTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!mounted || !_diaryScrollController.hasClients) return;
-      final position = _diaryScrollController.position;
-      if (position.pixels >= position.maxScrollExtent - 2) {
-        _diaryScrollController.animateTo(0,
-            duration: const Duration(milliseconds: 450),
-            curve: Curves.easeInOut);
-      } else {
-        _diaryScrollController.animateTo(
-            (position.pixels + 72).clamp(0.0, position.maxScrollExtent),
-            duration: const Duration(milliseconds: 450),
-            curve: Curves.easeInOut);
-      }
-    });
+    _startDiaryAutoScroll();
   }
 
   Future<void> _loadData() async {
@@ -132,6 +134,7 @@ class _SpacePageState extends State<SpacePage> {
                   ? 'angry'
                   : 'think';
       _memories = mem;
+      if (_diaryVisibleStart >= _memories.length) _diaryVisibleStart = 0;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
       // Generates once per calendar day and returns cached text on later opens.
       if (_dailyQuote.isEmpty ||
@@ -143,6 +146,8 @@ class _SpacePageState extends State<SpacePage> {
         setState(() {
           _loading = false;
         });
+        // 打开空间页面即自动开始日记循环滚动。
+        _startDiaryAutoScroll();
       }
     } else {
       _daysSince = 0;
@@ -186,6 +191,75 @@ class _SpacePageState extends State<SpacePage> {
                       color: theme.textFaint,
                       fontFamily: 'TideFont'))
             ])));
+  }
+
+  // 日记窗口：从短期→长期合并列表中，取 _diaryVisibleStart 开始的 3 条（循环取模），
+  // 配合 AnimatedSwitcher 做淡入滚动观感。显示不足 3 条时按实际数量铺开。
+  Widget _buildDiaryWindow(TideTheme theme) {
+    final count = _memories.length;
+    if (count == 0) return const SizedBox.shrink();
+    final window = <Map<String, dynamic>>[];
+    final visible = count < 3 ? count : 3;
+    for (var i = 0; i < visible; i++) {
+      window.add(_memories[(_diaryVisibleStart + i) % count]);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, anim) => FadeTransition(
+        opacity: anim,
+        child: SlideTransition(
+          position:
+              Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
+                  .animate(anim),
+          child: child,
+        ),
+      ),
+      child: Column(
+        key: ValueKey<int>(_diaryVisibleStart),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < window.length; i++) ...[
+            if (i > 0) Divider(height: 1, thickness: 0.5, color: theme.divider),
+            Expanded(
+              child: BouncyTap(
+                onTap: () => _showMemoryDetail(window[i]),
+                child: Container(
+                  width: double.infinity,
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        window[i]['content'] ?? '',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 14,
+                            height: 1.4,
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont'),
+                      ),
+                      if (window[i]['timestamp'] != null) ...[
+                        const SizedBox(height: 3),
+                        Text(formatTime(window[i]['timestamp']),
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: theme.textFaint,
+                                fontFamily: 'TideFont')),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -250,7 +324,7 @@ class _SpacePageState extends State<SpacePage> {
                             GestureDetector(
                               onTap: _toggleDiaryAutoScroll,
                               onPanDown: (_) {
-                                if (_diaryAutoScrolling)
+                                if (_diaryTimer != null)
                                   _toggleDiaryAutoScroll();
                               },
                               child: Column(
@@ -258,53 +332,8 @@ class _SpacePageState extends State<SpacePage> {
                                 children: [
                                   SizedBox(
                                     height: 196,
-                                    child: ListView.separated(
-                                      controller: _diaryScrollController,
-                                      physics: const BouncingScrollPhysics(),
-                                      padding: EdgeInsets.zero,
-                                      itemCount: _memories.length,
-                                      separatorBuilder: (_, __) => Divider(
-                                          height: 1,
-                                          thickness: 0.5,
-                                          color: theme.divider),
-                                      itemBuilder: (_, index) {
-                                        final m = _memories[index];
-                                        return BouncyTap(
-                                          onTap: () => _showMemoryDetail(m),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 8),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(m['content'] ?? '',
-                                                    style: TextStyle(
-                                                        fontSize: 14,
-                                                        height: 1.4,
-                                                        color: theme.textStrong,
-                                                        fontFamily:
-                                                            'TideFont')),
-                                                if (m['timestamp'] != null) ...[
-                                                  const SizedBox(height: 3),
-                                                  Text(
-                                                      formatTime(
-                                                          m['timestamp']),
-                                                      style: TextStyle(
-                                                          fontSize: 11,
-                                                          color:
-                                                              theme.textFaint,
-                                                          fontFamily:
-                                                              'TideFont')),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
+                                    child: _buildDiaryWindow(theme),
                                   ),
-                                  const SizedBox.shrink(),
                                 ],
                               ),
                             ),
@@ -1335,6 +1364,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
   bool _sendingComment = false;
+  final Random _random = Random();
 
   @override
   void initState() {
@@ -1349,11 +1379,26 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   }
 
   Future<void> _loadComments() async {
-    final rows =
-        await DBManager().queryPostComments(widget.feed['id'] as String? ?? '');
+    final db = DBManager();
+    // 关联机器人名字到头像，供评论真实头像展示。
+    final bots = await db.queryBots();
+    final avatarMap = <String, String>{};
+    for (final b in bots) {
+      final name = b['name']?.toString() ?? '';
+      if (name.isNotEmpty) avatarMap[name] = b['avatar']?.toString() ?? '';
+    }
+    final rows = await db.queryPostComments(widget.feed['id'] as String? ?? '');
     if (mounted) {
       setState(() {
-        _comments = rows;
+        // 为每条评论补充头像（机器人评论才有真实头像，'me' 无）。
+        _comments = rows.map((c) {
+          final author = c['author_id']?.toString() ?? '';
+          final avatar = avatarMap[author];
+          return {
+            ...c,
+            if (avatar != null && avatar.isNotEmpty) 'author_avatar': avatar
+          };
+        }).toList();
         _loading = false;
       });
     }
@@ -1427,6 +1472,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         });
       }
       widget.onUpdate();
+      // 若动态由机器人发布，原作者对用户评论做一次概率回复（真实互动）。
+      unawaited(_maybeBotReply(comment));
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -1437,6 +1484,65 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         });
         GlobalNotice.show('评论发送失败，请重试', color: const Color(0xFFE74C3C));
       }
+    }
+  }
+
+  // 机器人原作者以一定概率回复用户的评论；回复是真实的模型产出，且幂等去重。
+  Future<void> _maybeBotReply(Map<String, dynamic> userComment) async {
+    if (widget.feed['is_bot'] != true) return;
+    final authorName = widget.feed['author_id']?.toString().trim() ?? '';
+    if (authorName.isEmpty) return;
+    // 概率回复：约 45% 的评论会得到原作者回应。
+    if (_random.nextDouble() >= 0.45) return;
+    final db = DBManager();
+    final bots = await db.queryBots();
+    Map<String, dynamic> authorBot = const {};
+    for (final b in bots) {
+      if (b['name']?.toString() == authorName) {
+        authorBot = b;
+        break;
+      }
+    }
+    final botId = authorBot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    // 同一机器人对同一条用户评论只回复一次。
+    final replyKey = 'bot_reply_${botId}_${userComment['id']}';
+    if ((await db.getKV(replyKey)) == '1') return;
+    final um2 = userComment['content']?.toString() ?? '';
+    try {
+      final res = await AIManager().sendMessage(
+        botId: botId,
+        text:
+            '有人在你的动态下评论：“$um2”。请用第一人称口吻简短回复这条评论（20字以内），语气自然友好，不要出现心情标签或“评论”二字。',
+        persistResponse: false,
+        includeChatHistory: false,
+        enableAutoSummary: false,
+      );
+      final reply = (res['reply']?.toString() ?? '').trim();
+      if (reply.isEmpty) return;
+      await db.insertRealPostComment(
+        postId: widget.feed['id'] as String? ?? '',
+        authorId: authorName,
+        content: reply,
+      );
+      await db.setKV(replyKey, '1');
+      if (mounted) {
+        final replyComment = <String, dynamic>{
+          'id': 'br_${DateTime.now().millisecondsSinceEpoch}',
+          'post_id': widget.feed['id'],
+          'author_id': authorName,
+          'content': reply,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'author_avatar': authorBot['avatar']?.toString() ?? '',
+        };
+        setState(() {
+          _comments.add(replyComment);
+          widget.feed['comments'] = (widget.feed['comments'] as int) + 1;
+        });
+        widget.onUpdate();
+      }
+    } catch (_) {
+      // 回复失败不影响主流程。
     }
   }
 
@@ -1689,16 +1795,23 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            CircleAvatar(
-                              radius: 15,
-                              backgroundColor:
-                                  theme.primary.withValues(alpha: 0.12),
-                              child: Icon(
-                                Icons.person_rounded,
-                                size: 16,
-                                color: theme.primary,
-                              ),
-                            ),
+                            (comment['author_avatar'] as String?)?.isNotEmpty ==
+                                    true
+                                ? TideBotAvatar(
+                                    name: comment['author_id']?.toString() ??
+                                        'TA',
+                                    path: comment['author_avatar']?.toString(),
+                                    size: 30)
+                                : CircleAvatar(
+                                    radius: 15,
+                                    backgroundColor:
+                                        theme.primary.withValues(alpha: 0.12),
+                                    child: Icon(
+                                      Icons.person_rounded,
+                                      size: 16,
+                                      color: theme.primary,
+                                    ),
+                                  ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Column(

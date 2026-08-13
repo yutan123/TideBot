@@ -967,6 +967,12 @@ class AIManager {
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
       if (baseUrl.isEmpty || model.isEmpty) return null;
 
+      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com');
+      if (isDashScope) {
+        return await _transcribeDashScope(
+            provider: provider, model: model, audioPath: audioPath);
+      }
+
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/audio/transcriptions'),
@@ -987,6 +993,65 @@ class AIManager {
       print('[stt] transcription failed: $e');
       return null;
     }
+  }
+
+  /// 阿里云百炼 DashScope 录音文件识别（paraformer 系列 / SenseVoice）。
+  /// 使用表单提交录音文件，返回 output 结构中的转写文本，并兼容多种字段结构。
+  Future<String?> _transcribeDashScope({
+    required Map<String, dynamic> provider,
+    required String model,
+    required String audioPath,
+  }) async {
+    final apiKey = provider['api_key']?.toString().trim() ?? '';
+    if (apiKey.isEmpty) return null;
+    const endpoint =
+        'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
+    final request = http.MultipartRequest('POST', Uri.parse(endpoint))
+      ..headers['Authorization'] = 'Bearer $apiKey'
+      ..fields['model'] = model
+      ..files.add(await http.MultipartFile.fromPath('file', audioPath));
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode != 200) {
+      print('[stt] dashscope HTTP ${response.statusCode}: '
+          '${utf8.decode(response.bodyBytes, allowMalformed: true)}');
+      return null;
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    String? text;
+    if (decoded is Map) {
+      final output = decoded['output'];
+      // 常见返回结构：output.text / output.sentence[].text / output.transcription /
+      // output.results[].text，以及部分同步接口直接返回 text。
+      if (output is Map) {
+        text = output['text']?.toString();
+        // sentence 全文拼接
+        if (text == null || text.isEmpty) {
+          final sentences = output['sentence'];
+          if (sentences is List) {
+            text = sentences
+                .map((s) => (s is Map ? s['text']?.toString() : null) ?? '')
+                .where((s) => s.isNotEmpty)
+                .join('');
+          }
+        }
+        if (text == null || text.isEmpty) {
+          text = output['transcription']?.toString();
+        }
+        if (text == null || text.isEmpty) {
+          final results = output['results'];
+          if (results is List) {
+            text = results
+                .map((s) => (s is Map ? s['text']?.toString() : null) ?? '')
+                .where((s) => s.isNotEmpty)
+                .join('');
+          }
+        }
+      }
+      text ??= decoded['text']?.toString();
+    }
+    final trimmed = text?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
@@ -1943,7 +2008,6 @@ class AIManager {
   // 构建核心防御护栏与游戏机制注入
   Future<String?> generateTTS(String text, String providerId) =>
       _generateTTS(text, providerId);
-
   Future<Map<String, dynamic>> testProviderCapabilities(
       String baseUrl, String apiKey, String model) async {
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
@@ -1957,6 +2021,22 @@ class AIManager {
     };
     bool success(http.Response response) =>
         response.statusCode >= 200 && response.statusCode < 300;
+
+    // 每个探测返回 (是否成功, 耗时毫秒)；失败也返回耗时便于诊断。
+    Future<Map<String, dynamic>> probe(
+        String name, Future<bool> Function() run) async {
+      final t0 = DateTime.now();
+      var ok = false;
+      var latency = 0;
+      try {
+        ok = await run();
+      } catch (_) {
+        ok = false;
+      }
+      latency = DateTime.now().difference(t0).inMilliseconds;
+      return {'name': name, 'ok': ok, 'latency': latency};
+    }
+
     Future<bool> postJson(String path, Map<String, dynamic> body) async {
       try {
         final response = await http
@@ -2017,6 +2097,10 @@ class AIManager {
           0,
           0,
           0,
+          0,
+          0,
+          0,
+          0,
         ];
         final request = http.MultipartRequest(
             'POST', Uri.parse('$root/audio/transcriptions'))
@@ -2034,46 +2118,78 @@ class AIManager {
 
     const onePixel =
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
-    final results = await Future.wait<bool>([
-      postJson('/chat/completions', {
-        'model': modelName,
-        'messages': [
-          {'role': 'user', 'content': 'ping'}
-        ],
-        'max_tokens': 1,
-      }),
-      stt(),
-      postJson('/chat/completions', {
-        'model': modelName,
-        'messages': [
-          {
-            'role': 'user',
-            'content': [
-              {'type': 'text', 'text': 'Describe this image in one word.'},
-              {
-                'type': 'image_url',
-                'image_url': {'url': onePixel}
-              },
-            ],
-          }
-        ],
-        'max_tokens': 8,
-      }),
-      postJson('/images/generations', {
-        'model': modelName,
-        'prompt': 'A single blue pixel.',
-        'size': '256x256',
-        'n': 1,
-      }),
+
+    // 并发探测文本、STT、识图、生图四项能力，任意一项成功即判定通过，
+    // 并返回四项中「最快成功」的延迟（毫秒）。
+    final probes = await Future.wait<Map<String, dynamic>>([
+      probe(
+          '文本',
+          () => postJson('/chat/completions', {
+                'model': modelName,
+                'messages': [
+                  {'role': 'user', 'content': 'ping'}
+                ],
+                'max_tokens': 1,
+              })),
+      probe('STT', stt),
+      probe(
+          '识图',
+          () => postJson('/chat/completions', {
+                'model': modelName,
+                'messages': [
+                  {
+                    'role': 'user',
+                    'content': [
+                      {
+                        'type': 'text',
+                        'text': 'Describe this image in one word.'
+                      },
+                      {
+                        'type': 'image_url',
+                        'image_url': {'url': onePixel}
+                      },
+                    ],
+                  }
+                ],
+                'max_tokens': 8,
+              })),
+      probe(
+          '生图',
+          () => postJson('/images/generations', {
+                'model': modelName,
+                'prompt': 'A single blue pixel.',
+                'size': '256x256',
+                'n': 1,
+              })),
     ]);
-    const names = ['文本', 'STT', '识图', '生图'];
+
     final capabilities = <String>[];
-    for (var i = 0; i < results.length; i++) {
-      if (results[i]) capabilities.add(names[i]);
+    final latencies = <String, int>{};
+    int? fastest;
+    String? fastestName;
+    for (final p in probes) {
+      final name = p['name'] as String;
+      final ok = p['ok'] as bool;
+      final latency = p['latency'] as int;
+      latencies[name] = latency;
+      if (ok) {
+        capabilities.add(name);
+        if (fastest == null || latency < fastest) {
+          fastest = latency;
+          fastestName = name;
+        }
+      }
     }
+
+    final passed = capabilities.isNotEmpty;
     return {
       'capabilities': capabilities,
-      if (capabilities.isEmpty) 'error': '接口拒绝了所有测试请求',
+      'passed': passed,
+      'latencies': latencies,
+      'fastest_latency': fastest,
+      'fastest_name': fastestName,
+      // 任意成功即通过；全部失败才返回错误。
+      if (!passed) 'error': '接口拒绝了所有测试请求',
     };
   }
 

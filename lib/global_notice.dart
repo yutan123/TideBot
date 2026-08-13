@@ -63,53 +63,68 @@ class _GlobalNoticeView extends StatelessWidget {
             : scheme.onPrimary;
     // 根 Overlay 中的通知位于底部栏和系统手势区上方；键盘出现时继续上移。
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
+    // 对齐原生 SnackBar 的紧凑体量：窄内边距、小圆角、单行文案、可横滑 + 关闭。
+    final maxWidth = media.size.width > 540 ? 380.0 : media.size.width - 48;
     return Positioned(
       bottom: bottomInset,
-      left: 12,
-      right: 12,
-      child: Dismissible(
-        key: ValueKey<String>('notice_$message'),
-        direction: DismissDirection.horizontal,
-        onDismissed: (_) => onDismiss(),
-        child: Material(
-          color: Colors.transparent,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: surface,
-              border: Border.all(
-                  color: scheme.outlineVariant.withValues(alpha: 0.45)),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 18,
-                  offset: Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      message,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: foreground,
-                        fontFamily: 'TideFont',
-                      ),
+      left: 0,
+      right: 0,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Dismissible(
+            key: ValueKey<String>('notice_$message'),
+            direction: DismissDirection.horizontal,
+            onDismissed: (_) => onDismiss(),
+            child: Material(
+              color: Colors.transparent,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
                     ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 14, right: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          message,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: foreground,
+                            fontFamily: 'TideFont',
+                            fontSize: 13.5,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 34,
+                        height: 34,
+                        child: IconButton(
+                          tooltip: '关闭提示',
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          onPressed: onDismiss,
+                          icon: Icon(Icons.close_rounded,
+                              color: foreground.withValues(alpha: 0.9),
+                              size: 18),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: '关闭提示',
-                    onPressed: onDismiss,
-                    icon: Icon(Icons.close_rounded,
-                        color: foreground.withValues(alpha: 0.88), size: 20),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

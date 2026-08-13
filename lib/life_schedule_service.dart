@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'ai.dart';
+import 'app_log_service.dart';
 import 'db.dart';
 
 class LifeScheduleService {
@@ -190,6 +191,8 @@ class LifeScheduleService {
         'updated_at': now,
       };
       await db.upsertLifeSchedule(row);
+      AppLogService.instance.add('SCHEDULE',
+          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，时间线${timeline.length}条');
       return row;
     } catch (_) {
       return old;
@@ -272,6 +275,8 @@ class LifeScheduleService {
     if (mood.isNotEmpty) row['mood'] = mood;
     row['updated_at'] = DateTime.now().millisecondsSinceEpoch;
     await db.upsertLifeSchedule(row);
+    AppLogService.instance.add('SCHEDULE',
+        '已通过工具更新拟人化日程 ${dateKey()}：${args['kind']?.toString() ?? 'timeline'}');
     return row;
   }
 }
