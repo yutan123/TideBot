@@ -64,7 +64,7 @@ class _GlobalNoticeView extends StatelessWidget {
     // 根 Overlay 中的通知位于底部栏和系统手势区上方；键盘出现时继续上移。
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
     // 对齐原生 SnackBar 的紧凑体量：窄内边距、小圆角、单行文案、可横滑 + 关闭。
-    final maxWidth = media.size.width > 540 ? 380.0 : media.size.width - 48;
+    final maxWidth = media.size.width > 540 ? 480.0 : media.size.width - 32;
     return Positioned(
       bottom: bottomInset,
       left: 0,
@@ -82,7 +82,7 @@ class _GlobalNoticeView extends StatelessWidget {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: surface,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(14),
                   boxShadow: const [
                     BoxShadow(
                       color: Color(0x22000000),
@@ -92,26 +92,27 @@ class _GlobalNoticeView extends StatelessWidget {
                   ],
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.only(left: 14, right: 4),
+                  padding: const EdgeInsets.only(
+                      left: 18, right: 6, top: 4, bottom: 4),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Flexible(
                         child: Text(
                           message,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: foreground,
                             fontFamily: 'TideFont',
-                            fontSize: 13.5,
+                            fontSize: 14,
                             height: 1.2,
                           ),
                         ),
                       ),
                       SizedBox(
-                        width: 34,
-                        height: 34,
+                        width: 40,
+                        height: 40,
                         child: IconButton(
                           tooltip: '关闭提示',
                           padding: EdgeInsets.zero,
@@ -119,7 +120,7 @@ class _GlobalNoticeView extends StatelessWidget {
                           onPressed: onDismiss,
                           icon: Icon(Icons.close_rounded,
                               color: foreground.withValues(alpha: 0.9),
-                              size: 18),
+                              size: 20),
                         ),
                       ),
                     ],

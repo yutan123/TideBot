@@ -660,18 +660,24 @@ class AIManager {
           }
         }
         if (persistResponse) {
-          await db.insertChatMessage({
-            'id': msgId,
-            'bot_id': botId,
-            'role': 'assistant',
-            'type': 'text',
-            'content': replyText,
-            'file_path': null,
-            'mood': mood,
-            'sources_json':
-                searchSources.isEmpty ? null : jsonEncode(searchSources),
-            'timestamp': ts + 1
-          });
+          final segmented =
+              await db.getKV('segmented_reply_enabled') != 'false';
+          final segments =
+              segmented ? _replySegments(replyText) : <String>[replyText];
+          for (var index = 0; index < segments.length; index++) {
+            await db.insertChatMessage({
+              'id': index == 0 ? msgId : '${msgId}_segment_$index',
+              'bot_id': botId,
+              'role': 'assistant',
+              'type': 'text',
+              'content': segments[index],
+              'file_path': null,
+              'mood': mood,
+              'sources_json':
+                  searchSources.isEmpty ? null : jsonEncode(searchSources),
+              'timestamp': ts + 1 + index,
+            });
+          }
           // 聊天请求可能在等待模型期间进入后台。仅在用户已开启通知且
           // 应用不在前台时提醒；前台聊天由 UI 气泡承载，不重复打扰。
           try {
@@ -779,6 +785,15 @@ class AIManager {
         'error_code': 'network',
       };
     }
+  }
+
+  List<String> _replySegments(String content) {
+    final parts = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
+        .allMatches(content)
+        .map((match) => match.group(0)?.trim() ?? '')
+        .where((part) => part.isNotEmpty)
+        .toList();
+    return parts.isEmpty ? <String>[content] : parts;
   }
 
   String _cleanVisibleReply(String raw) {

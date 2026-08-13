@@ -264,32 +264,6 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   */
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
-    if (_type == 'future' && item != null) {
-      final task = item['prompt']?.toString() ?? item['note']?.toString() ?? '';
-      await TideDialogs.show<void>(
-          context: context,
-          builder: (ctx) => Center(
-              child: Material(
-                  type: MaterialType.transparency,
-                  child: TideDialogs.glassContent(context: ctx, children: [
-                    Text(item['title']?.toString() ?? '未来任务',
-                        style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 12),
-                    Text(task,
-                        style: const TextStyle(
-                            fontFamily: 'TideFont', height: 1.5)),
-                    const SizedBox(height: 8),
-                    Text('时间：${item['run_at'] ?? item['time'] ?? ''}',
-                        style: const TextStyle(fontFamily: 'TideFont')),
-                    const SizedBox(height: 14),
-                    TideDialogs.glassButton('关闭',
-                        onTap: () => Navigator.pop(ctx))
-                  ]))));
-      return;
-    }
     if (_type == 'future') {
       final title =
           TextEditingController(text: item?['title']?.toString() ?? '');
@@ -315,8 +289,8 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                   child: Material(
                       type: MaterialType.transparency,
                       child: TideDialogs.glassContent(context: ctx, children: [
-                        const Text('添加未来任务',
-                            style: TextStyle(
+                        Text(item == null ? '添加未来任务' : '编辑未来任务',
+                            style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w700,
                                 fontFamily: 'TideFont')),

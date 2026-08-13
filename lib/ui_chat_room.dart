@@ -31,7 +31,7 @@ class ChatRoomPage extends StatefulWidget {
 }
 
 class _ChatRoomPageState extends State<ChatRoomPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _msgC = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollC = ScrollController();
@@ -80,6 +80,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bot = Map.from(widget.botData);
     _msgC.addListener(_msgChanged);
     _inputFocus.addListener(_handleInputFocus);
@@ -104,6 +105,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       });
     });
     _loadMsgs();
+    _messageSyncTimer = Timer.periodic(
+        const Duration(seconds: 4), (_) => _syncLatestMessages());
     _loadBg();
     _loadChatPreferences();
     _startProactiveReply();
@@ -120,6 +123,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _messageSyncTimer?.cancel();
     _streamDisplayTimer?.cancel();
     _proactiveTimer?.cancel();
     _proactiveTimer = null;
@@ -136,6 +141,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _recTimer?.cancel();
     _bottomBarCtrl.dispose(); // 添加动画控制器释放
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _syncLatestMessages();
   }
 
   void _loadBg() async {
@@ -216,6 +226,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Timer? _streamDisplayTimer;
+  Timer? _messageSyncTimer;
+
+  Future<void> _syncLatestMessages() async {
+    if (!mounted || _loading) return;
+    try {
+      final fresh = await DBManager()
+          .queryMessages(_bot['id'] as String, limit: 80, descending: true);
+      if (!mounted || fresh.isEmpty) return;
+      final known = <String>{for (final m in _msgs) m['id']?.toString() ?? ''};
+      final additions =
+          fresh.where((m) => !known.contains(m['id']?.toString())).toList();
+      if (additions.isEmpty) return;
+      setState(() {
+        _msgs.addAll(additions);
+        _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
+            .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+      });
+      _scrollDown(animated: false);
+    } catch (_) {}
+  }
 
   List<String> _splitReplySegments(String content) {
     final matches = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)

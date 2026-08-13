@@ -17,6 +17,12 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   List<int> _replySeries = [];
   int _totalTokens = 0;
   int _totalReplies = 0;
+  int _todayTokens = 0;
+  int _monthTokens = 0;
+  int _todayReplies = 0;
+  int _monthReplies = 0;
+  List<DateTime> _days = [];
+  int? _selectedIndex;
 
   @override
   void initState() {
@@ -79,6 +85,12 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     final replySeries = <int>[];
     var totalTokens = 0;
     var totalReplies = 0;
+    var todayTokens = 0;
+    var monthTokens = 0;
+    var todayReplies = 0;
+    var monthReplies = 0;
+    final monthStart = DateTime(now.year, now.month);
+    final today = _dayStart(now);
     for (final d in days) {
       final key = '${d.year}-${d.month}-${d.day}';
       final t = tokenByDay[key] ?? 0;
@@ -87,14 +99,27 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
       replySeries.add(r);
       totalTokens += t;
       totalReplies += r;
+      if (d == today) {
+        todayTokens = t;
+        todayReplies = r;
+      }
+      if (!d.isBefore(monthStart)) {
+        monthTokens += t;
+        monthReplies += r;
+      }
     }
-
     if (!mounted) return;
     setState(() {
       _tokenSeries = tokenSeries;
       _replySeries = replySeries;
       _totalTokens = totalTokens;
       _totalReplies = totalReplies;
+      _todayTokens = todayTokens;
+      _monthTokens = monthTokens;
+      _todayReplies = todayReplies;
+      _monthReplies = monthReplies;
+      _days = days;
+      _selectedIndex = days.isEmpty ? null : days.length - 1;
       _loading = false;
     });
   }
@@ -127,6 +152,9 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
                   subtitle: '近 $_rangeDays 天',
                   color: theme.primary,
                   series: _tokenSeries,
+                  days: _days,
+                  selectedIndex: _selectedIndex,
+                  onSelect: (index) => setState(() => _selectedIndex = index),
                 ),
                 const SizedBox(height: 14),
                 _ChartCard(
@@ -134,21 +162,12 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
                   subtitle: '近 $_rangeDays 天',
                   color: const Color(0xFFB05E91),
                   series: _replySeries,
+                  days: _days,
+                  selectedIndex: _selectedIndex,
+                  onSelect: (index) => setState(() => _selectedIndex = index),
                 ),
                 const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _summaryCard(
-                          theme, Icons.bolt_rounded, '消耗 Token', _totalTokens),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _summaryCard(theme, Icons.chat_bubble_rounded,
-                          '机器人回复', _totalReplies),
-                    ),
-                  ],
-                ),
+                _summarySection(theme),
                 const SizedBox(height: 12),
                 Text(
                   '统计来自 AI 调用账本；不返回 usage 的提供商按文本长度估算。',
@@ -196,6 +215,26 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     );
   }
 
+  Widget _summarySection(TideTheme theme) {
+    final rows = <(IconData, String, int)>[
+      (Icons.today_rounded, '当天消耗 Token', _todayTokens),
+      (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens),
+      (Icons.bolt_rounded, '累计消耗 Token', _totalTokens),
+      (Icons.forum_rounded, '当天机器人回复', _todayReplies),
+      (Icons.date_range_rounded, '本月机器人回复', _monthReplies),
+      (Icons.chat_bubble_rounded, '累计机器人回复', _totalReplies),
+    ];
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: rows
+          .map((row) => SizedBox(
+              width: (MediaQuery.of(context).size.width - 44) / 2,
+              child: _summaryCard(theme, row.$1, row.$2, row.$3)))
+          .toList(),
+    );
+  }
+
   Widget _summaryCard(TideTheme theme, IconData icon, String label, int value) {
     return Container(
       padding: const EdgeInsets.all(18),
@@ -233,12 +272,18 @@ class _ChartCard extends StatelessWidget {
   final String subtitle;
   final Color color;
   final List<int> series;
+  final List<DateTime> days;
+  final int? selectedIndex;
+  final ValueChanged<int> onSelect;
 
   const _ChartCard({
     required this.title,
     required this.subtitle,
     required this.color,
     required this.series,
+    required this.days,
+    required this.selectedIndex,
+    required this.onSelect,
   });
 
   @override
@@ -272,15 +317,46 @@ class _ChartCard extends StatelessWidget {
           const SizedBox(height: 14),
           SizedBox(
             height: 150,
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: _LineChartPainter(
-                color: color,
-                series: series,
-                gridColor: theme.divider,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+              tween: Tween(begin: 0, end: 1),
+              builder: (_, progress, __) => GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: (details) {
+                  if (series.length < 2) return;
+                  final box = context.findRenderObject() as RenderBox?;
+                  final width = box?.size.width ?? 1;
+                  final index =
+                      ((details.localPosition.dx / width) * (series.length - 1))
+                          .round()
+                          .clamp(0, series.length - 1);
+                  onSelect(index);
+                },
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _LineChartPainter(
+                    color: color,
+                    series: series,
+                    gridColor: theme.divider,
+                    selectedIndex: selectedIndex,
+                    progress: progress,
+                  ),
+                ),
               ),
             ),
           ),
+          if (selectedIndex != null && selectedIndex! < days.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '${days[selectedIndex!].year}-${days[selectedIndex!].month.toString().padLeft(2, '0')}-${days[selectedIndex!].day.toString().padLeft(2, '0')}  ·  ${series[selectedIndex!]} $title',
+                style: TextStyle(
+                    fontFamily: 'TideFont',
+                    fontSize: 12,
+                    color: theme.textWeak),
+              ),
+            ),
         ],
       ),
     );
@@ -291,11 +367,15 @@ class _LineChartPainter extends CustomPainter {
   final Color color;
   final Color gridColor;
   final List<int> series;
+  final int? selectedIndex;
+  final double progress;
 
   _LineChartPainter({
     required this.color,
     required this.gridColor,
     required this.series,
+    required this.selectedIndex,
+    required this.progress,
   });
 
   @override
@@ -317,7 +397,8 @@ class _LineChartPainter extends CustomPainter {
       final x = series.length == 1
           ? size.width / 2
           : size.width * i / (series.length - 1);
-      final y = size.height - (series[i] / maxY) * (size.height - 16) - 8;
+      final y =
+          size.height - (series[i] / maxY) * (size.height - 16) * progress - 8;
       if (i == 0) {
         path.moveTo(x, y);
       } else {
