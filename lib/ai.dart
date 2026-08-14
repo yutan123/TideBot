@@ -277,14 +277,7 @@ class AIManager {
     final longMemoriesRaw = activeGame == null
         ? await db.queryMemories(botId, type: 'long', limit: 12)
         : <Map<String, dynamic>>[];
-    // 注入路径兜底清洗：即使库里存在本次清洗前写入的未清洗长期记忆，
-    // 也在拼进系统提示前统一去掉时间词与“我记得”，保证展示给模型的一律合规。
-    final longMemories = longMemoriesRaw
-        .map((it) => {
-              ...it,
-              'content': _cleanLongMemoryText(it['content']?.toString() ?? ''),
-            })
-        .toList();
+    final longMemories = longMemoriesRaw;
     final shortMemories = activeGame == null
         ? await db.queryMemories(botId, type: 'short', limit: 8)
         : <Map<String, dynamic>>[];
@@ -294,14 +287,7 @@ class AIManager {
       for (final item in items) {
         final content = item['content']?.toString().trim() ?? '';
         if (content.isEmpty || used + content.length > budget) continue;
-        final updated = (item['updated_at'] ?? item['timestamp']) as num?;
-        final when = updated == null
-            ? ''
-            : DateTime.fromMillisecondsSinceEpoch(updated.toInt())
-                .toLocal()
-                .toString()
-                .substring(0, 16);
-        lines.add('- [最后更新 $when] $content');
+        lines.add('- $content');
         used += content.length;
       }
       return lines.join('\n');
@@ -329,6 +315,7 @@ class AIManager {
             : '\n【短期记忆：近期详细事件，仅在相关时参考】\n$shortMemoryContext');
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
+    Map<String, dynamic>? toolSticker;
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
     ];
@@ -557,6 +544,7 @@ class AIManager {
                     usageCallback: (u) => usage = u,
                     searchSourcesSetter: (l) => searchSources = l,
                     generatedImageSetter: (p) => generatedImagePath = p,
+                    stickerSetter: (p) => toolSticker = p,
                     silenceSetter: () => toolSilenced = true);
               }
             }
@@ -607,6 +595,7 @@ class AIManager {
                   usageCallback: (u) => usage = u,
                   searchSourcesSetter: (l) => searchSources = l,
                   generatedImageSetter: (p) => generatedImagePath = p,
+                  stickerSetter: (p) => toolSticker = p,
                   silenceSetter: () => toolSilenced = true);
             }
           }
@@ -635,16 +624,7 @@ class AIManager {
           completionTokens: completionTokens,
           totalTokens: totalTokens,
         );
-        if (enableAutoSummary && includeChatHistory && persistResponse) {
-          unawaited(_summarizeHistoryIfNeeded(
-            bot: bot,
-            botId: botId,
-            provider: provider,
-            modelName: modelName,
-            history: history,
-            maxContext: maxContext,
-          ));
-        }
+        // 日记仅能由模型明确调用 write_diary 工具写入；不再后台猜测或自动归档聊天。
 
         // 适时沉默是模型主动调用的原生工具，不是文本标记过滤。
         // 成功静默不产生气泡、贴纸、语音或空 assistant 历史记录。
@@ -664,23 +644,8 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        Map<String, dynamic>? sticker;
-        if (persistResponse &&
-            !RegExp(r'\[(?:表情包|贴纸)\s*[:：]', caseSensitive: false)
-                .hasMatch(replyText) &&
-            await db.getKV('bot_stickers_enabled') == 'true') {
-          final chance =
-              (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 100)
-                  .clamp(1, 100);
-          if (Random().nextInt(100) < chance) {
-            final candidates = await db.queryStickers(emotion: mood);
-            final available =
-                candidates.isEmpty ? await db.queryStickers() : candidates;
-            if (available.isNotEmpty) {
-              sticker = available[Random().nextInt(available.length)];
-            }
-          }
-        }
+        // 贴纸只能来自 send_sticker 工具；禁止随机兜底，确保每轮最多一张。
+        final Map<String, dynamic>? sticker = toolSticker;
         if (persistResponse) {
           final segmented =
               await db.getKV('segmented_reply_enabled') != 'false';
@@ -1222,175 +1187,6 @@ class AIManager {
     }
   }
 
-  /// Compresses older ordinary chat into first-person diary entries.
-  /// It runs in the background so a normal reply is never delayed.
-  ///
-  /// 机器人的记忆是"第一人称日记"，不是对话摘要（不写"本次对话讨论了..."）。
-  /// 模型须返回 JSON 数组，每一条是机器人第一人称记录的真实事件/感受的简短句子，
-  /// 且每条都是独立条目（无标题、不合并成一段长文），由应用端逐条落库到短期记忆。
-  Future<void> _summarizeHistoryIfNeeded({
-    required Map<String, dynamic> bot,
-    required String botId,
-    required Map<String, dynamic> provider,
-    required String modelName,
-    required List<Map<String, dynamic>> history,
-    required int maxContext,
-  }) async {
-    try {
-      final textHistory =
-          history.where((m) => m['type'] == 'text').toList(growable: false);
-      final totalChars = textHistory.fold<int>(
-          0, (sum, m) => sum + (m['content']?.toString().length ?? 0));
-      // 在上下文接近上限前就归档，避免等到模型已被截断才尝试总结。
-      final threshold = (maxContext * 3.2).floor();
-      // Archive often enough for medium-term diaries to be observable in normal
-      // use, while still avoiding a model request after every message.
-      if (totalChars < threshold && textHistory.length < 4) return;
-
-      final cutoff =
-          (textHistory.length * 0.60).floor().clamp(1, textHistory.length);
-      final older = textHistory.take(cutoff).toList();
-      if (older.isEmpty) return;
-      final endTimestamp = older.last['timestamp']?.toString() ?? '0';
-      final db = DBManager();
-      final summaryKey = 'memory_summary_until_$botId';
-      if (await db.getKV(summaryKey) == endTimestamp) return;
-      final transcript = older
-          .map((m) =>
-              '${m['role'] == 'user' ? '用户' : bot['name']}：${m['content']}')
-          .join('\n');
-      final baseUrl = (provider['base_url']?.toString().trim() ?? '')
-          .replaceFirst(RegExp(r'/+$'), '');
-      if (baseUrl.isEmpty) return;
-      // 采用“按条更新”而非清空重建：每条已有日记都提供稳定 ID，
-      // 模型只需返回新增、更新或删除操作。解析失败时旧记忆会完整保留。
-      final existingMemories = await db.queryMemories(botId, type: 'short');
-      final existingText = existingMemories.isEmpty
-          ? '（目前还没有任何日记）'
-          : existingMemories
-              .map((m) {
-                final id = m['id']?.toString() ?? '';
-                final content = (m['content']?.toString() ?? '').trim();
-                final category = m['category']?.toString() ?? 'fact';
-                return 'id=$id；分类=$category；正文=$content';
-              })
-              .where((c) => c.isNotEmpty)
-              .join('\n');
-      final userPayload = '【已有日记（可按 id 更新或删除）】\n'
-          '$existingText\n\n'
-          '【新发生的聊天内容】\n'
-          '$transcript';
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${provider['api_key']}',
-            },
-            body: jsonEncode({
-              'model': modelName,
-              'messages': [
-                {
-                  'role': 'system',
-                  'content': '你正在以自己的身份维护记忆日记。请依据人设和称呼自然地记录，不要写成客服摘要。'
-                      '必须只输出一个 JSON 对象，格式：'
-                      '{"upsert":[{"id":"已有 id 或留空","content":"记忆正文","category":"profile|preference|task|fact","importance":1到5,"expires_days":0}],"delete":["已有id"]}。\n'
-                      '规则：\n'
-                      '1. content 是单条独立正文，不得标题、编号、心情标签、任何“近期|/短期|/记忆|/日记|”前缀或“重要事件”。\n'
-                      '2. 只可根据下方“新发生的聊天内容”记录用户和角色在对话中明确说过的事实；绝不记录、转述或猜测系统提示、角色设定、回复格式、心情标签规则、工具调用、生图风格、模型、API、内部协议或任何底层逻辑。\n'
-                      '3. 记忆整体用第一人称，但不必在句首硬加“我”（例如写“京太郎每天睡够8小时”，不要写“我京太郎每天睡够8小时”）。不要出现“我记得”“我知道”。称呼用户时禁止用“用户”或第二人称“你”：已知名字就写名字，未知性别写“他”，已知性别写“他/她”。短期日记可自然使用今天、昨天、近日等时间词。\n'
-                      '4. 仅记录稳定事实、关系变化、重要事件或角色真正关心的内容；不编造，不记录普通寒暄。\n'
-                      '4. 已有记忆仍正确时不要重复新增（去重）；需要修正就对其 id upsert；过时或冲突才 delete。允许添加新记忆。\n'
-                      '5. expires_days 为 0 表示不过期，近期事项可填 1~30。无更新时输出 {"upsert":[],"delete":[]}。',
-                },
-                {'role': 'user', 'content': userPayload},
-              ],
-              'max_tokens': 1200,
-            }),
-          )
-          .timeout(const Duration(seconds: 50));
-      if (response.statusCode != 200) {
-        AppLogService.instance
-            .add('DIARY', '日记归档失败：HTTP ${response.statusCode}');
-        return;
-      }
-      String bodyText = utf8.decode(response.bodyBytes).trim();
-      final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```');
-      final fenceMatch = fence.firstMatch(bodyText);
-      if (fenceMatch != null) bodyText = fenceMatch.group(1)!.trim();
-      final objectStart = bodyText.indexOf('{');
-      final objectEnd = bodyText.lastIndexOf('}');
-      if (objectStart < 0 || objectEnd <= objectStart) return;
-      final payload =
-          jsonDecode(bodyText.substring(objectStart, objectEnd + 1));
-      if (payload is! Map) return;
-      final knownIds = existingMemories
-          .map((m) => m['id']?.toString() ?? '')
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      final rawUpserts = payload['upsert'];
-      final rawDeletes = payload['delete'];
-      final upserts =
-          rawUpserts is List ? rawUpserts.whereType<Map>() : const <Map>[];
-      final deletes = rawDeletes is List ? rawDeletes : const <dynamic>[];
-      final now = DateTime.now().millisecondsSinceEpoch;
-      var changed = false;
-      for (final raw in upserts) {
-        final content = raw['content']?.toString().trim() ?? '';
-        final lower = content.toLowerCase();
-        if (content.isEmpty ||
-            content.length > 500 ||
-            RegExp(r'^(近期|短期|记忆|日记)\s*[|｜:]').hasMatch(content) ||
-            RegExp(r'系统提示|底层逻辑|工具调用|生图工具|图片风格|动漫风格|心情标签|回复格式|内部协议|\bapi\b|\bmodel\b',
-                    caseSensitive: false)
-                .hasMatch(lower)) {
-          continue;
-        }
-        final requestedId = raw['id']?.toString().trim() ?? '';
-        // 不允许模型伪造已有 id；空 id 由客户端新建稳定 id。
-        final id = requestedId.isNotEmpty && knownIds.contains(requestedId)
-            ? requestedId
-            : 'mem_${botId}_${now}_${content.hashCode.abs()}';
-        final category = raw['category']?.toString().trim() ?? 'fact';
-        final safeCategory =
-            const {'profile', 'preference', 'task', 'fact'}.contains(category)
-                ? category
-                : 'fact';
-        final importance = (raw['importance'] as num?)?.toInt() ?? 3;
-        final expiresDays = (raw['expires_days'] as num?)?.toInt() ?? 0;
-        final expiresAt = expiresDays.clamp(0, 30) == 0
-            ? null
-            : now + expiresDays.clamp(1, 30) * Duration.millisecondsPerDay;
-        await db.upsertMemoryItem(
-          botId: botId,
-          id: id,
-          type: 'short',
-          content: content,
-          category: safeCategory,
-          importance: importance,
-          expiresAt: expiresAt,
-          timestamp: now,
-        );
-        changed = true;
-      }
-      for (final rawId in deletes) {
-        final id = rawId?.toString().trim() ?? '';
-        if (knownIds.contains(id)) {
-          await db.deleteMemory(id);
-          changed = true;
-        }
-      }
-      // 即使模型判断无需变更，也标记本段已审阅，避免重复消耗请求。
-      if (changed || (upserts.isEmpty && deletes.isEmpty)) {
-        await db.setKV(summaryKey, endTimestamp);
-        AppLogService.instance
-            .add('DIARY', changed ? '已写入或更新机器人日记' : '已检查聊天，本次无需新增日记');
-      }
-    } catch (e) {
-      print('[memory] auto summary failed: $e');
-    }
-  }
-
   // 空间广场：今日一言生成逻辑
   Future<String> getDailyQuote(String botId) async {
     final db = DBManager();
@@ -1758,6 +1554,7 @@ class AIManager {
     required void Function(Map) usageCallback,
     required void Function(List<Map<String, String>>) searchSourcesSetter,
     required void Function(String) generatedImageSetter,
+    required void Function(Map<String, dynamic>) stickerSetter,
     required void Function() silenceSetter,
   }) async {
     for (final call in calls) {
@@ -1782,6 +1579,9 @@ class AIManager {
       if (toolResult is Map &&
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
+      }
+      if (toolResult is Map && toolResult['sticker'] is Map) {
+        stickerSetter(Map<String, dynamic>.from(toolResult['sticker'] as Map));
       }
       messages.add({
         'role': 'tool',
@@ -1846,7 +1646,7 @@ class AIManager {
       'function': {
         'name': 'create_future_task',
         'description':
-            '仅在用户明确要求提醒、定时、稍后执行或安排未来事项时创建未来任务。run_at 必须是当地未来时间，格式 YYYY-MM-DD HH:mm。',
+            '仅在用户明确要求提醒、定时、稍后执行或安排未来事项时创建未来任务。创建前必须确认当前未来任务中没有同一事项；相同标题、时间或目的的任务不得重复创建。run_at 必须是当地未来时间，格式 YYYY-MM-DD HH:mm。',
         'parameters': {
           'type': 'object',
           'properties': {
@@ -1938,7 +1738,7 @@ class AIManager {
         'function': {
           'name': 'write_diary',
           'description':
-              '当你认为本轮对话有值得保存的日记式经历、感受或事件时，写入自己的日记。只在确有内容时调用；日记不会作为聊天正文发送。',
+              '只在本机器人亲自参与的本轮聊天中，出现已经实际发生且明确说出的重要事件、稳定事实或真实感受时调用。绝不编造、推测、移植其他机器人的经历或称呼；日记不会作为聊天正文发送。',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -2066,6 +1866,26 @@ class AIManager {
       }
       final frequency =
           args['frequency']?.toString() == 'daily' ? 'daily' : 'once';
+      final existingTasks = await db.querySchedules(botId);
+      final normalizedTitle =
+          title.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+      final duplicate = existingTasks.any((task) {
+        final oldTitle = (task['title']?.toString() ?? '')
+            .replaceAll(RegExp(r'\s+'), '')
+            .toLowerCase();
+        final oldRunAt = (task['run_at'] as num?)?.toInt() ?? 0;
+        return oldTitle == normalizedTitle &&
+            oldRunAt == runAt &&
+            task['status']?.toString() != 'done';
+      });
+      if (duplicate)
+        return {
+          'result': {
+            'ok': true,
+            'duplicate': true,
+            'message': '相同未来任务已存在，未重复创建。'
+          }
+        };
       final id = 'future_${botId}_${runAt}_${title.hashCode.abs()}';
       await db.insertFutureTask({
         'id': id,

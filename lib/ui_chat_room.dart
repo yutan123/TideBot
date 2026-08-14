@@ -411,15 +411,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         setState(() => _msgs.add(aiMsg));
         final imagePath = result['image_path']?.toString();
         if (imagePath?.isNotEmpty == true) {
-          setState(() => _msgs.add({
-                'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'image',
-                'content': '',
-                'file_path': imagePath,
-                'timestamp': DateTime.now().millisecondsSinceEpoch,
-              }));
+          if (!_msgs.any((m) =>
+              m['type'] == 'image' && m['file_path']?.toString() == imagePath))
+            setState(() => _msgs.add({
+                  'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
+                  'bot_id': botId,
+                  'role': 'assistant',
+                  'type': 'image',
+                  'content': '',
+                  'file_path': imagePath,
+                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                }));
         }
         // 一次主动回复后：未应答 +1 并持久化，重新计时（下一次若仍无人应答则累加）。
         _proactiveUnanswered++;
@@ -740,6 +742,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             result['sources'] == null ? null : jsonEncode(result['sources']),
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
+      final persistedBase = int.tryParse(
+              aiMsg['id'].toString().replaceFirst(RegExp(r'^msg_a_'), '')) ??
+          (aiMsg['timestamp'] as int) + 1;
       // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
       // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
 
@@ -863,29 +868,38 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           setState(() => _msgs.add(aiMsg));
         }
         final imagePath = result['image_path']?.toString();
-        if (imagePath?.isNotEmpty == true) {
+        if (imagePath?.isNotEmpty == true &&
+            !_msgs.any((m) =>
+                m['type'] == 'image' &&
+                m['file_path']?.toString() == imagePath)) {
           setState(() => _msgs.add({
-                'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
+                'id': 'msg_i_${persistedBase + 1}',
                 'bot_id': botId,
                 'role': 'assistant',
                 'type': 'image',
                 'content': '',
                 'file_path': imagePath,
-                'timestamp': DateTime.now().millisecondsSinceEpoch,
+                'timestamp': persistedBase + 1,
               }));
         }
         final sticker = result['sticker'];
-        if (sticker is Map) {
+        if (sticker is Map &&
+            !_msgs.any((m) =>
+                m['type'] == 'sticker' &&
+                m['file_path']?.toString() ==
+                    sticker['file_path']?.toString())) {
           // sticker 已由 AIManager 落库；content 只用于内部分类，不能作为
           // 可见正文展示，避免把“开心/表情包类型”等协议泄漏给用户。
           setState(() => _msgs.add({
-                'id': 'msg_s_${(aiMsg['timestamp'] as int) + 1000}',
+                'id':
+                    'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}',
                 'bot_id': botId,
                 'role': 'assistant',
                 'type': 'sticker',
                 'content': '',
                 'file_path': sticker['file_path']?.toString(),
-                'timestamp': (aiMsg['timestamp'] as int) + 1000,
+                'timestamp':
+                    persistedBase + 1 + _splitReplySegments(content).length,
               }));
           _scrollDown();
         }
@@ -2623,24 +2637,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final theme = TideTheme.of(context);
     return SafeArea(
       top: false,
+      minimum: const EdgeInsets.only(bottom: 12),
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
             .animate(CurvedAnimation(
                 parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(18),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: _hasBg
                       ? theme.glass.withValues(alpha: 0.72)
                       : theme.surfaceVariant.withValues(alpha: 0.76),
-                  borderRadius: BorderRadius.circular(22),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: Colors.transparent),
                   boxShadow: theme.isDark
                       ? null

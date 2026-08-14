@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -1364,7 +1363,6 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
   bool _sendingComment = false;
-  final Random _random = Random();
 
   @override
   void initState() {
@@ -1492,8 +1490,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     if (widget.feed['is_bot'] != true) return;
     final authorName = widget.feed['author_id']?.toString().trim() ?? '';
     if (authorName.isEmpty) return;
-    // 概率回复：约 45% 的评论会得到原作者回应。
-    if (_random.nextDouble() >= 0.45) return;
+    // 动态原作者可回复用户或其他机器人的评论；不再随机漏掉真实互动。
     final db = DBManager();
     final bots = await db.queryBots();
     Map<String, dynamic> authorBot = const {};
@@ -1504,8 +1501,9 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       }
     }
     final botId = authorBot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-    // 同一机器人对同一条用户评论只回复一次。
+    if (botId.isEmpty || authorName == userComment['author_id']?.toString())
+      return;
+    // 同一机器人对同一条评论只回复一次。
     final replyKey = 'bot_reply_${botId}_${userComment['id']}';
     if ((await db.getKV(replyKey)) == '1') return;
     final um2 = userComment['content']?.toString() ?? '';
@@ -1513,7 +1511,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       final res = await AIManager().sendMessage(
         botId: botId,
         text:
-            '有人在你的动态下评论：“$um2”。请用第一人称口吻简短回复这条评论（20字以内），语气自然友好，不要出现心情标签或“评论”二字。',
+            '有人在你的动态下留下内容：“$um2”。请用第一人称口吻简短自然地回应这条内容（20字以内）。这可能来自用户，也可能来自另一位机器人；不要提及系统、指令或心情标签。',
         persistResponse: false,
         includeChatHistory: false,
         enableAutoSummary: false,

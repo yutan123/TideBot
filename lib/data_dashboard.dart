@@ -237,15 +237,15 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
         );
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       column('Token 消耗', theme.primary, [
-        (Icons.today_rounded, '当天', _todayTokens),
-        (Icons.calendar_month_rounded, '本月', _monthTokens),
-        (Icons.bolt_rounded, '当前区间', _totalTokens),
+        (Icons.today_rounded, '今日消耗 Token', _todayTokens),
+        (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens),
+        (Icons.all_inclusive_rounded, '累计消耗 Token', _totalTokens),
       ]),
       const SizedBox(width: 10),
       column('机器人回复', const Color(0xFFB05E91), [
-        (Icons.forum_rounded, '当天', _todayReplies),
-        (Icons.date_range_rounded, '本月', _monthReplies),
-        (Icons.chat_bubble_rounded, '当前区间', _totalReplies),
+        (Icons.today_rounded, '今日机器人回复', _todayReplies),
+        (Icons.calendar_month_rounded, '本月机器人回复', _monthReplies),
+        (Icons.forum_rounded, '累计机器人回复', _totalReplies),
       ]),
     ]);
   }
@@ -333,6 +333,8 @@ class _ChartCard extends StatelessWidget {
           SizedBox(
             height: 150,
             child: TweenAnimationBuilder<double>(
+              key: ValueKey(
+                  '${subtitle}_${series.length}_${series.fold<int>(0, (a, b) => a + b)}'),
               duration: const Duration(milliseconds: 420),
               curve: Curves.easeOutCubic,
               tween: Tween(begin: 0, end: 1),
