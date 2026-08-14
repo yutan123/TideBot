@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -141,6 +142,52 @@ class AIManager {
     };
   }
 
+  String _extractChatContent(dynamic payload) {
+    if (payload is! Map) return '';
+    String fromValue(dynamic value) {
+      if (value is String) return value.trim();
+      if (value is List) {
+        return value
+            .map((item) {
+              if (item is String) return item;
+              if (item is Map)
+                return item['text']?.toString() ??
+                    item['content']?.toString() ??
+                    '';
+              return '';
+            })
+            .where((text) => text.trim().isNotEmpty)
+            .join();
+      }
+      return '';
+    }
+
+    final choices = payload['choices'];
+    if (choices is List && choices.isNotEmpty && choices.first is Map) {
+      final choice = choices.first as Map;
+      final message = choice['message'];
+      if (message is Map) {
+        final content = fromValue(message['content']);
+        if (content.isNotEmpty) return content;
+      }
+      final text = fromValue(choice['text']);
+      if (text.isNotEmpty) return text;
+    }
+    final output = payload['output'];
+    if (output is Map) {
+      final text = fromValue(output['text']);
+      if (text.isNotEmpty) return text;
+      final message = output['message'];
+      if (message is Map) {
+        final content = fromValue(message['content']);
+        if (content.isNotEmpty) return content;
+      }
+    }
+    final direct = fromValue(payload['text']);
+    if (direct.isNotEmpty) return direct;
+    return fromValue(payload['output_text']);
+  }
+
   Future<Map<String, dynamic>> _sendMessageOnce({
     required String botId,
     required String text,
@@ -180,15 +227,24 @@ class AIManager {
                 await EmotionStateService.instance.promptContext(botId),
           },
         ];
-        for (final msg in history.take(20)) {
-          if (msg['type'] == 'text') {
-            localMessages.add({
-              'role': msg['role'],
-              'content': msg['content'],
-            });
-          }
+        final recentHistory = history
+            .where((msg) =>
+                msg['type'] == 'text' &&
+                msg['error_log']?.toString().isNotEmpty != true &&
+                msg['error_code']?.toString().isNotEmpty != true)
+            .toList();
+        final selected = recentHistory.reversed.take(20).toList().reversed;
+        for (final msg in selected) {
+          final role =
+              msg['role']?.toString() == 'assistant' ? 'assistant' : 'user';
+          final content = msg['content']?.toString().trim() ?? '';
+          if (content.isNotEmpty)
+            localMessages.add({'role': role, 'content': content});
         }
-        if (history.isEmpty || history.last['content']?.toString() != text) {
+        // The current turn is authoritative; skip only an identical final user row.
+        if (selected.isEmpty ||
+            selected.last['role']?.toString() != 'user' ||
+            selected.last['content']?.toString() != text) {
           localMessages.add({'role': 'user', 'content': text});
         }
         final path = await LocalLlama.instance.pathFor(localId);
@@ -269,6 +325,20 @@ class AIManager {
     final history = includeChatHistory
         ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
         : <Map<String, dynamic>>[];
+    // A rollover is semantic, not deletion: once the cumulative transcript reaches
+    // the configured context size, ask the configured model to retain only durable
+    // events/facts and then keep the newest half as live conversation.
+    if (includeChatHistory && enableAutoSummary && localId.isEmpty) {
+      await _rolloverContextMemory(
+        db: db,
+        botId: botId,
+        botName: bot['name']?.toString() ?? 'TideBot',
+        history: history,
+        maxContext: maxContext,
+        provider: provider,
+        modelName: modelName,
+      );
+    }
 
     // Keep stable instructions first for provider prefix caches. Dynamic time is
     // appended last, and history is packed newest-first within the user budget.
@@ -323,7 +393,9 @@ class AIManager {
     final historyMessages = <Map<String, dynamic>>[];
     var usedTokens = 0;
     // 给系统提示、记忆、工具定义和本轮输出预留空间，历史不能无上限发送。
-    final historyBudget = (maxContext * 0.58).floor().clamp(600, 64000);
+    // Keep only the recent half after every context rollover. Older facts
+    // are represented by the memory store, avoiding repeated full transcripts.
+    final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
     for (final msg in history.reversed) {
       if (msg['type'] != 'text') continue;
       // Failed/unsent messages must never become model context. They may be
@@ -339,14 +411,27 @@ class AIManager {
         if (historyMessages.isEmpty) {
           final keepChars =
               (historyBudget * 2.6).floor().clamp(200, content.length);
+          final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
+          final timeLabel = sentAt == null
+              ? ''
+              : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
           historyMessages.add({
-            'role': msg['role'],
-            'content': content.substring(content.length - keepChars)
+            'role':
+                msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
+            'content':
+                '$timeLabel${content.substring(content.length - keepChars)}',
           });
         }
         break;
       }
-      historyMessages.add({'role': msg['role'], 'content': content});
+      final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
+      final timeLabel = sentAt == null
+          ? ''
+          : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
+      historyMessages.add({
+        'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
+        'content': '$timeLabel$content',
+      });
       usedTokens += tokens;
     }
     messages.addAll(historyMessages.reversed);
@@ -355,9 +440,8 @@ class AIManager {
     // 标记以免下方再次追加造成重复喂给模型
     if (history.isNotEmpty) {
       final lastMsg = history.last;
-      if ((lastMsg['role'] == 'user') &&
-          (lastMsg['content']?.toString() == text) &&
-          history.length < 20) {
+      if ((lastMsg['role']?.toString() == 'user') &&
+          (lastMsg['content']?.toString() == text)) {
         lastIsCurrentUser = true;
       }
     }
@@ -467,8 +551,7 @@ class AIManager {
           if (contentType.contains('application/json')) {
             final body = await response.stream.bytesToString();
             final json = jsonDecode(body);
-            replyText =
-                json['choices']?[0]?['message']?['content']?.toString() ?? '';
+            replyText = _extractChatContent(json);
             usage = json['usage'] is Map ? json['usage'] as Map : const {};
             if (replyText.isNotEmpty) onDelta(replyText);
           } else {
@@ -486,7 +569,11 @@ class AIManager {
                 final event = jsonDecode(data);
                 final delta =
                     event['choices']?[0]?['delta'] as Map? ?? const {};
-                final content = delta['content']?.toString() ?? '';
+                final content = _extractChatContent({
+                  'choices': [
+                    {'message': delta}
+                  ]
+                });
                 if (content.isNotEmpty) {
                   replyText += content;
                   onDelta(content);
@@ -577,7 +664,7 @@ class AIManager {
         if (statusCode == 200) {
           final json = jsonDecode(errorBody);
           final message = json['choices']?[0]?['message'];
-          replyText = message?['content']?.toString() ?? '';
+          replyText = _extractChatContent(json);
           usage = json['usage'] is Map ? json['usage'] as Map : const {};
           if (message is Map && message['tool_calls'] is List) {
             final toolCalls = (message['tool_calls'] as List)
@@ -960,6 +1047,84 @@ class AIManager {
     return await MediaPreprocessor().imageFallbackText(imagePath);
   }
 
+  Future<void> _rolloverContextMemory({
+    required DBManager db,
+    required String botId,
+    required String botName,
+    required List<Map<String, dynamic>> history,
+    required int maxContext,
+    required Map<String, dynamic> provider,
+    required String modelName,
+  }) async {
+    try {
+      final boundary =
+          int.tryParse(await db.getKV('context_rollover_at_$botId') ?? '') ?? 0;
+      final pending = history
+          .where((m) =>
+              ((m['timestamp'] as num?)?.toInt() ?? 0) > boundary &&
+              m['type'] == 'text')
+          .toList();
+      final tokens = pending.fold<int>(
+          0, (n, m) => n + estimateTokens(m['content']?.toString() ?? ''));
+      if (tokens < maxContext) return;
+      final keepBudget = (maxContext / 2).floor();
+      var used = 0;
+      final recent = <Map<String, dynamic>>[];
+      for (final message in pending.reversed) {
+        final size = estimateTokens(message['content']?.toString() ?? '');
+        if (used + size > keepBudget) break;
+        used += size;
+        recent.add(message);
+      }
+      final recentIds = recent.map((m) => m['id']?.toString()).toSet();
+      final archived = pending
+          .where((m) => !recentIds.contains(m['id']?.toString()))
+          .toList();
+      if (archived.isEmpty) return;
+      final transcript = archived
+          .map((m) =>
+              '${m['role'] == 'assistant' ? '机器人' : '用户'}：${m['content']}')
+          .join('\n');
+      final url = (provider['base_url']?.toString() ?? '')
+          .replaceFirst(RegExp(r'/+$'), '');
+      final key = provider['api_key']?.toString() ?? '';
+      if (url.isEmpty || key.isEmpty) return;
+      final prompt =
+          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆可能会自动去重/修正。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。没有值得记住的内容就输出 NONE。
+
+$transcript''';
+      final response = await http
+          .post(Uri.parse('$url/chat/completions'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $key'
+              },
+              body: jsonEncode({
+                'model': modelName,
+                'messages': [
+                  {'role': 'system', 'content': '准确、克制地整理记忆，不与用户对话。'},
+                  {'role': 'user', 'content': prompt}
+                ],
+                'temperature': 0.1,
+                'max_tokens': 1200
+              }))
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode < 200 || response.statusCode >= 300) return;
+      final raw =
+          _extractChatContent(jsonDecode(utf8.decode(response.bodyBytes)));
+      if (raw.isNotEmpty && raw != 'NONE')
+        await _persistModelMemories(db, botName, botId, raw);
+      final newestArchived = archived.last['timestamp'] as num?;
+      if (newestArchived != null)
+        await db.setKV(
+            'context_rollover_at_$botId', '${newestArchived.toInt()}');
+      AppLogService.instance.add('MEMORY',
+          '上下文达到 $maxContext token，已整理 ${archived.length} 条历史并保留最近约 $keepBudget token');
+    } catch (e) {
+      AppLogService.instance.add('MEMORY', '上下文记忆整理跳过：$e');
+    }
+  }
+
   /// Transcribes an audio file through an OpenAI-compatible provider selected
 
   /// in the bot's STT setting. Returns null for missing configuration, unsupported
@@ -999,6 +1164,10 @@ class AIManager {
           model.toLowerCase().contains('sambert') ||
           model.toLowerCase().contains('cosyvoice');
       if (isDashScope) {
+        if (model.toLowerCase().contains('-realtime')) {
+          return await _transcribeDashScopeRealtime(
+              provider: provider, model: model, audioPath: audioPath);
+        }
         return await _transcribeDashScope(
             provider: provider, model: model, audioPath: audioPath);
       }
@@ -1120,6 +1289,144 @@ class AIManager {
     }
   }
 
+  Future<WebSocket> _dashScopeSocket(String apiKey, String model) =>
+      WebSocket.connect(
+          'wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${Uri.encodeQueryComponent(model)}',
+          headers: {'Authorization': 'Bearer $apiKey'});
+
+  Future<String?> _generateDashScopeRealtimeTTS(
+      {required String text,
+      required String apiKey,
+      required String model,
+      required String voice}) async {
+    WebSocket? socket;
+    try {
+      socket = await _dashScopeSocket(apiKey, model)
+          .timeout(const Duration(seconds: 20));
+      socket.add(jsonEncode({
+        'type': 'session.update',
+        'session': {
+          'modalities': ['text', 'audio'],
+          'voice': voice,
+          'output_audio_format': 'pcm16'
+        }
+      }));
+      socket.add(jsonEncode({
+        'type': 'conversation.item.create',
+        'item': {
+          'type': 'message',
+          'role': 'user',
+          'content': [
+            {'type': 'input_text', 'text': text}
+          ]
+        }
+      }));
+      socket.add(jsonEncode({
+        'type': 'response.create',
+        'response': {
+          'modalities': ['audio']
+        }
+      }));
+      final pcm = <int>[];
+      await for (final frame in socket.timeout(const Duration(seconds: 45))) {
+        if (frame is! String) continue;
+        final event = jsonDecode(frame);
+        final type = event['type']?.toString() ?? '';
+        final delta =
+            event['delta']?.toString() ?? event['audio']?.toString() ?? '';
+        if ((type.contains('audio.delta') || type.contains('audio')) &&
+            delta.isNotEmpty) {
+          try {
+            pcm.addAll(base64Decode(delta));
+          } catch (_) {}
+        }
+        if (type == 'response.done' || type.contains('response.completed'))
+          break;
+      }
+      if (pcm.isEmpty) return null;
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/tide_realtime_${DateTime.now().millisecondsSinceEpoch}.wav');
+      final header = BytesBuilder()
+        ..add(utf8.encode('RIFF'))
+        ..add(_u32(pcm.length + 36))
+        ..add(utf8.encode('WAVEfmt '))
+        ..add(_u32(16))
+        ..add([1, 0, 1, 0])
+        ..add(_u32(24000))
+        ..add(_u32(48000))
+        ..add([2, 0, 16, 0])
+        ..add(utf8.encode('data'))
+        ..add(_u32(pcm.length))
+        ..add(pcm);
+      await file.writeAsBytes(header.toBytes());
+      return file.path;
+    } catch (e) {
+      AppLogService.instance.add('TTS', '百炼实时 TTS 失败：$e');
+      return null;
+    } finally {
+      try {
+        await socket?.close();
+      } catch (_) {}
+    }
+  }
+
+  List<int> _u32(int n) =>
+      [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255];
+
+  Future<String?> _transcribeDashScopeRealtime(
+      {required Map<String, dynamic> provider,
+      required String model,
+      required String audioPath}) async {
+    WebSocket? socket;
+    try {
+      final key = provider['api_key']?.toString() ?? '';
+      if (key.isEmpty) return null;
+      socket = await _dashScopeSocket(key, model)
+          .timeout(const Duration(seconds: 20));
+      final audio = base64Encode(await File(audioPath).readAsBytes());
+      socket.add(jsonEncode({
+        'type': 'session.update',
+        'session': {
+          'modalities': ['text']
+        }
+      }));
+      socket.add(jsonEncode({
+        'type': 'conversation.item.create',
+        'item': {
+          'type': 'message',
+          'role': 'user',
+          'content': [
+            {'type': 'input_audio', 'audio': audio}
+          ]
+        }
+      }));
+      socket.add(jsonEncode({
+        'type': 'response.create',
+        'response': {
+          'modalities': ['text']
+        }
+      }));
+      final out = StringBuffer();
+      await for (final frame in socket.timeout(const Duration(seconds: 60))) {
+        if (frame is! String) continue;
+        final event = jsonDecode(frame);
+        final type = event['type']?.toString() ?? '';
+        if (type.contains('text.delta')) out.write(event['delta'] ?? '');
+        if (type == 'response.done' || type.contains('response.completed'))
+          break;
+      }
+      return out.toString().trim().isEmpty ? null : out.toString().trim();
+    } catch (e) {
+      AppLogService.instance.add('STT', '百炼实时 STT 失败：$e');
+      return null;
+    } finally {
+      try {
+        await socket?.close();
+      } catch (_) {}
+    }
+  }
+
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
   Future<String?> _generateTTS(String text, String providerId) async {
     final list = await DBManager().queryTtsProviders();
@@ -1155,13 +1462,18 @@ class AIManager {
           model.toLowerCase().contains('sambert') ||
           model.toLowerCase().contains('cosyvoice') ||
           model.toLowerCase().contains('qwen-audio');
-      final isQwenTts =
-          isDashScope && model.toLowerCase().contains('qwen-audio');
-      final endpoint = isQwenTts
-          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-speech'
-          : isDashScope
-              ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
-              : '$baseUrl/audio/speech';
+      final isRealtime =
+          isDashScope && model.toLowerCase().contains('-realtime');
+      // DashScope's regular synthesis service is separate from its legacy
+      // text-to-wav endpoint. Realtime models require the WebSocket protocol;
+      // keep their endpoint visible in logs instead of silently sending a bad HTTP request.
+      final endpoint = isDashScope
+          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesis'
+          : '$baseUrl/audio/speech';
+      if (isRealtime) {
+        return await _generateDashScopeRealtimeTTS(
+            text: text, apiKey: apiKey, model: model, voice: voice);
+      }
       AppLogService.instance.add('TTS',
           '请求语音：provider=${provider['name'] ?? providerId}，model=$model，dashscope=$isDashScope，endpoint=$endpoint，文本 ${text.length} 字');
       final res = await http
@@ -1175,9 +1487,7 @@ class AIManager {
                 ? {
                     'model': model,
                     'input': {'text': text},
-                    if (isQwenTts) 'voice': voice,
-                    if (!isQwenTts)
-                      'parameters': {'format': 'wav', 'voice': voice},
+                    'parameters': {'format': 'wav', 'voice': voice},
                   }
                 : {'model': model, 'input': text, 'voice': voice}),
           )
@@ -2051,7 +2361,27 @@ class AIManager {
             .post(Uri.parse('$root$path'),
                 headers: headers, body: jsonEncode(body))
             .timeout(const Duration(seconds: 20));
-        return success(response);
+        if (!success(response) || response.bodyBytes.isEmpty) return false;
+        try {
+          final body = jsonDecode(utf8.decode(response.bodyBytes));
+          if (body is! Map || body['error'] != null) return false;
+          if (path == '/chat/completions') {
+            final content =
+                body['choices'] is List && (body['choices'] as List).isNotEmpty
+                    ? ((body['choices'] as List).first as Map?)?['message']
+                            ?['content']
+                        ?.toString()
+                        .trim()
+                    : null;
+            return content != null && content.isNotEmpty;
+          }
+          if (path == '/images/generations') {
+            return body['data'] is List && (body['data'] as List).isNotEmpty;
+          }
+          return true;
+        } catch (_) {
+          return false;
+        }
       } catch (_) {
         return false;
       }

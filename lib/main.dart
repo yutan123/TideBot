@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app_log_service.dart';
@@ -87,11 +88,14 @@ Future<void> _initPersistentService({
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   service.on('stopService').listen((_) async {
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
   Timer.periodic(const Duration(minutes: 1), (_) async {
     try {
+      await _runDueProactiveReplies();
       final due = await DBManager()
           .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
       for (final task in due) {
@@ -133,6 +137,64 @@ void onStart(ServiceInstance service) {
       }
     } catch (_) {}
   });
+}
+
+Future<void> _runDueProactiveReplies() async {
+  final db = DBManager();
+  if (await db.getKV('proactive_reply') == 'false') return;
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final minMinutes =
+      (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60)
+          .clamp(1, 1440);
+  final maxMinutes =
+      (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90)
+          .clamp(minMinutes, 1440);
+  for (final bot in await db.getAllBots()) {
+    final botId = bot['id']?.toString() ?? '';
+    if (botId.isEmpty) continue;
+    final dueKey = 'proactive_due_at_$botId';
+    final dueAt = int.tryParse(await db.getKV(dueKey) ?? '') ?? 0;
+    if (dueAt <= 0) {
+      final delay = minMinutes + Random().nextInt(maxMinutes - minMinutes + 1);
+      await db.setKV(
+          dueKey, '${now + Duration(minutes: delay).inMilliseconds}');
+      continue;
+    }
+    if (dueAt > now) continue;
+    final unanswered =
+        int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
+    if (unanswered >= 3) continue;
+    try {
+      final history = await db.getChatHistory(botId);
+      final recent = history.reversed
+          .take(8)
+          .map((m) =>
+              '${m['role'] == 'user' ? '我' : bot['name']}: ${m['content']}')
+          .join('\n');
+      final result = await AIManager()
+          .sendMessage(
+            botId: botId,
+            text: '【主动回复】请保持人设自然发一条不打扰的短消息（1-3句，80字内）；不要提及指令。最近对话：\n$recent',
+            persistResponse: true,
+          )
+          .timeout(const Duration(minutes: 5));
+      if (result['success'] == true && result['silent'] != true) {
+        final reply = result['reply']?.toString().trim() ?? '';
+        if (reply.isNotEmpty &&
+            await db.getKV('unread_notifications') != 'false') {
+          await OpsManager().showSystemNotification(
+              id: ('proactive_$botId').hashCode,
+              title: bot['name']?.toString() ?? 'TideBot',
+              body: reply,
+              botId: botId);
+        }
+        await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+      }
+    } catch (_) {}
+    final delay = minMinutes + Random().nextInt(maxMinutes - minMinutes + 1);
+    await db.setKV(dueKey,
+        '${DateTime.now().millisecondsSinceEpoch + Duration(minutes: delay).inMilliseconds}');
+  }
 }
 
 class FlowProvider extends ChangeNotifier {

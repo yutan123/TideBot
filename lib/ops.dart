@@ -10,6 +10,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app_navigation.dart';
+import 'db.dart';
 
 class OpsManager {
   static final OpsManager _instance = OpsManager._internal();
@@ -27,6 +28,16 @@ class OpsManager {
 
   Future<void> init() async {
     await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+  }
+
+  Future<Map<String, dynamic>> storageInfo() async {
+    try {
+      final raw =
+          await _nativeChannel.invokeMapMethod<String, dynamic>('storageInfo');
+      return raw ?? const {};
+    } catch (_) {
+      return const {};
+    }
   }
 
   /// Initializes the shared notification plugin once for all message alerts.
@@ -175,6 +186,10 @@ class OpsManager {
     required bool done,
     String botId = '',
   }) async {
+    if (await DBManager().getKV('download_progress_notifications') == 'false') {
+      if (done) await cancelDownloadProgress(notifId);
+      return;
+    }
     await initializeNotifications();
     final details = NotificationDetails(
       android: AndroidNotificationDetails(

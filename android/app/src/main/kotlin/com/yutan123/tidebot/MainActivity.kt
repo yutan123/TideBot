@@ -8,6 +8,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.StatFs
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -52,6 +53,12 @@ class MainActivity: FlutterActivity() {
                     } else {
                         result.success(false)
                     }
+                }
+                "storageInfo" -> {
+                    try {
+                        val stat = StatFs(filesDir.absolutePath)
+                        result.success(mapOf("total" to stat.totalBytes, "available" to stat.availableBytes))
+                    } catch (_: Exception) { result.success(mapOf<String, Long>()) }
                 }
                 "vibrate" -> {
                     val duration = (call.argument<Int>("duration") ?: 24).toLong().coerceIn(1L, 500L)

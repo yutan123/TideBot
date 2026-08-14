@@ -19,6 +19,7 @@ import 'local_llama.dart';
 import 'life_schedule_service.dart';
 import 'life_schedule_pool_page.dart';
 import 'advanced_settings_page.dart';
+import 'storage_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -372,6 +373,22 @@ class _ProfilePageState extends State<ProfilePage> {
                           onTap: () async {
                             Navigator.pop(context);
                             await _exportSelectedChat();
+                          }),
+                      ListTile(
+                          leading: Icon(Icons.storage_rounded,
+                              color: TideTheme.of(context).primary),
+                          title: const Text('存储空间',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          subtitle: const Text('查看占用、清理缓存和多选聊天记录',
+                              style: TextStyle(
+                                  fontFamily: 'TideFont', fontSize: 12)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const StorageManagementPage()));
                           }),
                       ListTile(
                           leading: Icon(Icons.upload_file_rounded,
@@ -1501,6 +1518,7 @@ class NotificationSettingsPage extends StatefulWidget {
 class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   late bool _unread;
   late bool _keepRunning;
+  bool _downloadProgress = true;
   bool _switchingPersistentNotification = false;
 
   @override
@@ -1508,6 +1526,9 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     super.initState();
     _unread = widget.initialUnread;
     _keepRunning = widget.initialKeepRunning;
+    DBManager().getKV('download_progress_notifications').then((value) {
+      if (mounted) setState(() => _downloadProgress = value != 'false');
+    });
   }
 
   Future<void> _setValue(String key, bool value) async {
@@ -1544,6 +1565,20 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                     }
                     setState(() => _unread = value);
                     await _setValue('unread_notifications', value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('下载进度通知',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('显示本地模型下载的实时进度',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  value: _downloadProgress,
+                  activeThumbColor: theme.primary,
+                  onChanged: (value) async {
+                    if (value && !await AppPermissions.notifications(context))
+                      return;
+                    setState(() => _downloadProgress = value);
+                    await _setValue('download_progress_notifications', value);
                   },
                 ),
                 SwitchListTile(
@@ -1898,6 +1933,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
     final mCtrl = TextEditingController(text: models);
+    final isDashScope =
+        name.contains('百炼') || url.contains('dashscope.aliyuncs.com');
     TideDialogs.show(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1914,8 +1951,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           fontFamily: 'TideFont')),
                   const SizedBox(height: 12),
                   _f('名称', nCtrl),
-                  const SizedBox(height: 8),
-                  _f('API 地址', uCtrl),
+                  if (!isDashScope) ...[
+                    const SizedBox(height: 8),
+                    _f('API 地址', uCtrl),
+                  ],
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),
@@ -1965,6 +2004,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final kCtrl = TextEditingController(text: key);
     final mCtrl = TextEditingController(text: models);
     final vCtrl = TextEditingController(text: voice);
+    final isDashScope =
+        name.contains('百炼') || url.contains('dashscope.aliyuncs.com');
     TideDialogs.show(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1981,8 +2022,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           fontFamily: 'TideFont')),
                   const SizedBox(height: 12),
                   _f('名称', nCtrl),
-                  const SizedBox(height: 8),
-                  _f('API 地址', uCtrl),
+                  if (!isDashScope) ...[
+                    const SizedBox(height: 8),
+                    _f('API 地址', uCtrl),
+                  ],
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),
@@ -2069,6 +2112,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final kCtrl = TextEditingController(text: p['key']);
     final mCtrl = TextEditingController(text: p['model']);
     final hasVoice = p.containsKey('voice');
+    final isDashScope = hasVoice &&
+        (p['name']?.toString().contains('百炼') == true ||
+            p['url']?.toString().contains('dashscope.aliyuncs.com') == true);
     TideDialogs.show(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -2085,8 +2131,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           fontFamily: 'TideFont')),
                   const SizedBox(height: 12),
                   _f('名称', nCtrl),
-                  const SizedBox(height: 8),
-                  _f('API 地址', uCtrl),
+                  if (!isDashScope) ...[
+                    const SizedBox(height: 8),
+                    _f('API 地址', uCtrl),
+                  ],
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),

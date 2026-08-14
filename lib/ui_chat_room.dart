@@ -611,18 +611,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ? text
           : (text.isEmpty ? preparedContext : '$text\n$preparedContext');
 
-      final history = _msgs
-          .where((m) => (m['content'] as String?)?.isNotEmpty == true)
-          .map((m) {
-        final isCurrent = !noUserBubble && m['id'] == msg['id'];
-        final content = isCurrent ? modelText : _modelReadableContent(m);
-        return {'role': m['role'], 'content': content};
-      }).toList();
-      // 合并重发（noUserBubble）时不新增用户气泡，仅把合并后的完整文本作为
-      // 本次用户请求追加到上下文末尾，机器人统一回复一次。
-      if (noUserBubble || (preparedContext != null && text.isEmpty)) {
-        history.add({'role': 'user', 'content': modelText});
-      }
+      // AIManager reads persisted, role-typed chat_history itself. _msgs contains
+      // stream placeholders and animation-only segments, so it must not be reused
+      // as a model transcript.
+      final history = <Map<String, dynamic>>[
+        {'role': 'user', 'content': modelText},
+      ];
 
       var imgB64 = '';
       if (img != null) {
@@ -637,6 +631,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
+      var receivedStreamDelta = false;
       if (streamEnabled && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
@@ -688,6 +683,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             // 真实 SSE 增量立即渲染；不支持 SSE 的服务商仍在完整结果到达后走打字机。
             onDelta: (delta) {
               if (streamingMessage == null || !mounted || delta.isEmpty) return;
+              receivedStreamDelta = true;
               _streamDisplayTimer?.cancel();
               _streamDisplayTimer = null;
               setState(() => streamingMessage!['content'] =
@@ -769,8 +765,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 用户需求：无论厂商是否回传 SSE 增量，前端都等服务商完整回复后再用打字机
       // 逐字渲染，而不是边生成边显示。完整 content 收到后统一喂给字幕定时器上屏，
       // 播完后定格为完整内容。
-      final needsTypewriter =
-          streamingMessage != null && !segmentedReply && content.isNotEmpty;
+      // A provider that emitted actual SSE deltas already owns this bubble.
+      // Only synthesize typing for a provider that returned one complete JSON reply.
+      final needsTypewriter = streamingMessage != null &&
+          !receivedStreamDelta &&
+          !segmentedReply &&
+          content.isNotEmpty;
       if (needsTypewriter && mounted) {
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
@@ -2087,8 +2087,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         Column(children: [
           _chatHeader(),
           Expanded(child: _chatBody()),
-          _inputBar()
         ]),
+        Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
       ]),
     );
   }
@@ -2270,24 +2270,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ],
       ),
     );
-  }
-
-  String _modelReadableContent(Map<String, dynamic> message) {
-    if (message['type']?.toString() != 'shared_post') {
-      return message['content']?.toString() ?? '';
-    }
-    try {
-      final raw = jsonDecode(message['content']?.toString() ?? '');
-      if (raw is Map) {
-        final author = raw['author']?.toString().trim() ?? '匿名';
-        final content = raw['content']?.toString().trim() ?? '';
-        final imagePath = raw['image_path']?.toString().trim() ?? '';
-        final timestamp = raw['timestamp'];
-        return '用户分享了一条动态。作者：$author；发布时间：${timestamp ?? '未知'}；文字：$content；'
-            '图片：${imagePath.isEmpty ? '无' : '已附带本地图片，路径为 $imagePath'}。请像看到了这条动态一样自然回应。';
-      }
-    } catch (_) {}
-    return '用户分享了一条动态：${message['content'] ?? ''}';
   }
 
   Map<String, dynamic>? _sharedPostPayload(Map<String, dynamic> message) {

@@ -219,16 +219,17 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
 
   Widget _summarySection(TideTheme theme) {
     final cards = <(IconData, String, int, Color)>[
+      // Each row is one time range: left = token usage, right = replies.
       (Icons.today_rounded, '今日消耗 Token', _todayTokens, theme.primary),
-      (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens, theme.primary),
-      (Icons.all_inclusive_rounded, '累计消耗 Token', _totalTokens, theme.primary),
       (Icons.today_rounded, '今日机器人回复', _todayReplies, const Color(0xFFB05E91)),
+      (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens, theme.primary),
       (
         Icons.calendar_month_rounded,
         '本月机器人回复',
         _monthReplies,
         const Color(0xFFB05E91)
       ),
+      (Icons.all_inclusive_rounded, '累计消耗 Token', _totalTokens, theme.primary),
       (Icons.forum_rounded, '累计机器人回复', _totalReplies, const Color(0xFFB05E91)),
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
