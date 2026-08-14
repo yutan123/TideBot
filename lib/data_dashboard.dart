@@ -218,65 +218,64 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   }
 
   Widget _summarySection(TideTheme theme) {
-    Widget column(
-            String heading, Color color, List<(IconData, String, int)> rows) =>
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 8),
-                child: Text(heading,
-                    style: TextStyle(
-                        fontFamily: 'TideFont',
-                        fontWeight: FontWeight.w700,
-                        color: color))),
-            ...rows.map((row) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _summaryCard(theme, row.$1, row.$2, row.$3))),
-          ]),
-        );
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      column('Token 消耗', theme.primary, [
-        (Icons.today_rounded, '今日消耗 Token', _todayTokens),
-        (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens),
-        (Icons.all_inclusive_rounded, '累计消耗 Token', _totalTokens),
-      ]),
-      const SizedBox(width: 10),
-      column('机器人回复', const Color(0xFFB05E91), [
-        (Icons.today_rounded, '今日机器人回复', _todayReplies),
-        (Icons.calendar_month_rounded, '本月机器人回复', _monthReplies),
-        (Icons.forum_rounded, '累计机器人回复', _totalReplies),
-      ]),
+    final cards = <(IconData, String, int, Color)>[
+      (Icons.today_rounded, '今日消耗 Token', _todayTokens, theme.primary),
+      (Icons.calendar_month_rounded, '本月消耗 Token', _monthTokens, theme.primary),
+      (Icons.all_inclusive_rounded, '累计消耗 Token', _totalTokens, theme.primary),
+      (Icons.today_rounded, '今日机器人回复', _todayReplies, const Color(0xFFB05E91)),
+      (
+        Icons.calendar_month_rounded,
+        '本月机器人回复',
+        _monthReplies,
+        const Color(0xFFB05E91)
+      ),
+      (Icons.forum_rounded, '累计机器人回复', _totalReplies, const Color(0xFFB05E91)),
+    ];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('使用概览',
+          style: TextStyle(
+              fontFamily: 'TideFont',
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: theme.textStrong)),
+      const SizedBox(height: 10),
+      GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1.42,
+        children: cards
+            .map((card) =>
+                _summaryCard(theme, card.$1, card.$2, card.$3, card.$4))
+            .toList(),
+      ),
     ]);
   }
 
-  Widget _summaryCard(TideTheme theme, IconData icon, String label, int value) {
+  Widget _summaryCard(
+      TideTheme theme, IconData icon, String label, int value, Color accent) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
       decoration: BoxDecoration(
-        color: theme.surfaceVariant,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: theme.primary),
-          const SizedBox(height: 8),
-          Text(
-            '$value',
+          color: theme.surfaceVariant, borderRadius: BorderRadius.circular(20)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: accent, size: 25),
+        const Spacer(),
+        Text('$value',
             style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              color: theme.textStrong,
-              fontFamily: 'TideFont',
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
-        ],
-      ),
+                fontSize: 29,
+                fontWeight: FontWeight.w700,
+                color: theme.textStrong,
+                fontFamily: 'TideFont')),
+        const SizedBox(height: 3),
+        Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
+      ]),
     );
   }
 }

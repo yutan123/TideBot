@@ -1544,13 +1544,13 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     }
   }
 
-  bool _isMyComment(Map<String, dynamic> comment) {
-    final author = comment['author_id']?.toString().trim();
-    return author == 'me' || author == '我';
-  }
+  // 评论属于当前本地数据库；无论用户或机器人作者，长按均允许管理删除。
+  bool _canDeleteComment(Map<String, dynamic> comment) =>
+      comment['id']?.toString().trim().isNotEmpty == true &&
+      comment['pending'] != true;
 
   Future<void> _deleteComment(Map<String, dynamic> comment) async {
-    if (!_isMyComment(comment)) return;
+    if (!_canDeleteComment(comment)) return;
     final id = comment['id']?.toString() ?? '';
     if (id.isEmpty || comment['pending'] == true) return;
     final confirmed = await TideDialogs.show<bool>(
@@ -1785,7 +1785,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                   ..._comments.map(
                     (comment) => GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onLongPress: _isMyComment(comment)
+                      onLongPress: _canDeleteComment(comment)
                           ? () => _deleteComment(comment)
                           : null,
                       child: Padding(

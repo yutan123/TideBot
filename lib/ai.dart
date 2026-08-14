@@ -301,6 +301,7 @@ class AIManager {
     final emotionContext =
         await EmotionStateService.instance.promptContext(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        _safetyContext(text) +
         lifeContext +
         emotionContext +
         (longMemoryContext.isEmpty
@@ -320,8 +321,9 @@ class AIManager {
       {'role': 'system', 'content': systemPrompt},
     ];
     final historyMessages = <Map<String, dynamic>>[];
-    var usedChars = 0;
-    final charBudget = (maxContext * 3.2).floor();
+    var usedTokens = 0;
+    // 给系统提示、记忆、工具定义和本轮输出预留空间，历史不能无上限发送。
+    final historyBudget = (maxContext * 0.58).floor().clamp(600, 64000);
     for (final msg in history.reversed) {
       if (msg['type'] != 'text') continue;
       // Failed/unsent messages must never become model context. They may be
@@ -332,13 +334,20 @@ class AIManager {
       }
       final content = msg['content']?.toString() ?? '';
       if (content.isEmpty) continue;
-      if (usedChars + content.length > charBudget &&
-          historyMessages.isNotEmpty) {
+      final tokens = estimateTokens(content);
+      if (usedTokens + tokens > historyBudget) {
+        if (historyMessages.isEmpty) {
+          final keepChars =
+              (historyBudget * 2.6).floor().clamp(200, content.length);
+          historyMessages.add({
+            'role': msg['role'],
+            'content': content.substring(content.length - keepChars)
+          });
+        }
         break;
       }
-      // 时间只作为系统级元信息保留，不能与可复述的对话正文混排。
       historyMessages.add({'role': msg['role'], 'content': content});
-      usedChars += content.length;
+      usedTokens += tokens;
     }
     messages.addAll(historyMessages.reversed);
     var lastIsCurrentUser = false;
@@ -422,7 +431,7 @@ class AIManager {
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
-        'max_tokens': bot['max_tokens'] ?? 10000,
+        'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
@@ -1016,8 +1025,10 @@ class AIManager {
     }
   }
 
-  /// 阿里云百炼 DashScope 录音文件识别（paraformer 系列 / SenseVoice）。
-  /// 使用表单提交录音文件，返回 output 结构中的转写文本，并兼容多种字段结构。
+  /// 阿里云百炼 DashScope 录音文件识别。
+  /// 百炼不是 OpenAI 的 multipart `/audio/transcriptions` 协议：优先使用
+  /// paraformer + `input.audio` 的 JSON 专属请求。为兼容旧网关，专属请求
+  /// 被拒绝时才退回旧的 multipart 形式。
   Future<String?> _transcribeDashScope({
     required Map<String, dynamic> provider,
     required String model,
@@ -1027,52 +1038,86 @@ class AIManager {
     if (apiKey.isEmpty) return null;
     const endpoint =
         'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
-    final request = http.MultipartRequest('POST', Uri.parse(endpoint))
-      ..headers['Authorization'] = 'Bearer $apiKey'
-      ..fields['model'] = model
-      ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
-    final response = await http.Response.fromStream(streamed);
-    if (response.statusCode != 200) {
-      print('[stt] dashscope HTTP ${response.statusCode}: '
-          '${utf8.decode(response.bodyBytes, allowMalformed: true)}');
-      return null;
-    }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    String? text;
-    if (decoded is Map) {
+    final selectedModel = model.trim().isEmpty ? 'paraformer' : model.trim();
+
+    String? extractText(dynamic decoded) {
+      if (decoded is! Map) return null;
       final output = decoded['output'];
-      // 常见返回结构：output.text / output.sentence[].text / output.transcription /
-      // output.results[].text，以及部分同步接口直接返回 text。
+      String? text = decoded['text']?.toString();
       if (output is Map) {
-        text = output['text']?.toString();
-        // sentence 全文拼接
+        text ??=
+            output['text']?.toString() ?? output['transcription']?.toString();
         if (text == null || text.isEmpty) {
-          final sentences = output['sentence'];
+          final sentences =
+              output['sentence'] ?? output['sentences'] ?? output['results'];
           if (sentences is List) {
             text = sentences
-                .map((s) => (s is Map ? s['text']?.toString() : null) ?? '')
-                .where((s) => s.isNotEmpty)
-                .join('');
-          }
-        }
-        if (text == null || text.isEmpty) {
-          text = output['transcription']?.toString();
-        }
-        if (text == null || text.isEmpty) {
-          final results = output['results'];
-          if (results is List) {
-            text = results
-                .map((s) => (s is Map ? s['text']?.toString() : null) ?? '')
-                .where((s) => s.isNotEmpty)
+                .map(
+                    (item) => item is Map ? item['text']?.toString() ?? '' : '')
+                .where((item) => item.isNotEmpty)
                 .join('');
           }
         }
       }
-      text ??= decoded['text']?.toString();
+      final trimmed = text?.trim() ?? '';
+      return trimmed.isEmpty ? null : trimmed;
     }
-    final trimmed = text?.trim() ?? '';
-    return trimmed.isEmpty ? null : trimmed;
+
+    try {
+      final audioBytes = await File(audioPath).readAsBytes();
+      final extension = audioPath.split('.').last.toLowerCase();
+      final mime = switch (extension) {
+        'mp3' => 'audio/mpeg',
+        'm4a' => 'audio/mp4',
+        'aac' => 'audio/aac',
+        'ogg' => 'audio/ogg',
+        _ => 'audio/wav',
+      };
+      AppLogService.instance.add('STT',
+          '百炼专属识别请求：model=$selectedModel，input.audio（${audioBytes.length} bytes）');
+      final response = await http
+          .post(Uri.parse(endpoint),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $apiKey',
+              },
+              body: jsonEncode({
+                'model': selectedModel,
+                'input': {
+                  'audio': 'data:$mime;base64,${base64Encode(audioBytes)}',
+                },
+              }))
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final text = extractText(jsonDecode(utf8.decode(response.bodyBytes)));
+        if (text != null) return text;
+        AppLogService.instance.add('STT', '百炼专属识别完成，但响应中没有文本');
+        return null;
+      }
+      AppLogService.instance
+          .add('STT', '百炼专属识别 HTTP ${response.statusCode}，尝试旧版兼容请求');
+    } catch (e) {
+      AppLogService.instance.add('STT', '百炼专属识别异常，尝试旧版兼容请求：$e');
+    }
+
+    try {
+      final request = http.MultipartRequest('POST', Uri.parse(endpoint))
+        ..headers['Authorization'] = 'Bearer $apiKey'
+        ..fields['model'] = selectedModel
+        ..files.add(await http.MultipartFile.fromPath('file', audioPath));
+      final streamed =
+          await request.send().timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        AppLogService.instance
+            .add('STT', '百炼旧版兼容识别失败：HTTP ${response.statusCode}');
+        return null;
+      }
+      return extractText(jsonDecode(utf8.decode(response.bodyBytes)));
+    } catch (e) {
+      AppLogService.instance.add('STT', '百炼旧版兼容识别异常：$e');
+      return null;
+    }
   }
 
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
@@ -1108,10 +1153,15 @@ class AIManager {
           providerName.contains('百炼') ||
           providerName.contains('dashscope') ||
           model.toLowerCase().contains('sambert') ||
-          model.toLowerCase().contains('cosyvoice');
-      final endpoint = isDashScope
-          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
-          : '$baseUrl/audio/speech';
+          model.toLowerCase().contains('cosyvoice') ||
+          model.toLowerCase().contains('qwen-audio');
+      final isQwenTts =
+          isDashScope && model.toLowerCase().contains('qwen-audio');
+      final endpoint = isQwenTts
+          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-speech'
+          : isDashScope
+              ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/text-to-wav'
+              : '$baseUrl/audio/speech';
       AppLogService.instance.add('TTS',
           '请求语音：provider=${provider['name'] ?? providerId}，model=$model，dashscope=$isDashScope，endpoint=$endpoint，文本 ${text.length} 字');
       final res = await http
@@ -1125,7 +1175,9 @@ class AIManager {
                 ? {
                     'model': model,
                     'input': {'text': text},
-                    'parameters': {'format': 'wav', 'voice': voice},
+                    if (isQwenTts) 'voice': voice,
+                    if (!isQwenTts)
+                      'parameters': {'format': 'wav', 'voice': voice},
                   }
                 : {'model': model, 'input': text, 'voice': voice}),
           )
@@ -2149,6 +2201,16 @@ class AIManager {
     };
   }
 
+  String _safetyContext(String userText) {
+    final risky = RegExp(
+            r'(色情|裸聊|成人视频|强奸|轮奸|未成年.{0,6}(性|裸|色情)|自杀|自残|割腕|炸弹|爆炸物|制毒|毒品|枪支|杀人|恐怖袭击|极端组织|诈骗|洗钱|盗号|破解|木马|勒索|人肉|仇恨|种族灭绝)',
+            caseSensitive: false)
+        .hasMatch(userText);
+    return risky
+        ? '\n【安全处理】用户消息可能涉及违法、危险、露骨、仇恨、欺诈、隐私或自伤内容。不要生成、补全、鼓励或提供可执行细节；保持你的人设，以温和、不评判的方式拒绝或转移到安全话题。若涉及即时自伤或他伤风险，优先鼓励联系当地紧急服务、可信赖的人或专业支持。'
+        : '\n【安全规则】不得生成违法、危险、露骨色情、剥削未成年人、仇恨骚扰、欺诈、隐私侵害或自伤他伤的可执行内容；遇到此类请求应保持人设并温和转移到安全话题。';
+  }
+
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
@@ -2216,6 +2278,10 @@ class AIManager {
           type = 'long';
           content = content.replaceFirst(longPrefix, '').trim();
         }
+        content = content
+            .replaceFirst(
+                RegExp(r'^(?:内容|短期|short)\s*[|｜]\s*', caseSensitive: false), '')
+            .trim();
         if (content.isEmpty) continue;
         // 长期记忆绝对不能出现任何时间相关词汇（用户硬性要求）。“我记得”
         // 前缀也绝不写入（统一走 _cleanLongMemoryText）。

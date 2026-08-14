@@ -65,7 +65,7 @@ class _GlobalNoticeView extends StatelessWidget {
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
     // 对齐原生 SnackBar 的紧凑体量：窄内边距、小圆角、单行文案、可横滑 + 关闭。
     final maxWidth = media.size.width > 540 ? 500.0 : media.size.width - 32;
-    final targetWidth = (media.size.width * 0.82).clamp(288.0, maxWidth);
+    final targetWidth = (media.size.width * 0.94).clamp(320.0, maxWidth);
     return Positioned(
       bottom: bottomInset,
       left: 0,
@@ -96,7 +96,7 @@ class _GlobalNoticeView extends StatelessWidget {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.only(
-                        left: 14, right: 2, top: 4, bottom: 4),
+                        left: 18, right: 4, top: 7, bottom: 7),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -114,8 +114,8 @@ class _GlobalNoticeView extends StatelessWidget {
                           ),
                         ),
                         SizedBox(
-                          width: 40,
-                          height: 32,
+                          width: 48,
+                          height: 38,
                           child: IconButton(
                             tooltip: '关闭提示',
                             padding: EdgeInsets.zero,

@@ -1639,6 +1639,24 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       'models': 'Qwen2.5-7B-Instruct'
     },
   ];
+  final _sttPresets = [
+    {
+      'name': 'SiliconFlow STT',
+      'url': 'https://api.siliconflow.cn/v1',
+      'models': 'FunAudioLLM/SenseVoiceSmall',
+    },
+    {
+      'name': '阿里云百炼 STT',
+      'url':
+          'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription',
+      'models': 'paraformer',
+    },
+    {
+      'name': 'MiniMax STT',
+      'url': 'https://api.minimax.chat/v1',
+      'models': 'speech-01',
+    },
+  ];
   final _ttsPresets = [
     {
       'name': 'SiliconFlow TTS',
@@ -1650,8 +1668,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       'name': '阿里云百炼 TTS',
       'url':
           'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-to-speech',
-      'models': 'cosyvoice-v1',
-      'voice': 'default'
+      'models': 'qwen-audio-3.0-tts-flash',
+      'voice': 'Cherry'
     },
     {
       'name': 'MiniMax TTS',
@@ -1766,6 +1784,56 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                     color: TideTheme.of(context).primary)),
                             child: Center(
                                 child: Text('自定义',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        color: TideTheme.of(context).primary,
+                                        fontFamily: 'TideFont'))))),
+                    const SizedBox(height: 24),
+                    const Text('语音识别 (STT)',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _sttPresets
+                            .map((p) => BouncyTap(
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  _showAddDialog(p['name']!, p['url']!, '',
+                                      p['models']!, false);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(16),
+                                        color: TideTheme.of(context)
+                                            .surfaceVariant),
+                                    child: Text(p['name']!,
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: TideTheme.of(context)
+                                                .textStrong,
+                                            fontFamily: 'TideFont')))))
+                            .toList()),
+                    const SizedBox(height: 12),
+                    BouncyTap(
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showAddDialog('自定义 STT', '', '', '', false);
+                        },
+                        child: Container(
+                            width: double.infinity,
+                            height: 44,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: TideTheme.of(context).primary)),
+                            child: Center(
+                                child: Text('自定义 STT',
                                     style: TextStyle(
                                         fontSize: 15,
                                         color: TideTheme.of(context).primary,
@@ -1957,40 +2025,44 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 ])));
   }
 
-  Widget _f(String label, TextEditingController c, {bool obscure = false}) =>
-      StatefulBuilder(builder: (context, setFieldState) {
-        var hidden = obscure;
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label,
-              style: TextStyle(
-                  fontSize: 13,
-                  color: TideTheme.of(context).textWeak,
-                  fontFamily: 'TideFont')),
-          const SizedBox(height: 4),
-          Container(
-              decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: TideTheme.of(context).surfaceVariant),
-              child: TextField(
-                  controller: c,
-                  obscureText: hidden,
-                  style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
-                  decoration: InputDecoration(
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      border: InputBorder.none,
-                      suffixIcon: obscure
-                          ? IconButton(
-                              tooltip: hidden ? '显示 API Key' : '隐藏 API Key',
-                              icon: Icon(hidden
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined),
-                              onPressed: () =>
-                                  setFieldState(() => hidden = !hidden),
-                            )
-                          : null)))
-        ]);
-      });
+  Widget _f(String label, TextEditingController c, {bool obscure = false}) {
+    // Keep this outside the builder: declaring it inside rebuilds resets the
+    // field to hidden before the eye button state can be painted.
+    var hidden = obscure;
+    return StatefulBuilder(builder: (context, setFieldState) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                color: TideTheme.of(context).textWeak,
+                fontFamily: 'TideFont')),
+        const SizedBox(height: 4),
+        Container(
+            decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: TideTheme.of(context).surfaceVariant),
+            child: TextField(
+                controller: c,
+                obscureText: hidden,
+                style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
+                decoration: InputDecoration(
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    border: InputBorder.none,
+                    suffixIcon: obscure
+                        ? IconButton(
+                            tooltip: hidden ? '显示 API Key' : '隐藏 API Key',
+                            icon: Icon(hidden
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
+                            onPressed: () =>
+                                setFieldState(() => hidden = !hidden),
+                          )
+                        : null)))
+      ]);
+    });
+  }
+
   void _editProvider(Map<String, dynamic> p) {
     final nCtrl = TextEditingController(text: p['name']);
     final uCtrl = TextEditingController(text: p['url']);
@@ -2083,38 +2155,40 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   Future<void> _testProvider(Map<String, dynamic> p) async {
-    GlobalNotice.show('正在并行测试文本、语音识别、识图与生图能力...');
+    GlobalNotice.show('测试中');
     try {
       final result = await AIManager().testProviderCapabilities(
-        p['url']?.toString() ?? '',
-        p['key']?.toString() ?? '',
-        p['model']?.toString() ?? '',
-      );
-      final capabilities = (result['capabilities'] as List? ?? const [])
-          .map((item) => item.toString())
-          .join('、');
-      if (capabilities.isEmpty) {
-        GlobalNotice.show('全部能力测试失败：${result['error'] ?? '请检查模型与接口'}',
-            color: const Color(0xFFE74C3C));
+          p['url']?.toString() ?? '',
+          p['key']?.toString() ?? '',
+          p['model']?.toString() ?? '');
+      if (result['passed'] == true) {
+        final latency = result['fastest_latency'];
+        GlobalNotice.show(
+            '测试通过${latency is num ? '，延迟 ${latency.toInt()}ms' : ''}',
+            color: const Color(0xFF34C759));
       } else {
-        GlobalNotice.show('测试通过：$capabilities', color: const Color(0xFF34C759));
+        GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
       }
-    } catch (e) {
-      GlobalNotice.show('测试失败：$e', color: const Color(0xFFE74C3C));
+    } catch (_) {
+      GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
     }
   }
 
   Future<void> _testTtsProvider(Map<String, dynamic> p) async {
-    GlobalNotice.show('正在测试 TTS...');
-    final path = await AIManager().generateTTS(
-      '这是一段 TideBot 语音测试。',
-      p['id']?.toString() ?? '',
-    );
-    if (path == null || path.isEmpty) {
-      GlobalNotice.show('TTS 测试失败，请检查地址、模型、音色和 API Key',
-          color: const Color(0xFFE74C3C));
-    } else {
-      GlobalNotice.show('TTS 测试成功，已生成测试音频', color: const Color(0xFF34C759));
+    GlobalNotice.show('测试中');
+    final started = DateTime.now();
+    try {
+      final path =
+          await AIManager().generateTTS('你好', p['id']?.toString() ?? '');
+      if (path != null && path.isNotEmpty) {
+        GlobalNotice.show(
+            '测试通过，延迟 ${DateTime.now().difference(started).inMilliseconds}ms',
+            color: const Color(0xFF34C759));
+      } else {
+        GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
+      }
+    } catch (_) {
+      GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
     }
   }
 

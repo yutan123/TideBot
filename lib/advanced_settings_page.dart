@@ -200,7 +200,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                             final log = logs[i];
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 6),
-                              child: Text(
+                              child: SelectableText(
                                   '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
                                   style: TextStyle(
                                       fontFamily: 'monospace',

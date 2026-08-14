@@ -631,12 +631,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
-      final segmentedReply =
-          (await db.getKV('segmented_reply_enabled')) != 'false';
-      // 分段回复需要等到完整文本才能按句子拆分，避免与流式字符气泡互相覆盖。
-      // 分段与流式展示可以共存：流式气泡用于等待首句，完整回复回来后
-      // 再按句落库并依次展示，不能因为开启分段就把流式功能关闭。
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
+      // 分段逐句展示会取消打字机计时器；开启流式时必须由流式/打字机独占。
+      final segmentedReply = !streamEnabled &&
+          (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && localModelId.isEmpty && mounted) {
@@ -687,9 +685,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             messages: history,
             imageBase64: imgB64,
             persistResponse: persistThisReply,
-            // UI intentionally waits for the complete, protocol-filtered response.
-            // Raw provider deltas can contain internal mood/tool tags.
-            onDelta: null,
+            // 真实 SSE 增量立即渲染；不支持 SSE 的服务商仍在完整结果到达后走打字机。
+            onDelta: (delta) {
+              if (streamingMessage == null || !mounted || delta.isEmpty) return;
+              _streamDisplayTimer?.cancel();
+              _streamDisplayTimer = null;
+              setState(() => streamingMessage!['content'] =
+                  '${streamingMessage['content']}$delta');
+              _scrollDown(animated: false);
+            },
           )
           .timeout(requestTimeout);
 
@@ -2183,29 +2187,38 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   String _errorSolution(dynamic code) {
-    final detail = switch (code?.toString().toLowerCase()) {
-      '400' => '请求参数错误：检查模型名称、消息格式、附件类型和请求体限制。',
-      '401' || '403' => '鉴权或权限失败：检查 API Key、授权范围，以及 Base URL 是否属于该密钥对应的服务。',
-      '402' => '服务余额不足：请到模型提供商后台充值或更换有可用余额的 API Key。',
-      '404' => '接口或模型不存在：检查 Base URL 是否包含多余路径，并确认所填模型名称可用。',
-      '408' || 'timeout' => '请求超时：检查网络和服务端状态，降低附件大小或生成长度后重试。',
-      '409' => '请求冲突：检查是否重复提交，等待上一请求结束后再试。',
-      '429' => '请求过于频繁或触发限流：稍后重试，降低发送频率，或换用备用模型。',
-      '500' || '502' || '503' || '504' => '模型服务暂时不可用：稍后重试，检查服务商状态页，或切换备用模型。',
+    final raw = code?.toString().toLowerCase() ?? '';
+    final detail = switch (raw) {
+      '400' =>
+        '请求格式不被接口接受：核对模型名称；兼容接口地址应以 /v1 结尾而不是再填写 /chat/completions；移除该模型不支持的图片、工具调用或超长字段后重试。',
+      '401' => '密钥无效：重新粘贴完整 API Key，确认没有前后空格、过期密钥或把其他平台的 Key 填到了当前服务商。',
+      '403' => '当前 Key 没有该模型或服务权限：到服务商控制台开通模型并确认账户/项目空间正确。',
+      '402' => '账户余额或配额不足：到服务商后台检查余额、免费额度和并发配额，充值或切换已开通模型。',
+      '404' =>
+        '地址或模型不存在：检查 Base URL 是否重复包含 /v1、/chat/completions，确认模型 ID 与服务商控制台完全一致。',
+      '408' ||
+      'timeout' =>
+        '请求超时：检查网络和服务端排队；降低回复长度或附件尺寸。主模型持续超时时，还要分别测试备用模型的 URL、Key 与模型名。',
+      '409' => '请求与正在进行的任务冲突：等待当前请求结束后再发送，不要连续重复点击发送。',
+      '413' => '请求内容过大：减少图片、文件文本或历史上下文，并确认最大上下文不超过模型实际窗口。',
+      '422' => '字段语义校验失败：通常是模型不支持工具调用、视觉消息或指定音色。先用纯文本测试，再逐项开启功能。',
+      '429' => '触发限流：等待服务商冷却时间，降低并发和发送频率；必要时切换备用模型。',
+      '500' ||
+      '502' ||
+      '503' ||
+      '504' =>
+        '服务商侧异常：查看服务商状态页并稍后重试；若备用模型也失败，请分别测试其连接。',
       'network' ||
       'dns' ||
       'connection refused' =>
-        '网络连接失败：检查设备网络、Base URL、DNS、代理、防火墙和模型服务状态。',
-      'ssl' ||
-      'tls' ||
-      'certificate' =>
-        '安全连接失败：检查 Base URL 的 HTTPS 证书、系统时间和代理证书配置。',
+        '无法建立网络连接：确认设备联网、DNS/代理可用、域名可解析，并检查 Base URL 不是网页或内网地址。',
+      'ssl' || 'tls' || 'certificate' => 'HTTPS 证书校验失败：检查设备时间、证书有效性和代理是否注入证书。',
       'empty response' ||
       'invalid response' =>
-        '服务端返回为空或格式异常：检查接口兼容性、模型名称和服务端日志。',
-      _ => '请检查聊天模型、Base URL、API Key、模型名称、附件和网络配置。',
+        '服务端返回格式不是 OpenAI 兼容响应：检查接口类型和路径；部分模型需关闭工具调用或改用专用接口。',
+      _ => '请打开完整日志定位 HTTP 状态与响应体，再按对应状态检查模型、接口地址、密钥、账户配额、网络或功能兼容性。',
     };
-    return '$detail\\n\\n如果按照提示检查后仍然持续失败，可以复制完整日志联系作者。';
+    return '$detail\n\n仍无法解决时，请复制完整日志，并同时提供服务商名称、模型名和发生时间。';
   }
 
   void _showErrorDetails(Map<String, dynamic> message) {
@@ -2637,26 +2650,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final theme = TideTheme.of(context);
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.only(bottom: 12),
+      minimum: const EdgeInsets.only(bottom: 8),
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
             .animate(CurvedAnimation(
                 parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(24),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: _hasBg
                       ? theme.glass.withValues(alpha: 0.72)
                       : theme.surfaceVariant.withValues(alpha: 0.76),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.transparent),
+                  borderRadius: BorderRadius.circular(24),
+                  border:
+                      Border.all(color: theme.divider.withValues(alpha: 0.45)),
                   boxShadow: theme.isDark
                       ? null
                       : [
