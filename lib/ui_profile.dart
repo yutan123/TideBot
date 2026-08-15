@@ -1648,6 +1648,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   List<Map<String, dynamic>> _providers = [];
   List<Map<String, dynamic>> _ttsProviders = [];
   bool _loading = true;
+  final Map<String, List<String>> _modelListCache = {};
   final _presets = [
     {
       'name': 'DeepSeek',
@@ -2076,6 +2077,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     if (root.isEmpty) throw Exception('请先填写 API Base URL');
     if (apiKey.trim().isEmpty) throw Exception('请先填写 API Key');
+    final cacheKey = '$root|${apiKey.trim()}';
+    final cached = _modelListCache[cacheKey];
+    if (cached != null && cached.isNotEmpty) return List<String>.from(cached);
     final candidates = <String>[root];
     if (root.contains('compatible-mode/v1')) {
       candidates.add(root.replaceFirst('/compatible-mode/v1', ''));
@@ -2087,8 +2091,17 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             await http.get(Uri.parse('$candidate/models'), headers: {
           'Authorization': 'Bearer ${apiKey.trim()}',
           'Accept': 'application/json',
-        }).timeout(const Duration(seconds: 45));
+        }).timeout(const Duration(seconds: 75));
         if (response.statusCode < 200 || response.statusCode >= 300) {
+          if (response.statusCode == 429 || response.statusCode >= 500) {
+            final retryAfter = int.tryParse(
+                  response.headers['retry-after']?.trim() ?? '',
+                ) ??
+                0;
+            await Future<void>.delayed(Duration(
+              seconds: retryAfter.clamp(1, 15),
+            ));
+          }
           lastError = 'HTTP ${response.statusCode}';
           continue;
         }

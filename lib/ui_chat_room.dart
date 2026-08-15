@@ -681,16 +681,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             messages: history,
             imageBase64: imgB64,
             persistResponse: persistThisReply,
-            // 真实 SSE 增量立即渲染；不支持 SSE 的服务商仍在完整结果到达后走打字机。
-            onDelta: (delta) {
-              if (streamingMessage == null || !mounted || delta.isEmpty) return;
-              receivedStreamDelta = true;
-              _streamDisplayTimer?.cancel();
-              _streamDisplayTimer = null;
-              setState(() => streamingMessage!['content'] =
-                  '${streamingMessage['content']}$delta');
-              _scrollDown(animated: false);
-            },
+            // Keep transport non-streaming. The UI animates only the validated,
+            // persisted final reply after protocol filtering has completed.
           )
           .timeout(requestTimeout);
 

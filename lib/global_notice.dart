@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 final GlobalKey<OverlayState> globalNoticeOverlayKey =
@@ -61,11 +62,10 @@ class _GlobalNoticeView extends StatelessWidget {
         ThemeData.estimateBrightnessForColor(surface) == Brightness.dark
             ? Colors.white
             : scheme.onPrimary;
-    // 根 Overlay 中的通知位于底部栏和系统手势区上方；键盘出现时继续上移。
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
-    // 对齐原生 SnackBar 的紧凑体量：窄内边距、小圆角、单行文案、可横滑 + 关闭。
     final maxWidth = media.size.width > 540 ? 500.0 : media.size.width - 32;
-    final targetWidth = (media.size.width * 0.94).clamp(320.0, maxWidth);
+    final targetWidth = (media.size.width * 0.82).clamp(288.0, maxWidth);
+
     return Positioned(
       bottom: bottomInset,
       left: 0,
@@ -95,21 +95,19 @@ class _GlobalNoticeView extends StatelessWidget {
                     ],
                   ),
                   child: SizedBox(
-                    height: 38,
+                    height: 48,
                     child: Stack(
-                      fit: StackFit.expand,
                       children: [
                         Positioned.fill(
-                          right: 52,
+                          right: 48,
                           child: Padding(
-                            padding: const EdgeInsets.only(left: 18),
+                            padding: const EdgeInsets.only(left: 14),
                             child: Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
                                 message,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.start,
                                 style: TextStyle(
                                   color: foreground,
                                   fontFamily: 'TideFont',
@@ -121,10 +119,10 @@ class _GlobalNoticeView extends StatelessWidget {
                           ),
                         ),
                         Positioned(
-                          top: 0,
-                          right: 0,
-                          width: 48,
-                          height: 38,
+                          top: 4,
+                          right: 2,
+                          width: 40,
+                          height: 40,
                           child: IconButton(
                             tooltip: '关闭提示',
                             padding: EdgeInsets.zero,

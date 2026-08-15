@@ -142,19 +142,10 @@ void onStart(ServiceInstance service) {
 }
 
 Future<void> _generateMissingLifeSchedules() async {
-  final now = DateTime.now();
-  // 日程按原约定在 07:00 后补齐；前台 ensureToday() 仍是即时兜底。
-  if (now.hour < 7) return;
-  final service = LifeScheduleService.instance;
-  for (final bot in await DBManager().getAllBots()) {
-    final botId = bot['id']?.toString() ?? '';
-    if (botId.isNotEmpty) {
-      try {
-        await service.ensureToday(botId);
-      } catch (e) {
-        debugPrint('[schedule] generation skipped: $e');
-      }
-    }
+  try {
+    await LifeScheduleService.instance.generateDueSchedules();
+  } catch (e) {
+    debugPrint('[schedule] generation skipped: $e');
   }
 }
 

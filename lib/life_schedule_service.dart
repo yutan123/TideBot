@@ -8,7 +8,6 @@ import 'db.dart';
 class LifeScheduleService {
   LifeScheduleService._();
   static final instance = LifeScheduleService._();
-  final Map<String, Future<Map<String, dynamic>?>> _generation = {};
 
   static const defaultPools = <String, List<String>>{
     'themes': [
@@ -108,21 +107,46 @@ class LifeScheduleService {
     await DBManager().setKV('life_schedule_pools', jsonEncode(value));
   }
 
-  /// Reads today's generated state, creating it on demand when absent.
-  /// Concurrent callers for the same bot share one generation request.
+  final Map<String, Future<Map<String, dynamic>?>> _generationFlights = {};
+
+  /// Returns today's schedule, generating it on first interaction when absent.
   Future<Map<String, dynamic>?> ensureToday(String botId) async {
     if (!await enabled()) return null;
     final key = dateKey();
     final existing = await DBManager().getLifeSchedule(botId, key);
     if (existing != null) return Map<String, dynamic>.from(existing);
-    final running = _generation[botId];
-    if (running != null) return running;
-    final future = generateToday(botId);
-    _generation[botId] = future;
+    final flightKey = '$botId:$key';
+    final future = _generationFlights.putIfAbsent(
+      flightKey,
+      () => generateToday(botId),
+    );
     try {
-      return await future;
+      final generated = await future;
+      return generated == null ? null : Map<String, dynamic>.from(generated);
     } finally {
-      _generation.remove(botId);
+      if (identical(_generationFlights[flightKey], future)) {
+        _generationFlights.remove(flightKey);
+      }
+    }
+  }
+
+  /// Generates missing schedules after the configured daily generation hour.
+  /// The default preserves the historical 07:00 behavior.
+  Future<void> generateDueSchedules({DateTime? now}) async {
+    if (!await enabled()) return;
+    final current = now ?? DateTime.now();
+    final configured = int.tryParse(
+          await DBManager().getKV('life_schedule_generation_hour') ?? '',
+        ) ??
+        7;
+    if (current.hour < configured.clamp(0, 23)) return;
+    final today = dateKey(current);
+    for (final bot in await DBManager().getAllBots()) {
+      final botId = bot['id']?.toString().trim() ?? '';
+      if (botId.isEmpty) continue;
+      if (await DBManager().getLifeSchedule(botId, today) == null) {
+        await ensureToday(botId);
+      }
     }
   }
 
@@ -159,25 +183,14 @@ class LifeScheduleService {
       skipLifeState: true,
       allowTools: false,
     );
-    if (result['success'] != true) {
-      AppLogService.instance
-          .add('SCHEDULE', '日程生成失败 $key：${result['error'] ?? '模型请求失败'}');
-      return old;
-    }
+    if (result['success'] != true) return old;
     final text = result['reply']?.toString() ?? '';
     final start = text.indexOf('{');
     final end = text.lastIndexOf('}');
-    if (start < 0 || end <= start) {
-      AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：模型未返回有效 JSON，保留旧日程');
-      return old;
-    }
+    if (start < 0 || end <= start) return old;
     try {
       final payload = jsonDecode(text.substring(start, end + 1));
-      if (payload is! Map || payload['timeline'] is! List) {
-        AppLogService.instance
-            .add('SCHEDULE', '日程生成失败 $key：JSON 缺少 timeline，保留旧日程');
-        return old;
-      }
+      if (payload is! Map || payload['timeline'] is! List) return old;
       final timeline = (payload['timeline'] as List)
           .whereType<Map>()
           .map<Map<String, dynamic>>((e) => <String, dynamic>{
@@ -191,10 +204,7 @@ class LifeScheduleService {
           .take(5)
           .toList();
       final outfit = payload['outfit']?.toString().trim() ?? '';
-      if (timeline.length < 2 || outfit.isEmpty) {
-        AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：时间线或穿搭不完整，保留旧日程');
-        return old;
-      }
+      if (timeline.length < 2 || outfit.isEmpty) return old;
       final now = DateTime.now().millisecondsSinceEpoch;
       final row = <String, dynamic>{
         'id': old?['id'] ?? 'life_${botId}_$key',
@@ -213,15 +223,10 @@ class LifeScheduleService {
         'updated_at': now,
       };
       await db.upsertLifeSchedule(row);
-      final details = timeline
-          .map((e) =>
-              '${e['time']} ${e['activity']}${e['rigid'] == true ? '（刚性）' : ''}')
-          .join('；');
       AppLogService.instance.add('SCHEDULE',
-          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，穿搭=${row['outfit']}。时间线：$details');
+          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，时间线${timeline.length}条');
       return row;
-    } catch (e) {
-      AppLogService.instance.add('SCHEDULE', '日程生成失败 $key：JSON 解析异常 $e，保留旧日程');
+    } catch (_) {
       return old;
     }
   }

@@ -103,11 +103,12 @@ class AIManager {
         candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
     // Never attempt an empty primary. A configured backup must be usable even
     // when the bot has no primary model selected.
-    // Deterministic failover: exhaust the primary three times, then exhaust
-    // the backup three times. Do not silently mix providers mid-retry.
     final attempts = <Map<String, String>>[
-      if (configured(primary)) ...[primary, primary, primary],
-      if (configured(backup)) ...[backup, backup, backup],
+      if (configured(primary)) primary,
+      if (configured(backup)) backup,
+      if (configured(primary) && !configured(backup)) primary,
+      if (configured(backup)) backup,
+      if (configured(primary) && !configured(backup)) primary,
     ];
     if (attempts.isEmpty) {
       return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
@@ -138,7 +139,7 @@ class AIManager {
     return {
       ...?lastFailure,
       'error':
-          '主模型和备用模型均请求失败（主模型最多 3 次、备用模型最多 3 次）。${lastFailure?['error'] ?? ''}',
+          '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
     };
   }
 
@@ -146,17 +147,14 @@ class AIManager {
     if (payload is! Map) return '';
     String fromValue(dynamic value) {
       if (value is String) return value.trim();
-      if (value is num || value is bool) return value.toString();
       if (value is List) {
         return value
             .map((item) {
               if (item is String) return item;
-              if (item is Map) {
+              if (item is Map)
                 return item['text']?.toString() ??
                     item['content']?.toString() ??
-                    item['value']?.toString() ??
                     '';
-              }
               return '';
             })
             .where((text) => text.trim().isNotEmpty)
@@ -165,31 +163,35 @@ class AIManager {
       return '';
     }
 
-    String find(dynamic value) {
-      final direct = fromValue(value);
-      if (direct.isNotEmpty) return direct;
-      if (value is Map) {
-        for (final key in const [
-          'content',
-          'text',
-          'output_text',
-          'response'
-        ]) {
-          final nested = find(value[key]);
-          if (nested.isNotEmpty) return nested;
-        }
-      }
-      return '';
-    }
-
     final choices = payload['choices'];
-    if (choices is List && choices.isNotEmpty) {
-      final content = find(choices.first);
-      if (content.isNotEmpty) return content;
+    if (choices is List && choices.isNotEmpty && choices.first is Map) {
+      final choice = choices.first as Map;
+      final message = choice['message'] ?? choice['delta'];
+      if (message is Map) {
+        final content = fromValue(message['content']);
+        if (content.isNotEmpty) return content;
+      }
+      final text = fromValue(choice['text']);
+      if (text.isNotEmpty) return text;
     }
-    final output = find(payload['output']);
-    if (output.isNotEmpty) return output;
-    return find(payload);
+    final output = payload['output'];
+    if (output is Map) {
+      final text = fromValue(output['text'] ?? output['output_text']);
+      if (text.isNotEmpty) return text;
+      final message = output['message'] ?? output['choices']?[0]?['message'];
+      if (message is Map) {
+        final content = fromValue(message['content']);
+        if (content.isNotEmpty) return content;
+      }
+    }
+    final data = payload['data'];
+    if (data is Map) {
+      final nested = _extractChatContent(data);
+      if (nested.isNotEmpty) return nested;
+    }
+    final direct = fromValue(payload['text'] ?? payload['content']);
+    if (direct.isNotEmpty) return direct;
+    return fromValue(payload['output_text']);
   }
 
   Future<Map<String, dynamic>> _sendMessageOnce({
@@ -415,17 +417,26 @@ class AIManager {
         if (historyMessages.isEmpty) {
           final keepChars =
               (historyBudget * 2.6).floor().clamp(200, content.length);
+          final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
+          final timeLabel = sentAt == null
+              ? ''
+              : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
           historyMessages.add({
             'role':
                 msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-            'content': content.substring(content.length - keepChars),
+            'content':
+                '$timeLabel${content.substring(content.length - keepChars)}',
           });
         }
         break;
       }
+      final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
+      final timeLabel = sentAt == null
+          ? ''
+          : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
       historyMessages.add({
         'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-        'content': content,
+        'content': '$timeLabel$content',
       });
       usedTokens += tokens;
     }
@@ -510,10 +521,7 @@ class AIManager {
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
-        // max_tokens is output budget, never the configured context window.
-        // Reserving a bounded reply prevents a 10k context preference becoming
-        // a 10k/20k-token single response request.
-        'max_tokens': min(2048, max(256, (maxContext / 4).floor())),
+        'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
@@ -541,7 +549,7 @@ class AIManager {
               })
               ..body = jsonEncode(payload);
         final response =
-            await request.send().timeout(const Duration(seconds: 90));
+            await request.send().timeout(const Duration(seconds: 40));
         statusCode = response.statusCode;
         if (statusCode == 200) {
           final contentType =
@@ -551,8 +559,7 @@ class AIManager {
             final json = jsonDecode(body);
             replyText = _extractChatContent(json);
             usage = json['usage'] is Map ? json['usage'] as Map : const {};
-            // 完整响应已保存到 replyText；这里不向 UI 发送增量。
-            replyText = replyText.trim();
+            if (replyText.isNotEmpty) onDelta(replyText);
           } else {
             // SSE 流式：逐段回传文本，同时按 index 拼接 tool_calls 分片，
             // 以便工具调用与流式共存。流式结束后统一执行工具并做 follow-up。
@@ -575,6 +582,7 @@ class AIManager {
                 });
                 if (content.isNotEmpty) {
                   replyText += content;
+                  onDelta(content);
                 }
                 // 累加 tool_calls 片段（每个 index 独立拼接 arguments）。
                 final chunk = delta['tool_calls'];
@@ -656,7 +664,7 @@ class AIManager {
               },
               body: jsonEncode(payload),
             )
-            .timeout(const Duration(seconds: 90));
+            .timeout(const Duration(seconds: 40));
         statusCode = response.statusCode;
         errorBody = utf8.decode(response.bodyBytes);
         if (statusCode == 200) {
@@ -664,6 +672,18 @@ class AIManager {
           final message = json['choices']?[0]?['message'];
           replyText = _extractChatContent(json);
           usage = json['usage'] is Map ? json['usage'] as Map : const {};
+          AppLogService.instance.addJson('RESPONSE_DEBUG', 'HTTP 200 解析诊断', {
+            'keys':
+                json is Map ? json.keys.map((e) => e.toString()).toList() : [],
+            'finish_reason': json['choices']?[0]?['finish_reason'],
+            'message_keys': message is Map
+                ? message.keys.map((e) => e.toString()).toList()
+                : [],
+            'has_reasoning_content': message is Map &&
+                (message['reasoning_content'] ?? message['reasoning']) != null,
+            'has_tool_calls': message is Map && message['tool_calls'] is List,
+            'parsed_length': replyText.length,
+          });
           if (message is Map && message['tool_calls'] is List) {
             final toolCalls = (message['tool_calls'] as List)
                 .whereType<Map>()
@@ -700,15 +720,8 @@ class AIManager {
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
       AppLogService.instance.add('RESPONSE',
           '模型提供商响应（HTTP $statusCode）\n${errorBody.isEmpty ? replyText : errorBody}');
-      if (statusCode == 200 && replyText.trim().isEmpty && !toolSilenced) {
-        AppLogService.instance.add('AI', 'HTTP 200 但未提取到可见正文，触发重试');
-        return {
-          'error': '模型返回 HTTP 200，但响应中没有可显示正文',
-          'error_log': 'HTTP 200\n$errorBody',
-          'error_code': 'empty_response',
-        };
-      }
       if (statusCode == 200) {
+        // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
         final promptText = messages.fold<String>(
             '', (sum, m) => sum + (m['content']?.toString() ?? ''));
         final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??
@@ -739,8 +752,17 @@ class AIManager {
         await _persistModelMemories(db, bot['name']?.toString() ?? 'TideBot',
             bot['id']?.toString() ?? botId, replyText);
         replyText = _cleanVisibleReply(replyText);
+        if (replyText.isEmpty) {
+          const detail = 'HTTP 200，但未解析到可见正文；请查看 RESPONSE_DEBUG 日志';
+          AppLogService.instance.add('RESPONSE_DEBUG', detail);
+          return {
+            'error': detail,
+            'error_log': 'HTTP 200\n$detail\n原始响应：$errorBody',
+            'error_code': 'empty_response',
+          };
+        }
 
-        // 工具调用可能已返回图片路径，先初始化供下方落库使用。
+        // 工具调用可能已返回图片路径，先初始化供下方落库使用.
         // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
@@ -913,8 +935,8 @@ class AIManager {
                 r'<\|?\s*DSML\s*\|?[^>]*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?[^>]*>',
                 caseSensitive: false),
             '');
-    return withoutDsml
-        .replaceAll(RegExp(r'\[心情\s*:\s*[^\]]*\]'), '')
+    final normalized = withoutDsml
+        .replaceAll(RegExp(r'\[心情\s*[:：]\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
         .replaceAll(
@@ -938,6 +960,7 @@ class AIManager {
             '')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
+    return normalized;
   }
 
   String _friendlyHttpError(int status, String detail) {
@@ -1095,7 +1118,7 @@ class AIManager {
       final key = provider['api_key']?.toString() ?? '';
       if (url.isEmpty || key.isEmpty) return;
       final prompt =
-          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆会自动去重：只有确有新增或原事实被明确更正时才输出对应记忆；若没有任何需要新增或修改的内容，必须只输出 NONE，绝不能为了刷新时间重复输出旧记忆。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。
+          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆可能会自动去重/修正。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。没有值得记住的内容就输出 NONE。
 
 $transcript''';
       final response = await http
@@ -1149,9 +1172,9 @@ $transcript''';
           .trim();
       if (providerId.isEmpty || !await File(audioPath).exists()) return null;
 
-      final provider = await DBManager().getChatProviderById(providerId);
+      final provider = await _findSpeechProvider(providerId);
       if (provider == null) {
-        AppLogService.instance.add('TTS', '语音合成未请求：找不到绑定的 TTS 服务商 $providerId');
+        AppLogService.instance.add('STT', '语音识别未请求：找不到绑定的 STT 服务商 $providerId');
         return null;
       }
       final baseUrl = provider['base_url']
@@ -1172,30 +1195,6 @@ $transcript''';
         if (model.toLowerCase().contains('-realtime')) {
           return await _transcribeDashScopeRealtime(
               provider: provider, model: model, audioPath: audioPath);
-        }
-        // Current DashScope ASR models support the OpenAI-compatible multipart
-        // route. Try the configured compatible base first, then retain the
-        // proprietary fallback for older Paraformer configurations.
-        final compatible = baseUrl.contains('compatible-mode')
-            ? baseUrl
-            : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-        try {
-          final request = http.MultipartRequest(
-              'POST', Uri.parse('$compatible/audio/transcriptions'))
-            ..headers['Authorization'] = 'Bearer ${provider['api_key']}'
-            ..fields['model'] = model
-            ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-          final response = await http.Response.fromStream(
-              await request.send().timeout(const Duration(seconds: 60)));
-          if (response.statusCode >= 200 && response.statusCode < 300) {
-            final body = jsonDecode(utf8.decode(response.bodyBytes));
-            final text = body is Map ? body['text']?.toString().trim() : null;
-            if (text != null && text.isNotEmpty) return text;
-          }
-          AppLogService.instance
-              .add('STT', '百炼兼容 STT HTTP ${response.statusCode}，转专属兼容链路');
-        } catch (e) {
-          AppLogService.instance.add('STT', '百炼兼容 STT 异常，转专属兼容链路：$e');
         }
         return await _transcribeDashScope(
             provider: provider, model: model, audioPath: audioPath);
@@ -1219,6 +1218,19 @@ $transcript''';
       return text == null || text.isEmpty ? null : text;
     } catch (e) {
       print('[stt] transcription failed: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _findSpeechProvider(String providerId) async {
+    final db = DBManager();
+    final providers = <Map<String, dynamic>>[
+      ...await db.queryChatProviders(),
+      ...await db.queryTtsProviders(),
+    ];
+    try {
+      return providers.firstWhere((provider) => provider['id'] == providerId);
+    } catch (_) {
       return null;
     }
   }
@@ -1287,6 +1299,10 @@ $transcript''';
               }))
           .timeout(const Duration(seconds: 60));
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        AppLogService.instance.addJson('STT', '百炼专属识别响应', {
+          'status': response.statusCode,
+          'body': utf8.decode(response.bodyBytes, allowMalformed: true),
+        });
         final text = extractText(jsonDecode(utf8.decode(response.bodyBytes)));
         if (text != null) return text;
         AppLogService.instance.add('STT', '百炼专属识别完成，但响应中没有文本');
@@ -1496,11 +1512,8 @@ $transcript''';
       // DashScope's regular synthesis service is separate from its legacy
       // text-to-wav endpoint. Realtime models require the WebSocket protocol;
       // keep their endpoint visible in logs instead of silently sending a bad HTTP request.
-      final dashCompatible = baseUrl.contains('compatible-mode')
-          ? baseUrl
-          : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
       final endpoint = isDashScope
-          ? '$dashCompatible/audio/speech'
+          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesis'
           : '$baseUrl/audio/speech';
       if (isRealtime) {
         return await _generateDashScopeRealtimeTTS(
@@ -1515,12 +1528,13 @@ $transcript''';
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $apiKey',
             },
-            body: jsonEncode({
-              'model': model,
-              'input': text,
-              'voice': voice,
-              'response_format': 'wav'
-            }),
+            body: jsonEncode(isDashScope
+                ? {
+                    'model': model,
+                    'input': {'text': text},
+                    'parameters': {'format': 'wav', 'voice': voice},
+                  }
+                : {'model': model, 'input': text, 'voice': voice}),
           )
           .timeout(const Duration(seconds: 30));
       AppLogService.instance.add('TTS',
@@ -1536,6 +1550,10 @@ $transcript''';
       final contentType = (res.headers['content-type'] ?? '').toLowerCase();
       if (contentType.contains('json') ||
           utf8.decode(bytes, allowMalformed: true).trimLeft().startsWith('{')) {
+        AppLogService.instance.addJson('TTS', '语音服务 JSON 响应', {
+          'status': res.statusCode,
+          'body': utf8.decode(bytes, allowMalformed: true),
+        });
         final raw = jsonDecode(utf8.decode(bytes));
         String? audioUrl;
         if (raw is Map) {
@@ -2362,98 +2380,203 @@ $transcript''';
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final modelName = model.split(',').first.trim();
     if (root.isEmpty || apiKey.trim().isEmpty || modelName.isEmpty) {
-      return {
-        'capabilities': <String>[],
-        'passed': false,
-        'error': '请填写 API 地址、Key 和模型名'
-      };
+      return {'capabilities': <String>[], 'error': '请填写 API 地址、Key 和模型名'};
     }
     final headers = {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer $apiKey'
+      'Authorization': 'Bearer $apiKey',
     };
+    bool success(http.Response response) =>
+        response.statusCode >= 200 && response.statusCode < 300;
+
+    // 每个探测返回 (是否成功, 耗时毫秒)；失败也返回耗时便于诊断。
     Future<Map<String, dynamic>> probe(
-        String name, String path, Map<String, dynamic> body) async {
-      final started = DateTime.now();
+        String name, Future<bool> Function() run) async {
+      final t0 = DateTime.now();
+      var ok = false;
+      var latency = 0;
+      try {
+        ok = await run();
+      } catch (_) {
+        ok = false;
+      }
+      latency = DateTime.now().difference(t0).inMilliseconds;
+      return {'name': name, 'ok': ok, 'latency': latency};
+    }
+
+    Future<bool> postJson(String path, Map<String, dynamic> body) async {
       try {
         final response = await http
             .post(Uri.parse('$root$path'),
                 headers: headers, body: jsonEncode(body))
-            .timeout(const Duration(seconds: 60));
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          return {
-            'name': name,
-            'ok': false,
-            'error': 'HTTP ${response.statusCode}'
-          };
+            .timeout(const Duration(seconds: 20));
+        if (!success(response) || response.bodyBytes.isEmpty) return false;
+        try {
+          final body = jsonDecode(utf8.decode(response.bodyBytes));
+          if (body is! Map || body['error'] != null) return false;
+          if (path == '/chat/completions') {
+            final content =
+                body['choices'] is List && (body['choices'] as List).isNotEmpty
+                    ? ((body['choices'] as List).first as Map?)?['message']
+                            ?['content']
+                        ?.toString()
+                        .trim()
+                    : null;
+            return content != null && content.isNotEmpty;
+          }
+          if (path == '/images/generations') {
+            return body['data'] is List && (body['data'] as List).isNotEmpty;
+          }
+          return true;
+        } catch (_) {
+          return false;
         }
-        if (name == '文本') {
-          final payload = jsonDecode(utf8.decode(response.bodyBytes));
-          if (_extractChatContent(payload).isEmpty)
-            return {'name': name, 'ok': false, 'error': '响应无文本'};
-        }
-        return {
-          'name': name,
-          'ok': true,
-          'latency': DateTime.now().difference(started).inMilliseconds
-        };
-      } catch (e) {
-        return {'name': name, 'ok': false, 'error': '$e'};
+      } catch (_) {
+        return false;
       }
     }
 
-    // All probes start together. Text is the real normal-chat request; image
-    // generation and vision are optional capability probes and cannot make a
-    // text-capable model appear unusable.
-    final results = await Future.wait([
-      probe('文本', '/chat/completions', {
-        'model': modelName,
-        'messages': [
-          {'role': 'user', 'content': '你好，请只回复 pong'}
-        ],
-        'max_tokens': 16,
-        'stream': false
-      }),
-      probe('识图', '/chat/completions', {
-        'model': modelName,
-        'messages': [
-          {
-            'role': 'user',
-            'content': [
-              {'type': 'text', 'text': '请只回复 pong'}
-            ]
-          }
-        ],
-        'max_tokens': 16,
-        'stream': false
-      }),
-      probe('生图', '/images/generations', {
-        'model': modelName,
-        'prompt': 'a tiny blue circle',
-        'size': '256x256',
-        'n': 1
-      }),
-      // A zero-byte WAV intentionally tests endpoint reachability/validation;
-      // it is not counted as a failure of normal chat.
-      probe('STT', '/audio/transcriptions',
-          {'model': modelName, 'file': 'capability-probe'}),
+    Future<bool> stt() async {
+      try {
+        // A minimal valid PCM WAV avoids treating a missing multipart file as a test.
+        const wav = <int>[
+          82,
+          73,
+          70,
+          70,
+          36,
+          0,
+          0,
+          0,
+          87,
+          65,
+          86,
+          69,
+          102,
+          109,
+          116,
+          32,
+          16,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          128,
+          62,
+          0,
+          0,
+          0,
+          125,
+          0,
+          0,
+          2,
+          0,
+          16,
+          0,
+          100,
+          97,
+          116,
+          97,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+        ];
+        final request = http.MultipartRequest(
+            'POST', Uri.parse('$root/audio/transcriptions'))
+          ..headers['Authorization'] = 'Bearer $apiKey'
+          ..fields['model'] = modelName
+          ..files.add(http.MultipartFile.fromBytes('file', wav,
+              filename: 'tidebot-test.wav', contentType: null));
+        final response =
+            await request.send().timeout(const Duration(seconds: 20));
+        return response.statusCode >= 200 && response.statusCode < 300;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const onePixel =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+    // 并发探测文本、STT、识图、生图四项能力，任意一项成功即判定通过，
+    // 并返回四项中「最快成功」的延迟（毫秒）。
+    final probes = await Future.wait<Map<String, dynamic>>([
+      probe(
+          '文本',
+          () => postJson('/chat/completions', {
+                'model': modelName,
+                'messages': [
+                  {'role': 'user', 'content': 'ping'}
+                ],
+                'max_tokens': 1,
+              })),
+      probe('STT', stt),
+      probe(
+          '识图',
+          () => postJson('/chat/completions', {
+                'model': modelName,
+                'messages': [
+                  {
+                    'role': 'user',
+                    'content': [
+                      {
+                        'type': 'text',
+                        'text': 'Describe this image in one word.'
+                      },
+                      {
+                        'type': 'image_url',
+                        'image_url': {'url': onePixel}
+                      },
+                    ],
+                  }
+                ],
+                'max_tokens': 8,
+              })),
+      probe(
+          '生图',
+          () => postJson('/images/generations', {
+                'model': modelName,
+                'prompt': 'A single blue pixel.',
+                'size': '256x256',
+                'n': 1,
+              })),
     ]);
-    final passed = results.where((r) => r['ok'] == true).toList();
-    final latencies = {
-      for (final r in passed) r['name'].toString(): r['latency']
-    };
-    final failed = results
-        .where((r) => r['ok'] != true)
-        .map((r) => '${r['name']}: ${r['error']}')
-        .join('；');
+
+    final capabilities = <String>[];
+    final latencies = <String, int>{};
+    int? fastest;
+    String? fastestName;
+    for (final p in probes) {
+      final name = p['name'] as String;
+      final ok = p['ok'] as bool;
+      final latency = p['latency'] as int;
+      latencies[name] = latency;
+      if (ok) {
+        capabilities.add(name);
+        if (fastest == null || latency < fastest) {
+          fastest = latency;
+          fastestName = name;
+        }
+      }
+    }
+
+    final passed = capabilities.isNotEmpty;
     return {
-      'capabilities': passed.map((r) => r['name'].toString()).toList(),
-      'passed': passed.isNotEmpty,
+      'capabilities': capabilities,
+      'passed': passed,
       'latencies': latencies,
-      'fastest_latency': passed.isEmpty
-          ? null
-          : passed.map((r) => r['latency'] as int).reduce(min),
-      'error': failed,
+      'fastest_latency': fastest,
+      'fastest_name': fastestName,
+      // 任意成功即通过；全部失败才返回错误。
+      if (!passed) 'error': '接口拒绝了所有测试请求',
     };
   }
 
@@ -2471,7 +2594,7 @@ $transcript''';
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
-        "【记忆工具】：只有捕捉到新增的确定信息，或已有事实被明确更正时，才在本条回复末尾另起一行输出机器指令；如果记忆没有需要改动的内容，绝对不要输出任何记忆标签。\n"
+        "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
         "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|京太郎每天睡够8小时]。长期记忆正文要自然、稳定，绝对不要出现“我记得”“我知道”这类口头语；也绝不能出现“今天、昨天、明天、近日、上周、刚才、现在”等任何时间相关词汇。称呼用户时，若已知道对方的名字/称呼就必须用那个称呼（如“京太郎”），绝不能用“用户”这两个字。\n"
         "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
         "一条记忆一个标签，多条则连续输出；记忆整体用第一人称写，但不必在句首硬加“我”（例如直接写“京太郎每天睡够8小时”而不是“我京太郎每天睡够8小时”）。称呼用户时不要用第二人称“你”，也禁止出现“用户”这个词：已知用户的名字就写名字，不知道性别就写“他”，从聊天中推断出性别后写“他/她”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
