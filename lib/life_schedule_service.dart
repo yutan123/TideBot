@@ -8,6 +8,7 @@ import 'db.dart';
 class LifeScheduleService {
   LifeScheduleService._();
   static final instance = LifeScheduleService._();
+  final Map<String, Future<Map<String, dynamic>?>> _generation = {};
 
   static const defaultPools = <String, List<String>>{
     'themes': [
@@ -107,15 +108,22 @@ class LifeScheduleService {
     await DBManager().setKV('life_schedule_pools', jsonEncode(value));
   }
 
-  /// Reads the state already generated for today.
-  ///
-  /// This intentionally never generates a schedule on the foreground chat
-  /// request path: generation itself uses a model request, which used to make
-  /// the first user message recursively wait for another model request.
+  /// Reads today's generated state, creating it on demand when absent.
+  /// Concurrent callers for the same bot share one generation request.
   Future<Map<String, dynamic>?> ensureToday(String botId) async {
     if (!await enabled()) return null;
-    final existing = await DBManager().getLifeSchedule(botId, dateKey());
-    return existing == null ? null : Map<String, dynamic>.from(existing);
+    final key = dateKey();
+    final existing = await DBManager().getLifeSchedule(botId, key);
+    if (existing != null) return Map<String, dynamic>.from(existing);
+    final running = _generation[botId];
+    if (running != null) return running;
+    final future = generateToday(botId);
+    _generation[botId] = future;
+    try {
+      return await future;
+    } finally {
+      _generation.remove(botId);
+    }
   }
 
   Future<Map<String, dynamic>?> generateToday(

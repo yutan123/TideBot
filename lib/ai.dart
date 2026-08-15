@@ -146,14 +146,17 @@ class AIManager {
     if (payload is! Map) return '';
     String fromValue(dynamic value) {
       if (value is String) return value.trim();
+      if (value is num || value is bool) return value.toString();
       if (value is List) {
         return value
             .map((item) {
               if (item is String) return item;
-              if (item is Map)
+              if (item is Map) {
                 return item['text']?.toString() ??
                     item['content']?.toString() ??
+                    item['value']?.toString() ??
                     '';
+              }
               return '';
             })
             .where((text) => text.trim().isNotEmpty)
@@ -162,30 +165,31 @@ class AIManager {
       return '';
     }
 
+    String find(dynamic value) {
+      final direct = fromValue(value);
+      if (direct.isNotEmpty) return direct;
+      if (value is Map) {
+        for (final key in const [
+          'content',
+          'text',
+          'output_text',
+          'response'
+        ]) {
+          final nested = find(value[key]);
+          if (nested.isNotEmpty) return nested;
+        }
+      }
+      return '';
+    }
+
     final choices = payload['choices'];
-    if (choices is List && choices.isNotEmpty && choices.first is Map) {
-      final choice = choices.first as Map;
-      final message = choice['message'];
-      if (message is Map) {
-        final content = fromValue(message['content']);
-        if (content.isNotEmpty) return content;
-      }
-      final text = fromValue(choice['text']);
-      if (text.isNotEmpty) return text;
+    if (choices is List && choices.isNotEmpty) {
+      final content = find(choices.first);
+      if (content.isNotEmpty) return content;
     }
-    final output = payload['output'];
-    if (output is Map) {
-      final text = fromValue(output['text']);
-      if (text.isNotEmpty) return text;
-      final message = output['message'];
-      if (message is Map) {
-        final content = fromValue(message['content']);
-        if (content.isNotEmpty) return content;
-      }
-    }
-    final direct = fromValue(payload['text']);
-    if (direct.isNotEmpty) return direct;
-    return fromValue(payload['output_text']);
+    final output = find(payload['output']);
+    if (output.isNotEmpty) return output;
+    return find(payload);
   }
 
   Future<Map<String, dynamic>> _sendMessageOnce({
@@ -411,26 +415,17 @@ class AIManager {
         if (historyMessages.isEmpty) {
           final keepChars =
               (historyBudget * 2.6).floor().clamp(200, content.length);
-          final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
-          final timeLabel = sentAt == null
-              ? ''
-              : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
           historyMessages.add({
             'role':
                 msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-            'content':
-                '$timeLabel${content.substring(content.length - keepChars)}',
+            'content': content.substring(content.length - keepChars),
           });
         }
         break;
       }
-      final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
-      final timeLabel = sentAt == null
-          ? ''
-          : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
       historyMessages.add({
         'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-        'content': '$timeLabel$content',
+        'content': content,
       });
       usedTokens += tokens;
     }
@@ -546,7 +541,7 @@ class AIManager {
               })
               ..body = jsonEncode(payload);
         final response =
-            await request.send().timeout(const Duration(seconds: 40));
+            await request.send().timeout(const Duration(seconds: 90));
         statusCode = response.statusCode;
         if (statusCode == 200) {
           final contentType =
@@ -556,7 +551,8 @@ class AIManager {
             final json = jsonDecode(body);
             replyText = _extractChatContent(json);
             usage = json['usage'] is Map ? json['usage'] as Map : const {};
-            if (replyText.isNotEmpty) onDelta(replyText);
+            // 完整响应已保存到 replyText；这里不向 UI 发送增量。
+            replyText = replyText.trim();
           } else {
             // SSE 流式：逐段回传文本，同时按 index 拼接 tool_calls 分片，
             // 以便工具调用与流式共存。流式结束后统一执行工具并做 follow-up。
@@ -579,7 +575,6 @@ class AIManager {
                 });
                 if (content.isNotEmpty) {
                   replyText += content;
-                  onDelta(content);
                 }
                 // 累加 tool_calls 片段（每个 index 独立拼接 arguments）。
                 final chunk = delta['tool_calls'];
@@ -661,7 +656,7 @@ class AIManager {
               },
               body: jsonEncode(payload),
             )
-            .timeout(const Duration(seconds: 40));
+            .timeout(const Duration(seconds: 90));
         statusCode = response.statusCode;
         errorBody = utf8.decode(response.bodyBytes);
         if (statusCode == 200) {
@@ -705,8 +700,15 @@ class AIManager {
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
       AppLogService.instance.add('RESPONSE',
           '模型提供商响应（HTTP $statusCode）\n${errorBody.isEmpty ? replyText : errorBody}');
+      if (statusCode == 200 && replyText.trim().isEmpty && !toolSilenced) {
+        AppLogService.instance.add('AI', 'HTTP 200 但未提取到可见正文，触发重试');
+        return {
+          'error': '模型返回 HTTP 200，但响应中没有可显示正文',
+          'error_log': 'HTTP 200\n$errorBody',
+          'error_code': 'empty_response',
+        };
+      }
       if (statusCode == 200) {
-        // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
         final promptText = messages.fold<String>(
             '', (sum, m) => sum + (m['content']?.toString() ?? ''));
         final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??

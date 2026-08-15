@@ -2132,32 +2132,46 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     List<String> models = [];
     String? error;
     var loading = true;
+    var loadStarted = false;
     final searchCtrl = TextEditingController();
     await TideDialogs.show<void>(
       context: context,
       builder: (pickerContext) =>
           StatefulBuilder(builder: (pickerContext, setPickerState) {
         Future<void> load() async {
+          if (loading && loadStarted) return;
+          loadStarted = true;
           setPickerState(() {
             loading = true;
             error = null;
           });
-          try {
-            final result = await _fetchProviderModels(
-                baseUrl: urlCtrl.text, apiKey: keyCtrl.text);
-            setPickerState(() {
-              models = result;
-              loading = false;
-            });
-          } catch (e) {
-            setPickerState(() {
-              error = e.toString();
-              loading = false;
-            });
+          Object? lastError;
+          for (var attempt = 0; attempt < 3; attempt++) {
+            try {
+              final result = await _fetchProviderModels(
+                  baseUrl: urlCtrl.text, apiKey: keyCtrl.text);
+              if (!pickerContext.mounted) return;
+              setPickerState(() {
+                models = result;
+                loading = false;
+              });
+              return;
+            } catch (e) {
+              lastError = e;
+              if (attempt < 2) {
+                await Future<void>.delayed(
+                    Duration(seconds: 2 * (attempt + 1)));
+              }
+            }
           }
+          if (!pickerContext.mounted) return;
+          setPickerState(() {
+            error = lastError.toString();
+            loading = false;
+          });
         }
 
-        if (loading && models.isEmpty && error == null) {
+        if (loading && models.isEmpty && error == null && !loadStarted) {
           WidgetsBinding.instance.addPostFrameCallback((_) => load());
         }
         final query = searchCtrl.text.trim().toLowerCase();
@@ -2204,7 +2218,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                           fontFamily: 'TideFont')),
                                   const SizedBox(height: 10),
                                   TextButton.icon(
-                                      onPressed: load,
+                                      onPressed: () {
+                                        loadStarted = false;
+                                        load();
+                                      },
                                       icon: const Icon(Icons.refresh_rounded),
                                       label: const Text('重试'))
                                 ])

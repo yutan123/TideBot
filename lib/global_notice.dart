@@ -94,27 +94,35 @@ class _GlobalNoticeView extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.only(
-                        left: 18, right: 4, top: 7, bottom: 7),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.max,
+                  child: SizedBox(
+                    height: 38,
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        Flexible(
-                          child: Text(
-                            message,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.start,
-                            style: TextStyle(
-                              color: foreground,
-                              fontFamily: 'TideFont',
-                              fontSize: 14,
-                              height: 1.2,
+                        Positioned.fill(
+                          right: 52,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 18),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                message,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.start,
+                                style: TextStyle(
+                                  color: foreground,
+                                  fontFamily: 'TideFont',
+                                  fontSize: 14,
+                                  height: 1.2,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                        SizedBox(
+                        Positioned(
+                          top: 0,
+                          right: 0,
                           width: 48,
                           height: 38,
                           child: IconButton(
@@ -122,9 +130,11 @@ class _GlobalNoticeView extends StatelessWidget {
                             padding: EdgeInsets.zero,
                             visualDensity: VisualDensity.compact,
                             onPressed: onDismiss,
-                            icon: Icon(Icons.close_rounded,
-                                color: foreground.withValues(alpha: 0.9),
-                                size: 20),
+                            icon: Icon(
+                              Icons.close_rounded,
+                              color: foreground.withValues(alpha: 0.9),
+                              size: 20,
+                            ),
                           ),
                         ),
                       ],
