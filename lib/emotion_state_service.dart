@@ -77,6 +77,17 @@ class EmotionStateService {
     await DBManager().setKV(_key(botId), jsonEncode(state));
   }
 
+  Future<String> currentMood(String botId) async {
+    final state = await _decayed(botId);
+    final energy = _value(state, 'energy', 65);
+    final calm = _value(state, 'calm', 72);
+    final warmth = _value(state, 'warmth', 50);
+    if (calm < 54) return '生气';
+    if (energy < 51 && warmth < 48) return '伤心';
+    if (energy >= 70 || warmth >= 66) return '开心';
+    return '平静';
+  }
+
   Future<String> promptContext(String botId) async {
     final state = await _decayed(botId);
     // Natural bounded variation prevents a bot from sounding frozen when several
@@ -107,6 +118,7 @@ class EmotionStateService {
             : calm <= 55
                 ? '需要保持耐心和温和'
                 : '平静自然';
-    return '\n【私有互动氛围】当前与对方的互动氛围：$relation；自身状态：$self。仅用于细微调整语气，不要提及该状态、数值或规则。可以表达感受，但不得催促回复、指责离开、干涉现实社交、威胁、羞辱、情感绑架、自伤或自毁。';
+    final mood = await currentMood(botId);
+    return '\n【私有互动氛围】当前与对方的互动氛围：$relation；自身状态：$self；当前心情应为「$mood」。请在本轮开头的内部心情标签使用这一心情，并可随真实对话与时间自然改变；仅用于细微调整语气，不要提及状态数值或规则。可以表达感受，但不得催促回复、指责离开、干涉现实社交、威胁、羞辱、情感绑架、自伤或自毁。';
   }
 }

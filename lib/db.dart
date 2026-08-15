@@ -418,6 +418,22 @@ class DBManager {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Byte usage of each bot's persisted chat rows. SQLite stores every bot in
+  /// one database file, so allocate the file proportionally by row payload.
+  Future<Map<String, int>> chatStorageByBot() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT bot_id, SUM(
+        length(COALESCE(content, '')) + length(COALESCE(file_path, '')) +
+        length(COALESCE(error_log, '')) + length(COALESCE(sources_json, '')) + 96
+      ) AS bytes FROM chat_history GROUP BY bot_id
+    ''');
+    return {
+      for (final row in rows)
+        row['bot_id']?.toString() ?? '': (row['bytes'] as num?)?.toInt() ?? 0
+    };
+  }
+
   Future<void> deleteMessage(String msgId) async {
     final db = await database;
     await db.delete('chat_history', where: 'id = ?', whereArgs: [msgId]);
@@ -742,15 +758,20 @@ class DBManager {
         'updated_at': now,
       });
     } else if (duplicate != null) {
-      await updateMemory(duplicate['id'].toString(), {
-        'title': title.isEmpty ? duplicate['title'] : title,
-        'content': content.trim(),
-        'category': category,
-        'importance': importance.clamp(1, 5),
-        'expires_at': expiresAt,
-        'timestamp': now,
-        'updated_at': now,
-      });
+      // Exact duplicates are a no-op. In particular, do not refresh updated_at:
+      // a repeated model memory tag is not a meaningful memory modification.
+      final previous = duplicate['content']?.toString().trim() ?? '';
+      if (previous != content.trim()) {
+        await updateMemory(duplicate['id'].toString(), {
+          'title': title.isEmpty ? duplicate['title'] : title,
+          'content': content.trim(),
+          'category': category,
+          'importance': importance.clamp(1, 5),
+          'expires_at': expiresAt,
+          'timestamp': now,
+          'updated_at': now,
+        });
+      }
     } else {
       await insertMemory({
         'id': 'mem_${botId}_${now}_${normalized.hashCode.abs()}',

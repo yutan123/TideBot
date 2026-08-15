@@ -63,7 +63,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
           contentPadding: EdgeInsets.zero,
           content: TideDialogs.glassContent(context: ctx, children: [
             Text('关闭实时日志',
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.start,
                 style: TextStyle(
                     fontFamily: 'TideFont',
                     fontSize: 17,
@@ -71,7 +71,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     color: TideTheme.of(ctx).textStrong)),
             const SizedBox(height: 8),
             Text('是否保存本次日志到历史记录？',
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.start,
                 style: TextStyle(
                     fontFamily: 'TideFont', color: TideTheme.of(ctx).textWeak)),
             const SizedBox(height: 18),

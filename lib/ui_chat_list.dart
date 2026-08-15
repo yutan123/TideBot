@@ -82,9 +82,10 @@ class ChatListPageState extends State<ChatListPage> {
                       fontWeight: FontWeight.w700,
                       fontFamily: 'TideFont'))),
           const SizedBox(height: 10),
-          Center(
+          Align(
+              alignment: Alignment.centerLeft,
               child: Text('确定删除「${bot['name']}」吗？\n此操作不可恢复。',
-                  textAlign: TextAlign.center,
+                  textAlign: TextAlign.start,
                   style: const TextStyle(
                       fontSize: 14,
                       color: Color(0xFF636366),

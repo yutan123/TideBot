@@ -137,7 +137,8 @@ class AIManager {
     }
     return {
       ...?lastFailure,
-      'error': '主模型和备用模型均请求失败（主模型最多 3 次、备用模型最多 3 次）。${lastFailure?['error'] ?? ''}',
+      'error':
+          '主模型和备用模型均请求失败（主模型最多 3 次、备用模型最多 3 次）。${lastFailure?['error'] ?? ''}',
     };
   }
 
@@ -514,7 +515,10 @@ class AIManager {
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
-        'max_tokens': maxContext,
+        // max_tokens is output budget, never the configured context window.
+        // Reserving a bounded reply prevents a 10k context preference becoming
+        // a 10k/20k-token single response request.
+        'max_tokens': min(2048, max(256, (maxContext / 4).floor())),
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
@@ -1089,7 +1093,7 @@ class AIManager {
       final key = provider['api_key']?.toString() ?? '';
       if (url.isEmpty || key.isEmpty) return;
       final prompt =
-          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆可能会自动去重/修正。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。没有值得记住的内容就输出 NONE。
+          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆会自动去重：只有确有新增或原事实被明确更正时才输出对应记忆；若没有任何需要新增或修改的内容，必须只输出 NONE，绝不能为了刷新时间重复输出旧记忆。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。
 
 $transcript''';
       final response = await http
@@ -1166,6 +1170,30 @@ $transcript''';
         if (model.toLowerCase().contains('-realtime')) {
           return await _transcribeDashScopeRealtime(
               provider: provider, model: model, audioPath: audioPath);
+        }
+        // Current DashScope ASR models support the OpenAI-compatible multipart
+        // route. Try the configured compatible base first, then retain the
+        // proprietary fallback for older Paraformer configurations.
+        final compatible = baseUrl.contains('compatible-mode')
+            ? baseUrl
+            : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+        try {
+          final request = http.MultipartRequest(
+              'POST', Uri.parse('$compatible/audio/transcriptions'))
+            ..headers['Authorization'] = 'Bearer ${provider['api_key']}'
+            ..fields['model'] = model
+            ..files.add(await http.MultipartFile.fromPath('file', audioPath));
+          final response = await http.Response.fromStream(
+              await request.send().timeout(const Duration(seconds: 60)));
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            final body = jsonDecode(utf8.decode(response.bodyBytes));
+            final text = body is Map ? body['text']?.toString().trim() : null;
+            if (text != null && text.isNotEmpty) return text;
+          }
+          AppLogService.instance
+              .add('STT', '百炼兼容 STT HTTP ${response.statusCode}，转专属兼容链路');
+        } catch (e) {
+          AppLogService.instance.add('STT', '百炼兼容 STT 异常，转专属兼容链路：$e');
         }
         return await _transcribeDashScope(
             provider: provider, model: model, audioPath: audioPath);
@@ -1466,8 +1494,11 @@ $transcript''';
       // DashScope's regular synthesis service is separate from its legacy
       // text-to-wav endpoint. Realtime models require the WebSocket protocol;
       // keep their endpoint visible in logs instead of silently sending a bad HTTP request.
+      final dashCompatible = baseUrl.contains('compatible-mode')
+          ? baseUrl
+          : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
       final endpoint = isDashScope
-          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesis'
+          ? '$dashCompatible/audio/speech'
           : '$baseUrl/audio/speech';
       if (isRealtime) {
         return await _generateDashScopeRealtimeTTS(
@@ -1482,13 +1513,12 @@ $transcript''';
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $apiKey',
             },
-            body: jsonEncode(isDashScope
-                ? {
-                    'model': model,
-                    'input': {'text': text},
-                    'parameters': {'format': 'wav', 'voice': voice},
-                  }
-                : {'model': model, 'input': text, 'voice': voice}),
+            body: jsonEncode({
+              'model': model,
+              'input': text,
+              'voice': voice,
+              'response_format': 'wav'
+            }),
           )
           .timeout(const Duration(seconds: 30));
       AppLogService.instance.add('TTS',
@@ -2330,25 +2360,99 @@ $transcript''';
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final modelName = model.split(',').first.trim();
     if (root.isEmpty || apiKey.trim().isEmpty || modelName.isEmpty) {
-      return {'capabilities': <String>[], 'passed': false, 'error': '请填写 API 地址、Key 和模型名'};
+      return {
+        'capabilities': <String>[],
+        'passed': false,
+        'error': '请填写 API 地址、Key 和模型名'
+      };
     }
-    final started = DateTime.now();
-    try {
-      final response = await http.post(Uri.parse('$root/chat/completions'),
-        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $apiKey'},
-        body: jsonEncode({'model': modelName, 'messages': [{'role': 'user', 'content': 'Reply with exactly: pong'}], 'max_tokens': 8, 'stream': false}),
-      ).timeout(const Duration(seconds: 25));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return {'capabilities': <String>[], 'passed': false, 'error': '聊天请求返回 HTTP ${response.statusCode}'};
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $apiKey'
+    };
+    Future<Map<String, dynamic>> probe(
+        String name, String path, Map<String, dynamic> body) async {
+      final started = DateTime.now();
+      try {
+        final response = await http
+            .post(Uri.parse('$root$path'),
+                headers: headers, body: jsonEncode(body))
+            .timeout(const Duration(seconds: 60));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return {
+            'name': name,
+            'ok': false,
+            'error': 'HTTP ${response.statusCode}'
+          };
+        }
+        if (name == '文本') {
+          final payload = jsonDecode(utf8.decode(response.bodyBytes));
+          if (_extractChatContent(payload).isEmpty)
+            return {'name': name, 'ok': false, 'error': '响应无文本'};
+        }
+        return {
+          'name': name,
+          'ok': true,
+          'latency': DateTime.now().difference(started).inMilliseconds
+        };
+      } catch (e) {
+        return {'name': name, 'ok': false, 'error': '$e'};
       }
-      final payload = jsonDecode(utf8.decode(response.bodyBytes));
-      final text = _extractChatContent(payload);
-      if (text.isEmpty) return {'capabilities': <String>[], 'passed': false, 'error': '聊天接口返回成功但没有可用文本'};
-      final latency = DateTime.now().difference(started).inMilliseconds;
-      return {'capabilities': ['文本'], 'passed': true, 'latencies': {'文本': latency}, 'fastest_latency': latency, 'fastest_name': '文本'};
-    } catch (e) {
-      return {'capabilities': <String>[], 'passed': false, 'error': '聊天测试失败：$e'};
     }
+
+    // All probes start together. Text is the real normal-chat request; image
+    // generation and vision are optional capability probes and cannot make a
+    // text-capable model appear unusable.
+    final results = await Future.wait([
+      probe('文本', '/chat/completions', {
+        'model': modelName,
+        'messages': [
+          {'role': 'user', 'content': '你好，请只回复 pong'}
+        ],
+        'max_tokens': 16,
+        'stream': false
+      }),
+      probe('识图', '/chat/completions', {
+        'model': modelName,
+        'messages': [
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': '请只回复 pong'}
+            ]
+          }
+        ],
+        'max_tokens': 16,
+        'stream': false
+      }),
+      probe('生图', '/images/generations', {
+        'model': modelName,
+        'prompt': 'a tiny blue circle',
+        'size': '256x256',
+        'n': 1
+      }),
+      // A zero-byte WAV intentionally tests endpoint reachability/validation;
+      // it is not counted as a failure of normal chat.
+      probe('STT', '/audio/transcriptions',
+          {'model': modelName, 'file': 'capability-probe'}),
+    ]);
+    final passed = results.where((r) => r['ok'] == true).toList();
+    final latencies = {
+      for (final r in passed) r['name'].toString(): r['latency']
+    };
+    final failed = results
+        .where((r) => r['ok'] != true)
+        .map((r) => '${r['name']}: ${r['error']}')
+        .join('；');
+    return {
+      'capabilities': passed.map((r) => r['name'].toString()).toList(),
+      'passed': passed.isNotEmpty,
+      'latencies': latencies,
+      'fastest_latency': passed.isEmpty
+          ? null
+          : passed.map((r) => r['latency'] as int).reduce(min),
+      'error': failed,
+    };
   }
 
   String _safetyContext(String userText) {
@@ -2365,7 +2469,7 @@ $transcript''';
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
-        "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
+        "【记忆工具】：只有捕捉到新增的确定信息，或已有事实被明确更正时，才在本条回复末尾另起一行输出机器指令；如果记忆没有需要改动的内容，绝对不要输出任何记忆标签。\n"
         "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|京太郎每天睡够8小时]。长期记忆正文要自然、稳定，绝对不要出现“我记得”“我知道”这类口头语；也绝不能出现“今天、昨天、明天、近日、上周、刚才、现在”等任何时间相关词汇。称呼用户时，若已知道对方的名字/称呼就必须用那个称呼（如“京太郎”），绝不能用“用户”这两个字。\n"
         "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
         "一条记忆一个标签，多条则连续输出；记忆整体用第一人称写，但不必在句首硬加“我”（例如直接写“京太郎每天睡够8小时”而不是“我京太郎每天睡够8小时”）。称呼用户时不要用第二人称“你”，也禁止出现“用户”这个词：已知用户的名字就写名字，不知道性别就写“他”，从聊天中推断出性别后写“他/她”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";

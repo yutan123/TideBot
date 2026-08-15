@@ -22,6 +22,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _appData = 0,
       _total = 0;
   List<Map<String, dynamic>> _bots = [];
+  final Map<String, int> _chatBytes = {};
   final Set<String> _selected = {};
 
   Future<int> _size(Directory dir) async {
@@ -56,6 +57,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _size(temp),
       dbFile.exists().then((yes) => yes ? dbFile.length() : 0),
       DBManager().getAllBots(),
+      DBManager().chatStorageByBot(),
     ]);
     if (!mounted) return;
     setState(() {
@@ -63,6 +65,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _temporary = values[1] as int;
       _database = values[2] as int;
       _bots = values[3] as List<Map<String, dynamic>>;
+      _chatBytes
+        ..clear()
+        ..addAll(values[4] as Map<String, int>);
       _total = (native['total'] as num?)?.toInt() ?? 0;
       _apk = (native['apk'] as num?)?.toInt() ?? 0;
       _appData = (native['data'] as num?)?.toInt() ??
@@ -166,6 +171,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                                 _selected.remove(bot['id'].toString());
                             }),
                         title: Text(bot['name']?.toString() ?? '未命名机器人',
+                            style: const TextStyle(fontFamily: 'TideFont')),
+                        subtitle: Text(
+                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}',
                             style: const TextStyle(fontFamily: 'TideFont')),
                         controlAffinity: ListTileControlAffinity.leading),
                   if (_bots.isEmpty)

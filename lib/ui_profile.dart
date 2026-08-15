@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1958,7 +1959,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),
-                  _f('模型名（仅填一个）', mCtrl),
+                  _modelField(ctx, mCtrl, uCtrl, kCtrl),
                   const SizedBox(height: 16),
                   Row(children: [
                     Expanded(
@@ -2029,7 +2030,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),
-                  _f('模型名（仅填一个）', mCtrl),
+                  _modelField(ctx, mCtrl, uCtrl, kCtrl),
                   const SizedBox(height: 8),
                   _f('音色', vCtrl),
                   const SizedBox(height: 16),
@@ -2066,6 +2067,214 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                     }))
                   ])
                 ])));
+  }
+
+  Future<List<String>> _fetchProviderModels({
+    required String baseUrl,
+    required String apiKey,
+  }) async {
+    final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (root.isEmpty) throw Exception('请先填写 API Base URL');
+    if (apiKey.trim().isEmpty) throw Exception('请先填写 API Key');
+    final candidates = <String>[root];
+    if (root.contains('compatible-mode/v1')) {
+      candidates.add(root.replaceFirst('/compatible-mode/v1', ''));
+    }
+    Object? lastError;
+    for (final candidate in candidates.toSet()) {
+      try {
+        final response =
+            await http.get(Uri.parse('$candidate/models'), headers: {
+          'Authorization': 'Bearer ${apiKey.trim()}',
+          'Accept': 'application/json',
+        }).timeout(const Duration(seconds: 45));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          lastError = 'HTTP ${response.statusCode}';
+          continue;
+        }
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        final rows = decoded is Map
+            ? (decoded['data'] ?? decoded['models'] ?? decoded['output'])
+            : decoded;
+        final list = rows is List
+            ? rows
+            : (rows is Map ? (rows['data'] ?? rows['models']) : null);
+        if (list is List) {
+          final models = list
+              .map((item) {
+                if (item is String) return item.trim();
+                if (item is Map)
+                  return (item['id'] ?? item['name'] ?? item['model'] ?? '')
+                      .toString()
+                      .trim();
+                return '';
+              })
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+          if (models.isNotEmpty) return models;
+        }
+        lastError = '接口未返回模型列表';
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw Exception('获取模型失败：${lastError ?? '未知错误'}');
+  }
+
+  void _showModelPicker(
+      BuildContext dialogContext,
+      TextEditingController urlCtrl,
+      TextEditingController keyCtrl,
+      TextEditingController modelCtrl) async {
+    FocusScope.of(dialogContext).unfocus();
+    List<String> models = [];
+    String? error;
+    var loading = true;
+    final searchCtrl = TextEditingController();
+    await TideDialogs.show<void>(
+      context: context,
+      builder: (pickerContext) =>
+          StatefulBuilder(builder: (pickerContext, setPickerState) {
+        Future<void> load() async {
+          setPickerState(() {
+            loading = true;
+            error = null;
+          });
+          try {
+            final result = await _fetchProviderModels(
+                baseUrl: urlCtrl.text, apiKey: keyCtrl.text);
+            setPickerState(() {
+              models = result;
+              loading = false;
+            });
+          } catch (e) {
+            setPickerState(() {
+              error = e.toString();
+              loading = false;
+            });
+          }
+        }
+
+        if (loading && models.isEmpty && error == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => load());
+        }
+        final query = searchCtrl.text.trim().toLowerCase();
+        final visible = query.isEmpty
+            ? models
+            : models.where((m) => m.toLowerCase().contains(query)).toList();
+        return AlertDialog(
+          backgroundColor: Colors.transparent,
+          contentPadding: EdgeInsets.zero,
+          content: TideDialogs.glassContent(
+              context: pickerContext,
+              maxWidth: .9,
+              children: [
+                const Text('选择模型',
+                    textAlign: TextAlign.start,
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 6),
+                Text('已从当前 API Base URL 获取可用模型；也可不选择，直接手动输入。',
+                    textAlign: TextAlign.start,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: TideTheme.of(pickerContext).textWeak,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 10),
+                _f('筛选模型', searchCtrl),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 260,
+                  child: loading
+                      ? Center(
+                          child: CircularProgressIndicator(
+                              color: TideTheme.of(pickerContext).primary))
+                      : error != null
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                  Text(error!,
+                                      textAlign: TextAlign.start,
+                                      style: const TextStyle(
+                                          color: Color(0xFFE74C3C),
+                                          fontFamily: 'TideFont')),
+                                  const SizedBox(height: 10),
+                                  TextButton.icon(
+                                      onPressed: load,
+                                      icon: const Icon(Icons.refresh_rounded),
+                                      label: const Text('重试'))
+                                ])
+                          : visible.isEmpty
+                              ? const Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text('没有匹配的模型，可关闭后手动输入。',
+                                      textAlign: TextAlign.start,
+                                      style: TextStyle(fontFamily: 'TideFont')))
+                              : ListView.separated(
+                                  itemCount: visible.length,
+                                  separatorBuilder: (_, __) =>
+                                      const Divider(height: 1),
+                                  itemBuilder: (_, index) => ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(visible[index],
+                                          textAlign: TextAlign.start,
+                                          style: const TextStyle(
+                                              fontFamily: 'TideFont')),
+                                      onTap: () {
+                                        modelCtrl.text = visible[index];
+                                        Navigator.pop(pickerContext);
+                                      })),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                        onPressed: () => Navigator.pop(pickerContext),
+                        child: const Text('关闭'))),
+              ]),
+        );
+      }),
+    );
+    searchCtrl.dispose();
+  }
+
+  Widget _modelField(
+      BuildContext dialogContext,
+      TextEditingController modelCtrl,
+      TextEditingController urlCtrl,
+      TextEditingController keyCtrl) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('模型名（可手动输入或获取后选择）',
+          style: TextStyle(
+              fontSize: 13,
+              color: TideTheme.of(dialogContext).textWeak,
+              fontFamily: 'TideFont')),
+      const SizedBox(height: 4),
+      Container(
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: TideTheme.of(dialogContext).surfaceVariant),
+          child: Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: modelCtrl,
+                    style:
+                        const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
+                    decoration: const InputDecoration(
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        border: InputBorder.none))),
+            TextButton.icon(
+                onPressed: () => _showModelPicker(
+                    dialogContext, urlCtrl, keyCtrl, modelCtrl),
+                icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                label: const Text('获取')),
+          ])),
+    ]);
   }
 
   Widget _f(String label, TextEditingController c, {bool obscure = false}) {
@@ -2138,7 +2347,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   const SizedBox(height: 8),
                   _f('API Key', kCtrl, obscure: true),
                   const SizedBox(height: 8),
-                  _f('模型名', mCtrl),
+                  _modelField(ctx, mCtrl, uCtrl, kCtrl),
                   const SizedBox(height: 16),
                   Row(children: [
                     Expanded(

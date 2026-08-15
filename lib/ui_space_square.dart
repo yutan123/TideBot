@@ -11,6 +11,7 @@ import 'theme.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
+import 'emotion_state_service.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -117,14 +118,9 @@ class _SpacePageState extends State<SpacePage> {
       final longMemories =
           await db.queryMemories(_botId, type: 'long', limit: 50);
       final mem = [...shortMemories, ...longMemories];
-      final messages = await db.queryMessages(_botId, limit: 30);
-      final latestMood = messages.reversed.firstWhere(
-        (m) =>
-            m['role'] == 'assistant' &&
-            (m['mood']?.toString().isNotEmpty ?? false),
-        orElse: () => <String, dynamic>{},
-      );
-      final mood = latestMood['mood']?.toString() ?? '平静';
+      // The space card reflects the same state injected into chat prompts,
+      // including safe time-based fluctuations between messages.
+      final mood = await EmotionStateService.instance.currentMood(_botId);
       _moodLabel = mood;
       _moodIcon = mood == '开心'
           ? 'smile'
@@ -872,9 +868,10 @@ class SquarePageState extends State<SquarePage>
                       fontWeight: FontWeight.w700,
                       fontFamily: 'TideFont'))),
           const SizedBox(height: 10),
-          const Center(
+          const Align(
+              alignment: Alignment.centerLeft,
               child: Text('确定删除这条动态吗？\n此操作不可恢复。',
-                  textAlign: TextAlign.center,
+                  textAlign: TextAlign.start,
                   style: TextStyle(
                       fontSize: 14,
                       color: Color(0xFF636366),
