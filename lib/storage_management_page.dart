@@ -15,7 +15,12 @@ class StorageManagementPage extends StatefulWidget {
 
 class _StorageManagementPageState extends State<StorageManagementPage> {
   bool _loading = true;
-  int _documents = 0, _temporary = 0, _database = 0, _total = 0;
+  int _documents = 0,
+      _temporary = 0,
+      _database = 0,
+      _apk = 0,
+      _appData = 0,
+      _total = 0;
   List<Map<String, dynamic>> _bots = [];
   final Set<String> _selected = {};
 
@@ -59,6 +64,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _database = values[2] as int;
       _bots = values[3] as List<Map<String, dynamic>>;
       _total = (native['total'] as num?)?.toInt() ?? 0;
+      _apk = (native['apk'] as num?)?.toInt() ?? 0;
+      _appData = (native['data'] as num?)?.toInt() ??
+          (_documents + _temporary + _database);
       _loading = false;
     });
   }
@@ -101,9 +109,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final pct = _total == 0
-        ? '—'
-        : '${(_documents / _total * 100).toStringAsFixed(3)}%';
+    final used = _apk + _appData;
+    final pct =
+        _total == 0 ? '—' : '${(used / _total * 100).toStringAsFixed(3)}%';
     return Scaffold(
         backgroundColor: theme.bgColor,
         appBar: AppBar(
@@ -117,7 +125,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      Text('TideBot 已用 ${_format(_documents)}',
+                      Text('TideBot 已用 ${_format(used)}',
                           style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w700,
@@ -131,8 +139,10 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                 const SizedBox(height: 16),
                 FrostCard(
                     child: Column(children: [
-                  _row(Icons.storage_rounded, '应用文件', _format(_documents)),
-                  _row(Icons.storage_rounded, '聊天数据库', _format(_database)),
+                  _row(Icons.install_mobile_rounded, '安装包', _format(_apk)),
+                  _row(Icons.data_object_rounded, '应用数据', _format(_appData)),
+                  _row(Icons.storage_rounded, '聊天数据库（已含于应用数据）',
+                      _format(_database)),
                   _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
                       action: '清理', onTap: _clearCache)
                 ])),

@@ -56,8 +56,21 @@ class MainActivity: FlutterActivity() {
                 }
                 "storageInfo" -> {
                     try {
+                        fun sizeOf(file: File?): Long {
+                            if (file == null || !file.exists()) return 0L
+                            if (file.isFile) return file.length()
+                            return file.listFiles()?.sumOf { sizeOf(it) } ?: 0L
+                        }
                         val stat = StatFs(filesDir.absolutePath)
-                        result.success(mapOf("total" to stat.totalBytes, "available" to stat.availableBytes))
+                        val apk = applicationInfo.sourceDir?.let { File(it) }
+                        result.success(mapOf(
+                            "total" to stat.totalBytes,
+                            "available" to stat.availableBytes,
+                            "data" to sizeOf(File(applicationInfo.dataDir)),
+                            "apk" to sizeOf(apk),
+                            "cache" to sizeOf(cacheDir),
+                            "files" to sizeOf(filesDir)
+                        ))
                     } catch (_: Exception) { result.success(mapOf<String, Long>()) }
                 }
                 "vibrate" -> {

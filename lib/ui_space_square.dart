@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'dart:math';
 import 'package:image_picker/image_picker.dart';
 import 'ui_components.dart';
 import 'global_notice.dart';
@@ -470,7 +471,7 @@ class _SpacePageState extends State<SpacePage> {
                   fontFamily: 'TideFont')),
           const SizedBox(height: 8),
           Text('由 TA 的最近回复决定',
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.start,
               style: TextStyle(
                   fontSize: 11,
                   color: theme.textFaint,
@@ -585,7 +586,16 @@ class SquarePageState extends State<SquarePage>
         // the feed opens, so scheduled time must be checked before model work.
         final dayStart =
             DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
-        final slot = (botId.hashCode.abs() + index * 7919) % (24 * 60);
+        // Store each day's random slot. Hash-based slots made every bot post at
+        // the exact same clock time on every day.
+        final scheduleKey = 'bot_post_time_${botId}_${dayKey}_$index';
+        var slot = int.tryParse(await db.getKV(scheduleKey) ?? '');
+        if (slot == null || slot < 0 || slot >= 24 * 60) {
+          // Day + bot + index seed: stable after generation, different tomorrow.
+          final rng = Random('$dayKey:$botId:$index'.hashCode);
+          slot = 8 * 60 + rng.nextInt(14 * 60); // 08:00–21:59
+          await db.setKV(scheduleKey, '$slot');
+        }
         final scheduledAt = dayStart + slot * Duration.millisecondsPerMinute;
         if (DateTime.now().millisecondsSinceEpoch < scheduledAt) continue;
         final res = await AIManager().sendMessage(
@@ -620,20 +630,35 @@ class SquarePageState extends State<SquarePage>
                 (cb['id']?.toString() ?? '') != botId &&
                 (cb['chat_model']?.toString().isNotEmpty ?? false))
             .toList();
-        for (var i = 0; i < otherBots.length && i < 2; i++) {
-          final reactor = otherBots[i];
+        final shuffled = List<Map<String, dynamic>>.from(otherBots)
+          ..shuffle(Random('$postId:reactions'.hashCode));
+        for (var i = 0; i < shuffled.length && i < 2; i++) {
+          final reactor = shuffled[i];
+          final chance =
+              Random('$postId:${reactor['id']}'.hashCode).nextDouble();
+          // Reactions are optional: some posts receive nothing, some only a like,
+          // and only a subset receive an actual generated comment.
+          if (chance > .58) continue;
           final reactorId = reactor['id']?.toString() ?? '';
           if (reactorId.isEmpty) continue;
           // 每个互动事件幂等：同一天同一机器人对同一条动态只真实互动一次。
           final reactKey = 'bot_react_${reactorId}_$postId';
           if (await db.getKV(reactKey) == '1') continue;
-          // 先记录点赞事件（真实发生的互动，非模拟数）。
-          await db.recordFeedEvent(
-            postId: postId,
-            actorId: reactorId,
-            eventType: 'like',
-          );
-          // 让该机器人真实阅读动态并生产一条第一人称评论。
+          final interaction =
+              Random('$postId:$reactorId:kind'.hashCode).nextDouble();
+          if (interaction < .72) {
+            await db.recordFeedEvent(
+                postId: postId, actorId: reactorId, eventType: 'like');
+          }
+          if (interaction < .38) {
+            await db.recordFeedEvent(
+                postId: postId, actorId: reactorId, eventType: 'collect');
+          }
+          if (interaction > .44) {
+            await db.setKV(reactKey, '1');
+            continue;
+          }
+          // This bot chose to leave a real generated comment.
           try {
             final reactRes = await AIManager().sendMessage(
               botId: reactorId,
@@ -1363,6 +1388,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
   bool _sendingComment = false;
+  Map<String, dynamic>? _replyTarget;
 
   @override
   void initState() {
@@ -1451,12 +1477,14 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       'post_id': widget.feed['id'],
       'author_id': 'me',
       'content': content,
+      'parent_id': _replyTarget?['id'],
       'timestamp': now,
       'pending': true,
     };
     setState(() {
       _sendingComment = true;
       _commentCtrl.clear();
+      _replyTarget = null;
       _comments.add(comment);
       widget.feed['comments'] = (widget.feed['comments'] as int) + 1;
     });
@@ -1470,7 +1498,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         });
       }
       widget.onUpdate();
-      // 若动态由机器人发布，原作者对用户评论做一次概率回复（真实互动）。
+      // If this is a reply, it stays nested under its target; author replies
+      // directly to that same node, enabling unlimited comment depth.
       unawaited(_maybeBotReply(comment));
     } catch (_) {
       if (mounted) {
@@ -1490,7 +1519,9 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     if (widget.feed['is_bot'] != true) return;
     final authorName = widget.feed['author_id']?.toString().trim() ?? '';
     if (authorName.isEmpty) return;
-    // 动态原作者可回复用户或其他机器人的评论；不再随机漏掉真实互动。
+    // Replies are intentionally probabilistic, not mandatory for every comment.
+    if (Random('reply:${userComment['id']}'.hashCode).nextDouble() > .45)
+      return;
     final db = DBManager();
     final bots = await db.queryBots();
     Map<String, dynamic> authorBot = const {};
@@ -1522,6 +1553,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         postId: widget.feed['id'] as String? ?? '',
         authorId: authorName,
         content: reply,
+        parentId: userComment['id']?.toString(),
       );
       await db.setKV(replyKey, '1');
       if (mounted) {
@@ -1530,6 +1562,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
           'post_id': widget.feed['id'],
           'author_id': authorName,
           'content': reply,
+          'parent_id': userComment['id']?.toString(),
           'timestamp': DateTime.now().millisecondsSinceEpoch,
           'author_avatar': authorBot['avatar']?.toString() ?? '',
         };
@@ -1560,7 +1593,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
         contentPadding: EdgeInsets.zero,
         content: TideDialogs.glassContent(context: ctx, children: [
           Text('删除评论',
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.start,
               style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -1568,7 +1601,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                   fontFamily: 'TideFont')),
           const SizedBox(height: 8),
           Text('确定删除这条评论吗？',
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.start,
               style: TextStyle(
                   color: TideTheme.of(ctx).textWeak, fontFamily: 'TideFont')),
           const SizedBox(height: 18),
@@ -1600,6 +1633,75 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     } catch (_) {
       if (mounted) GlobalNotice.show('删除评论失败，请重试');
     }
+  }
+
+  List<Widget> _commentTree() {
+    final byParent = <String, List<Map<String, dynamic>>>{};
+    for (final comment in _comments) {
+      final key = comment['parent_id']?.toString() ?? '';
+      (byParent[key] ??= []).add(comment);
+    }
+    List<Widget> buildNodes(String parentId, int depth) => [
+          for (final comment
+              in byParent[parentId] ?? const <Map<String, dynamic>>[]) ...[
+            _commentNode(comment, depth),
+            ...buildNodes(comment['id']?.toString() ?? '', depth + 1),
+          ],
+        ];
+    return buildNodes('', 0);
+  }
+
+  Widget _commentNode(Map<String, dynamic> comment, int depth) {
+    final theme = TideTheme.of(context);
+    final inset = (depth * 18.0).clamp(0, 72).toDouble();
+    return Padding(
+      padding: EdgeInsets.only(left: inset, bottom: 14),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        (comment['author_avatar'] as String?)?.isNotEmpty == true
+            ? TideBotAvatar(
+                name: comment['author_id']?.toString() ?? 'TA',
+                path: comment['author_avatar']?.toString(),
+                size: 30)
+            : CircleAvatar(
+                radius: 15,
+                backgroundColor: theme.primary.withValues(alpha: .12),
+                child:
+                    Icon(Icons.person_rounded, size: 16, color: theme.primary)),
+        const SizedBox(width: 10),
+        Expanded(
+            child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPress:
+              _canDeleteComment(comment) ? () => _deleteComment(comment) : null,
+          onTap: () => setState(() {
+            _replyTarget = comment;
+            _commentCtrl.clear();
+          }),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(comment['author_id'] ?? '匿名',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 3),
+            Text(comment['content'] ?? '',
+                style: TextStyle(
+                    fontSize: 14,
+                    color: theme.textWeak,
+                    fontFamily: 'TideFont',
+                    height: 1.4)),
+            const SizedBox(height: 4),
+            Text('回复',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: theme.primary,
+                    fontFamily: 'TideFont')),
+          ]),
+        )),
+      ]),
+    );
   }
 
   @override
@@ -1782,66 +1884,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                     ),
                   )
                 else
-                  ..._comments.map(
-                    (comment) => GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onLongPress: _canDeleteComment(comment)
-                          ? () => _deleteComment(comment)
-                          : null,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 14),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            (comment['author_avatar'] as String?)?.isNotEmpty ==
-                                    true
-                                ? TideBotAvatar(
-                                    name: comment['author_id']?.toString() ??
-                                        'TA',
-                                    path: comment['author_avatar']?.toString(),
-                                    size: 30)
-                                : CircleAvatar(
-                                    radius: 15,
-                                    backgroundColor:
-                                        theme.primary.withValues(alpha: 0.12),
-                                    child: Icon(
-                                      Icons.person_rounded,
-                                      size: 16,
-                                      color: theme.primary,
-                                    ),
-                                  ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    comment['author_id'] ?? '匿名',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: theme.textStrong,
-                                      fontFamily: 'TideFont',
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    comment['content'] ?? '',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: theme.textWeak,
-                                      fontFamily: 'TideFont',
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  ..._commentTree(),
               ],
             ),
           ),
@@ -1853,8 +1896,20 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                 color: theme.surface,
                 border: Border(top: BorderSide(color: theme.border)),
               ),
-              child: Row(
-                children: [
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (_replyTarget != null)
+                  Row(children: [
+                    Expanded(
+                        child: Text('回复 ${_replyTarget!['author_id'] ?? '评论'}',
+                            textAlign: TextAlign.start,
+                            style: TextStyle(
+                                color: theme.textWeak,
+                                fontFamily: 'TideFont'))),
+                    IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () => setState(() => _replyTarget = null)),
+                  ]),
+                Row(children: [
                   Expanded(
                     child: TextField(
                       controller: _commentCtrl,
@@ -1894,8 +1949,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : Icon(Icons.send_rounded, color: theme.primary),
                   ),
-                ],
-              ),
+                ]),
+              ]),
             ),
           ),
         ],

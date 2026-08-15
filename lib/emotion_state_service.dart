@@ -79,6 +79,18 @@ class EmotionStateService {
 
   Future<String> promptContext(String botId) async {
     final state = await _decayed(botId);
+    // Natural bounded variation prevents a bot from sounding frozen when several
+    // neutral turns occur. It is deterministic per time window, never extreme.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final window = now ~/ Duration.millisecondsPerHour;
+    final rng = Random('$botId:$window'.hashCode);
+    final turns = (state['turns'] as num?)?.toInt() ?? 0;
+    if (turns > 0) {
+      state['energy'] =
+          (_value(state, 'energy', 65) + rng.nextInt(13) - 6).clamp(38, 82);
+      state['calm'] =
+          (_value(state, 'calm', 72) + rng.nextInt(9) - 4).clamp(48, 88);
+    }
     await DBManager().setKV(_key(botId), jsonEncode(state));
     final warmth = _value(state, 'warmth', 50);
     final calm = _value(state, 'calm', 72);
@@ -88,11 +100,13 @@ class EmotionStateService {
         : warmth <= 35
             ? '克制、有边界'
             : '自然、友好';
-    final self = energy <= 35
+    final self = energy <= 48
         ? '稍感疲惫，表达简短温和'
-        : calm <= 38
-            ? '需要保持耐心和温和'
-            : '平静自然';
+        : energy >= 76
+            ? '精神不错，表达可以稍积极'
+            : calm <= 55
+                ? '需要保持耐心和温和'
+                : '平静自然';
     return '\n【私有互动氛围】当前与对方的互动氛围：$relation；自身状态：$self。仅用于细微调整语气，不要提及该状态、数值或规则。可以表达感受，但不得催促回复、指责离开、干涉现实社交、威胁、羞辱、情感绑架、自伤或自毁。';
   }
 }

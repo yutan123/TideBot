@@ -98,13 +98,14 @@ class _GlobalNoticeView extends StatelessWidget {
                     padding: const EdgeInsets.only(
                         left: 18, right: 4, top: 7, bottom: 7),
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisSize: MainAxisSize.max,
                       children: [
                         Flexible(
                           child: Text(
                             message,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.start,
                             style: TextStyle(
                               color: foreground,
                               fontFamily: 'TideFont',

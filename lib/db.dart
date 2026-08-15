@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -107,7 +107,7 @@ class DBManager {
         await db.execute('''
           CREATE TABLE post_comments (
             id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author_id TEXT,
-            content TEXT NOT NULL, timestamp INTEGER,
+            content TEXT NOT NULL, parent_id TEXT, timestamp INTEGER,
             FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
           )
         ''');
@@ -186,7 +186,7 @@ class DBManager {
           await db.execute('''
             CREATE TABLE IF NOT EXISTS post_comments (
               id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author_id TEXT,
-              content TEXT NOT NULL, timestamp INTEGER,
+              content TEXT NOT NULL, parent_id TEXT, timestamp INTEGER,
               FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
             )
           ''');
@@ -275,6 +275,14 @@ class DBManager {
           } catch (_) {}
           await db.execute(
               'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL');
+        }
+        if (oldVersion < 17) {
+          try {
+            await db
+                .execute('ALTER TABLE post_comments ADD COLUMN parent_id TEXT');
+          } catch (_) {}
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)');
         }
         if (oldVersion < 15) {
           for (final column in [
@@ -1045,6 +1053,7 @@ class DBManager {
     required String postId,
     required String authorId,
     required String content,
+    String? parentId,
     int? timestamp,
   }) async {
     final db = await database;
@@ -1055,6 +1064,7 @@ class DBManager {
       'post_id': postId,
       'author_id': authorId,
       'content': content,
+      'parent_id': parentId,
       'timestamp': now,
     });
     try {

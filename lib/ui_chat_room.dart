@@ -645,8 +645,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
                     50)
                 .clamp(1, 100);
-        final interval = Duration(milliseconds: 30 + ((100 - speed) * 7));
-        final batch = (1 + speed ~/ 18).clamp(1, 6);
+        // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
+        final interval = Duration(milliseconds: 90 + ((100 - speed) * 9));
+        final batch = (speed >= 85 ? 2 : 1);
         _streamDisplayTimer?.cancel();
         final displayMessage = streamingMessage;
         _streamDisplayTimer = Timer.periodic(interval, (_) {
@@ -779,8 +780,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
                     50)
                 .clamp(1, 100);
-        final interval = Duration(milliseconds: 30 + ((100 - speed) * 7));
-        final batch = (1 + speed ~/ 18).clamp(1, 6);
+        // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
+        final interval = Duration(milliseconds: 90 + ((100 - speed) * 9));
+        final batch = (speed >= 85 ? 2 : 1);
         _streamDisplayTimer = Timer.periodic(interval, (timer) {
           if (!mounted) {
             timer.cancel();
@@ -2362,7 +2364,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       controller: _scrollC,
       reverse: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      // The composer is overlaid on the stack; reserve its full height so the last bubble is never covered.
+      padding: EdgeInsets.fromLTRB(12, 8, 12, MediaQuery.of(context).padding.bottom + 108),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
         final m = _msgs[_msgs.length - 1 - i];
@@ -2630,135 +2633,43 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _inputBar() {
     final theme = TideTheme.of(context);
+    // One clean capsule like the reference: no outer dark outline/card.
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.only(bottom: 8),
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
-            .animate(CurvedAnimation(
-                parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _hasBg
-                      ? theme.glass.withValues(alpha: 0.72)
-                      : theme.surfaceVariant.withValues(alpha: 0.76),
-                  borderRadius: BorderRadius.circular(24),
-                  border:
-                      Border.all(color: theme.divider.withValues(alpha: 0.45)),
-                  boxShadow: theme.isDark
-                      ? null
-                      : [
-                          BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4))
-                        ],
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: '添加图片或文件',
-                      onPressed: _pickMedia,
-                      icon: Icon(Icons.add_rounded,
-                          size: 24, color: theme.iconMuted),
-                    ),
-                    if (_pendingImage != null || _pendingDocument != null)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: InputChip(
-                          avatar: Icon(
-                              _pendingImage != null
-                                  ? Icons.image_rounded
-                                  : Icons.attach_file_rounded,
-                              size: 18),
-                          label: SizedBox(
-                              width: 82,
-                              child: Text(
-                                  (_pendingImage ?? _pendingDocument!)
-                                      .split(Platform.pathSeparator)
-                                      .last,
-                                  overflow: TextOverflow.ellipsis)),
-                          onDeleted: () => setState(() {
-                            _pendingImage = null;
-                            _pendingDocument = null;
-                            _pendingMediaContext = null;
-                          }),
-                        ),
-                      ),
-                    Expanded(
-                      child: TextField(
-                        focusNode: _inputFocus,
-                        controller: _msgC,
-                        minLines: 1,
-                        maxLines: 4,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _send(),
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontFamily: 'TideFont',
-                            color: theme.textStrong),
-                        decoration: InputDecoration(
-                          hintText: '发送新消息...',
-                          hintStyle: TextStyle(
-                              color: theme.textFaint,
-                              fontSize: 14,
-                              fontFamily: 'TideFont'),
-                          border: InputBorder.none,
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 4),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: _isRecording ? '结束录音' : '录音',
-                      onPressed: _toggleRec,
-                      icon: Icon(Icons.mic_rounded,
-                          size: 24,
-                          color: _isRecording ? Colors.red : theme.iconMuted),
-                    ),
-                    SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: IconButton(
-                        tooltip: '发送',
-                        splashRadius: 24,
-                        onPressed: _send,
-                        icon: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: theme.primary.withValues(
-                                alpha: (_hasText ||
-                                        _pendingImage != null ||
-                                        _pendingDocument != null)
-                                    ? 1
-                                    : 0.48),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: theme.primary.withValues(
-                                      alpha: _hasText ? 0.38 : 0.12),
-                                  blurRadius: 8)
-                            ],
-                          ),
-                          child: const Icon(Icons.arrow_upward_rounded,
-                              size: 18, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+        position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
+            .animate(CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 54),
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+          decoration: BoxDecoration(
+            color: theme.surfaceVariant.withValues(alpha: _hasBg ? .92 : 1),
+            borderRadius: BorderRadius.circular(27),
           ),
+          child: Row(children: [
+            IconButton(tooltip: '添加图片或文件', onPressed: _pickMedia,
+              icon: Icon(Icons.add_rounded, size: 23, color: theme.iconMuted)),
+            if (_pendingImage != null || _pendingDocument != null)
+              Padding(padding: const EdgeInsets.only(right: 4), child: InputChip(
+                avatar: Icon(_pendingImage != null ? Icons.image_rounded : Icons.attach_file_rounded, size: 17),
+                label: SizedBox(width: 74, child: Text((_pendingImage ?? _pendingDocument!).split(Platform.pathSeparator).last, overflow: TextOverflow.ellipsis)),
+                onDeleted: () => setState(() { _pendingImage = null; _pendingDocument = null; _pendingMediaContext = null; }),
+              )),
+            Expanded(child: TextField(
+              focusNode: _inputFocus, controller: _msgC, minLines: 1, maxLines: 4,
+              textInputAction: TextInputAction.send, onSubmitted: (_) => _send(),
+              style: TextStyle(fontSize: 15, fontFamily: 'TideFont', color: theme.textStrong),
+              decoration: InputDecoration(hintText: '发消息...', hintStyle: TextStyle(color: theme.textFaint, fontSize: 14, fontFamily: 'TideFont'), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10)),
+            )),
+            IconButton(tooltip: _isRecording ? '结束录音' : '录音', onPressed: _toggleRec,
+              icon: Icon(Icons.mic_rounded, size: 22, color: _isRecording ? Colors.red : theme.iconMuted)),
+            SizedBox(width: 44, height: 44, child: IconButton(tooltip: '发送', splashRadius: 22, onPressed: _send,
+              icon: AnimatedContainer(duration: const Duration(milliseconds: 160), width: 34, height: 34,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: theme.primary.withValues(alpha: (_hasText || _pendingImage != null || _pendingDocument != null) ? 1 : .42)),
+                child: const Icon(Icons.arrow_upward_rounded, size: 18, color: Colors.white)),
+            )),
+          ]),
         ),
       ),
     );

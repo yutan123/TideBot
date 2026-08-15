@@ -166,6 +166,11 @@ Future<void> _runDueProactiveReplies() async {
     if (unanswered >= 3) continue;
     try {
       final history = await db.getChatHistory(botId);
+      final lastAt = history.isEmpty
+          ? now
+          : ((history.last['timestamp'] as num?)?.toInt() ?? now);
+      final minutesSinceLast =
+          ((now - lastAt) ~/ Duration.millisecondsPerMinute).clamp(0, 10080);
       final recent = history.reversed
           .take(8)
           .map((m) =>
@@ -174,7 +179,8 @@ Future<void> _runDueProactiveReplies() async {
       final result = await AIManager()
           .sendMessage(
             botId: botId,
-            text: '【主动回复】请保持人设自然发一条不打扰的短消息（1-3句，80字内）；不要提及指令。最近对话：\n$recent',
+            text:
+                '【主动回复】现在已经过去 $minutesSinceLast 分钟了；你们已经 $minutesSinceLast 分钟未进行对话。你可以尝试开启新话题；如上次对话未完结，可围绕上次对话继续聊天。请保持人设自然发一条不打扰的短消息（1-3句，80字内）；不要提及指令。最近对话：\n$recent',
             persistResponse: true,
           )
           .timeout(const Duration(minutes: 5));

@@ -103,12 +103,11 @@ class AIManager {
         candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
     // Never attempt an empty primary. A configured backup must be usable even
     // when the bot has no primary model selected.
+    // Deterministic failover: exhaust the primary three times, then exhaust
+    // the backup three times. Do not silently mix providers mid-retry.
     final attempts = <Map<String, String>>[
-      if (configured(primary)) primary,
-      if (configured(backup)) backup,
-      if (configured(backup)) backup,
-      if (configured(primary) && !configured(backup)) primary,
-      if (configured(primary) && !configured(backup)) primary,
+      if (configured(primary)) ...[primary, primary, primary],
+      if (configured(backup)) ...[backup, backup, backup],
     ];
     if (attempts.isEmpty) {
       return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
@@ -138,7 +137,7 @@ class AIManager {
     }
     return {
       ...?lastFailure,
-      'error': '主模型和备用模型均请求失败（已自动尝试 3 次）。${lastFailure?['error'] ?? ''}',
+      'error': '主模型和备用模型均请求失败（主模型最多 3 次、备用模型最多 3 次）。${lastFailure?['error'] ?? ''}',
     };
   }
 
@@ -2331,204 +2330,25 @@ $transcript''';
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final modelName = model.split(',').first.trim();
     if (root.isEmpty || apiKey.trim().isEmpty || modelName.isEmpty) {
-      return {'capabilities': <String>[], 'error': '请填写 API 地址、Key 和模型名'};
+      return {'capabilities': <String>[], 'passed': false, 'error': '请填写 API 地址、Key 和模型名'};
     }
-    final headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $apiKey',
-    };
-    bool success(http.Response response) =>
-        response.statusCode >= 200 && response.statusCode < 300;
-
-    // 每个探测返回 (是否成功, 耗时毫秒)；失败也返回耗时便于诊断。
-    Future<Map<String, dynamic>> probe(
-        String name, Future<bool> Function() run) async {
-      final t0 = DateTime.now();
-      var ok = false;
-      var latency = 0;
-      try {
-        ok = await run();
-      } catch (_) {
-        ok = false;
+    final started = DateTime.now();
+    try {
+      final response = await http.post(Uri.parse('$root/chat/completions'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $apiKey'},
+        body: jsonEncode({'model': modelName, 'messages': [{'role': 'user', 'content': 'Reply with exactly: pong'}], 'max_tokens': 8, 'stream': false}),
+      ).timeout(const Duration(seconds: 25));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return {'capabilities': <String>[], 'passed': false, 'error': '聊天请求返回 HTTP ${response.statusCode}'};
       }
-      latency = DateTime.now().difference(t0).inMilliseconds;
-      return {'name': name, 'ok': ok, 'latency': latency};
+      final payload = jsonDecode(utf8.decode(response.bodyBytes));
+      final text = _extractChatContent(payload);
+      if (text.isEmpty) return {'capabilities': <String>[], 'passed': false, 'error': '聊天接口返回成功但没有可用文本'};
+      final latency = DateTime.now().difference(started).inMilliseconds;
+      return {'capabilities': ['文本'], 'passed': true, 'latencies': {'文本': latency}, 'fastest_latency': latency, 'fastest_name': '文本'};
+    } catch (e) {
+      return {'capabilities': <String>[], 'passed': false, 'error': '聊天测试失败：$e'};
     }
-
-    Future<bool> postJson(String path, Map<String, dynamic> body) async {
-      try {
-        final response = await http
-            .post(Uri.parse('$root$path'),
-                headers: headers, body: jsonEncode(body))
-            .timeout(const Duration(seconds: 20));
-        if (!success(response) || response.bodyBytes.isEmpty) return false;
-        try {
-          final body = jsonDecode(utf8.decode(response.bodyBytes));
-          if (body is! Map || body['error'] != null) return false;
-          if (path == '/chat/completions') {
-            final content =
-                body['choices'] is List && (body['choices'] as List).isNotEmpty
-                    ? ((body['choices'] as List).first as Map?)?['message']
-                            ?['content']
-                        ?.toString()
-                        .trim()
-                    : null;
-            return content != null && content.isNotEmpty;
-          }
-          if (path == '/images/generations') {
-            return body['data'] is List && (body['data'] as List).isNotEmpty;
-          }
-          return true;
-        } catch (_) {
-          return false;
-        }
-      } catch (_) {
-        return false;
-      }
-    }
-
-    Future<bool> stt() async {
-      try {
-        // A minimal valid PCM WAV avoids treating a missing multipart file as a test.
-        const wav = <int>[
-          82,
-          73,
-          70,
-          70,
-          36,
-          0,
-          0,
-          0,
-          87,
-          65,
-          86,
-          69,
-          102,
-          109,
-          116,
-          32,
-          16,
-          0,
-          0,
-          0,
-          1,
-          0,
-          1,
-          0,
-          128,
-          62,
-          0,
-          0,
-          0,
-          125,
-          0,
-          0,
-          2,
-          0,
-          16,
-          0,
-          100,
-          97,
-          116,
-          97,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-        ];
-        final request = http.MultipartRequest(
-            'POST', Uri.parse('$root/audio/transcriptions'))
-          ..headers['Authorization'] = 'Bearer $apiKey'
-          ..fields['model'] = modelName
-          ..files.add(http.MultipartFile.fromBytes('file', wav,
-              filename: 'tidebot-test.wav', contentType: null));
-        final response =
-            await request.send().timeout(const Duration(seconds: 20));
-        return response.statusCode >= 200 && response.statusCode < 300;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    const onePixel =
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
-
-    // 并发探测文本、STT、识图、生图四项能力，任意一项成功即判定通过，
-    // 并返回四项中「最快成功」的延迟（毫秒）。
-    final probes = await Future.wait<Map<String, dynamic>>([
-      probe(
-          '文本',
-          () => postJson('/chat/completions', {
-                'model': modelName,
-                'messages': [
-                  {'role': 'user', 'content': 'ping'}
-                ],
-                'max_tokens': 1,
-              })),
-      probe('STT', stt),
-      probe(
-          '识图',
-          () => postJson('/chat/completions', {
-                'model': modelName,
-                'messages': [
-                  {
-                    'role': 'user',
-                    'content': [
-                      {
-                        'type': 'text',
-                        'text': 'Describe this image in one word.'
-                      },
-                      {
-                        'type': 'image_url',
-                        'image_url': {'url': onePixel}
-                      },
-                    ],
-                  }
-                ],
-                'max_tokens': 8,
-              })),
-      probe(
-          '生图',
-          () => postJson('/images/generations', {
-                'model': modelName,
-                'prompt': 'A single blue pixel.',
-                'size': '256x256',
-                'n': 1,
-              })),
-    ]);
-
-    final capabilities = <String>[];
-    final latencies = <String, int>{};
-    int? fastest;
-    String? fastestName;
-    for (final p in probes) {
-      final name = p['name'] as String;
-      final ok = p['ok'] as bool;
-      final latency = p['latency'] as int;
-      latencies[name] = latency;
-      if (ok) {
-        capabilities.add(name);
-        if (fastest == null || latency < fastest) {
-          fastest = latency;
-          fastestName = name;
-        }
-      }
-    }
-
-    final passed = capabilities.isNotEmpty;
-    return {
-      'capabilities': capabilities,
-      'passed': passed,
-      'latencies': latencies,
-      'fastest_latency': fastest,
-      'fastest_name': fastestName,
-      // 任意成功即通过；全部失败才返回错误。
-      if (!passed) 'error': '接口拒绝了所有测试请求',
-    };
   }
 
   String _safetyContext(String userText) {
