@@ -1018,6 +1018,40 @@ class DBManager {
     }
   }
 
+  // STT is deliberately independent from chat providers. A chat endpoint is
+  // often OpenAI-compatible for completions but has no transcription route.
+  Future<List<Map<String, dynamic>>> querySttProviders() async {
+    final data = await getKV('stt_provider_list');
+    if (data == null || data.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(data) as List;
+      return decoded.whereType<Map>().map((raw) {
+        final m = Map<String, dynamic>.from(raw);
+        return {
+          'id': m['id']?.toString().isNotEmpty == true
+              ? m['id'].toString()
+              : 'stt_${m['name'] ?? m['url']}',
+          'type': 'stt',
+          'name': m['name'] ?? '',
+          'base_url': m['url'] ?? m['base_url'] ?? '',
+          'api_key': m['key'] ?? m['api_key'] ?? '',
+          'model': m['model'] ?? '',
+        };
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> getSttProviderById(String id) async {
+    final list = await querySttProviders();
+    try {
+      return list.firstWhere((p) => p['id'] == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ============ 统一 TTS 链路 provider 读取 ============
   // API 设置页把 TTS 提供商也存在 'tts_provider_list'（字段: name/url/key/model/voice）
   Future<List<Map<String, dynamic>>> queryTtsProviders() async {

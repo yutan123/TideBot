@@ -900,6 +900,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _scrollDown();
         }
       }
+      if (mounted) unawaited(DBManager().markBotRead(botId));
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
@@ -977,7 +978,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       }
       if (mounted) setState(() => _loading = false);
-      await _send(documents: [audioPath], mediaContext: modelContext);
+      // The audio message has already been persisted and rendered. Send only
+      // the transcript as model context so no duplicate document bubble exists.
+      await _send(mediaContext: modelContext, noUserBubble: true);
     } finally {
       if (mounted && !_loading) setState(() => _typing = false);
     }
@@ -1315,6 +1318,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // 需求#5显示模型名 / #6 TTS分开+音色 / #7 token实时反馈：统一改为 StatefulBuilder + 本地状态，点击即刷新
   void _showModelSettings() async {
     final providers = await DBManager().queryChatProviders();
+    final sttProviders = await DBManager().querySttProviders();
     final ttsProviders = await DBManager().queryTtsProviders();
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
@@ -1326,6 +1330,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String curBak = prefs.getString('backup_model_$botId') ?? '';
     String curVision = prefs.getString('vision_model_$botId') ?? '';
     String curImageGen = prefs.getString('image_gen_model_$botId') ?? '';
+    String curStt = prefs.getString('stt_model_$botId') ??
+        ((_bot['stt_model'] as String?)?.trim() ?? '');
     String curTts = prefs.getString('tts_model_$botId') ??
         ((_bot['tts_model'] as String?)?.isNotEmpty == true
             ? _bot['tts_model'] as String
@@ -1360,6 +1366,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 if (isTts && key == 'tts_model_$botId') {
                   _bot['tts_model'] = val;
                   await DBManager().updateBot(botId, {'tts_model': val});
+                }
+                if (key == 'stt_model_$botId') {
+                  _bot['stt_model'] = val;
+                  await DBManager().updateBot(botId, {'stt_model': val});
                 }
                 setSt(() {});
               }
@@ -1432,6 +1442,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         await pickModel('image_gen_model_$botId', v);
                       }),
                       // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
+                      _mLabel('STT模型'),
+                      _modelPicker(ctx, sttProviders, curStt, (v) async {
+                        curStt = v;
+                        await pickModel('stt_model_$botId', v);
+                      }),
                       _mLabel('TTS模型'),
                       _modelPicker(ctx, ttsProviders, curTts, (v) async {
                         curTts = v;
@@ -2174,10 +2189,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 这里只校验已选择的配置；当前没有实时 STT/TTS 运行时，
     // 因而不会开始录音、转写或播放伪造的通话音频。
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('stt_model_$botId');
-    final hasStt =
-        (_bot['chat_model']?.toString().trim().isNotEmpty ?? false) ||
-            (prefs.getString('local_chat_model_$botId') ?? '').isNotEmpty;
+    final hasStt = (prefs.getString('stt_model_$botId') ??
+            (_bot['stt_model']?.toString() ?? ''))
+        .isNotEmpty;
     final hasTts = (prefs.getString('tts_model_$botId') ??
             (_bot['tts_model']?.toString() ?? ''))
         .isNotEmpty;
@@ -2602,39 +2616,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   // 富文本解析：旁白括号灰化
   Widget _parseText(String text, bool isUser) {
+    final baseStyle = TextStyle(
+      color: isUser ? Colors.white : TideTheme.of(context).textStrong,
+      fontSize: 14,
+      fontFamily: 'TideFont',
+      height: 1.5,
+    );
     final spans = <TextSpan>[];
     final reg = RegExp(r'\(.*?\)');
     int last = 0;
     for (var m in reg.allMatches(text)) {
       if (m.start > last) {
-        spans.add(TextSpan(
-            text: text.substring(last, m.start),
-            style: TextStyle(
-                color: isUser ? Colors.white : TideTheme.of(context).textStrong,
-                fontSize: 14,
-                fontFamily: 'TideFont',
-                height: 1.65)));
+        spans.add(
+            TextSpan(text: text.substring(last, m.start), style: baseStyle));
       }
       spans.add(TextSpan(
           text: text.substring(m.start, m.end),
-          style: TextStyle(
+          style: baseStyle.copyWith(
               color: isUser
                   ? Colors.white.withValues(alpha: 0.6)
                   : TideTheme.of(context).textWeak,
               fontSize: 12,
-              fontFamily: 'TideFont',
-              fontStyle: FontStyle.italic,
-              height: 1.65)));
+              fontStyle: FontStyle.italic)));
       last = m.end;
     }
     if (last < text.length) {
-      spans.add(TextSpan(
-          text: text.substring(last),
-          style: TextStyle(
-              color: isUser ? Colors.white : TideTheme.of(context).textStrong,
-              fontSize: 14,
-              fontFamily: 'TideFont',
-              height: 1.65)));
+      spans.add(TextSpan(text: text.substring(last), style: baseStyle));
     }
     return Container(
         padding: const EdgeInsets.all(12),
@@ -2643,14 +2650,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 ? TideTheme.of(context).primary
                 : TideTheme.of(context).bubbleAi,
             borderRadius: BorderRadius.circular(16)),
-        child: RichText(text: TextSpan(children: spans)));
+        child: RichText(
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: false,
+              applyHeightToLastDescent: false,
+            ),
+            text: TextSpan(children: spans)));
   }
 
   Widget _attachmentPreview(dynamic theme) {
     final paths = [..._pendingImages, ..._pendingDocuments];
     if (paths.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 70,
+      height: 62,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: paths.length,
@@ -2659,7 +2671,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           final path = paths[index];
           final isImage = _pendingImages.contains(path);
           return SizedBox(
-            width: 70,
+            width: isImage ? 62 : 140,
             child: Stack(children: [
               Positioned.fill(
                 child: ClipRRect(

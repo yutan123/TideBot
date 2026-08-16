@@ -1748,6 +1748,7 @@ class ApiSettingsPage extends StatefulWidget {
 
 class _ApiSettingsPageState extends State<ApiSettingsPage> {
   List<Map<String, dynamic>> _providers = [];
+  List<Map<String, dynamic>> _sttProviders = [];
   List<Map<String, dynamic>> _ttsProviders = [];
   bool _loading = true;
   final Map<String, List<String>> _modelListCache = {};
@@ -1812,13 +1813,22 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   Future<void> _loadAll() async {
     final db = DBManager();
     final raw = await db.getKV('provider_list');
+    final sttRaw = await db.getKV('stt_provider_list');
     final ttsRaw = await db.getKV('tts_provider_list');
     List<Map<String, dynamic>> list = [];
+    List<Map<String, dynamic>> sttList = [];
     List<Map<String, dynamic>> ttsList = [];
     if (raw != null && raw.isNotEmpty) {
       try {
         final decoded = jsonDecode(raw) as List;
         list = decoded.map((e) => e as Map<String, dynamic>).toList();
+      } catch (_) {}
+    }
+    if (sttRaw != null && sttRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(sttRaw) as List;
+        sttList =
+            decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       } catch (_) {}
     }
     if (ttsRaw != null && ttsRaw.isNotEmpty) {
@@ -1830,6 +1840,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     if (mounted) {
       setState(() {
         _providers = list;
+        _sttProviders = sttList;
         _ttsProviders = ttsList;
         _loading = false;
       });
@@ -1842,6 +1853,11 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
           'provider_${DateTime.now().microsecondsSinceEpoch}_$i';
     }
     await DBManager().insertKV('provider_list', jsonEncode(_providers));
+    for (var i = 0; i < _sttProviders.length; i++) {
+      _sttProviders[i]['id'] ??=
+          'stt_${DateTime.now().microsecondsSinceEpoch}_$i';
+    }
+    await DBManager().insertKV('stt_provider_list', jsonEncode(_sttProviders));
     for (var i = 0; i < _ttsProviders.length; i++) {
       _ttsProviders[i]['id'] ??=
           'tts_${DateTime.now().microsecondsSinceEpoch}_$i';
@@ -1909,6 +1925,31 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                     color: TideTheme.of(context).primary)),
                             child: Center(
                                 child: Text('自定义',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        color: TideTheme.of(context).primary,
+                                        fontFamily: 'TideFont'))))),
+                    const SizedBox(height: 24),
+                    const Text('语音识别 (STT)',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 12),
+                    BouncyTap(
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showSttDialog('自定义 STT', '', '', '');
+                        },
+                        child: Container(
+                            width: double.infinity,
+                            height: 44,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: TideTheme.of(context).primary)),
+                            child: Center(
+                                child: Text('添加 STT 提供商',
                                     style: TextStyle(
                                         fontSize: 15,
                                         color: TideTheme.of(context).primary,
@@ -2031,6 +2072,66 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                     }))
                   ])
                 ])));
+  }
+
+  void _showSttDialog(String name, String url, String key, String model) {
+    final nCtrl = TextEditingController(text: name);
+    final uCtrl = TextEditingController(text: url);
+    final kCtrl = TextEditingController(text: key);
+    final mCtrl = TextEditingController(text: model);
+    TideDialogs.show(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.transparent,
+        contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(
+          context: ctx,
+          maxWidth: 0.9,
+          children: [
+            const Text('添加 STT 提供商',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 12),
+            _f('名称', nCtrl),
+            const SizedBox(height: 8),
+            _f('API 地址', uCtrl),
+            const SizedBox(height: 8),
+            _f('API Key', kCtrl, obscure: true),
+            const SizedBox(height: 8),
+            _f('STT 模型', mCtrl),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                  child: TideDialogs.glassButton('取消',
+                      onTap: () => Navigator.pop(ctx),
+                      color: TideTheme.of(context).buttonSecondary,
+                      textColor: TideTheme.of(context).textStrong)),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: TideDialogs.glassButton('添加', onTap: () {
+                if (uCtrl.text.trim().isEmpty ||
+                    kCtrl.text.trim().isEmpty ||
+                    mCtrl.text.trim().isEmpty) {
+                  GlobalNotice.show('请填写 API 地址、Key 和 STT 模型');
+                  return;
+                }
+                setState(() => _sttProviders.add({
+                      'name': nCtrl.text.trim(),
+                      'url': uCtrl.text.trim(),
+                      'key': kCtrl.text.trim(),
+                      'model': mCtrl.text.trim(),
+                      'id': 'stt_${DateTime.now().microsecondsSinceEpoch}',
+                    }));
+                Navigator.pop(ctx);
+                _saveList();
+              }))
+            ]),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showTtsDialog(
@@ -3080,7 +3181,8 @@ class _LocalModelPageState extends State<LocalModelPage> {
         if (!mounted) return;
         setState(() {
           if (state['installed'] == true) {
-            m['installed'] = false;
+            m['installed'] = true;
+            m['verificationError'] = '';
             m['downloading'] = false;
             m['progress'] = 1.0;
             m['receivedBytes'] = state['receivedBytes'] ?? m['receivedBytes'];

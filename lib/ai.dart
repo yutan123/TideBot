@@ -1190,30 +1190,42 @@ $transcript''';
     }
   }
 
-  /// Transcribes through the bot's selected chat provider using the standard
-  /// OpenAI-compatible endpoint. STT has no separate provider or model setting.
+  /// Transcribe with the bot's independently selected OpenAI-compatible STT
+  /// provider. MiMo's compatible endpoint uses this same multipart contract.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
   }) async {
     try {
       if (!await File(audioPath).exists()) return null;
-      final bot = await DBManager().getBotById(botId);
-      final providerId = bot?['chat_model']?.toString().trim() ?? '';
-      if (providerId.isEmpty) return null;
-      final provider = await DBManager().getChatProviderById(providerId);
-      if (provider == null) return null;
+      final db = DBManager();
+      final prefs = await SharedPreferences.getInstance();
+      final bot = await db.getBotById(botId);
+      final providerId = (prefs.getString('stt_model_$botId') ??
+              bot?['stt_model']?.toString() ??
+              '')
+          .trim();
+      if (providerId.isEmpty) {
+        AppLogService.instance.add('STT', '未为当前机器人选择 STT 服务');
+        return null;
+      }
+      final provider = await db.getSttProviderById(providerId);
+      if (provider == null) {
+        AppLogService.instance.add('STT', '未找到 STT 服务配置：$providerId');
+        return null;
+      }
       final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
           .toString()
           .trim()
           .replaceFirst(RegExp(r'/+$'), '');
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
-      if (baseUrl.isEmpty || model.isEmpty) return null;
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('$baseUrl/audio/transcriptions'),
-      )
-        ..headers['Authorization'] = 'Bearer ${provider['api_key']}'
+      final apiKey = provider['api_key']?.toString().trim() ?? '';
+      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) return null;
+      final endpoint = '$baseUrl/audio/transcriptions';
+      AppLogService.instance.add('STT',
+          '请求转写：provider=${provider['name'] ?? providerId}，model=$model，endpoint=$endpoint');
+      final request = http.MultipartRequest('POST', Uri.parse(endpoint))
+        ..headers['Authorization'] = 'Bearer $apiKey'
         ..fields['model'] = model
         ..fields['response_format'] = 'json'
         ..files.add(await http.MultipartFile.fromPath('file', audioPath));
@@ -1221,7 +1233,9 @@ $transcript''';
           await request.send().timeout(const Duration(seconds: 45));
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        AppLogService.instance.add('STT', '语音识别失败：HTTP ${response.statusCode}');
+        final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+        AppLogService.instance.add('STT',
+            '语音识别失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 300))}');
         return null;
       }
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
