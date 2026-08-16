@@ -60,9 +60,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   late AnimationController _bottomBarCtrl;
   bool _hasText = false;
-  // Attachment is staged beside the composer and sent only after explicit confirmation.
-  String? _pendingImage;
-  String? _pendingDocument;
+  // Attachments are staged above the composer and sent together on confirmation.
+  final List<String> _pendingImages = [];
+  final List<String> _pendingDocuments = [];
   String? _pendingMediaContext;
 
   // ===== 防抖/合并：请求代次 + 待重发队列 =====
@@ -455,23 +455,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   // ========== 发送消息 ==========
   Future<void> _send({
-    String? img,
-    String? document,
+    List<String>? images,
+    List<String>? documents,
     String? mediaContext,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
     bool noUserBubble = false,
   }) async {
     final text = _msgC.text.trim();
-    img ??= _pendingImage;
-    document ??= _pendingDocument;
+    images ??= List<String>.from(_pendingImages);
+    documents ??= List<String>.from(_pendingDocuments);
     mediaContext ??= _pendingMediaContext;
     if (text.isEmpty &&
-        img == null &&
-        document == null &&
+        images.isEmpty &&
+        documents.isEmpty &&
         mediaContext == null) {
       if (mounted) setState(() => _hasText = false);
       return;
     }
+    final primaryDocument = documents.isEmpty ? null : documents.first;
+    final attachmentPaths = [...images, ...documents];
 
     // 用户主动发言：清零主动回复未应答计数并重置计时。
     _onUserInteracted();
@@ -489,12 +491,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         'id': 'm_${now}_q',
         'bot_id': botId,
         'role': 'user',
-        'type':
-            document != null ? 'document' : (img != null ? 'image' : 'text'),
+        'type': attachmentPaths.isNotEmpty
+            ? (primaryDocument != null ? 'document' : 'image')
+            : 'text',
         'content': text,
-        'image': img,
-        'file_path': document ?? img,
-        'document_name': document?.split(Platform.pathSeparator).last,
+        'file_path': attachmentPaths.isEmpty ? null : attachmentPaths.join('|'),
+        'document_name': primaryDocument?.split(Platform.pathSeparator).last,
         'timestamp': now,
       };
       if (_queued) {
@@ -520,10 +522,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'id': mergedMsg['id'],
           'bot_id': botId,
           'role': 'user',
-          'type':
-              document != null ? 'document' : (img == null ? 'text' : 'image'),
+          'type': mergedMsg['type'],
           'content': text,
-          'file_path': document ?? img,
+          'file_path': mergedMsg['file_path'],
           'mood': null,
           'timestamp': now,
         }).timeout(const Duration(seconds: 12));
@@ -545,12 +546,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         'id': 'm_$now',
         'bot_id': botId,
         'role': 'user',
-        'type':
-            document != null ? 'document' : (img != null ? 'image' : 'text'),
+        'type': attachmentPaths.isNotEmpty
+            ? (primaryDocument != null ? 'document' : 'image')
+            : 'text',
         'content': text,
-        'image': img,
-        'file_path': document ?? img,
-        'document_name': document?.split(Platform.pathSeparator).last,
+        'file_path': attachmentPaths.isEmpty ? null : attachmentPaths.join('|'),
+        'document_name': primaryDocument?.split(Platform.pathSeparator).last,
         'timestamp': now,
       };
 
@@ -562,8 +563,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _msgsLoading = false;
           _msgs.add(msg);
           _msgC.clear();
-          _pendingImage = null;
-          _pendingDocument = null;
+          _pendingImages.clear();
+          _pendingDocuments.clear();
           _pendingMediaContext = null;
           _hasText = false;
         });
@@ -580,11 +581,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             'id': msg['id'],
             'bot_id': botId,
             'role': 'user',
-            'type': document != null
-                ? 'document'
-                : (img == null ? 'text' : 'image'),
+            'type': msg['type'],
             'content': text,
-            'file_path': document ?? img,
+            'file_path': msg['file_path'],
             'mood': null,
             'timestamp': now,
           }).timeout(const Duration(seconds: 12));
@@ -604,10 +603,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       }
 
-      final documentNotice = document == null
-          ? null
-          : await MediaPreprocessor().documentText(document);
-      final preparedContext = mediaContext ?? documentNotice;
+      final documentNotices = <String>[];
+      for (final path in documents) {
+        documentNotices.add(await MediaPreprocessor().documentText(path));
+      }
+      final attachmentNotice =
+          documentNotices.isEmpty ? null : documentNotices.join('\n\n');
+      final preparedContext = mediaContext ?? attachmentNotice;
       final modelText = preparedContext == null
           ? text
           : (text.isEmpty ? preparedContext : '$text\n$preparedContext');
@@ -615,15 +617,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // AIManager reads persisted, role-typed chat_history itself. _msgs contains
       // stream placeholders and animation-only segments, so it must not be reused
       // as a model transcript.
-      final history = <Map<String, dynamic>>[
-        {'role': 'user', 'content': modelText},
-      ];
-
-      var imgB64 = '';
-      if (img != null) {
-        imgB64 = base64Encode(await File(img).readAsBytes());
-      }
-
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
@@ -677,13 +670,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ? const Duration(minutes: 2)
           : const Duration(minutes: 5);
       final result = await AIManager()
-          .chatResult(
+          .sendMessage(
             botId: botId,
-            messages: history,
-            imageBase64: imgB64,
+            text: modelText,
+            imagePaths: images,
             persistResponse: persistThisReply,
-            // Keep transport non-streaming. The UI animates only the validated,
-            // persisted final reply after protocol filtering has completed.
+            onDelta: streamEnabled && localModelId.isEmpty
+                ? (delta) {
+                    receivedStreamDelta = true;
+                    pendingDisplay += delta;
+                  }
+                : null,
           )
           .timeout(requestTimeout);
 
@@ -980,7 +977,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       }
       if (mounted) setState(() => _loading = false);
-      await _send(document: audioPath, mediaContext: modelContext);
+      await _send(documents: [audioPath], mediaContext: modelContext);
     } finally {
       if (mounted && !_loading) setState(() => _typing = false);
     }
@@ -1093,39 +1090,54 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ]));
     if (r == 'img') {
       if (!await AppPermissions.photos(context, feature: '选择图片')) return;
-      final p = await ImagePicker().pickImage(source: ImageSource.gallery);
-      if (p != null) {
-        final fixed = await _fixHeic(p.path);
-        if (mounted) setState(() => _pendingImage = fixed);
+      final selected = await ImagePicker().pickMultiImage();
+      if (selected.isNotEmpty) {
+        final fixed = <String>[];
+        for (final image in selected) {
+          fixed.add(await _fixHeic(image.path));
+        }
+        if (mounted) setState(() => _pendingImages.addAll(fixed));
       }
     } else if (r == 'file') {
       try {
         await Permission.storage.request();
       } catch (_) {}
-      final fp = await FilePicker.platform.pickFiles();
-      final path = fp?.files.single.path;
-      if (path == null || path.isEmpty) return;
-      final extension = path.split('.').last.toLowerCase();
-      const imageExtensions = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'};
-      const videoExtensions = {'mp4', 'm4v', 'mov', 'webm', '3gp'};
-      const audioExtensions = {'m4a', 'mp3', 'wav', 'aac', 'ogg', 'opus'};
-      if (imageExtensions.contains(extension)) {
-        if (mounted) setState(() => _pendingImage = path);
-      } else if (videoExtensions.contains(extension)) {
-        if (mounted) setState(() => _pendingDocument = path);
-      } else if (audioExtensions.contains(extension)) {
-        final transcript = await AIManager().transcribeAudio(
-          botId: _bot['id']?.toString() ?? '',
-          audioPath: path,
-        );
-        await _send(
-          document: path,
-          mediaContext: transcript == null || transcript.isEmpty
-              ? '[已附加音频：${path.split(Platform.pathSeparator).last}。未配置 STT 模型或转写失败，无法向文本模型提供语音内容。]'
-              : '[音频转写]\\n$transcript',
-        );
-      } else {
-        if (mounted) setState(() => _pendingDocument = path);
+      final fp = await FilePicker.platform.pickFiles(allowMultiple: true);
+      final paths = fp?.files
+              .map((file) => file.path)
+              .whereType<String>()
+              .where((path) => path.isNotEmpty)
+              .toList() ??
+          const <String>[];
+      if (paths.isEmpty) return;
+      final stagedImages = <String>[];
+      final stagedDocuments = <String>[];
+      for (final path in paths) {
+        final extension = path.split('.').last.toLowerCase();
+        const imageExtensions = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'};
+        const audioExtensions = {'m4a', 'mp3', 'wav', 'aac', 'ogg', 'opus'};
+        if (imageExtensions.contains(extension)) {
+          stagedImages.add(path);
+        } else if (audioExtensions.contains(extension)) {
+          final transcript = await AIManager().transcribeAudio(
+            botId: _bot['id']?.toString() ?? '',
+            audioPath: path,
+          );
+          await _send(
+            documents: [path],
+            mediaContext: transcript == null || transcript.isEmpty
+                ? '[已附加音频：${path.split(Platform.pathSeparator).last}。未配置可用的语音识别服务或转写失败，无法向文本模型提供语音内容。]'
+                : '[音频转写]\n$transcript',
+          );
+        } else {
+          stagedDocuments.add(path);
+        }
+      }
+      if (mounted && (stagedImages.isNotEmpty || stagedDocuments.isNotEmpty)) {
+        setState(() {
+          _pendingImages.addAll(stagedImages);
+          _pendingDocuments.addAll(stagedDocuments);
+        });
       }
     }
   }
@@ -1314,7 +1326,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String curBak = prefs.getString('backup_model_$botId') ?? '';
     String curVision = prefs.getString('vision_model_$botId') ?? '';
     String curImageGen = prefs.getString('image_gen_model_$botId') ?? '';
-    String curStt = prefs.getString('stt_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ??
         ((_bot['tts_model'] as String?)?.isNotEmpty == true
             ? _bot['tts_model'] as String
@@ -1419,11 +1430,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       _modelPicker(ctx, providers, curImageGen, (v) async {
                         curImageGen = v;
                         await pickModel('image_gen_model_$botId', v);
-                      }),
-                      _mLabel('STT模型'),
-                      _modelPicker(ctx, providers, curStt, (v) async {
-                        curStt = v;
-                        await pickModel('stt_model_$botId', v);
                       }),
                       // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
                       _mLabel('TTS模型'),
@@ -2168,7 +2174,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 这里只校验已选择的配置；当前没有实时 STT/TTS 运行时，
     // 因而不会开始录音、转写或播放伪造的通话音频。
     final prefs = await SharedPreferences.getInstance();
-    final hasStt = (prefs.getString('stt_model_$botId') ?? '').isNotEmpty;
+    await prefs.remove('stt_model_$botId');
+    final hasStt =
+        (_bot['chat_model']?.toString().trim().isNotEmpty ?? false) ||
+            (prefs.getString('local_chat_model_$botId') ?? '').isNotEmpty;
     final hasTts = (prefs.getString('tts_model_$botId') ??
             (_bot['tts_model']?.toString() ?? ''))
         .isNotEmpty;
@@ -2604,7 +2613,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 color: isUser ? Colors.white : TideTheme.of(context).textStrong,
                 fontSize: 14,
                 fontFamily: 'TideFont',
-                height: 1.45)));
+                height: 1.65)));
       }
       spans.add(TextSpan(
           text: text.substring(m.start, m.end),
@@ -2615,7 +2624,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               fontSize: 12,
               fontFamily: 'TideFont',
               fontStyle: FontStyle.italic,
-              height: 1.45)));
+              height: 1.65)));
       last = m.end;
     }
     if (last < text.length) {
@@ -2624,7 +2633,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           style: TextStyle(
               color: isUser ? Colors.white : TideTheme.of(context).textStrong,
               fontSize: 14,
-              fontFamily: 'TideFont')));
+              fontFamily: 'TideFont',
+              height: 1.65)));
     }
     return Container(
         padding: const EdgeInsets.all(12),
@@ -2634,6 +2644,70 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 : TideTheme.of(context).bubbleAi,
             borderRadius: BorderRadius.circular(16)),
         child: RichText(text: TextSpan(children: spans)));
+  }
+
+  Widget _attachmentPreview(dynamic theme) {
+    final paths = [..._pendingImages, ..._pendingDocuments];
+    if (paths.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 70,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: paths.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final path = paths[index];
+          final isImage = _pendingImages.contains(path);
+          return SizedBox(
+            width: 70,
+            child: Stack(children: [
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: isImage
+                      ? Image.file(File(path), fit: BoxFit.cover)
+                      : Container(
+                          color: theme.surfaceVariant,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.all(6),
+                          child: Text(
+                            path.split(Platform.pathSeparator).last,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: theme.textWeak,
+                                fontFamily: 'TideFont'),
+                          ),
+                        ),
+                ),
+              ),
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => setState(() {
+                      _pendingImages.remove(path);
+                      _pendingDocuments.remove(path);
+                    }),
+                    child: const Padding(
+                      padding: EdgeInsets.all(3),
+                      child: Icon(Icons.close_rounded,
+                          size: 14, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            ]),
+          );
+        },
+      ),
+    );
   }
 
   Widget _inputBar() {
@@ -2653,84 +2727,72 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             color: theme.surfaceVariant.withValues(alpha: _hasBg ? .92 : 1),
             borderRadius: BorderRadius.circular(27),
           ),
-          child: Row(children: [
-            IconButton(
-                tooltip: '添加图片或文件',
-                onPressed: _pickMedia,
-                icon:
-                    Icon(Icons.add_rounded, size: 23, color: theme.iconMuted)),
-            if (_pendingImage != null || _pendingDocument != null)
-              Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: InputChip(
-                    avatar: Icon(
-                        _pendingImage != null
-                            ? Icons.image_rounded
-                            : Icons.attach_file_rounded,
-                        size: 17),
-                    label: SizedBox(
-                        width: 74,
-                        child: Text(
-                            (_pendingImage ?? _pendingDocument!)
-                                .split(Platform.pathSeparator)
-                                .last,
-                            overflow: TextOverflow.ellipsis)),
-                    onDeleted: () => setState(() {
-                      _pendingImage = null;
-                      _pendingDocument = null;
-                      _pendingMediaContext = null;
-                    }),
-                  )),
-            Expanded(
-                child: TextField(
-              focusNode: _inputFocus,
-              controller: _msgC,
-              minLines: 1,
-              maxLines: 4,
-              textInputAction: TextInputAction.newline,
-              style: TextStyle(
-                  fontSize: 15,
-                  fontFamily: 'TideFont',
-                  color: theme.textStrong),
-              decoration: InputDecoration(
-                  hintText: '发消息...',
-                  hintStyle: TextStyle(
-                      color: theme.textFaint,
-                      fontSize: 14,
-                      fontFamily: 'TideFont'),
-                  border: InputBorder.none,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 10)),
-            )),
-            IconButton(
-                tooltip: _isRecording ? '结束录音' : '录音',
-                onPressed: _toggleRec,
-                icon: Icon(Icons.mic_rounded,
-                    size: 22,
-                    color: _isRecording ? Colors.red : theme.iconMuted)),
-            SizedBox(
-                width: 44,
-                height: 44,
-                child: IconButton(
-                  tooltip: '发送',
-                  splashRadius: 22,
-                  onPressed: _send,
-                  icon: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: theme.primary.withValues(
-                              alpha: (_hasText ||
-                                      _pendingImage != null ||
-                                      _pendingDocument != null)
-                                  ? 1
-                                  : .42)),
-                      child: const Icon(Icons.arrow_upward_rounded,
-                          size: 18, color: Colors.white)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                  child: _attachmentPreview(theme),
+                ),
+              Row(children: [
+                IconButton(
+                    tooltip: '添加图片或文件',
+                    onPressed: _pickMedia,
+                    icon: Icon(Icons.add_rounded,
+                        size: 23, color: theme.iconMuted)),
+                Expanded(
+                    child: TextField(
+                  focusNode: _inputFocus,
+                  controller: _msgC,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.newline,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontFamily: 'TideFont',
+                      color: theme.textStrong),
+                  decoration: InputDecoration(
+                      hintText: '发消息...',
+                      hintStyle: TextStyle(
+                          color: theme.textFaint,
+                          fontSize: 14,
+                          fontFamily: 'TideFont'),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 10)),
                 )),
-          ]),
+                IconButton(
+                    tooltip: _isRecording ? '结束录音' : '录音',
+                    onPressed: _toggleRec,
+                    icon: Icon(Icons.mic_rounded,
+                        size: 22,
+                        color: _isRecording ? Colors.red : theme.iconMuted)),
+                SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: IconButton(
+                      tooltip: '发送',
+                      splashRadius: 22,
+                      onPressed: _send,
+                      icon: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: theme.primary.withValues(
+                                  alpha: (_hasText ||
+                                          _pendingImages.isNotEmpty ||
+                                          _pendingDocuments.isNotEmpty)
+                                      ? 1
+                                      : .42)),
+                          child: const Icon(Icons.arrow_upward_rounded,
+                              size: 18, color: Colors.white)),
+                    )),
+              ]),
+            ],
+          ),
         ),
       ),
     );

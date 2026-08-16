@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -75,6 +74,7 @@ class AIManager {
     required String botId,
     required String text,
     String? imagePath,
+    List<String>? imagePaths,
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
@@ -117,10 +117,15 @@ class AIManager {
     Map<String, dynamic>? lastFailure;
     for (var index = 0; index < attempts.length; index++) {
       final candidate = attempts[index];
+      final selectedImagePaths = <String>[
+        if (imagePath?.isNotEmpty == true) imagePath!,
+        ...?imagePaths,
+      ];
       final result = await _sendMessageOnce(
         botId: botId,
         text: text,
-        imagePath: imagePath,
+        imagePath: selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+        imagePaths: selectedImagePaths,
         activeGame: activeGame,
         persistResponse: persistResponse,
         includeChatHistory: includeChatHistory,
@@ -198,6 +203,7 @@ class AIManager {
     required String botId,
     required String text,
     String? imagePath,
+    List<String> imagePaths = const [],
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
@@ -239,7 +245,26 @@ class AIManager {
                 msg['error_log']?.toString().isNotEmpty != true &&
                 msg['error_code']?.toString().isNotEmpty != true)
             .toList();
-        final selected = recentHistory.reversed.take(20).toList().reversed;
+        final maxContext = (prefs.getInt('max_token_$botId') ??
+                bot['max_tokens'] as int? ??
+                10000)
+            .clamp(1000, 128000);
+        final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
+        final selectedReversed = <Map<String, dynamic>>[];
+        var usedTokens = 0;
+        for (final msg in recentHistory.reversed) {
+          final content = msg['content']?.toString().trim() ?? '';
+          if (content.isEmpty) continue;
+          final tokens = estimateTokens(content);
+          if (usedTokens + tokens > historyBudget) break;
+          selectedReversed.add(msg);
+          usedTokens += tokens;
+        }
+        final selected = selectedReversed.reversed.toList();
+        AppLogService.instance.add(
+          'CONTEXT',
+          '本地模型上下文：历史 ${selected.length}/${recentHistory.length} 条，估算 $usedTokens/$historyBudget token${selected.length < recentHistory.length ? '，已截断较早历史' : ''}',
+        );
         for (final msg in selected) {
           final role =
               msg['role']?.toString() == 'assistant' ? 'assistant' : 'user';
@@ -441,6 +466,17 @@ class AIManager {
       usedTokens += tokens;
     }
     messages.addAll(historyMessages.reversed);
+    final eligibleHistoryCount = history
+        .where((msg) =>
+            msg['type'] == 'text' &&
+            msg['error_log']?.toString().isNotEmpty != true &&
+            msg['error_code']?.toString().isNotEmpty != true &&
+            (msg['content']?.toString().trim().isNotEmpty ?? false))
+        .length;
+    AppLogService.instance.add(
+      'CONTEXT',
+      '远程模型上下文：历史 ${historyMessages.length}/$eligibleHistoryCount 条，估算 $usedTokens/$historyBudget token${historyMessages.length < eligibleHistoryCount ? '，已截断较早历史' : ''}',
+    );
     var lastIsCurrentUser = false;
     // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
     // 标记以免下方再次追加造成重复喂给模型
@@ -451,32 +487,33 @@ class AIManager {
         lastIsCurrentUser = true;
       }
     }
-    // 图片先交给明确配置的视觉模型转述，再将转述交给聊天模型；
-    // 未配置视觉模型时仅使用本地 OCR/元数据，绝不把普通聊天模型当作视觉模型。
-    if (imagePath != null && imagePath.isNotEmpty) {
-      String mediaContext;
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
-        if (visionId.isNotEmpty) {
-          final visionProvider = await db.getChatProviderById(visionId);
-          if (visionProvider != null) {
-            mediaContext = await _describeImage(
-              provider: visionProvider,
-              imagePath: imagePath,
-              userText: text,
-            );
-          } else {
-            mediaContext =
-                await MediaPreprocessor().imageFallbackText(imagePath);
-          }
-        } else {
-          mediaContext = await MediaPreprocessor().imageFallbackText(imagePath);
+    // Images are described independently so every attachment reaches the model.
+    final effectiveImagePaths = imagePaths.isNotEmpty
+        ? imagePaths
+        : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
+    if (effectiveImagePaths.isNotEmpty) {
+      final mediaDescriptions = <String>[];
+      for (var index = 0; index < effectiveImagePaths.length; index++) {
+        final path = effectiveImagePaths[index];
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final visionId =
+              (prefs.getString('vision_model_$botId') ?? '').trim();
+          final visionProvider =
+              visionId.isEmpty ? null : await db.getChatProviderById(visionId);
+          final description = visionProvider == null
+              ? await MediaPreprocessor().imageFallbackText(path)
+              : await _describeImage(
+                  provider: visionProvider,
+                  imagePath: path,
+                  userText: text,
+                );
+          mediaDescriptions.add('[图片 ${index + 1}] $description');
+        } catch (e) {
+          mediaDescriptions.add('[图片 ${index + 1} 预处理失败：$e]');
         }
-      } catch (e) {
-        mediaContext = '[图片预处理失败：$e]';
       }
-      final contentWithMedia = '$text\n\n$mediaContext';
+      final contentWithMedia = '$text\n\n${mediaDescriptions.join('\n\n')}';
       if (lastIsCurrentUser && messages.isNotEmpty) {
         // 当前用户消息已从数据库进入上下文时，替换其内容而非重复追加。
         messages[messages.length - 1] = {
@@ -1153,53 +1190,25 @@ $transcript''';
     }
   }
 
-  /// Transcribes an audio file through an OpenAI-compatible provider selected
-
-  /// in the bot's STT setting. Returns null for missing configuration, unsupported
-  /// providers, or request failures so callers can preserve the original recording.
+  /// Transcribes through the bot's selected chat provider using the standard
+  /// OpenAI-compatible endpoint. STT has no separate provider or model setting.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
   }) async {
     try {
+      if (!await File(audioPath).exists()) return null;
       final bot = await DBManager().getBotById(botId);
-      final prefs = await SharedPreferences.getInstance();
-      // STT selection is currently persisted per bot in preferences by the
-      // model settings page; keep the database field as a compatibility fallback.
-      final providerId = (prefs.getString('stt_model_$botId') ??
-              bot?['stt_model']?.toString() ??
-              '')
-          .trim();
-      if (providerId.isEmpty || !await File(audioPath).exists()) return null;
-
-      final provider = await _findSpeechProvider(providerId);
-      if (provider == null) {
-        AppLogService.instance.add('STT', '语音识别未请求：找不到绑定的 STT 服务商 $providerId');
-        return null;
-      }
-      final baseUrl = provider['base_url']
-              ?.toString()
-              .trim()
-              .replaceFirst(RegExp(r'/+$'), '') ??
-          '';
+      final providerId = bot?['chat_model']?.toString().trim() ?? '';
+      if (providerId.isEmpty) return null;
+      final provider = await DBManager().getChatProviderById(providerId);
+      if (provider == null) return null;
+      final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
+          .toString()
+          .trim()
+          .replaceFirst(RegExp(r'/+$'), '');
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
       if (baseUrl.isEmpty || model.isEmpty) return null;
-
-      final providerName = (provider['name'] ?? '').toString().toLowerCase();
-      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com') ||
-          providerName.contains('百炼') ||
-          providerName.contains('dashscope') ||
-          model.toLowerCase().contains('paraformer') ||
-          model.toLowerCase().contains('fun-asr');
-      if (isDashScope) {
-        if (model.toLowerCase().contains('-realtime')) {
-          return await _transcribeDashScopeRealtime(
-              provider: provider, model: model, audioPath: audioPath);
-        }
-        return await _transcribeDashScope(
-            provider: provider, model: model, audioPath: audioPath);
-      }
-
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/audio/transcriptions'),
@@ -1211,293 +1220,17 @@ $transcript''';
       final streamed =
           await request.send().timeout(const Duration(seconds: 45));
       final response = await http.Response.fromStream(streamed);
-      if (response.statusCode != 200) return null;
-
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        AppLogService.instance.add('STT', '语音识别失败：HTTP ${response.statusCode}');
+        return null;
+      }
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      final text = decoded is Map ? decoded['text']?.toString().trim() : null;
-      return text == null || text.isEmpty ? null : text;
+      final transcript =
+          decoded is Map ? decoded['text']?.toString().trim() : '';
+      return transcript == null || transcript.isEmpty ? null : transcript;
     } catch (e) {
-      print('[stt] transcription failed: $e');
+      AppLogService.instance.add('STT', '语音识别异常：$e');
       return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> _findSpeechProvider(String providerId) async {
-    final db = DBManager();
-    final providers = <Map<String, dynamic>>[
-      ...await db.queryChatProviders(),
-      ...await db.queryTtsProviders(),
-    ];
-    try {
-      return providers.firstWhere((provider) => provider['id'] == providerId);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// DashScope Paraformer only accepts a URL. Upload the local recording to
-  /// DashScope's temporary OSS area, submit an async task, poll it, then fetch
-  /// the transcription JSON returned by the service.
-  Future<String?> _transcribeDashScope({
-    required Map<String, dynamic> provider,
-    required String model,
-    required String audioPath,
-  }) async {
-    final apiKey = provider['api_key']?.toString().trim() ?? '';
-    if (apiKey.isEmpty) return null;
-    final selectedModel = model.trim().isEmpty ? 'paraformer-v2' : model.trim();
-    try {
-      final policyResponse = await http.get(
-        Uri.parse('https://dashscope.aliyuncs.com/api/v1/uploads').replace(
-          queryParameters: {'action': 'getPolicy', 'model': selectedModel},
-        ),
-        headers: {'Authorization': 'Bearer $apiKey'},
-      ).timeout(const Duration(seconds: 30));
-      if (policyResponse.statusCode != 200) {
-        AppLogService.instance
-            .add('STT', '百炼文件上传凭证失败：HTTP ${policyResponse.statusCode}');
-        return null;
-      }
-      final policyJson = jsonDecode(utf8.decode(policyResponse.bodyBytes));
-      final policy = policyJson is Map ? policyJson['data'] : null;
-      if (policy is! Map) return null;
-      final fileName = audioPath.split(Platform.pathSeparator).last;
-      final objectKey = '${policy['upload_dir']}/$fileName';
-      final upload = http.MultipartRequest(
-          'POST', Uri.parse(policy['upload_host'].toString()))
-        ..fields.addAll({
-          'OSSAccessKeyId': policy['oss_access_key_id'].toString(),
-          'Signature': policy['signature'].toString(),
-          'policy': policy['policy'].toString(),
-          'x-oss-object-acl': policy['x_oss_object_acl'].toString(),
-          'x-oss-forbid-overwrite': policy['x_oss_forbid_overwrite'].toString(),
-          'key': objectKey,
-          'success_action_status': '200',
-        })
-        ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-      final uploadResponse =
-          await upload.send().timeout(const Duration(seconds: 60));
-      if (uploadResponse.statusCode != 200) {
-        AppLogService.instance
-            .add('STT', '百炼录音上传失败：HTTP ${uploadResponse.statusCode}');
-        return null;
-      }
-      final headers = {
-        'Authorization': 'Bearer $apiKey',
-        'Content-Type': 'application/json',
-        'X-DashScope-Async': 'enable',
-        'X-DashScope-OssResourceResolve': 'enable',
-      };
-      const endpoint =
-          'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
-      final submit = await http
-          .post(Uri.parse(endpoint),
-              headers: headers,
-              body: jsonEncode({
-                'model': selectedModel,
-                'input': {
-                  'file_urls': ['oss://$objectKey']
-                },
-              }))
-          .timeout(const Duration(seconds: 30));
-      if (submit.statusCode != 200) {
-        AppLogService.instance
-            .add('STT', '百炼识别任务提交失败：HTTP ${submit.statusCode}');
-        return null;
-      }
-      final submitJson = jsonDecode(utf8.decode(submit.bodyBytes));
-      final output = submitJson is Map ? submitJson['output'] : null;
-      final taskId = output is Map ? output['task_id']?.toString() ?? '' : '';
-      if (taskId.isEmpty) return null;
-      for (var attempt = 0; attempt < 45; attempt++) {
-        await Future<void>.delayed(const Duration(seconds: 1));
-        final poll = await http.post(
-            Uri.parse('https://dashscope.aliyuncs.com/api/v1/tasks/$taskId'),
-            headers: {
-              'Authorization': 'Bearer $apiKey'
-            }).timeout(const Duration(seconds: 15));
-        if (poll.statusCode != 200) continue;
-        final pollJson = jsonDecode(utf8.decode(poll.bodyBytes));
-        final pollOutput = pollJson is Map ? pollJson['output'] : null;
-        if (pollOutput is! Map) continue;
-        final status = pollOutput['task_status']?.toString() ?? '';
-        if (status == 'FAILED' || status == 'CANCELED') return null;
-        if (status != 'SUCCEEDED') continue;
-        final results = pollOutput['results'];
-        if (results is! List || results.isEmpty || results.first is! Map) {
-          return null;
-        }
-        final resultUrl =
-            (results.first as Map)['transcription_url']?.toString() ?? '';
-        if (resultUrl.isEmpty) return null;
-        final result = await http
-            .get(Uri.parse(resultUrl))
-            .timeout(const Duration(seconds: 30));
-        if (result.statusCode != 200) return null;
-        final decoded = jsonDecode(utf8.decode(result.bodyBytes));
-        final transcripts = decoded is Map ? decoded['transcripts'] : null;
-        if (transcripts is List) {
-          final text = transcripts
-              .whereType<Map>()
-              .map((item) => item['text'] ?? item['transcript'] ?? '')
-              .join('\n')
-              .trim();
-          if (text.isNotEmpty) return text;
-        }
-        final channels = decoded is Map ? decoded['channels'] : null;
-        if (channels is List) {
-          final text = channels
-              .whereType<Map>()
-              .map((item) => item['transcript'] ?? item['text'] ?? '')
-              .join('\n')
-              .trim();
-          return text.isEmpty ? null : text;
-        }
-        return null;
-      }
-      AppLogService.instance.add('STT', '百炼识别任务等待超时');
-      return null;
-    } catch (e) {
-      AppLogService.instance.add('STT', '百炼录音识别失败：$e');
-      return null;
-    }
-  }
-
-  Future<WebSocket> _dashScopeSocket(String apiKey, String model) =>
-      WebSocket.connect(
-          'wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${Uri.encodeQueryComponent(model)}',
-          headers: {'Authorization': 'Bearer $apiKey'});
-
-  Future<String?> _generateDashScopeRealtimeTTS(
-      {required String text,
-      required String apiKey,
-      required String model,
-      required String voice}) async {
-    WebSocket? socket;
-    try {
-      socket = await _dashScopeSocket(apiKey, model)
-          .timeout(const Duration(seconds: 20));
-      socket.add(jsonEncode({
-        'type': 'session.update',
-        'session': {
-          'modalities': ['text', 'audio'],
-          'voice': voice,
-          'output_audio_format': 'pcm16'
-        }
-      }));
-      socket.add(jsonEncode({
-        'type': 'conversation.item.create',
-        'item': {
-          'type': 'message',
-          'role': 'user',
-          'content': [
-            {'type': 'input_text', 'text': text}
-          ]
-        }
-      }));
-      socket.add(jsonEncode({
-        'type': 'response.create',
-        'response': {
-          'modalities': ['audio']
-        }
-      }));
-      final pcm = <int>[];
-      await for (final frame in socket.timeout(const Duration(seconds: 45))) {
-        if (frame is! String) continue;
-        final event = jsonDecode(frame);
-        final type = event['type']?.toString() ?? '';
-        final delta =
-            event['delta']?.toString() ?? event['audio']?.toString() ?? '';
-        if ((type.contains('audio.delta') || type.contains('audio')) &&
-            delta.isNotEmpty) {
-          try {
-            pcm.addAll(base64Decode(delta));
-          } catch (_) {}
-        }
-        if (type == 'response.done' || type.contains('response.completed'))
-          break;
-      }
-      if (pcm.isEmpty) return null;
-      final dir = await getTemporaryDirectory();
-      final file = File(
-          '${dir.path}/tide_realtime_${DateTime.now().millisecondsSinceEpoch}.wav');
-      final header = BytesBuilder()
-        ..add(utf8.encode('RIFF'))
-        ..add(_u32(pcm.length + 36))
-        ..add(utf8.encode('WAVEfmt '))
-        ..add(_u32(16))
-        ..add([1, 0, 1, 0])
-        ..add(_u32(24000))
-        ..add(_u32(48000))
-        ..add([2, 0, 16, 0])
-        ..add(utf8.encode('data'))
-        ..add(_u32(pcm.length))
-        ..add(pcm);
-      await file.writeAsBytes(header.toBytes());
-      return file.path;
-    } catch (e) {
-      AppLogService.instance.add('TTS', '百炼实时 TTS 失败：$e');
-      return null;
-    } finally {
-      try {
-        await socket?.close();
-      } catch (_) {}
-    }
-  }
-
-  List<int> _u32(int n) =>
-      [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255];
-
-  Future<String?> _transcribeDashScopeRealtime(
-      {required Map<String, dynamic> provider,
-      required String model,
-      required String audioPath}) async {
-    WebSocket? socket;
-    try {
-      final key = provider['api_key']?.toString() ?? '';
-      if (key.isEmpty) return null;
-      socket = await _dashScopeSocket(key, model)
-          .timeout(const Duration(seconds: 20));
-      final audio = base64Encode(await File(audioPath).readAsBytes());
-      socket.add(jsonEncode({
-        'type': 'session.update',
-        'session': {
-          'modalities': ['text']
-        }
-      }));
-      socket.add(jsonEncode({
-        'type': 'conversation.item.create',
-        'item': {
-          'type': 'message',
-          'role': 'user',
-          'content': [
-            {'type': 'input_audio', 'audio': audio}
-          ]
-        }
-      }));
-      socket.add(jsonEncode({
-        'type': 'response.create',
-        'response': {
-          'modalities': ['text']
-        }
-      }));
-      final out = StringBuffer();
-      await for (final frame in socket.timeout(const Duration(seconds: 60))) {
-        if (frame is! String) continue;
-        final event = jsonDecode(frame);
-        final type = event['type']?.toString() ?? '';
-        if (type.contains('text.delta')) out.write(event['delta'] ?? '');
-        if (type == 'response.done' || type.contains('response.completed'))
-          break;
-      }
-      return out.toString().trim().isEmpty ? null : out.toString().trim();
-    } catch (e) {
-      AppLogService.instance.add('STT', '百炼实时 STT 失败：$e');
-      return null;
-    } finally {
-      try {
-        await socket?.close();
-      } catch (_) {}
     }
   }
 
@@ -1529,28 +1262,9 @@ $transcript''';
     }
 
     try {
-      final providerName = (provider['name'] ?? '').toString().toLowerCase();
-      final isDashScope = baseUrl.contains('dashscope.aliyuncs.com') ||
-          providerName.contains('百炼') ||
-          providerName.contains('dashscope') ||
-          model.toLowerCase().contains('sambert') ||
-          model.toLowerCase().contains('cosyvoice') ||
-          model.toLowerCase().contains('qwen-tts') ||
-          model.toLowerCase().contains('qwen3-tts');
-      final isRealtime =
-          isDashScope && model.toLowerCase().contains('-realtime');
-      // DashScope's regular synthesis service is separate from its legacy
-      // text-to-wav endpoint. Realtime models require the WebSocket protocol;
-      // keep their endpoint visible in logs instead of silently sending a bad HTTP request.
-      final endpoint = isDashScope
-          ? 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesis'
-          : '$baseUrl/audio/speech';
-      if (isRealtime) {
-        return await _generateDashScopeRealtimeTTS(
-            text: text, apiKey: apiKey, model: model, voice: voice);
-      }
+      final endpoint = '$baseUrl/audio/speech';
       AppLogService.instance.add('TTS',
-          '请求语音：provider=${provider['name'] ?? providerId}，model=$model，dashscope=$isDashScope，endpoint=$endpoint，文本 ${text.length} 字');
+          '请求语音：provider=${provider['name'] ?? providerId}，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
       final res = await http
           .post(
             Uri.parse(endpoint),
@@ -1558,13 +1272,7 @@ $transcript''';
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $apiKey',
             },
-            body: jsonEncode(isDashScope
-                ? {
-                    'model': model,
-                    'input': {'text': text, 'voice': voice},
-                    'parameters': {'format': 'wav'},
-                  }
-                : {'model': model, 'input': text, 'voice': voice}),
+            body: jsonEncode({'model': model, 'input': text, 'voice': voice}),
           )
           .timeout(const Duration(seconds: 30));
       AppLogService.instance.add('TTS',
@@ -1652,7 +1360,7 @@ $transcript''';
     final res = await sendMessage(
         botId: botId,
         text:
-            '请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
+            '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
         persistResponse: false,
         includeChatHistory: false,
         enableAutoSummary: false);
@@ -2630,7 +2338,7 @@ $transcript''';
         "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
         "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
         "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|京太郎每天睡够8小时]。长期记忆正文要自然、稳定，绝对不要出现“我记得”“我知道”这类口头语；也绝不能出现“今天、昨天、明天、近日、上周、刚才、现在”等任何时间相关词汇。称呼用户时，若已知道对方的名字/称呼就必须用那个称呼（如“京太郎”），绝不能用“用户”这两个字。\n"
-        "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词，例如 [记忆:昨天下午我们一起在公园散步了]。\n"
+        "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词。标签内只能写本轮对话中明确陈述的真实内容；格式说明不是事实，绝不能把任何示例、假设或模型自行补全的情节写入记忆。\n"
         "一条记忆一个标签，多条则连续输出；记忆整体用第一人称写，但不必在句首硬加“我”（例如直接写“京太郎每天睡够8小时”而不是“我京太郎每天睡够8小时”）。称呼用户时不要用第二人称“你”，也禁止出现“用户”这个词：已知用户的名字就写名字，不知道性别就写“他”，从聊天中推断出性别后写“他/她”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
 
     if (activeGame == 'poker') {

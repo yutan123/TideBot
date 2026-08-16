@@ -235,11 +235,12 @@ class LifeScheduleService {
 
   Future<void> runDueEndEvents({DateTime? now}) async {
     if (!await enabled()) return;
+    final db = DBManager();
+    if (await db.getKV('proactive_reply') == 'false') return;
     final current = now ?? DateTime.now();
     final key = dateKey(current);
     final nowText =
         '${current.hour.toString().padLeft(2, '0')}:${current.minute.toString().padLeft(2, '0')}';
-    final db = DBManager();
     for (final bot in await db.getAllBots()) {
       final botId = bot['id']?.toString() ?? '';
       final row = await db.getLifeSchedule(botId, key);
