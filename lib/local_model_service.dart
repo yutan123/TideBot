@@ -237,9 +237,7 @@ class LocalModelService {
         throw const FileSystemException('下载不完整，将保留进度以便下次继续');
       }
       if (await target.exists()) await target.delete();
-      if (await part.exists()) await part.delete();
       await part.rename(target.path);
-      await _clearDownloadState(id);
       // 校验下载完成的 GGUF 头部魔数，防止损坏文件被误判为已安装。
       final magicOk = await _hasGgufMagic(target);
       if (!magicOk) {
@@ -248,6 +246,7 @@ class LocalModelService {
         } catch (_) {}
         throw const FileSystemException('下载文件头部校验失败，已清理，请重新下载。');
       }
+      await _clearDownloadState(id);
       dl.value = false;
       p.value = 1.0;
       _completed.add(id);

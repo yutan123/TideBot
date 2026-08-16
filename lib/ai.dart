@@ -1189,8 +1189,8 @@ $transcript''';
       final isDashScope = baseUrl.contains('dashscope.aliyuncs.com') ||
           providerName.contains('百炼') ||
           providerName.contains('dashscope') ||
-          model.toLowerCase().contains('sambert') ||
-          model.toLowerCase().contains('cosyvoice');
+          model.toLowerCase().contains('paraformer') ||
+          model.toLowerCase().contains('fun-asr');
       if (isDashScope) {
         if (model.toLowerCase().contains('-realtime')) {
           return await _transcribeDashScopeRealtime(
@@ -1235,10 +1235,9 @@ $transcript''';
     }
   }
 
-  /// 阿里云百炼 DashScope 录音文件识别。
-  /// 百炼不是 OpenAI 的 multipart `/audio/transcriptions` 协议：优先使用
-  /// paraformer + `input.audio` 的 JSON 专属请求。为兼容旧网关，专属请求
-  /// 被拒绝时才退回旧的 multipart 形式。
+  /// DashScope Paraformer only accepts a URL. Upload the local recording to
+  /// DashScope's temporary OSS area, submit an async task, poll it, then fetch
+  /// the transcription JSON returned by the service.
   Future<String?> _transcribeDashScope({
     required Map<String, dynamic> provider,
     required String model,
@@ -1246,90 +1245,120 @@ $transcript''';
   }) async {
     final apiKey = provider['api_key']?.toString().trim() ?? '';
     if (apiKey.isEmpty) return null;
-    const endpoint =
-        'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
-    final selectedModel = model.trim().isEmpty ? 'paraformer' : model.trim();
-
-    String? extractText(dynamic decoded) {
-      if (decoded is! Map) return null;
-      final output = decoded['output'];
-      String? text = decoded['text']?.toString();
-      if (output is Map) {
-        text ??=
-            output['text']?.toString() ?? output['transcription']?.toString();
-        if (text == null || text.isEmpty) {
-          final sentences =
-              output['sentence'] ?? output['sentences'] ?? output['results'];
-          if (sentences is List) {
-            text = sentences
-                .map(
-                    (item) => item is Map ? item['text']?.toString() ?? '' : '')
-                .where((item) => item.isNotEmpty)
-                .join('');
-          }
-        }
-      }
-      final trimmed = text?.trim() ?? '';
-      return trimmed.isEmpty ? null : trimmed;
-    }
-
+    final selectedModel = model.trim().isEmpty ? 'paraformer-v2' : model.trim();
     try {
-      final audioBytes = await File(audioPath).readAsBytes();
-      final extension = audioPath.split('.').last.toLowerCase();
-      final mime = switch (extension) {
-        'mp3' => 'audio/mpeg',
-        'm4a' => 'audio/mp4',
-        'aac' => 'audio/aac',
-        'ogg' => 'audio/ogg',
-        _ => 'audio/wav',
+      final policyResponse = await http.get(
+        Uri.parse('https://dashscope.aliyuncs.com/api/v1/uploads').replace(
+          queryParameters: {'action': 'getPolicy', 'model': selectedModel},
+        ),
+        headers: {'Authorization': 'Bearer $apiKey'},
+      ).timeout(const Duration(seconds: 30));
+      if (policyResponse.statusCode != 200) {
+        AppLogService.instance
+            .add('STT', '百炼文件上传凭证失败：HTTP ${policyResponse.statusCode}');
+        return null;
+      }
+      final policyJson = jsonDecode(utf8.decode(policyResponse.bodyBytes));
+      final policy = policyJson is Map ? policyJson['data'] : null;
+      if (policy is! Map) return null;
+      final fileName = audioPath.split(Platform.pathSeparator).last;
+      final objectKey = '${policy['upload_dir']}/$fileName';
+      final upload = http.MultipartRequest(
+          'POST', Uri.parse(policy['upload_host'].toString()))
+        ..fields.addAll({
+          'OSSAccessKeyId': policy['oss_access_key_id'].toString(),
+          'Signature': policy['signature'].toString(),
+          'policy': policy['policy'].toString(),
+          'x-oss-object-acl': policy['x_oss_object_acl'].toString(),
+          'x-oss-forbid-overwrite': policy['x_oss_forbid_overwrite'].toString(),
+          'key': objectKey,
+          'success_action_status': '200',
+        })
+        ..files.add(await http.MultipartFile.fromPath('file', audioPath));
+      final uploadResponse =
+          await upload.send().timeout(const Duration(seconds: 60));
+      if (uploadResponse.statusCode != 200) {
+        AppLogService.instance
+            .add('STT', '百炼录音上传失败：HTTP ${uploadResponse.statusCode}');
+        return null;
+      }
+      final headers = {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+        'X-DashScope-Async': 'enable',
+        'X-DashScope-OssResourceResolve': 'enable',
       };
-      AppLogService.instance.add('STT',
-          '百炼专属识别请求：model=$selectedModel，input.audio（${audioBytes.length} bytes）');
-      final response = await http
+      const endpoint =
+          'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
+      final submit = await http
           .post(Uri.parse(endpoint),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $apiKey',
-              },
+              headers: headers,
               body: jsonEncode({
                 'model': selectedModel,
                 'input': {
-                  'audio': 'data:$mime;base64,${base64Encode(audioBytes)}',
+                  'file_urls': ['oss://$objectKey']
                 },
               }))
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        AppLogService.instance.addJson('STT', '百炼专属识别响应', {
-          'status': response.statusCode,
-          'body': utf8.decode(response.bodyBytes, allowMalformed: true),
-        });
-        final text = extractText(jsonDecode(utf8.decode(response.bodyBytes)));
-        if (text != null) return text;
-        AppLogService.instance.add('STT', '百炼专属识别完成，但响应中没有文本');
-        return null;
-      }
-      AppLogService.instance
-          .add('STT', '百炼专属识别 HTTP ${response.statusCode}，尝试旧版兼容请求');
-    } catch (e) {
-      AppLogService.instance.add('STT', '百炼专属识别异常，尝试旧版兼容请求：$e');
-    }
-
-    try {
-      final request = http.MultipartRequest('POST', Uri.parse(endpoint))
-        ..headers['Authorization'] = 'Bearer $apiKey'
-        ..fields['model'] = selectedModel
-        ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-      final streamed =
-          await request.send().timeout(const Duration(seconds: 60));
-      final response = await http.Response.fromStream(streamed);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+          .timeout(const Duration(seconds: 30));
+      if (submit.statusCode != 200) {
         AppLogService.instance
-            .add('STT', '百炼旧版兼容识别失败：HTTP ${response.statusCode}');
+            .add('STT', '百炼识别任务提交失败：HTTP ${submit.statusCode}');
         return null;
       }
-      return extractText(jsonDecode(utf8.decode(response.bodyBytes)));
+      final submitJson = jsonDecode(utf8.decode(submit.bodyBytes));
+      final output = submitJson is Map ? submitJson['output'] : null;
+      final taskId = output is Map ? output['task_id']?.toString() ?? '' : '';
+      if (taskId.isEmpty) return null;
+      for (var attempt = 0; attempt < 45; attempt++) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        final poll = await http.post(
+            Uri.parse('https://dashscope.aliyuncs.com/api/v1/tasks/$taskId'),
+            headers: {
+              'Authorization': 'Bearer $apiKey'
+            }).timeout(const Duration(seconds: 15));
+        if (poll.statusCode != 200) continue;
+        final pollJson = jsonDecode(utf8.decode(poll.bodyBytes));
+        final pollOutput = pollJson is Map ? pollJson['output'] : null;
+        if (pollOutput is! Map) continue;
+        final status = pollOutput['task_status']?.toString() ?? '';
+        if (status == 'FAILED' || status == 'CANCELED') return null;
+        if (status != 'SUCCEEDED') continue;
+        final results = pollOutput['results'];
+        if (results is! List || results.isEmpty || results.first is! Map) {
+          return null;
+        }
+        final resultUrl =
+            (results.first as Map)['transcription_url']?.toString() ?? '';
+        if (resultUrl.isEmpty) return null;
+        final result = await http
+            .get(Uri.parse(resultUrl))
+            .timeout(const Duration(seconds: 30));
+        if (result.statusCode != 200) return null;
+        final decoded = jsonDecode(utf8.decode(result.bodyBytes));
+        final transcripts = decoded is Map ? decoded['transcripts'] : null;
+        if (transcripts is List) {
+          final text = transcripts
+              .whereType<Map>()
+              .map((item) => item['text'] ?? item['transcript'] ?? '')
+              .join('\n')
+              .trim();
+          if (text.isNotEmpty) return text;
+        }
+        final channels = decoded is Map ? decoded['channels'] : null;
+        if (channels is List) {
+          final text = channels
+              .whereType<Map>()
+              .map((item) => item['transcript'] ?? item['text'] ?? '')
+              .join('\n')
+              .trim();
+          return text.isEmpty ? null : text;
+        }
+        return null;
+      }
+      AppLogService.instance.add('STT', '百炼识别任务等待超时');
+      return null;
     } catch (e) {
-      AppLogService.instance.add('STT', '百炼旧版兼容识别异常：$e');
+      AppLogService.instance.add('STT', '百炼录音识别失败：$e');
       return null;
     }
   }
@@ -1506,7 +1535,8 @@ $transcript''';
           providerName.contains('dashscope') ||
           model.toLowerCase().contains('sambert') ||
           model.toLowerCase().contains('cosyvoice') ||
-          model.toLowerCase().contains('qwen-audio');
+          model.toLowerCase().contains('qwen-tts') ||
+          model.toLowerCase().contains('qwen3-tts');
       final isRealtime =
           isDashScope && model.toLowerCase().contains('-realtime');
       // DashScope's regular synthesis service is separate from its legacy
@@ -1531,8 +1561,8 @@ $transcript''';
             body: jsonEncode(isDashScope
                 ? {
                     'model': model,
-                    'input': {'text': text},
-                    'parameters': {'format': 'wav', 'voice': voice},
+                    'input': {'text': text, 'voice': voice},
+                    'parameters': {'format': 'wav'},
                   }
                 : {'model': model, 'input': text, 'voice': voice}),
           )
@@ -1559,8 +1589,12 @@ $transcript''';
         if (raw is Map) {
           final output = raw['output'];
           final data = raw['data'];
+          final outputAudio = output is Map ? output['audio'] : null;
           audioUrl = raw['audio_url']?.toString() ??
               raw['url']?.toString() ??
+              (outputAudio is Map
+                  ? (outputAudio['url'] ?? outputAudio['audio_url'])?.toString()
+                  : null) ??
               (output is Map
                   ? (output['audio_url'] ?? output['url'])?.toString()
                   : null) ??

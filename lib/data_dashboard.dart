@@ -46,14 +46,16 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
       days.add(_dayStart(now.subtract(Duration(days: i))));
     }
 
-    final usageRows = await db.query('ai_usage_events',
+    final chartUsageRows = await db.query('ai_usage_events',
         where: 'timestamp >= ? AND event_type = ?',
         whereArgs: [startMs, 'chat'],
         orderBy: 'timestamp ASC');
+    final allUsageRows = await db
+        .query('ai_usage_events', where: 'event_type = ?', whereArgs: ['chat']);
 
     final tokenByDay = <String, int>{};
     final replyByDay = <String, int>{};
-    for (final r in usageRows) {
+    for (final r in chartUsageRows) {
       final ts = (r['timestamp'] as num?)?.toInt();
       if (ts == null) continue;
       final d = _dayStart(DateTime.fromMillisecondsSinceEpoch(ts));
@@ -85,30 +87,36 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
 
     final tokenSeries = <int>[];
     final replySeries = <int>[];
+    final today = _dayStart(now);
+    final monthStart = DateTime(now.year, now.month);
     var totalTokens = 0;
     var totalReplies = 0;
     var todayTokens = 0;
     var monthTokens = 0;
     var todayReplies = 0;
     var monthReplies = 0;
-    final monthStart = DateTime(now.year, now.month);
-    final today = _dayStart(now);
+    for (final row in allUsageRows) {
+      final timestamp = (row['timestamp'] as num?)?.toInt() ?? 0;
+      final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      final tokens = (row['total_tokens'] as num?)?.toInt() ?? 0;
+      final replies = (row['reply_count'] as num?)?.toInt() ?? 0;
+      totalTokens += tokens;
+      totalReplies += replies;
+      if (!date.isBefore(today)) {
+        todayTokens += tokens;
+        todayReplies += replies;
+      }
+      if (!date.isBefore(monthStart)) {
+        monthTokens += tokens;
+        monthReplies += replies;
+      }
+    }
     for (final d in days) {
       final key = '${d.year}-${d.month}-${d.day}';
       final t = tokenByDay[key] ?? 0;
       final r = replyByDay[key] ?? 0;
       tokenSeries.add(t);
       replySeries.add(r);
-      totalTokens += t;
-      totalReplies += r;
-      if (d == today) {
-        todayTokens = t;
-        todayReplies = r;
-      }
-      if (!d.isBefore(monthStart)) {
-        monthTokens += t;
-        monthReplies += r;
-      }
     }
     if (!mounted) return;
     setState(() {

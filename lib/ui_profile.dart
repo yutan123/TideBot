@@ -263,6 +263,8 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _importSelectedChat() async {
     final botId = await _pickDataBot('选择要导入到的机器人');
     if (botId == null) return;
+    final confirmed = await _confirmDataOverwrite('聊天记录');
+    if (!confirmed) return;
     final result = await FilePicker.platform
         .pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
     final path = result?.files.single.path;
@@ -277,6 +279,82 @@ class _ProfilePageState extends State<ProfilePage> {
         GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
         TideHaptics.error();
       }
+    }
+  }
+
+  Future<bool> _confirmDataOverwrite(String label) async {
+    final result = await TideDialogs.show<bool>(
+      context: context,
+      builder: (ctx) => TideDialogSurface(
+        backgroundColor: Colors.transparent,
+        contentPadding: EdgeInsets.zero,
+        content: TideDialogs.glassContent(context: ctx, children: [
+          const Text('确认覆盖',
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont')),
+          const SizedBox(height: 10),
+          Text('当前机器人的$label将被导入文件直接覆盖，此操作不可恢复。',
+              textAlign: TextAlign.start,
+              style: TextStyle(
+                  color: TideTheme.of(ctx).textWeak, fontFamily: 'TideFont')),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(
+                child: TideDialogs.glassButton('取消',
+                    onTap: () => Navigator.pop(ctx, false))),
+            const SizedBox(width: 12),
+            Expanded(
+                child: TideDialogs.glassButton('继续',
+                    onTap: () => Navigator.pop(ctx, true),
+                    color: const Color(0xFFE74C3C))),
+          ]),
+        ]),
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _exportSelectedMemory() async {
+    final botId = await _pickDataBot('选择要导出底层记忆的机器人');
+    if (botId == null) return;
+    try {
+      final export = await DBManager().buildMemoryExport(botId);
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: '保存底层记忆到 Download',
+        fileName: export.fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        bytes: utf8.encode(export.content),
+      );
+      if (!mounted || path == null) return;
+      GlobalNotice.show('底层记忆已导出');
+      TideHaptics.confirm();
+    } catch (e) {
+      if (!mounted) return;
+      GlobalNotice.show('导出失败：$e', color: const Color(0xFFE74C3C));
+    }
+  }
+
+  Future<void> _importSelectedMemory() async {
+    final botId = await _pickDataBot('选择要导入底层记忆的机器人');
+    if (botId == null || !await _confirmDataOverwrite('底层记忆')) return;
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
+    final path = result?.files.single.path;
+    if (path == null) return;
+    try {
+      final count = await DBManager().importBotMemory(botId, path);
+      if (!mounted) return;
+      GlobalNotice.show('已覆盖导入 $count 条底层记忆');
+      TideHaptics.confirm();
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
+    } catch (e) {
+      if (!mounted) return;
+      GlobalNotice.show('导入失败：$e', color: const Color(0xFFE74C3C));
     }
   }
 
@@ -354,7 +432,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'data':
         showTideSheet(
             context: context,
-            height: 290,
+            height: 430,
             child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -374,6 +452,30 @@ class _ProfilePageState extends State<ProfilePage> {
                           onTap: () async {
                             Navigator.pop(context);
                             await _exportSelectedChat();
+                          }),
+                      ListTile(
+                          leading: Icon(Icons.memory_rounded,
+                              color: TideTheme.of(context).primary),
+                          title: const Text('导出底层记忆',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          subtitle: const Text('包含记忆、日记、今日一言和相遇时间',
+                              style: TextStyle(
+                                  fontFamily: 'TideFont', fontSize: 12)),
+                          onTap: () async {
+                            Navigator.pop(context);
+                            await _exportSelectedMemory();
+                          }),
+                      ListTile(
+                          leading: Icon(Icons.settings_backup_restore_rounded,
+                              color: TideTheme.of(context).primary),
+                          title: const Text('导入底层记忆',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                          subtitle: const Text('选择文件后将直接覆盖当前机器人',
+                              style: TextStyle(
+                                  fontFamily: 'TideFont', fontSize: 12)),
+                          onTap: () async {
+                            Navigator.pop(context);
+                            await _importSelectedMemory();
                           }),
                       ListTile(
                           leading: Icon(Icons.storage_rounded,
@@ -1704,8 +1806,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     {
       'name': '阿里云百炼 TTS',
       'url':
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-to-speech',
-      'models': 'qwen-audio-3.0-tts-flash',
+          'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesis',
+      'models': 'qwen3-tts-flash',
       'voice': 'Cherry'
     },
     {
@@ -2077,6 +2179,25 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     if (root.isEmpty) throw Exception('请先填写 API Base URL');
     if (apiKey.trim().isEmpty) throw Exception('请先填写 API Key');
+    if (root.contains('dashscope.aliyuncs.com') &&
+        (root.contains('/services/audio/') ||
+            root.endsWith('/api/v1') ||
+            root.contains('/compatible-mode/'))) {
+      if (root.contains('/asr/') || root.contains('transcription')) {
+        return const [
+          'paraformer-v2',
+          'paraformer-realtime-v2',
+          'fun-asr',
+          'fun-asr-realtime',
+        ];
+      }
+      return const [
+        'qwen-tts',
+        'qwen-tts-latest',
+        'qwen3-tts-flash',
+        'qwen3-tts-instruct-flash',
+      ];
+    }
     final cacheKey = '$root|${apiKey.trim()}';
     final cached = _modelListCache[cacheKey];
     if (cached != null && cached.isNotEmpty) return List<String>.from(cached);

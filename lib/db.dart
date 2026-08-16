@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 17,
+      version: 18,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -60,7 +60,8 @@ class DBManager {
             id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
             avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
             max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
-            last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0
+            last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0,
+            last_read_at INTEGER DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -284,6 +285,12 @@ class DBManager {
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)');
         }
+        if (oldVersion < 18) {
+          try {
+            await db.execute(
+                'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0');
+          } catch (_) {}
+        }
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -414,8 +421,25 @@ class DBManager {
 
   Future<void> insertChatMessage(Map<String, dynamic> msg) async {
     final db = await database;
-    await db.insert('chat_history', msg,
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.transaction((txn) async {
+      await txn.insert('chat_history', msg,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      final timestamp = (msg['timestamp'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch;
+      await txn.update('bots', {'last_msg_time': timestamp},
+          where: 'id = ?', whereArgs: [msg['bot_id']]);
+    });
+  }
+
+  Future<int> unreadBotCount() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT COUNT(*) AS count FROM bots b
+      WHERE COALESCE((SELECT MAX(timestamp) FROM chat_history h
+        WHERE h.bot_id = b.id AND h.role = 'assistant'), 0)
+        > COALESCE(b.last_read_at, 0)
+    ''');
+    return (rows.first['count'] as num?)?.toInt() ?? 0;
   }
 
   /// Byte usage of each bot's persisted chat rows. SQLite stores every bot in
@@ -573,30 +597,127 @@ class DBManager {
       final oldId = items[i]['id']?.toString() ?? '';
       if (oldId.isNotEmpty) idMap[oldId] = 'import_${base}_$i';
     }
-    var count = 0;
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      final oldId = item['id']?.toString() ?? '';
-      final timestamp = (item['timestamp'] as num?)?.toInt() ??
-          DateTime.now().millisecondsSinceEpoch + i;
-      final oldReplyId = item['reply_to_id']?.toString() ?? '';
-      await insertChatMessage({
-        'id': idMap[oldId] ?? 'import_${base}_$i',
-        'bot_id': botId,
-        'role': item['role']?.toString() ?? 'user',
-        'type': item['type']?.toString() ?? 'text',
-        'content': item['content']?.toString() ?? '',
-        'file_path': item['file_path']?.toString(),
-        'mood': item['mood']?.toString(),
-        'duration': item['duration'],
-        // Preserve quotes whose source is part of this same imported archive.
-        'reply_to_id': idMap[oldReplyId],
-        'sources_json': item['sources_json']?.toString(),
-        'timestamp': timestamp + i,
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
+      for (var i = 0; i < items.length; i++) {
+        final item = items[i];
+        final oldId = item['id']?.toString() ?? '';
+        final timestamp = (item['timestamp'] as num?)?.toInt() ??
+            DateTime.now().millisecondsSinceEpoch + i;
+        final oldReplyId = item['reply_to_id']?.toString() ?? '';
+        await txn.insert('chat_history', {
+          'id': idMap[oldId] ?? 'import_${base}_$i',
+          'bot_id': botId,
+          'role': item['role']?.toString() ?? 'user',
+          'type': item['type']?.toString() ?? 'text',
+          'content': item['content']?.toString() ?? '',
+          'file_path': item['file_path']?.toString(),
+          'mood': item['mood']?.toString(),
+          'duration': item['duration'],
+          'reply_to_id': idMap[oldReplyId],
+          'sources_json': item['sources_json']?.toString(),
+          'timestamp': timestamp + i,
+        });
+      }
+      final latest = items.fold<int>(0, (value, item) {
+        final timestamp = (item['timestamp'] as num?)?.toInt() ?? 0;
+        return timestamp > value ? timestamp : value;
       });
-      count++;
+      await txn.update('bots', {'last_msg_time': latest},
+          where: 'id = ?', whereArgs: [botId]);
+    });
+    return items.length;
+  }
+
+  Future<({String fileName, String content})> buildMemoryExport(
+      String botId) async {
+    final bot = await getBotById(botId);
+    if (bot == null) throw StateError('机器人不存在');
+    final db = await database;
+    final memories = await db.query('memories',
+        where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
+    final kv = await db.query('kv_store',
+        where: 'key LIKE ? OR key LIKE ?',
+        whereArgs: ['%_$botId', '%_${botId}_%']);
+    final safeName = (bot['name']?.toString() ?? 'bot')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
+    return (
+      fileName:
+          'tidebot_memory_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json',
+      content: jsonEncode({
+        'format': 'tidebot.memory',
+        'version': 1,
+        'bot': {
+          'id': botId,
+          'name': bot['name'],
+          'created_at': bot['created_at'],
+          'daily_quote': bot['daily_quote'],
+        },
+        'memories': memories,
+        'kv': kv,
+      })
+    );
+  }
+
+  Future<int> importBotMemory(String botId, String sourcePath) async {
+    final raw = jsonDecode(await File(sourcePath).readAsString());
+    if (raw is! Map ||
+        raw['format'] != 'tidebot.memory' ||
+        raw['version'] != 1) {
+      throw const FormatException('仅支持 TideBot 导出的底层记忆文件');
     }
-    return count;
+    final memories = raw['memories'];
+    final kvRows = raw['kv'];
+    if (memories is! List || kvRows is! List) {
+      throw const FormatException('底层记忆内容无效');
+    }
+    final sourceBotId =
+        (raw['bot'] is Map ? raw['bot']['id'] : '')?.toString() ?? '';
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
+      await txn.delete('kv_store',
+          where: 'key LIKE ? OR key LIKE ?',
+          whereArgs: ['%_$botId', '%_${botId}_%']);
+      for (var i = 0; i < memories.length; i++) {
+        final item = memories[i];
+        if (item is! Map) continue;
+        final row = Map<String, dynamic>.from(item);
+        row['bot_id'] = botId;
+        row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
+        await txn.insert('memories', row,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final item in kvRows) {
+        if (item is! Map || item['key'] == null) continue;
+        var key = item['key'].toString();
+        if (sourceBotId.isNotEmpty) key = key.replaceAll(sourceBotId, botId);
+        await txn.insert(
+            'kv_store', {'key': key, 'value': item['value']?.toString()},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      final botInfo = raw['bot'];
+      if (botInfo is Map) {
+        await txn.update(
+            'bots',
+            {
+              'created_at': botInfo['created_at'],
+              'daily_quote': botInfo['daily_quote'],
+            },
+            where: 'id = ?',
+            whereArgs: [botId]);
+      }
+    });
+    return memories.whereType<Map>().length;
+  }
+
+  Future<void> markBotRead(String botId) async {
+    if (botId.isEmpty) return;
+    final db = await database;
+    await db.update(
+        'bots', {'last_read_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [botId]);
   }
 
   // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。

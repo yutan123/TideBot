@@ -63,8 +63,8 @@ class _GlobalNoticeView extends StatelessWidget {
             ? Colors.white
             : scheme.onPrimary;
     final bottomInset = media.padding.bottom + media.viewInsets.bottom + 76;
-    final maxWidth = media.size.width > 540 ? 500.0 : media.size.width - 32;
-    final targetWidth = (media.size.width * 0.82).clamp(288.0, maxWidth);
+    final maxWidth = media.size.width - 16;
+    final targetWidth = maxWidth;
 
     return Positioned(
       bottom: bottomInset,

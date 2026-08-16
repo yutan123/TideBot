@@ -18,6 +18,7 @@ import 'app_navigation.dart';
 import 'db.dart';
 import 'global_notice.dart';
 import 'ops.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'ota_update.dart';
 import 'ai.dart';
 import 'life_schedule_service.dart';
@@ -95,49 +96,55 @@ void onStart(ServiceInstance service) {
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
   Timer.periodic(const Duration(minutes: 1), (_) async {
-    try {
-      await _generateMissingLifeSchedules();
-      await _runDueProactiveReplies();
-      final due = await DBManager()
-          .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
-      for (final task in due) {
-        final id = task['id']?.toString() ?? '';
-        if (id.isEmpty) continue;
-        await DBManager().updateFutureTask(id, {'status': 'running'});
-        final botId = task['bot_id']?.toString() ?? '';
-        final prompt =
-            task['prompt']?.toString() ?? task['note']?.toString() ?? '';
-        if (botId.isEmpty || prompt.isEmpty) continue;
-        try {
-          final result = await AIManager().sendMessage(
-              botId: botId,
-              text: '这是一个定时任务，请完成：$prompt',
-              persistResponse: true);
-          final answer = result['reply']?.toString() ?? '';
-          await OpsManager().showSystemNotification(
-              id: id.hashCode,
-              title: task['title']?.toString() ?? '未来任务完成',
-              body: answer.isEmpty ? '任务已执行' : answer,
-              botId: botId);
-          if (task['frequency']?.toString() == 'daily') {
-            // daily 任务：基于原 run_at 的小时/分钟，推进到明天同一时刻，
-            // 而不是从现在开始加 24 小时，避免因任务延迟执行导致设定时间漂移。
-            final prevMs = int.tryParse(task['run_at']?.toString() ?? '') ??
-                DateTime.now().millisecondsSinceEpoch;
-            final prev = DateTime.fromMillisecondsSinceEpoch(prevMs);
-            final next = DateTime(
-                    prev.year, prev.month, prev.day + 1, prev.hour, prev.minute)
-                .millisecondsSinceEpoch;
-            await DBManager()
-                .updateFutureTask(id, {'run_at': next, 'status': 'pending'});
-          } else {
-            await DBManager().deleteFutureTask(id);
+    final isForeground = service is AndroidServiceInstance
+        ? await service.isForegroundService()
+        : false;
+    if (isForeground || AppState.isForeground.value) {
+      try {
+        await _generateMissingLifeSchedules();
+        await LifeScheduleService.instance.runDueEndEvents();
+        await _runDueProactiveReplies();
+        final due = await DBManager()
+            .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
+        for (final task in due) {
+          final id = task['id']?.toString() ?? '';
+          if (id.isEmpty) continue;
+          await DBManager().updateFutureTask(id, {'status': 'running'});
+          final botId = task['bot_id']?.toString() ?? '';
+          final prompt =
+              task['prompt']?.toString() ?? task['note']?.toString() ?? '';
+          if (botId.isEmpty || prompt.isEmpty) continue;
+          try {
+            final result = await AIManager().sendMessage(
+                botId: botId,
+                text: '这是一个定时任务，请完成：$prompt',
+                persistResponse: true);
+            final answer = result['reply']?.toString() ?? '';
+            await OpsManager().showSystemNotification(
+                id: id.hashCode,
+                title: task['title']?.toString() ?? '未来任务完成',
+                body: answer.isEmpty ? '任务已执行' : answer,
+                botId: botId);
+            if (task['frequency']?.toString() == 'daily') {
+              // daily 任务：基于原 run_at 的小时/分钟，推进到明天同一时刻，
+              // 而不是从现在开始加 24 小时，避免因任务延迟执行导致设定时间漂移。
+              final prevMs = int.tryParse(task['run_at']?.toString() ?? '') ??
+                  DateTime.now().millisecondsSinceEpoch;
+              final prev = DateTime.fromMillisecondsSinceEpoch(prevMs);
+              final next = DateTime(prev.year, prev.month, prev.day + 1,
+                      prev.hour, prev.minute)
+                  .millisecondsSinceEpoch;
+              await DBManager()
+                  .updateFutureTask(id, {'run_at': next, 'status': 'pending'});
+            } else {
+              await DBManager().deleteFutureTask(id);
+            }
+          } catch (_) {
+            await DBManager().updateFutureTask(id, {'status': 'pending'});
           }
-        } catch (_) {
-          await DBManager().updateFutureTask(id, {'status': 'pending'});
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   });
 }
 
@@ -260,9 +267,9 @@ class FlowGlassBg extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: theme.isDark
               ? [
-                  const Color(0xFF10151D),
-                  const Color(0xFF16212D),
-                  const Color(0xFF111923)
+                  const Color(0xFF151416),
+                  const Color(0xFF201D21),
+                  const Color(0xFF181719)
                 ]
               : [
                   const Color(0xFFF8FAFF),
@@ -586,7 +593,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 class JellyDock extends StatefulWidget {
   final int currentIndex;
   final Function(int) onTap;
-  const JellyDock({super.key, required this.currentIndex, required this.onTap});
+  final int unreadCount;
+  const JellyDock({
+    super.key,
+    required this.currentIndex,
+    required this.onTap,
+    this.unreadCount = 0,
+  });
   @override
   State<JellyDock> createState() => _JellyDockState();
 }
@@ -739,10 +752,32 @@ class _JellyDockState extends State<JellyDock>
                       onTapDown: (_) => TideHaptics.tap(),
                       onTap: () => widget.onTap(i),
                       child: Center(
-                          child: Icon(_icons[i],
-                              color:
-                                  act ? theme.primary : const Color(0xFFAEAEB2),
-                              size: 22)),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Icon(_icons[i],
+                                color: act
+                                    ? theme.primary
+                                    : const Color(0xFFAEAEB2),
+                                size: 22),
+                            if (i == 0 && widget.unreadCount > 0)
+                              Positioned(
+                                right: -5,
+                                top: -5,
+                                child: Container(
+                                  width: 9,
+                                  height: 9,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFF3B30),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: theme.surface, width: 1.5),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ));
                   }),
                 ),
@@ -761,8 +796,11 @@ class TideMainScaffold extends StatefulWidget {
   State<TideMainScaffold> createState() => _TideMainScaffoldState();
 }
 
-class _TideMainScaffoldState extends State<TideMainScaffold> {
+class _TideMainScaffoldState extends State<TideMainScaffold>
+    with WidgetsBindingObserver {
   int _idx = 0;
+  int _unreadCount = 0;
+  Timer? _unreadTimer;
   final PageController _pageCtrl = PageController();
   final GlobalKey<SquarePageState> _squareKey = GlobalKey<SquarePageState>();
   final GlobalKey<ChatListPageState> _chatListKey =
@@ -772,17 +810,101 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pages = [
       ChatListPage(key: _chatListKey),
       const SpacePage(),
       SquarePage(key: _squareKey),
       const ProfilePage()
     ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshUnread();
+      _maybePromptNotificationPermission();
+    });
+    _unreadTimer =
+        Timer.periodic(const Duration(seconds: 4), (_) => _refreshUnread());
+  }
+
+  Future<void> _refreshUnread() async {
+    final count = await DBManager().unreadBotCount();
+    if (mounted && count != _unreadCount) setState(() => _unreadCount = count);
+  }
+
+  Future<void> _maybePromptNotificationPermission() async {
+    final db = DBManager();
+    if (await db.getKV('notification_permission_prompt_disabled') == 'true') {
+      return;
+    }
+    if (await Permission.notification.status == PermissionStatus.granted ||
+        !mounted) return;
+    var neverAsk = false;
+    final authorize = await TideDialogs.show<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Colors.transparent,
+          contentPadding: EdgeInsets.zero,
+          content: TideDialogs.glassContent(
+            context: context,
+            children: [
+              const Text('开启消息通知',
+                  textAlign: TextAlign.start,
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont')),
+              const SizedBox(height: 8),
+              Text('用于后台主动消息、定时任务和下载状态提醒。',
+                  textAlign: TextAlign.start,
+                  style: TextStyle(
+                      color: TideTheme.of(context).textWeak,
+                      height: 1.45,
+                      fontFamily: 'TideFont')),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text('不再提示',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                value: neverAsk,
+                onChanged: (value) =>
+                    setDialogState(() => neverAsk = value ?? false),
+              ),
+              Row(children: [
+                Expanded(
+                  child: TideDialogs.glassButton('取消',
+                      color: TideTheme.of(context).buttonSecondary,
+                      textColor: TideTheme.of(context).textStrong,
+                      onTap: () => Navigator.pop(dialogContext, false)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TideDialogs.glassButton('去授权',
+                      onTap: () => Navigator.pop(dialogContext, true)),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (neverAsk) {
+      await db.setKV('notification_permission_prompt_disabled', 'true');
+    }
+    if (authorize == true) await Permission.notification.request();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshUnread();
   }
 
   void _onDockTap(int i) {
     if (_idx != i) {
       setState(() => _idx = i);
+      if (i == 0) {
+        _chatListKey.currentState?.load();
+        Future<void>.delayed(const Duration(milliseconds: 350), _refreshUnread);
+      }
       _pageCtrl.animateToPage(i,
           duration: const Duration(milliseconds: 350),
           curve: Curves.easeOutCubic);
@@ -791,6 +913,8 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _unreadTimer?.cancel();
     _pageCtrl.dispose();
     flowProvider.dispose();
     super.dispose();
@@ -813,7 +937,11 @@ class _TideMainScaffoldState extends State<TideMainScaffold> {
             left: 0,
             right: 0,
             bottom: bottomPadding + 24,
-            child: JellyDock(currentIndex: _idx, onTap: _onDockTap),
+            child: JellyDock(
+              currentIndex: _idx,
+              unreadCount: _unreadCount,
+              onTap: _onDockTap,
+            ),
           ),
           // 聊天列表创建机器人悬浮球
           if (_idx == 0)

@@ -87,6 +87,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _bot = Map.from(widget.botData);
+    unawaited(DBManager().markBotRead(_bot['id']?.toString() ?? ''));
     _msgC.addListener(_msgChanged);
     _inputFocus.addListener(_handleInputFocus);
     _audioPositionSub = _player.onPositionChanged.listen((v) {
@@ -646,7 +647,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     50)
                 .clamp(1, 100);
         // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
-        final interval = Duration(milliseconds: 90 + ((100 - speed) * 9));
+        final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
         final batch = (speed >= 85 ? 2 : 1);
         _streamDisplayTimer?.cancel();
         final displayMessage = streamingMessage;
@@ -773,7 +774,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     50)
                 .clamp(1, 100);
         // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
-        final interval = Duration(milliseconds: 90 + ((100 - speed) * 9));
+        final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
         final batch = (speed >= 85 ? 2 : 1);
         _streamDisplayTimer = Timer.periodic(interval, (timer) {
           if (!mounted) {
@@ -952,28 +953,37 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String audioPath,
   ) async {
     final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-
-    final transcript = await AIManager()
-        .transcribeAudio(botId: botId, audioPath: audioPath)
-        .timeout(const Duration(seconds: 50), onTimeout: () => null);
-    if (transcript == null || transcript.isEmpty) return;
+    if (botId.isEmpty || _loading) return;
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _typing = true;
+      });
+      _scrollDown();
+    }
 
     try {
-      await DBManager()
-          .updateMessageContent(message['id'].toString(), transcript);
-    } catch (e) {
-      debugPrint('[stt] persist transcript failed: $e');
-      return;
-    }
-    if (!mounted) return;
-    setState(() => message['content'] = transcript);
+      final transcript = await AIManager()
+          .transcribeAudio(botId: botId, audioPath: audioPath)
+          .timeout(const Duration(seconds: 50), onTimeout: () => null);
+      final modelContext = transcript == null || transcript.trim().isEmpty
+          ? '[用户发送了一段语音，但当前未配置可用的语音识别服务或转写失败。你听不到具体内容，请自然说明并结合上下文回应，可以请用户重发或改用文字；不要假装听懂。]'
+          : '[用户刚发送的语音转写]\n${transcript.trim()}';
 
-    // Only a successful, persisted transcript is sent to the chat model.
-    // The original audio row remains type=audio with file_path intact.
-    _msgC.text = transcript;
-    _msgChanged();
-    await _send();
+      if (transcript != null && transcript.trim().isNotEmpty) {
+        try {
+          await DBManager().updateMessageContent(
+              message['id'].toString(), transcript.trim());
+          if (mounted) setState(() => message['content'] = transcript.trim());
+        } catch (e) {
+          debugPrint('[stt] persist transcript failed: $e');
+        }
+      }
+      if (mounted) setState(() => _loading = false);
+      await _send(document: audioPath, mediaContext: modelContext);
+    } finally {
+      if (mounted && !_loading) setState(() => _typing = false);
+    }
   }
 
   // ========== 录音 ==========
@@ -2593,7 +2603,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             style: TextStyle(
                 color: isUser ? Colors.white : TideTheme.of(context).textStrong,
                 fontSize: 14,
-                fontFamily: 'TideFont')));
+                fontFamily: 'TideFont',
+                height: 1.45)));
       }
       spans.add(TextSpan(
           text: text.substring(m.start, m.end),
@@ -2603,7 +2614,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   : TideTheme.of(context).textWeak,
               fontSize: 12,
               fontFamily: 'TideFont',
-              fontStyle: FontStyle.italic)));
+              fontStyle: FontStyle.italic,
+              height: 1.45)));
       last = m.end;
     }
     if (last < text.length) {
@@ -2675,8 +2687,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               controller: _msgC,
               minLines: 1,
               maxLines: 4,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _send(),
+              textInputAction: TextInputAction.newline,
               style: TextStyle(
                   fontSize: 15,
                   fontFamily: 'TideFont',

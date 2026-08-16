@@ -65,10 +65,6 @@ class OpsManager {
     await _notifications
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
 
     final launch = await _notifications.getNotificationAppLaunchDetails();

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
+import 'ops.dart';
 
 class LifeScheduleService {
   LifeScheduleService._();
@@ -175,8 +176,8 @@ class LifeScheduleService {
 今天是 $key。为自己生成真实连续的拟人化生活状态。
 主题：$theme；心情：$mood；穿搭风格：$outfitStyle；日程类型：$scheduleType。
 输出格式：
-{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","activity":"...","rigid":false}]}
-时间线 3 到 5 条；刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
+{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","rigid":false}]}
+时间线 3 到 5 条；每条必须提供晚于开始时间的 end_time；刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
@@ -195,6 +196,7 @@ class LifeScheduleService {
           .whereType<Map>()
           .map<Map<String, dynamic>>((e) => <String, dynamic>{
                 'time': e['time']?.toString() ?? '',
+                'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
                 'rigid': e['rigid'] == true,
               })
@@ -228,6 +230,60 @@ class LifeScheduleService {
       return row;
     } catch (_) {
       return old;
+    }
+  }
+
+  Future<void> runDueEndEvents({DateTime? now}) async {
+    if (!await enabled()) return;
+    final current = now ?? DateTime.now();
+    final key = dateKey(current);
+    final nowText =
+        '${current.hour.toString().padLeft(2, '0')}:${current.minute.toString().padLeft(2, '0')}';
+    final db = DBManager();
+    for (final bot in await db.getAllBots()) {
+      final botId = bot['id']?.toString() ?? '';
+      final row = await db.getLifeSchedule(botId, key);
+      if (botId.isEmpty || row == null) continue;
+      final timeline = _timeline(row);
+      for (var index = 0; index < timeline.length; index++) {
+        final item = timeline[index];
+        final explicitEnd = item['end_time']?.toString() ?? '';
+        final inferredEnd = index + 1 < timeline.length
+            ? timeline[index + 1]['time']?.toString() ?? ''
+            : '';
+        final endTime = explicitEnd.isNotEmpty ? explicitEnd : inferredEnd;
+        if (endTime.isEmpty || endTime.compareTo(nowText) > 0) continue;
+        final eventKey = 'life_end_${botId}_${key}_$index';
+        if (await db.getKV(eventKey) == 'done') continue;
+        await db.setKV(eventKey, 'running');
+        try {
+          final activity = item['activity']?.toString() ?? '';
+          final result = await AIManager()
+              .sendMessage(
+                botId: botId,
+                text:
+                    '【日程结束事件】你今天从 ${item['time']} 到 $endTime 的“$activity”刚刚结束。根据人格、当前心情和最近聊天，自然决定是否想告诉用户；没有分享欲或会打扰时必须保持沉默。若发送，仅发 1-3 句自然短消息，不要提及日程、系统或指令。',
+                persistResponse: true,
+              )
+              .timeout(const Duration(minutes: 5));
+          if (result['success'] == true && result['silent'] != true) {
+            final reply = result['reply']?.toString().trim() ?? '';
+            if (reply.isNotEmpty &&
+                await db.getKV('unread_notifications') != 'false') {
+              await OpsManager().showSystemNotification(
+                id: eventKey.hashCode,
+                title: bot['name']?.toString() ?? 'TideBot',
+                body: reply,
+                botId: botId,
+              );
+            }
+          }
+          await db.setKV(eventKey, 'done');
+        } catch (e) {
+          await db.setKV(eventKey, 'pending');
+          AppLogService.instance.add('SCHEDULE', '日程结束事件失败：$e');
+        }
+      }
     }
   }
 
@@ -284,6 +340,7 @@ class LifeScheduleService {
           .whereType<Map>()
           .map<Map<String, dynamic>>((e) => <String, dynamic>{
                 'time': e['time']?.toString() ?? '',
+                'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
                 'rigid': e['rigid'] == true,
               })

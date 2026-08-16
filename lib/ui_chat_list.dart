@@ -57,7 +57,19 @@ class ChatListPageState extends State<ChatListPage> {
         if (preview.length > 25) preview = '${preview.substring(0, 25)}...';
         lastTime = msgs.first['timestamp'] as int? ?? lastTime;
       }
-      enriched.add({...b, 'preview': preview, 'lastTime': lastTime});
+      final latestAssistant = msgs
+          .where((message) => message['role']?.toString() == 'assistant')
+          .fold<int>(0, (latest, message) {
+        final timestamp = (message['timestamp'] as num?)?.toInt() ?? 0;
+        return timestamp > latest ? timestamp : latest;
+      });
+      final lastRead = (b['last_read_at'] as num?)?.toInt() ?? 0;
+      enriched.add({
+        ...b,
+        'preview': preview,
+        'lastTime': lastTime,
+        'unread': latestAssistant > lastRead,
+      });
     }
     enriched.sort((a, b) {
       final aPin = (a['is_pinned'] as int?) ?? 0;
@@ -278,7 +290,24 @@ class ChatListPageState extends State<ChatListPage> {
         load();
       },
       child: Row(children: [
-        TideBotAvatar(name: bot['name'] as String? ?? '', path: av, size: 56),
+        Stack(clipBehavior: Clip.none, children: [
+          TideBotAvatar(name: bot['name'] as String? ?? '', path: av, size: 56),
+          if (bot['unread'] == true)
+            Positioned(
+              right: -1,
+              top: -1,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE74C3C),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: TideTheme.of(context).bgColor, width: 2),
+                ),
+              ),
+            ),
+        ]),
         const SizedBox(width: 12),
         Expanded(
             child:

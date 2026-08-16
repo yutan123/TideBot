@@ -597,7 +597,7 @@ class SquarePageState extends State<SquarePage>
         final res = await AIManager().sendMessage(
           botId: botId,
           text:
-              '请以第一人称写一条适合公开空间的简短生活动态（20到60字）。这是今天第 ${index + 1} 条，请避免重复已有内容；自然、友好，不要使用心情标签或话题标签。',
+              '请以第一人称写一条适合公开空间的简短生活动态（20到60字），分享具体的日常见闻、行动或感受。这是今天第 ${index + 1} 条，请避免重复已有内容；自然、有生活感，不要使用心情标签、话题标签，也不要提到图片、照片、配图或任何媒体占位。',
           persistResponse: false,
         );
         if (res['success'] != true) continue;

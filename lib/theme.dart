@@ -30,15 +30,15 @@ class TideTheme extends ChangeNotifier {
       LinearGradient(colors: [_primary, _primaryLight]);
   // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
   Color get bgColor =>
-      isDark ? const Color(0xFF10151D) : const Color(0xFFF3F5FA);
+      isDark ? const Color(0xFF151416) : const Color(0xFFF3F5FA);
   // 卡片 / 输入框 / 弹窗浮层：夜间采用带蓝灰倾向的深表面，避免纯黑割裂。
   Color get surface =>
-      isDark ? const Color(0xFF1A222D) : const Color(0xFFFFFFFF);
+      isDark ? const Color(0xFF211F22) : const Color(0xFFFFFFFF);
   // 次级表面（输入框内部、芯片、弱浮层）
   Color get surfaceVariant =>
-      isDark ? const Color(0xFF263241) : const Color(0xFFE9EDF5);
+      isDark ? const Color(0xFF302C31) : const Color(0xFFE9EDF5);
   // 毛玻璃层：夜间必须是低亮度深色玻璃，不能使用半透明白色。
-  Color get glass => isDark ? const Color(0xD91B2633) : const Color(0xC9FFFFFF);
+  Color get glass => isDark ? const Color(0xE6272428) : const Color(0xC9FFFFFF);
 
   // 文字主色
   Color get textStrong =>
