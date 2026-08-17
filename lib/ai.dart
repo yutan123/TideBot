@@ -400,8 +400,9 @@ class AIManager {
     const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
-    final forcedStickerEmotion =
-        allowSticker ? await _chooseStickerEmotion(db) : null;
+    // 命中表情包概率后由模型结合当前语境选择分类；应用只在该分类素材池中
+    // 随机抽取一个文件，绝不预先随机指定分类。
+    const forcedStickerEmotion = null;
     final toolContext = allowTools
         ? await _buildToolContext(db,
             allowSticker: allowSticker,
@@ -545,9 +546,23 @@ class AIManager {
         firstAt ??= DateTime.fromMillisecondsSinceEpoch(stamp);
         lastAt = DateTime.fromMillisecondsSinceEpoch(stamp);
       }
+      // 当前待回复的用户消息已入库，不能把它当成“最后一次对话”，
+      // 否则任何一轮都会显示 0 分钟，机器人无法感知两轮之间的间隔。
+      DateTime? previousAt;
+      if (history.isNotEmpty) {
+        final current = history.last;
+        final currentIsThisTurn = current['role']?.toString() == 'user' &&
+            current['content']?.toString() == text;
+        final candidate = currentIsThisTurn && history.length > 1
+            ? history[history.length - 2]
+            : current;
+        final stamp = int.tryParse(candidate['timestamp']?.toString() ?? '');
+        if (stamp != null)
+          previousAt = DateTime.fromMillisecondsSinceEpoch(stamp);
+      }
       final span = firstAt == null || lastAt == null
           ? ''
-          : '当前所附历史覆盖约 ${lastAt.difference(firstAt).inMinutes.abs()} 分钟；最后一条历史距现在约 ${now.difference(lastAt).inMinutes.abs()} 分钟。';
+          : '当前所附历史覆盖约 ${lastAt.difference(firstAt).inMinutes.abs()} 分钟；本轮消息前最后一次对话距现在约 ${previousAt == null ? 0 : now.difference(previousAt).inMinutes.abs()} 分钟。';
       messages.add({
         'role': 'system',
         'content':
@@ -1274,13 +1289,10 @@ $transcript''';
       'stream': false,
       'messages': [
         {
-          'role': 'system',
-          'content': '你是语音转文字引擎。只输出音频中的原始文字，不要解释、标题、标点说明或心情标签。'
-        },
-        {
+          // MiMo ASR 网关会自行注入转写指令；请求体中不能包含任何 text
+          // content part（包括 system 文本），否则返回 HTTP 400。
           'role': 'user',
           'content': [
-            {'type': 'text', 'text': '请将这段音频准确转写为文字。'},
             {
               'type': 'input_audio',
               'input_audio': {
@@ -2065,12 +2077,7 @@ $transcript''';
         selected ? '本轮允许表情包工具（概率 $chance%）' : '本轮不提供表情包工具（概率 $chance%）');
     return selected;
   }
-
-  Future<String?> _chooseStickerEmotion(DBManager db) async {
-    final emotions = await db.stickerEmotions();
-    if (emotions.isEmpty) return null;
-    return emotions[Random.secure().nextInt(emotions.length)];
-  }
+  // 表情包分类由模型在 send_sticker 工具调用中按当轮语境选择。
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
       {required String botId, bool allowSticker = true}) async {
