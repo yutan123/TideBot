@@ -10,23 +10,6 @@ class DeviceCapabilityService {
 
   static const contextFeature = 'extra_context';
   static const proactiveFeature = 'operation_proactive';
-  static const controlFeature = 'device_control';
-
-  static const actionPolicyOff = 'off';
-  static const actionPolicyAsk = 'ask';
-  static const actionPolicyAllow = 'allow';
-
-  Future<String> actionPolicy() async =>
-      (await SharedPreferences.getInstance())
-          .getString('device_action_policy') ??
-      actionPolicyAsk;
-
-  Future<void> setActionPolicy(String value) async {
-    if (!const {actionPolicyOff, actionPolicyAsk, actionPolicyAllow}
-        .contains(value)) return;
-    await (await SharedPreferences.getInstance())
-        .setString('device_action_policy', value);
-  }
 
   Future<String?> boundBot(String feature) async =>
       (await SharedPreferences.getInstance()).getString('${feature}_bot_id');
@@ -86,28 +69,7 @@ class DeviceCapabilityService {
     return state['connected'] == true;
   }
 
-  Future<bool> requestControl({
-    required String botId,
-    required String action,
-    int? x,
-    int? y,
-    String? text,
-    String? packageName,
-    String? selector,
-  }) async {
-    if (!await isAuthorized(controlFeature, botId)) return false;
-    if (!(await whitelist(controlFeature)).contains(action)) return false;
-    final result =
-        await _channel.invokeMethod<bool>('executeAccessibilityAction', {
-      'action': action,
-      'x': x,
-      'y': y,
-      'text': text,
-      'packageName': packageName,
-      'selector': selector,
-    });
-    return result == true;
-  }
+  // 手机操控接口已移除。
 
   Future<Map<String, dynamic>> capabilityState() async =>
       await _channel.invokeMapMethod<String, dynamic>('capabilityState') ??
@@ -138,28 +100,7 @@ class DeviceCapabilityService {
   Future<void> openLocationSettings() =>
       _channel.invokeMethod<void>('openLocationSettings');
 
-  Future<bool> overlayEnabled() async =>
-      await _channel.invokeMethod<bool>('overlayEnabled') == true;
-
-  Future<bool> overlayRunning() async =>
-      await _channel.invokeMethod<bool>('overlayRunning') == true;
-
-  Future<void> openOverlaySettings() =>
-      _channel.invokeMethod<void>('openOverlaySettings');
-
-  Future<bool> setAssistantOverlay({
-    required bool enabled,
-    String? botId,
-    String? botName,
-    String? avatarPath,
-  }) async =>
-      await _channel.invokeMethod<bool>('setAssistantOverlay', {
-        'enabled': enabled,
-        'botId': botId,
-        'botName': botName,
-        'avatarPath': avatarPath,
-      }) ==
-      true;
+  // 悬浮窗接口已移除。
 
   String encodeContext(Map<String, dynamic> context) => jsonEncode(context);
 }

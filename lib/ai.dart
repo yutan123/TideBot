@@ -610,7 +610,6 @@ class AIManager {
       String replyText = '';
       String? generatedImagePath;
       var toolSilenced = false;
-      Map<String, dynamic>? pendingDeviceAction;
       Map usage = const {};
       String errorBody = '';
       int statusCode;
@@ -669,7 +668,7 @@ class AIManager {
                 searchSourcesSetter: (l) => searchSources = l,
                 generatedImageSetter: (p) => generatedImagePath = p,
                 stickerSetter: (p) => toolSticker = p,
-                pendingDeviceActionSetter: (p) => pendingDeviceAction = p,
+                pendingDeviceActionSetter: (_) {},
                 silenceSetter: () => toolSilenced = true);
           }
         }
@@ -857,8 +856,6 @@ class AIManager {
           if (searchSources.isNotEmpty) 'sources': searchSources,
           if (generatedImagePath != null) 'image_path': generatedImagePath,
           if (sticker != null) 'sticker': sticker,
-          if (pendingDeviceAction != null)
-            'pending_device_action': pendingDeviceAction,
         };
       } else {
         final detail = errorBody.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -1994,9 +1991,6 @@ $transcript''';
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
       }
-      if (toolResult is Map && toolResult['pending_confirmation'] == true) {
-        pendingDeviceActionSetter(Map<String, dynamic>.from(toolResult));
-      }
       if (toolResult is Map) {
         final stickerValue = toolResult['sticker'];
         if (stickerValue is Map) {
@@ -2064,10 +2058,6 @@ $transcript''';
       for (final call in nextCalls) {
         final result =
             await _executeNativeToolCall(db: db, botId: botId, call: call);
-        final toolResult = result['result'];
-        if (toolResult is Map && toolResult['pending_confirmation'] == true) {
-          pendingDeviceActionSetter(Map<String, dynamic>.from(toolResult));
-        }
         messages.add({
           'role': 'tool',
           'tool_call_id': call['id']?.toString() ?? '',
@@ -2194,46 +2184,7 @@ $transcript''';
         },
       });
     }
-    if (await DeviceCapabilityService.instance
-        .isAuthorized(DeviceCapabilityService.controlFeature, botId)) {
-      final allowed = await DeviceCapabilityService.instance
-          .whitelist(DeviceCapabilityService.controlFeature);
-      if (allowed.isNotEmpty) {
-        final apps = await DeviceCapabilityService.instance.installedApps();
-        final appSummary = apps
-            .take(120)
-            .map((app) => '${app['label']}(${app['packageName']})')
-            .join('、');
-        tools.add({
-          'type': 'function',
-          'function': {
-            'name': 'request_device_action',
-            'description':
-                '请求执行已授权的手机操作。不会立即执行，TideBot 会向用户显示具体操作并等待一次明确确认。可按坐标或文字/资源ID操作、打开关闭应用及跳转。当前应用是 TideBot（com.yutan123.tidebot），需要用户及时查看消息可使用 jump_tidebot。已安装可启动应用：$appSummary',
-            'parameters': {
-              'type': 'object',
-              'properties': {
-                'action': {'type': 'string', 'enum': allowed.toList()..sort()},
-                'x': {'type': 'integer'},
-                'y': {'type': 'integer'},
-                'text': {'type': 'string'},
-                'packageName': {
-                  'type': 'string',
-                  'description': '目标应用包名；打开/关闭应用时使用'
-                },
-                'selector': {
-                  'type': 'string',
-                  'description': '屏幕中要点击的文字、描述或资源 ID'
-                },
-                'reason': {'type': 'string', 'description': '向用户说明这一步将做什么'}
-              },
-              'required': ['action', 'reason'],
-              'additionalProperties': false,
-            },
-          },
-        });
-      }
-    }
+    // 手机操控工具已移除。设备上下文与操作触发仍由各自的授权能力提供。
     return tools;
   }
 
@@ -2304,31 +2255,8 @@ $transcript''';
       };
     }
     if (name == 'request_device_action') {
-      final action = args['action']?.toString() ?? '';
-      final reason = args['reason']?.toString().trim() ?? '';
-      final allowed = await DeviceCapabilityService.instance
-          .isAuthorized(DeviceCapabilityService.controlFeature, botId);
-      final whitelisted = await DeviceCapabilityService.instance
-          .whitelist(DeviceCapabilityService.controlFeature);
-      if (!allowed || !whitelisted.contains(action) || reason.isEmpty) {
-        return {
-          'result': {'ok': false, 'error': '该设备操作未获授权'}
-        };
-      }
       return {
-        'result': {
-          'ok': true,
-          'pending_confirmation': true,
-          'message': '操作尚未执行，必须由用户在界面中逐次确认。',
-          'action': action,
-          'reason': reason,
-          if (args['x'] is num) 'x': (args['x'] as num).toInt(),
-          if (args['y'] is num) 'y': (args['y'] as num).toInt(),
-          if (args['text'] != null) 'text': args['text'].toString(),
-          if (args['packageName'] != null)
-            'packageName': args['packageName'].toString(),
-          if (args['selector'] != null) 'selector': args['selector'].toString(),
-        },
+        'result': {'ok': false, 'error': '手机操控功能已移除'}
       };
     }
     if (name == 'choose_silence') {

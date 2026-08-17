@@ -234,7 +234,7 @@ class ChatListPageState extends State<ChatListPage> {
           onTap: () => _openChat(bot),
           onLongPress: () => showTideSheet(
               context: context,
-              height: 160,
+              height: 232,
               child: Column(children: [
                 const SizedBox(height: 10),
                 ListTile(
@@ -248,6 +248,27 @@ class ChatListPageState extends State<ChatListPage> {
                       final pin =
                           ((bot['is_pinned'] as int?) ?? 0) == 1 ? 0 : 1;
                       DBManager().toggleBotPin(bot['id'] as String, pin);
+                      load();
+                    }),
+                ListTile(
+                    leading: Icon(
+                        (bot['is_disabled'] == 1 || bot['is_disabled'] == true)
+                            ? Icons.play_circle_outline_rounded
+                            : Icons.pause_circle_outline_rounded,
+                        color: const Color(0xFFF39C12)),
+                    title: Text(
+                        (bot['is_disabled'] == 1 || bot['is_disabled'] == true)
+                            ? '启用机器人'
+                            : '禁用机器人',
+                        style: const TextStyle(fontFamily: 'TideFont')),
+                    subtitle: const Text('禁用后机器人不会回复、执行日程或主动消息。',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 11)),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final disabled =
+                          bot['is_disabled'] == 1 || bot['is_disabled'] == true;
+                      await DBManager().updateBot(bot['id'] as String,
+                          {'is_disabled': disabled ? 0 : 1});
                       load();
                     }),
                 ListTile(
@@ -322,6 +343,11 @@ class ChatListPageState extends State<ChatListPage> {
               Icon(Icons.push_pin_rounded,
                   size: 14, color: TideTheme.of(context).primary),
               const SizedBox(width: 2),
+            ],
+            if (bot['is_disabled'] == 1 || bot['is_disabled'] == true) ...[
+              const Icon(Icons.pause_circle_filled_rounded,
+                  size: 17, color: Color(0xFFE67E22)),
+              const SizedBox(width: 4),
             ],
             Flexible(
                 child: Text(bot['name'] as String? ?? '',

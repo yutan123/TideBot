@@ -10,7 +10,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
-import android.net.Uri
+// URI helpers are not needed after overlay removal.
 import android.os.ParcelFileDescriptor
 import android.os.StatFs
 import android.os.Build
@@ -39,33 +39,7 @@ import java.io.FileOutputStream
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
-    private var pendingOverlayMessage: Map<String, String>? = null
-
-    private fun overlayMessage(intent: Intent?): Map<String, String>? {
-        val prompt = intent?.getStringExtra("overlay_prompt")?.trim().orEmpty()
-        if (prompt.isEmpty()) return null
-        return mapOf(
-            "botId" to intent?.getStringExtra("botId").orEmpty(),
-            "prompt" to prompt
-        )
-    }
-
-    private fun dispatchOverlayMessage(message: Map<String, String>) {
-        pendingOverlayMessage = message
-        nativeChannel?.invokeMethod("overlayMessage", message, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                if (pendingOverlayMessage == message) pendingOverlayMessage = null
-            }
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
-            override fun notImplemented() = Unit
-        })
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        overlayMessage(intent)?.let(::dispatchOverlayMessage)
-    }
+    // 悬浮窗消息转发已移除。
 
 
     private fun accessibilitySystemEnabled(): Boolean {
@@ -88,12 +62,7 @@ class MainActivity: FlutterActivity() {
         nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "takePendingOverlayMessage" -> {
-                    val message = pendingOverlayMessage ?: overlayMessage(intent)
-                    pendingOverlayMessage = null
-                    intent?.removeExtra("overlay_prompt")
-                    result.success(message)
-                }
+                // 悬浮窗待处理消息接口已移除。
                 "setAlarmManager" -> {
                     val hour = call.argument<Int>("hour") ?: 0
                     val minute = call.argument<Int>("minute") ?: 0
@@ -239,58 +208,7 @@ class MainActivity: FlutterActivity() {
                     startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                     result.success(null)
                 }
-                "overlayEnabled" -> result.success(Settings.canDrawOverlays(this))
-                "overlayRunning" -> result.success(TideOverlayService.running)
-                "openOverlaySettings" -> {
-                    try {
-                        startActivity(Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        ))
-                        result.success(null)
-                    } catch (error: Exception) {
-                        result.error("overlay_settings_failed", error.message, null)
-                    }
-                }
-                "setAssistantOverlay" -> {
-                    val enabled = call.argument<Boolean>("enabled") == true
-                    if (enabled && !Settings.canDrawOverlays(this)) {
-                        result.success(false)
-                    } else {
-                        try {
-                            val overlayIntent = Intent(this, TideOverlayService::class.java).apply {
-                                action = if (enabled) TideOverlayService.ACTION_SHOW else TideOverlayService.ACTION_HIDE
-                                putExtra("botId", call.argument<String>("botId"))
-                                putExtra("botName", call.argument<String>("botName"))
-                                putExtra("avatarPath", call.argument<String>("avatarPath"))
-                            }
-                            startService(overlayIntent)
-                            result.success(true)
-                        } catch (error: Exception) {
-                            result.error("overlay_service_failed", error.message, null)
-                        }
-                    }
-                }
-                "executeAccessibilityAction" -> {
-                    val action = call.argument<String>("action") ?: ""
-                    val x = call.argument<Int>("x")
-                    val y = call.argument<Int>("y")
-                    val text = call.argument<String>("text")
-                    val selector = call.argument<String>("selector")
-                    val targetPackage = call.argument<String>("packageName")
-                    val ok = when (action) {
-                        "open_app", "jump_tidebot" -> {
-                            val pkg = if (action == "jump_tidebot") packageName else targetPackage.orEmpty()
-                            packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true } ?: false
-                        }
-                        "close_app" -> {
-                            if (targetPackage.isNullOrBlank() || targetPackage == packageName) false
-                            else { (getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).killBackgroundProcesses(targetPackage); true }
-                        }
-                        else -> TideAccessibilityService.instance?.performAction(action, x, y, text, selector) == true
-                    }
-                    result.success(ok)
-                }
+                // 悬浮窗与无障碍操控 MethodChannel 接口已移除。
                 "installApk" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {

@@ -213,19 +213,7 @@ class OpsManager {
     await _notifications.cancel(notifId);
   }
 
-  Future<String> executeAccessibilityCommand(
-      String action, Map<String, dynamic> payload) async {
-    try {
-      final String result =
-          await _nativeChannel.invokeMethod('executeAccessibilityAction', {
-        'action': action,
-        'payload': payload,
-      });
-      return result;
-    } on PlatformException catch (e) {
-      return "Native Bridge Error: '${e.message}'.";
-    }
-  }
+  // 手机操控桥接已移除。
 
   Future<bool> setSystemAlarm(int hour, int minute, String message) async {
     try {

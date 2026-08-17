@@ -21,7 +21,7 @@ import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
-import 'device_capability_service.dart';
+// Device control has been removed; device context remains in the AI layer.
 import 'emotion_state_service.dart';
 import 'ui_call.dart';
 
@@ -187,6 +187,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _loadMsgs() async {
+    final revision = _messagesRevision;
     print('_loadMsgs called with bot ID: ${_bot['id']}');
     try {
       final db = DBManager();
@@ -197,7 +198,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 触发大量顺序数据库查询并造成列表首帧卡顿。
       print('_loadMsgs success: got ${msgs.length} messages');
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
-      if (mounted) {
+      if (mounted && revision == _messagesRevision) {
         setState(() {
           final byId = <String, Map<String, dynamic>>{
             for (final m in msgs)
@@ -245,6 +246,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Timer? _streamDisplayTimer;
   Timer? _messageSyncTimer;
+  int _messagesRevision = 0;
   // IDs already persisted for the current foreground reply but not yet owned by
   // a visible bubble. The periodic database refresh must not append them early.
   final Set<String> _deferredPersistedMessageIds = <String>{};
@@ -254,8 +256,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     try {
       final botId = _bot['id']?.toString() ?? '';
       if (botId.isEmpty) return;
+      final revision = _messagesRevision;
       final fresh = await DBManager().queryMessages(botId);
-      if (!mounted) return;
+      if (!mounted || revision != _messagesRevision) return;
       final freshById = <String, Map<String, dynamic>>{
         for (final message in fresh) message['id']?.toString() ?? '': message,
       };
@@ -491,74 +494,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  Future<void> _confirmDeviceAction(
-      String botId, Map<String, dynamic> request) async {
-    if (!mounted) return;
-    final action = request['action']?.toString() ?? '';
-    final reason = request['reason']?.toString() ?? '未提供原因';
-    final policy = await DeviceCapabilityService.instance.actionPolicy();
-    if (policy == DeviceCapabilityService.actionPolicyOff) {
-      await DBManager().setKV(
-        'device_action_audit_${DateTime.now().millisecondsSinceEpoch}',
-        jsonEncode({
-          'bot_id': botId,
-          'action': action,
-          'reason': reason,
-          'confirmed': false,
-          'ok': false,
-          'policy': policy,
-        }),
-      );
-      return;
-    }
-    final confirmed = policy == DeviceCapabilityService.actionPolicyAllow
-        ? true
-        : await TideDialogs.show<bool>(
-              context: context,
-              barrierDismissible: false,
-              builder: (ctx) => TideDialogSurface(
-                title: const Text('确认手机操作',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                content: Text('机器人请求执行：$action\n原因：$reason\n\n本次确认只对这一项操作有效。',
-                    style: const TextStyle(fontFamily: 'TideFont')),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('拒绝')),
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('确认执行')),
-                ],
-              ),
-            ) ??
-            false;
-    var ok = false;
-    if (confirmed) {
-      ok = await DeviceCapabilityService.instance.requestControl(
-        botId: botId,
-        action: action,
-        x: request['x'] as int?,
-        y: request['y'] as int?,
-        text: request['text']?.toString(),
-        packageName: request['packageName']?.toString(),
-        selector: request['selector']?.toString(),
-      );
-    }
-    await DBManager().setKV(
-      'device_action_audit_${DateTime.now().millisecondsSinceEpoch}',
-      jsonEncode({
-        'bot_id': botId,
-        'action': action,
-        'reason': reason,
-        'confirmed': confirmed,
-        'ok': ok
-      }),
-    );
-    if (mounted) {
-      GlobalNotice.show(
-          confirmed ? (ok ? '已执行本次手机操作' : '未执行：无障碍服务未启用或操作失败') : '已拒绝本次手机操作');
-    }
-  }
+  // 手机操控确认流程已移除。
 
   // ========== 发送消息 ==========
   Future<void> _send({
@@ -813,13 +749,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final content = (result['reply']?.toString() ?? '').trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
-      final pendingAction = result['pending_device_action'];
-      if (pendingAction is Map) {
-        await _confirmDeviceAction(
-          botId,
-          Map<String, dynamic>.from(pendingAction),
-        );
-      }
+      // 手机操控功能已移除；旧版 pending_device_action 将被忽略。
       final aiMsg = <String, dynamic>{
         'id': result['message_id']?.toString() ??
             'm_${DateTime.now().millisecondsSinceEpoch}',
@@ -1992,7 +1922,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     Expanded(
                         child: TideDialogs.glassButton('确认清除', onTap: () async {
                       if (delMsgs) {
+                        _messagesRevision++;
                         await DBManager().deleteMessages(_bot['id'] as String);
+                        if (mounted) {
+                          setState(() {
+                            _msgs.clear();
+                            _deferredPersistedMessageIds.clear();
+                          });
+                        }
                       }
                       if (delMem) {
                         await DBManager().deleteMemories(_bot['id'] as String);

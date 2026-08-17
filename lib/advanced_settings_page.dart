@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'app_log_service.dart';
 import 'db.dart';
 import 'device_capability_service.dart';
+import 'external_api_service.dart';
 import 'global_notice.dart';
 import 'log_session_detail_page.dart';
 import 'theme.dart';
@@ -19,17 +20,17 @@ class AdvancedSettingsPage extends StatefulWidget {
   State<AdvancedSettingsPage> createState() => _AdvancedSettingsPageState();
 }
 
-class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
-    with WidgetsBindingObserver {
+class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
-  bool _botUiEditing = false;
   bool _extraContext = false;
   bool _operationProactive = false;
-  bool _deviceControl = false;
-  String _actionPolicy = DeviceCapabilityService.actionPolicyAsk;
-  bool _overlayEnabled = false;
-  bool _overlayPermissionPending = false;
+  bool _externalApiEnabled = false;
+  String _externalApiPort = '6666';
+  String _externalApiKey = 'tidebot';
+  String _externalApiBotId = '';
+  bool _externalApiSyncMessages = true;
+  List<Map<String, dynamic>> _bots = const [];
   final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
   final _scroll = ScrollController();
@@ -37,7 +38,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _load();
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted && _logging) {
@@ -57,11 +57,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
     final enabled = AppLogService.instance.enabled;
     final capability = DeviceCapabilityService.instance;
     final bots = await DBManager().getAllBots();
+    final db = DBManager();
     final botNames = <String, String>{};
     for (final feature in const [
       DeviceCapabilityService.contextFeature,
       DeviceCapabilityService.proactiveFeature,
-      DeviceCapabilityService.controlFeature,
     ]) {
       final id = await capability.boundBot(feature);
       if (id != null && id.isNotEmpty) {
@@ -72,29 +72,25 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
         botNames[feature] = bot['name']?.toString() ?? id;
       }
     }
-    final policy = await capability.actionPolicy();
-    final overlayIntent = prefs.getBool('assistant_overlay_enabled') ?? false;
-    final botUiEditing = prefs.getBool('bot_ui_editing_enabled') ?? false;
-    final hasOverlayPermission = await capability.overlayEnabled();
-    final overlayRunning = await capability.overlayRunning();
-    final overlay = overlayIntent && hasOverlayPermission && overlayRunning;
-    if (overlayIntent && !hasOverlayPermission) {
-      await prefs.setBool('assistant_overlay_enabled', false);
-    }
-    final pending =
-        prefs.getBool('assistant_overlay_permission_pending') ?? false;
+    final externalEnabled = await db.getKV('external_api_enabled') == 'true';
+    final externalPort = await db.getKV('external_api_port') ?? '6666';
+    final externalKey = await db.getKV('external_api_key') ?? 'tidebot';
+    final externalBotId = await db.getKV('external_api_bot_id') ?? '';
+    final externalSync =
+        await db.getKV('external_api_sync_messages') != 'false';
     if (mounted) {
       setState(() {
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
-        _botUiEditing = botUiEditing;
         _extraContext = prefs.getBool('extra_context_enabled') ?? false;
         _operationProactive =
             prefs.getBool('operation_proactive_enabled') ?? false;
-        _deviceControl = prefs.getBool('device_control_enabled') ?? false;
-        _actionPolicy = policy;
-        _overlayEnabled = overlay;
-        _overlayPermissionPending = pending;
+        _externalApiEnabled = externalEnabled;
+        _externalApiPort = externalPort;
+        _externalApiKey = externalKey;
+        _externalApiBotId = externalBotId;
+        _externalApiSyncMessages = externalSync;
+        _bots = bots.cast<Map<String, dynamic>>();
         _boundBotNames
           ..clear()
           ..addAll(botNames);
@@ -184,30 +180,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
         selected.contains('new_notification')) {
       await capability.openNotificationListenerSettings();
     }
-    if (feature == DeviceCapabilityService.controlFeature &&
-        !await capability.accessibilityEnabled()) {
-      if (!mounted) return;
-      final openSettings = await TideDialogs.show<bool>(
-            context: context,
-            builder: (ctx) => TideDialogSurface(
-              title: const Text('需要无障碍授权',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              content: const Text(
-                  '仅在 Android 系统设置中单独启用 TideBot 受控自动化后，已确认的操作才能执行。',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('稍后')),
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('打开系统设置')),
-              ],
-            ),
-          ) ??
-          false;
-      if (openSettings) await capability.openAccessibilitySettings();
-    }
+    // 手机操控能力已移除；无障碍仅保留给用户明确授权的信息感知与操作触发。
     await (await SharedPreferences.getInstance()).setBool(key, true);
     if (mounted) setState(() => update(true));
   }
@@ -357,8 +330,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
                     selected.contains('foreground_app'))) ||
             (feature == DeviceCapabilityService.proactiveFeature &&
                 (selected.contains('app_opened') ||
-                    selected.contains('screen_event'))) ||
-            feature == DeviceCapabilityService.controlFeature;
+                    selected.contains('screen_event')));
     if (needsAccessibility && state['accessibility'] != true) {
       await explain(
           '请在系统无障碍页面开启“TideBot 受控自动化”', capability.openAccessibilitySettings);
@@ -384,88 +356,140 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
           ),
         ],
       );
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _overlayPermissionPending) {
-      unawaited(_resumeOverlayAfterPermission());
+  Future<void> _toggleExternalApi(bool value) async {
+    final db = DBManager();
+    final usableBots = _bots
+        .where((bot) => bot['is_disabled'] != 1 && bot['is_disabled'] != true)
+        .toList();
+    if (value && usableBots.isEmpty) {
+      GlobalNotice.show('请先创建并启用一个机器人');
+      return;
+    }
+    String? botId = _externalApiBotId;
+    if (value && botId.isEmpty) {
+      botId = await _chooseBot('选择对外提供服务的机器人');
+      if (botId == null || botId.isEmpty) return;
+      await db.setKV('external_api_bot_id', botId);
+    }
+    await db.setKV('external_api_enabled', '$value');
+    bool ok = true;
+    if (value) {
+      ok = await ExternalApiService.instance.start();
+    } else {
+      await ExternalApiService.instance.stop();
+    }
+    await _load();
+    if (mounted) {
+      GlobalNotice.show(
+          ok ? (value ? '外部访问服务已启动' : '外部访问服务已停止') : '外部访问服务启动失败，请查看开发日志');
     }
   }
 
-  Future<void> _resumeOverlayAfterPermission() async {
-    final capability = DeviceCapabilityService.instance;
-    if (!await capability.overlayEnabled()) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('assistant_overlay_permission_pending', false);
-    _overlayPermissionPending = false;
-    await _startOverlay();
-  }
+  Future<String?> _chooseBot(String title, {String? selectedId}) =>
+      showTideSheet<String>(
+        context: context,
+        child: SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                  title: Text(title,
+                      style: const TextStyle(fontFamily: 'TideFont'))),
+              for (final bot in _bots.where(
+                (item) =>
+                    item['is_disabled'] != 1 && item['is_disabled'] != true,
+              ))
+                ListTile(
+                  selected: bot['id']?.toString() == selectedId,
+                  title: Text(bot['name']?.toString() ?? '未命名机器人',
+                      style: const TextStyle(fontFamily: 'TideFont')),
+                  subtitle: Text(bot['id']?.toString() ?? ''),
+                  onTap: () => Navigator.pop(context, bot['id']?.toString()),
+                ),
+            ],
+          ),
+        ),
+      );
 
-  Future<void> _startOverlay() async {
-    final capability = DeviceCapabilityService.instance;
-    var botId =
-        await capability.boundBot(DeviceCapabilityService.controlFeature);
-    final bots = await DBManager().getAllBots();
-    if ((botId == null || botId.isEmpty) && bots.isNotEmpty) {
-      botId = bots.first['id']?.toString();
-    }
-    final bot = bots.cast<Map<String, dynamic>>().firstWhere(
-          (item) => item['id']?.toString() == botId,
-          orElse: () => const {},
-        );
-    final ok = await capability.setAssistantOverlay(
-      enabled: true,
-      botId: botId,
-      botName: bot['name']?.toString(),
-      avatarPath: bot['avatar']?.toString(),
+  Future<void> _editExternalApi() async {
+    final portController = TextEditingController(text: _externalApiPort);
+    final keyController = TextEditingController(text: _externalApiKey);
+    var botId = _externalApiBotId;
+    var syncMessages = _externalApiSyncMessages;
+    final saved = await TideDialogs.show<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (_, setLocal) => TideDialogSurface(
+          title: const Text('外部访问服务', style: TextStyle(fontFamily: 'TideFont')),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: portController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '端口',
+                  helperText: '默认 6666；端口占用时会自动换用可用端口。',
+                ),
+              ),
+              TextField(
+                controller: keyController,
+                decoration: const InputDecoration(labelText: 'API Key'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('服务机器人',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: Text(_bots
+                        .where((bot) => bot['id']?.toString() == botId)
+                        .map((bot) => bot['name']?.toString())
+                        .firstOrNull ??
+                    '请选择'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () async {
+                  final chosen =
+                      await _chooseBot('选择对外服务机器人', selectedId: botId);
+                  if (chosen != null) setLocal(() => botId = chosen);
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('同步到 TideBot 聊天记录',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('默认开启；关闭后外部请求不写入本地聊天记录。',
+                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                value: syncMessages,
+                onChanged: (value) => setLocal(() => syncMessages = value),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('保存并重启')),
+          ],
+        ),
+      ),
     );
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('assistant_overlay_enabled', ok);
-    if (ok && botId != null && botId.isNotEmpty) {
-      await prefs.setString('assistant_overlay_bot_id', botId);
-    }
-    if (mounted) setState(() => _overlayEnabled = ok);
-  }
-
-  Future<void> _toggleOverlay(bool value) async {
-    final capability = DeviceCapabilityService.instance;
-    final prefs = await SharedPreferences.getInstance();
-    if (!value) {
-      await prefs.setBool('assistant_overlay_enabled', false);
-      await prefs.setBool('assistant_overlay_permission_pending', false);
-      _overlayPermissionPending = false;
-      await capability.setAssistantOverlay(enabled: false);
-      if (mounted) setState(() => _overlayEnabled = false);
+    if (saved != true) return;
+    final port = int.tryParse(portController.text.trim());
+    if (port == null ||
+        port < 1024 ||
+        port > 65535 ||
+        keyController.text.trim().isEmpty ||
+        botId.isEmpty) {
+      if (mounted) GlobalNotice.show('请填写有效端口、API Key 并选择机器人');
       return;
     }
-    if (!await capability.overlayEnabled()) {
-      if (!mounted) return;
-      final open = await TideDialogs.show<bool>(
-            context: context,
-            builder: (ctx) => TideDialogSurface(
-              title: const Text('允许机器人悬浮窗',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              content: const Text(
-                  '接下来会打开 Android 的“显示在其他应用上层”页面。请选择 TideBot 并开启允许；返回 TideBot 后，悬浮窗会自动启动，无需再次拨动开关。',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('取消')),
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('前往授权')),
-              ],
-            ),
-          ) ??
-          false;
-      if (!open) return;
-      await prefs.setBool('assistant_overlay_permission_pending', true);
-      _overlayPermissionPending = true;
-      await capability.openOverlaySettings();
-      return;
-    }
-    await _startOverlay();
+    final db = DBManager();
+    await db.setKV('external_api_port', '$port');
+    await db.setKV('external_api_key', keyController.text.trim());
+    await db.setKV('external_api_bot_id', botId);
+    await db.setKV('external_api_sync_messages', '$syncMessages');
+    if (_externalApiEnabled) await ExternalApiService.instance.restart();
+    await _load();
   }
 
   Future<void> _toggleLog(bool value) async {
@@ -517,7 +541,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     _scroll.dispose();
     super.dispose();
@@ -570,25 +593,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
             ]),
           ),
           const SizedBox(height: 12),
-          FrostCard(
-            padding: const EdgeInsets.all(16),
-            child: SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('机器人修改主题',
-                  style: TextStyle(fontFamily: 'TideFont')),
-              subtitle: const Text(
-                  '默认关闭。开启后，机器人仅在你明确要求时可调用 UI 外观工具；不会改动功能、权限、数据或安全设置。',
-                  style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-              value: _botUiEditing,
-              activeThumbColor: theme.primary,
-              onChanged: (value) async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool('bot_ui_editing_enabled', value);
-                if (mounted) setState(() => _botUiEditing = value);
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
+          // 机器人修改主题功能已移除。
           FrostCard(
             padding: const EdgeInsets.all(16),
             child: Column(children: [
@@ -629,100 +634,49 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
               ),
               _featureFooter(DeviceCapabilityService.proactiveFeature,
                   const {'app_opened'}),
-              const Divider(),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('机器人操控手机',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                subtitle: const Text('需要无障碍授权；每次实际执行前必须展示确认。',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                value: _deviceControl,
-                onChanged: (value) => _setProtectedToggle(
-                    key: 'device_control_enabled',
-                    feature: DeviceCapabilityService.controlFeature,
-                    value: value,
-                    title: '授权机器人操控手机',
-                    description: '启用不会自动授予控制。功能须绑定机器人、限制动作白名单，并对每次实际操作要求明确确认。',
-                    defaultWhitelist: const {
-                      'back',
-                      'home',
-                      'open_app',
-                      'click_selector'
-                    },
-                    update: (v) => _deviceControl = v),
-              ),
-              _featureFooter(DeviceCapabilityService.controlFeature,
-                  const {'back', 'home', 'open_app', 'click_selector'}),
-              const SizedBox(height: 8),
-              InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () async {
-                  const options = {
-                    DeviceCapabilityService.actionPolicyOff: '关闭',
-                    DeviceCapabilityService.actionPolicyAsk: '每次询问',
-                    DeviceCapabilityService.actionPolicyAllow: '允许',
-                  };
-                  final value = await showTideSheet<String>(
-                    context: context,
-                    height: 300,
-                    child: SafeArea(
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-                        children: [
-                          const ListTile(
-                            title: Text('机器人执行操作',
-                                style: TextStyle(
-                                    fontFamily: 'TideFont',
-                                    fontWeight: FontWeight.w700)),
-                            subtitle: Text('选择机器人对已授权白名单操作的执行策略。',
-                                style: TextStyle(fontFamily: 'TideFont')),
-                          ),
-                          for (final entry in options.entries)
-                            ListTile(
-                              leading: Icon(entry.key == _actionPolicy
-                                  ? Icons.radio_button_checked_rounded
-                                  : Icons.radio_button_off_rounded),
-                              title: Text(entry.value,
-                                  style:
-                                      const TextStyle(fontFamily: 'TideFont')),
-                              onTap: () => Navigator.pop(context, entry.key),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                  if (value == null) return;
-                  await DeviceCapabilityService.instance.setActionPolicy(value);
-                  if (mounted) setState(() => _actionPolicy = value);
-                },
-                child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: '机器人执行操作',
-                    helperText: '关闭：拒绝执行；每次询问：逐步确认；允许：白名单内直接执行。',
-                    suffixIcon: Icon(Icons.keyboard_arrow_down_rounded),
-                  ),
-                  child: Text(
-                    const {
-                          DeviceCapabilityService.actionPolicyOff: '关闭',
-                          DeviceCapabilityService.actionPolicyAsk: '每次询问',
-                          DeviceCapabilityService.actionPolicyAllow: '允许',
-                        }[_actionPolicy] ??
-                        '每次询问',
-                    style: const TextStyle(fontFamily: 'TideFont'),
-                  ),
-                ),
-              ),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('机器人悬浮窗',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                subtitle: const Text('在其他应用上显示机器人头像和快捷输入栏。',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                value: _overlayEnabled,
-                onChanged: _toggleOverlay,
-              ),
+              // 机器人操控手机与悬浮窗功能已移除。
             ]),
           ),
+          const SizedBox(height: 12),
+          FrostCard(
+            padding: const EdgeInsets.all(16),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('外部访问服务',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('将选定机器人作为本机 OpenAI 兼容 API 服务提供给同一局域网设备。',
+                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                value: _externalApiEnabled,
+                activeThumbColor: theme.primary,
+                onChanged: _toggleExternalApi,
+              ),
+              if (_externalApiEnabled) ...[
+                const Divider(),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                      'API Base URL：http://本机局域网 IP:$_externalApiPort/v1',
+                      style: const TextStyle(
+                          fontFamily: 'TideFont', fontSize: 13)),
+                  subtitle: Text(
+                      'API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
+                      style: TextStyle(
+                          fontFamily: 'TideFont',
+                          color: theme.textWeak,
+                          fontSize: 12)),
+                  trailing: const Icon(Icons.settings_outlined),
+                  onTap: _editExternalApi,
+                ),
+              ] else
+                TextButton.icon(
+                    onPressed: _editExternalApi,
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('配置端口、API Key 和机器人')),
+            ]),
+          ),
+          const SizedBox(height: 12),
           FrostCard(
             padding: const EdgeInsets.all(16),
             child:

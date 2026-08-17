@@ -10,7 +10,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'theme.dart';
 import 'ui_chat_list.dart';
-import 'ui_chat_room.dart';
+// Chat room is opened through app navigation elsewhere.
 import 'ui_create_bot.dart';
 import 'ui_space_square.dart';
 import 'ui_profile.dart';
@@ -25,85 +25,11 @@ import 'ota_update.dart';
 import 'ai.dart';
 import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
+import 'external_api_service.dart';
 import 'daily_launch_animation.dart';
 
 final TideTheme tideTheme = TideTheme();
-const MethodChannel _nativeChannel = MethodChannel('tidebot.native.channel');
-final Set<String> _processingOverlayMessages = <String>{};
-
-Future<void> _handleOverlayMessage(dynamic raw) async {
-  if (raw is! Map) return;
-  final message = Map<String, dynamic>.from(raw);
-  final botId = message['botId']?.toString().trim() ?? '';
-  final prompt = message['prompt']?.toString().trim() ?? '';
-  if (botId.isEmpty || prompt.isEmpty) return;
-  final fingerprint = '$botId\u0000$prompt';
-  if (!_processingOverlayMessages.add(fingerprint)) return;
-  try {
-    final db = DBManager();
-    final bot = await db.getBotById(botId);
-    if (bot == null || bot['is_disabled'] == 1 || bot['is_disabled'] == true) {
-      return;
-    }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insertChatMessage({
-      'id': 'overlay_user_$now',
-      'bot_id': botId,
-      'role': 'user',
-      'type': 'text',
-      'content': prompt,
-      'timestamp': now,
-    });
-    await AIManager().sendMessage(
-      botId: botId,
-      text: prompt,
-      persistResponse: true,
-    );
-    for (var attempt = 0;
-        attempt < 20 && appNavigatorKey.currentState == null;
-        attempt++) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    appNavigatorKey.currentState?.push(MaterialPageRoute(
-      builder: (_) => ChatRoomPage(botData: bot),
-    ));
-  } catch (error) {
-    debugPrint('[overlay] message failed: $error');
-  } finally {
-    _processingOverlayMessages.remove(fingerprint);
-  }
-}
-
-Future<void> _initializeNativeMessages() async {
-  _nativeChannel.setMethodCallHandler((call) async {
-    if (call.method == 'overlayMessage') {
-      await _handleOverlayMessage(call.arguments);
-    }
-  });
-  try {
-    final pending = await _nativeChannel
-        .invokeMapMethod<String, dynamic>('takePendingOverlayMessage');
-    if (pending != null) await _handleOverlayMessage(pending);
-  } catch (error) {
-    debugPrint('[overlay] pending message unavailable: $error');
-  }
-}
-
-Future<void> _restoreAssistantOverlay(SharedPreferences prefs) async {
-  if (prefs.getBool('assistant_overlay_enabled') != true) return;
-  final capability = DeviceCapabilityService.instance;
-  if (!await capability.overlayEnabled()) return;
-  final botId = prefs.getString('assistant_overlay_bot_id')?.trim() ?? '';
-  if (botId.isEmpty) return;
-  final bot = await DBManager().getBotById(botId);
-  if (bot == null) return;
-  await capability.setAssistantOverlay(
-    enabled: true,
-    botId: botId,
-    botName: bot['name']?.toString(),
-    avatarPath: bot['avatar']?.toString(),
-  );
-}
+// 悬浮窗功能已移除。
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -125,10 +51,9 @@ void main() async {
   await AppLogService.instance.restoreForLaunch();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
   runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
-  unawaited(_initializeNativeMessages());
-  unawaited(_restoreAssistantOverlay(prefs).catchError((error, stack) {
-    debugPrint('[overlay] restore skipped: $error');
-  }));
+  if (await DBManager().getKV('external_api_enabled') == 'true') {
+    unawaited(ExternalApiService.instance.start());
+  }
   unawaited(_runOperationTriggeredReply());
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());

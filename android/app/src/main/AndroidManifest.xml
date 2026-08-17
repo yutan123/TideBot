@@ -11,8 +11,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 手机操控与悬浮窗能力已移除。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     
     <!-- 相册/文件读取权限（Android 13+ 用 READ_MEDIA_IMAGES，旧版用 READ_EXTERNAL_STORAGE） -->
@@ -87,9 +86,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <service
-            android:name=".TideOverlayService"
-            android:exported="false" />
+        <!-- TideOverlayService 已移除。 -->
 
         <service
             android:name=".TideNotificationListenerService"
