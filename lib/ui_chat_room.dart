@@ -805,12 +805,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final persistedBase = int.tryParse(
               aiMsg['id'].toString().replaceFirst(RegExp(r'^msg_a_'), '')) ??
           (aiMsg['timestamp'] as int) + 1;
+      final segmentCount = _splitReplySegments(content).length;
       final persistedMessageIds = <String>{
         result['message_id']?.toString() ?? '',
         if (result['image_path']?.toString().isNotEmpty == true)
           'msg_i_${persistedBase + 1}',
         if (result['sticker'] is Map)
-          'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}',
+          // AIManager stores the sticker after its text rows: ts + 2 + count.
+          'msg_s_${persistedBase + 1 + segmentCount}',
       }..remove('');
       _deferredPersistedMessageIds.addAll(persistedMessageIds);
       // AIManager has already persisted this response. The foreground owns these
@@ -832,7 +834,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 此处才将完整可见正文按速度设置送入唯一的前台占位气泡。
       final needsTypewriter =
           streamingMessage != null && !segmentedReply && content.isNotEmpty;
+
+      void adoptSticker() {
+        if (!mounted) return;
+        final sticker = result['sticker'];
+        final stickerId = 'msg_s_${persistedBase + 1 + segmentCount}';
+        if (sticker is Map &&
+            !_msgs.any((m) => m['id']?.toString() == stickerId)) {
+          setState(() => _msgs.add({
+                'id': stickerId,
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'sticker',
+                'content': '',
+                'file_path': sticker['file_path']?.toString(),
+                'timestamp': persistedBase + 1 + segmentCount,
+              }));
+          _scrollDown();
+        }
+      }
+
       if (needsTypewriter && mounted) {
+        // The sticker must follow completed visible text, not the empty
+        // placeholder.  Its insertion is deferred until the timer adopts the
+        // persisted text row below.
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
         final tm = streamingMessage;
@@ -857,6 +882,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               tm['timestamp'] = aiMsg['timestamp'];
               tm.remove('is_streaming');
             });
+            adoptSticker();
+            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
             _scrollDown(animated: false);
             return;
           }
@@ -884,6 +911,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               streamingMessage['timestamp'] = aiMsg['timestamp'];
               streamingMessage.remove('is_streaming');
             });
+            adoptSticker();
           }
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
@@ -922,26 +950,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 'file_path': imagePath,
                 'timestamp': persistedBase + 1,
               }));
-        }
-        final sticker = result['sticker'];
-        if (sticker is Map &&
-            !_msgs.any((m) =>
-                m['id']?.toString() ==
-                'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}')) {
-          // Text segments are deliberately rendered first. A sticker is a
-          // follow-up message, never a competing response or protocol label.
-          setState(() => _msgs.add({
-                'id':
-                    'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}',
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'sticker',
-                'content': '',
-                'file_path': sticker['file_path']?.toString(),
-                'timestamp':
-                    persistedBase + 1 + _splitReplySegments(content).length,
-              }));
-          _scrollDown();
         }
       }
       if (!needsTypewriter) {
@@ -2540,6 +2548,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             m['document_name']?.toString().trim().isNotEmpty == true
                 ? m['document_name'].toString()
                 : (documentPath?.split(Platform.pathSeparator).last ?? '文档');
+        final documentExt = documentName.contains('.')
+            ? documentName.split('.').last.toUpperCase()
+            : '文件';
         final isSticker = m['type'] == 'sticker';
         // 表情包的 content 是内部情绪分类，绝不能作为正文显示。
         final txt = isSticker ? '' : ((m['content'] as String?) ?? '');
@@ -2621,38 +2632,96 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     height: 1,
                                     color: TideTheme.of(context).border),
                               ),
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 4),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isUser
-                                    ? TideTheme.of(context).primary
-                                    : TideTheme.of(context).buttonSecondary,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.insert_drive_file_rounded,
-                                      color: isUser
-                                          ? Colors.white
-                                          : TideTheme.of(context).primary),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      documentName,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
+                            GestureDetector(
+                              onTap: () async {
+                                if (documentPath != null &&
+                                    await File(documentPath).exists()) {
+                                  GlobalNotice.show('文件已保存在：$documentName');
+                                }
+                              },
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isUser
+                                      ? TideTheme.of(context).primary
+                                      : TideTheme.of(context).buttonSecondary,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: isUser
+                                        ? Colors.white.withValues(alpha: .28)
+                                        : TideTheme.of(context).border,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 38,
+                                      height: 42,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
                                         color: isUser
                                             ? Colors.white
-                                            : TideTheme.of(context).textStrong,
-                                        fontFamily: 'TideFont',
+                                                .withValues(alpha: .18)
+                                            : TideTheme.of(context)
+                                                .primary
+                                                .withValues(alpha: .12),
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.insert_drive_file_rounded,
+                                              size: 20,
+                                              color: isUser
+                                                  ? Colors.white
+                                                  : TideTheme.of(context)
+                                                      .primary),
+                                          Text(documentExt,
+                                              style: TextStyle(
+                                                  fontSize: 8,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: isUser
+                                                      ? Colors.white
+                                                      : TideTheme.of(context)
+                                                          .primary,
+                                                  fontFamily: 'TideFont')),
+                                        ],
                                       ),
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 10),
+                                    Flexible(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(documentName,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                  color: isUser
+                                                      ? Colors.white
+                                                      : TideTheme.of(context)
+                                                          .textStrong,
+                                                  fontFamily: 'TideFont')),
+                                          const SizedBox(height: 3),
+                                          Text('文件附件 · 点击查看保存位置',
+                                              style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: isUser
+                                                      ? Colors.white70
+                                                      : TideTheme.of(context)
+                                                          .textWeak,
+                                                  fontFamily: 'TideFont')),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ],

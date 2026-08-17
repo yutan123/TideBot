@@ -702,23 +702,10 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // A forced sticker turn must not depend on the model deciding to call a
-        // tool. Select one concrete asset after the reply is generated.
-        Map<String, dynamic>? sticker = toolSticker;
-        if (sticker == null && allowSticker) {
-          final emotions = await db.stickerEmotions();
-          if (emotions.isNotEmpty) {
-            final emotion = emotions[Random.secure().nextInt(emotions.length)];
-            final candidates = await db.queryStickers(emotion: emotion);
-            if (candidates.isNotEmpty) {
-              sticker = Map<String, dynamic>.from(
-                candidates[Random.secure().nextInt(candidates.length)],
-              );
-              AppLogService.instance
-                  .add('STICKER', '本轮概率命中，已直接发送「$emotion」表情包');
-            }
-          }
-        }
+        // A sticker is only sent when the model explicitly selected one through its
+        // native tool. Do not also generate a random fallback: one reply has at
+        // most one sticker, and the UI inserts it only after all text segments.
+        final Map<String, dynamic>? sticker = toolSticker;
         if (persistResponse) {
           // Streaming uses one persisted row as well as one foreground bubble.
           // Sentence splitting remains available for non-streaming replies.
@@ -876,6 +863,11 @@ class AIManager {
     // protocol lines before rendering so content such as ":平静]" or
     // "记忆:..." never becomes a chat bubble.
     final withoutProtocolLines = raw
+        .replaceAll(
+            RegExp(
+                r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
+                multiLine: true),
+            '')
         .replaceAll(
             RegExp(r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
                 multiLine: true, caseSensitive: false),
@@ -1133,30 +1125,40 @@ $transcript''';
     }
   }
 
-  /// Transcribe with a bot-specific STT provider. MiMo exposes the same
-  /// `/audio/transcriptions` resource as other OpenAI-compatible audio APIs.
-  /// The request must be multipart: audio base64 in JSON is not accepted by
-  /// that endpoint and was the source of the previous 404/422 failures.
+  /// Transcribe with the STT provider selected for this bot.
+  ///
+  /// MiMo audio models use the OpenAI-compatible chat-completions endpoint,
+  /// rather than /audio/transcriptions.  Audio is therefore sent as a data URL
+  /// in a user content part and the returned assistant text is the transcript.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
   }) async {
+    final db = DBManager();
+    final prefs = await SharedPreferences.getInstance();
+    final bot = await db.getBotById(botId);
+    final providerId = (prefs.getString('stt_model_$botId') ??
+            bot?['stt_model']?.toString() ??
+            '')
+        .trim();
+    if (providerId.isEmpty) {
+      AppLogService.instance.add('STT', '未为当前机器人选择 STT 服务');
+      return null;
+    }
+    final provider = await db.getSttProviderById(providerId);
+    if (provider == null) {
+      AppLogService.instance.add('STT', '未找到 STT 服务配置：$providerId');
+      return null;
+    }
+    return transcribeWithProvider(provider, audioPath);
+  }
+
+  Future<String?> transcribeWithProvider(
+      Map<String, dynamic> provider, String audioPath) async {
     try {
-      if (!await File(audioPath).exists()) return null;
-      final db = DBManager();
-      final prefs = await SharedPreferences.getInstance();
-      final bot = await db.getBotById(botId);
-      final providerId = (prefs.getString('stt_model_$botId') ??
-              bot?['stt_model']?.toString() ??
-              '')
-          .trim();
-      if (providerId.isEmpty) {
-        AppLogService.instance.add('STT', '未为当前机器人选择 STT 服务');
-        return null;
-      }
-      final provider = await db.getSttProviderById(providerId);
-      if (provider == null) {
-        AppLogService.instance.add('STT', '未找到 STT 服务配置：$providerId');
+      final audio = File(audioPath);
+      if (!await audio.exists()) {
+        AppLogService.instance.add('STT', '语音文件不存在');
         return null;
       }
       final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
@@ -1168,37 +1170,138 @@ $transcript''';
           (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
       final protocol =
           (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
-      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) return null;
-      if (protocol != 'openai' && protocol != 'mimo') {
+      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
+        AppLogService.instance.add('STT', '语音转文字失败：缺少地址、Key 或模型');
+        return null;
+      }
+      if (protocol == 'mimo') {
+        return _transcribeMiMo(
+          baseUrl: baseUrl,
+          apiKey: apiKey,
+          model: model,
+          audio: audio,
+          providerName: provider['name']?.toString() ?? 'MiMo STT',
+        );
+      }
+      if (protocol != 'openai') {
         AppLogService.instance.add('STT', '不支持的 STT 协议：$protocol');
         return null;
       }
       final endpoint = _sttTranscriptionEndpoint(baseUrl);
-      AppLogService.instance.add('STT',
-          '请求语音转文字：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint');
       final request = http.MultipartRequest('POST', Uri.parse(endpoint))
         ..headers['Authorization'] = 'Bearer $apiKey'
-        ..headers['api-key'] = apiKey
         ..fields['model'] = model
         ..fields['response_format'] = 'json'
         ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-      final streamed =
-          await request.send().timeout(const Duration(seconds: 45));
-      final response = await http.Response.fromStream(streamed);
+      final response = await http.Response.fromStream(
+          await request.send().timeout(const Duration(seconds: 45)));
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final body = utf8.decode(response.bodyBytes, allowMalformed: true);
         AppLogService.instance.add('STT',
-            '语音识别失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 300))}');
+            '语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}');
         return null;
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = jsonDecode(body);
       final transcript =
           decoded is Map ? decoded['text']?.toString().trim() : '';
-      return transcript == null || transcript.isEmpty ? null : transcript;
+      return transcript?.isEmpty == true ? null : transcript;
     } catch (e) {
-      AppLogService.instance.add('STT', '语音识别异常：$e');
+      AppLogService.instance.add('STT', '语音转文字异常：$e');
       return null;
     }
+  }
+
+  Future<String> createSttProbeAudio() async {
+    // A tiny valid PCM WAV containing 120 ms of silence.  It keeps the test a
+    // real STT request without prompting the user to pick or record a file.
+    const sampleRate = 8000;
+    const samples = 960;
+    const dataBytes = samples * 2;
+    final bytes = BytesBuilder()
+      ..add('RIFF'.codeUnits)
+      ..add(_le32(36 + dataBytes))
+      ..add('WAVEfmt '.codeUnits)
+      ..add(_le32(16))
+      ..add(_le16(1))
+      ..add(_le16(1))
+      ..add(_le32(sampleRate))
+      ..add(_le32(sampleRate * 2))
+      ..add(_le16(2))
+      ..add(_le16(16))
+      ..add('data'.codeUnits)
+      ..add(_le32(dataBytes))
+      ..add(List<int>.filled(dataBytes, 0));
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/tidebot_stt_probe.wav');
+    await file.writeAsBytes(bytes.toBytes(), flush: true);
+    return file.path;
+  }
+
+  List<int> _le16(int value) => [value & 0xff, (value >> 8) & 0xff];
+  List<int> _le32(int value) => [
+        value & 0xff,
+        (value >> 8) & 0xff,
+        (value >> 16) & 0xff,
+        (value >> 24) & 0xff,
+      ];
+
+  Future<String?> _transcribeMiMo({
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+    required File audio,
+    required String providerName,
+  }) async {
+    final endpoint = _chatCompletionsEndpoint(baseUrl);
+    final bytes = await audio.readAsBytes();
+    final extension = audio.path.split('.').last.toLowerCase();
+    final payload = {
+      'model': model,
+      'stream': false,
+      'messages': [
+        {
+          'role': 'system',
+          'content': '你是语音转文字引擎。只输出音频中的原始文字，不要解释、标题、标点说明或心情标签。'
+        },
+        {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': '请将这段音频准确转写为文字。'},
+            {
+              'type': 'input_audio',
+              'input_audio': {
+                'data': base64Encode(bytes),
+                'format': extension,
+              }
+            },
+          ]
+        }
+      ]
+    };
+    AppLogService.instance.add('STT',
+        '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes');
+    final response = await http
+        .post(Uri.parse(endpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 60));
+    final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      AppLogService.instance.add('STT',
+          'MiMo 语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 800))}');
+      return null;
+    }
+    final decoded = jsonDecode(body);
+    final transcript = _extractChatContent(decoded).trim();
+    if (transcript.isEmpty) {
+      AppLogService.instance.add('STT',
+          'MiMo 语音转文字返回为空：${body.substring(0, body.length.clamp(0, 500))}');
+      return null;
+    }
+    return transcript;
   }
 
   String _sttTranscriptionEndpoint(String configuredUrl) {
@@ -1208,11 +1311,11 @@ $transcript''';
     return '$root/v1/audio/transcriptions';
   }
 
-  String _mimoTtsEndpoint(String configuredUrl) {
+  String _chatCompletionsEndpoint(String configuredUrl) {
     final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
-    if (root.endsWith('/audio/speech')) return root;
-    if (root.endsWith('/v1')) return '$root/audio/speech';
-    return '$root/v1/audio/speech';
+    if (root.endsWith('/chat/completions')) return root;
+    if (root.endsWith('/v1')) return '$root/chat/completions';
+    return '$root/v1/chat/completions';
   }
 
   String _miniMaxTtsEndpoint(String configuredUrl) {
@@ -1258,7 +1361,7 @@ $transcript''';
     try {
       final endpoint = switch (protocol) {
         'minimax' => _miniMaxTtsEndpoint(baseUrl),
-        'mimo' => _mimoTtsEndpoint(baseUrl),
+        'mimo' => _chatCompletionsEndpoint(baseUrl),
         _ => '$baseUrl/audio/speech',
       };
       final payload = switch (protocol) {
@@ -1281,20 +1384,28 @@ $transcript''';
           },
         'mimo' => {
             'model': model,
-            'input': text,
-            'voice': voice == 'default' ? 'mimo_default' : voice,
-            'response_format': 'wav',
+            'stream': false,
+            'messages': [
+              {'role': 'system', 'content': '你是语音合成引擎。严格按用户提供的文字生成语音，不要输出解释。'},
+              {
+                'role': 'user',
+                'content': [
+                  {'type': 'text', 'text': text},
+                ]
+              }
+            ],
+            'audio': {
+              'voice': voice == 'default' ? 'default' : voice,
+              'format': 'wav',
+            },
           },
         _ => {'model': model, 'input': text, 'voice': voice},
       };
       AppLogService.instance.add('TTS',
           '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
-      // MiMo requires its API key header. Keep Bearer too for gateways that
-      // expose the OpenAI-compatible authentication variant.
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
-        if (protocol == 'mimo') 'api-key': apiKey,
       };
       final res = await http
           .post(
@@ -2030,6 +2141,14 @@ $transcript''';
                 'x': {'type': 'integer'},
                 'y': {'type': 'integer'},
                 'text': {'type': 'string'},
+                'packageName': {
+                  'type': 'string',
+                  'description': '目标应用包名；打开/关闭应用时使用'
+                },
+                'selector': {
+                  'type': 'string',
+                  'description': '屏幕中要点击的文字、描述或资源 ID'
+                },
                 'reason': {'type': 'string', 'description': '向用户说明这一步将做什么'}
               },
               'required': ['action', 'reason'],
@@ -2130,6 +2249,9 @@ $transcript''';
           if (args['x'] is num) 'x': (args['x'] as num).toInt(),
           if (args['y'] is num) 'y': (args['y'] as num).toInt(),
           if (args['text'] != null) 'text': args['text'].toString(),
+          if (args['packageName'] != null)
+            'packageName': args['packageName'].toString(),
+          if (args['selector'] != null) 'selector': args['selector'].toString(),
         },
       };
     }
@@ -2549,7 +2671,7 @@ $transcript''';
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【输出规则】只输出给用户看的自然聊天正文。严禁输出心情、情绪、记忆、工具、表情包类型、系统规则或任何方括号协议标签。情绪由系统内部状态管理，不需要你用文本声明。"
+        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。"
         "【记忆】如有稳定且重要的用户信息，使用原生记忆工具；不要在正文中写记忆标签。\n";
 
     if (activeGame == 'poker') {
@@ -2578,10 +2700,11 @@ $transcript''';
   }
 
   String _extractMood(String text) {
-    if (text.contains('[心情:开心]')) return '开心';
-    if (text.contains('[心情:伤心]')) return '伤心';
-    if (text.contains('[心情:生气]')) return '生气';
-    return '平静';
+    // 唯一允许的内部格式是独占首行：[心情:平静]。
+    final match =
+        RegExp(r'^\s*\[心情\s*[:：]\s*(平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)')
+            .firstMatch(text);
+    return match?.group(1) ?? '平静';
   }
 
   /// 解析模型通过内部协议 [记忆:类型|内容]（可多条）主动要求记住的信息，

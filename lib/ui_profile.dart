@@ -2765,10 +2765,32 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             '测试通过，延迟 ${DateTime.now().difference(started).inMilliseconds}ms',
             color: const Color(0xFF34C759));
       } else {
-        GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
+        GlobalNotice.show('测试失败，请查看开发日志中的 HTTP 响应',
+            color: const Color(0xFFE74C3C));
       }
     } catch (_) {
-      GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
+      GlobalNotice.show('测试失败，请查看开发日志中的 HTTP 响应',
+          color: const Color(0xFFE74C3C));
+    }
+  }
+
+  Future<void> _testSttProvider(Map<String, dynamic> p) async {
+    GlobalNotice.show('正在发送 STT 真实测试请求');
+    final started = DateTime.now();
+    try {
+      final path = await AIManager().createSttProbeAudio();
+      final text = await AIManager().transcribeWithProvider(p, path);
+      if (text != null && text.isNotEmpty) {
+        GlobalNotice.show(
+            '测试通过，${DateTime.now().difference(started).inMilliseconds}ms：$text',
+            color: const Color(0xFF34C759));
+      } else {
+        GlobalNotice.show('测试失败，请查看开发日志中的 HTTP 响应',
+            color: const Color(0xFFE74C3C));
+      }
+    } catch (_) {
+      GlobalNotice.show('测试失败，请查看开发日志中的 HTTP 响应',
+          color: const Color(0xFFE74C3C));
     }
   }
 
@@ -2931,42 +2953,81 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                   color: TideTheme.of(context).textStrong))),
                       ...List.generate(_sttProviders.length, (i) {
                         final p = _sttProviders[i];
-                        return FrostCard(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(14),
-                          child: Row(children: [
-                            const Icon(Icons.mic_rounded),
-                            const SizedBox(width: 10),
-                            Expanded(
-                                child: Column(
+                        return BouncyTap(
+                          onTap: () => _editProvider(p, isStt: true),
+                          child: FrostCard(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(p['name']?.toString() ?? '',
-                                    style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: 'TideFont')),
-                                const SizedBox(height: 4),
-                                Text('${p['model'] ?? ''}  ${p['url'] ?? ''}',
+                                Row(children: [
+                                  Expanded(
+                                    child: Text(p['name']?.toString() ?? '',
+                                        style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            fontFamily: 'TideFont')),
+                                  ),
+                                  BouncyTap(
+                                    onTap: () => _testSttProvider(p),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(10),
+                                        color: TideTheme.of(context)
+                                            .primary
+                                            .withValues(alpha: 0.15),
+                                      ),
+                                      child: Text('测试',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  TideTheme.of(context).primary,
+                                              fontFamily: 'TideFont')),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  BouncyTap(
+                                    onTap: () =>
+                                        _deleteProvider(i, isStt: true),
+                                    child: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 20,
+                                        color: Color(0xFFE74C3C)),
+                                  ),
+                                ]),
+                                const SizedBox(height: 6),
+                                Text(p['url']?.toString() ?? '',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                         fontSize: 12,
                                         color: TideTheme.of(context).textWeak,
                                         fontFamily: 'TideFont')),
+                                if ((p['model'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text('模型: ${p['model']}',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: TideTheme.of(context)
+                                                  .textFaint,
+                                              fontFamily: 'TideFont'))),
+                                if ((p['key'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                          'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              color: TideTheme.of(context)
+                                                  .textFaint,
+                                              fontFamily: 'TideFont'))),
                               ],
-                            )),
-                            IconButton(
-                                icon: const Icon(Icons.edit_outlined, size: 20),
-                                tooltip: '编辑 STT',
-                                onPressed: () => _editProvider(p, isStt: true)),
-                            IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded,
-                                    size: 20, color: Color(0xFFE74C3C)),
-                                tooltip: '删除 STT',
-                                onPressed: () =>
-                                    _deleteProvider(i, isStt: true)),
-                          ]),
+                            ),
+                          ),
                         );
                       }),
                     ],

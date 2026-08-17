@@ -65,6 +65,8 @@ class DeviceCapabilityService {
     int? x,
     int? y,
     String? text,
+    String? packageName,
+    String? selector,
   }) async {
     if (!await isAuthorized(controlFeature, botId)) return false;
     if (!(await whitelist(controlFeature)).contains(action)) return false;
@@ -74,12 +76,32 @@ class DeviceCapabilityService {
       'x': x,
       'y': y,
       'text': text,
+      'packageName': packageName,
+      'selector': selector,
     });
     return result == true;
   }
 
+  Future<List<Map<String, dynamic>>> installedApps() async {
+    final raw =
+        await _channel.invokeListMethod<dynamic>('installedApps') ?? const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
   Future<void> openAccessibilitySettings() =>
       _channel.invokeMethod<void>('openAccessibilitySettings');
+
+  Future<void> openUsageAccessSettings() =>
+      _channel.invokeMethod<void>('openUsageAccessSettings');
+
+  Future<void> openNotificationListenerSettings() =>
+      _channel.invokeMethod<void>('openNotificationListenerSettings');
+
+  Future<void> openLocationSettings() =>
+      _channel.invokeMethod<void>('openLocationSettings');
 
   String encodeContext(Map<String, dynamic> context) => jsonEncode(context);
 }
