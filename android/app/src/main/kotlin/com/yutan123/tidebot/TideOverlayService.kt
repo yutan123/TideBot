@@ -92,7 +92,7 @@ class TideOverlayService : Service() {
             text = "发送"
             setOnClickListener {
                 val text = input.text.toString().trim()
-                if (text.isNotEmpty) {
+                if (text.isNotEmpty()) {
                     response.text = "已收到：$text\n正在后台请求机器人，请在 TideBot 查看完整回复。"
                     response.visibility = View.VISIBLE
                     packageManager.getLaunchIntentForPackage(packageName)?.let { launch ->
