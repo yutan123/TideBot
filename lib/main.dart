@@ -42,7 +42,9 @@ Future<void> _handleOverlayMessage(dynamic raw) async {
   try {
     final db = DBManager();
     final bot = await db.getBotById(botId);
-    if (bot == null) return;
+    if (bot == null || bot['is_disabled'] == 1 || bot['is_disabled'] == true) {
+      return;
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.insertChatMessage({
       'id': 'overlay_user_$now',
@@ -206,6 +208,14 @@ void onStart(ServiceInstance service) {
           if (id.isEmpty) continue;
           await DBManager().updateFutureTask(id, {'status': 'running'});
           final botId = task['bot_id']?.toString() ?? '';
+          final bot =
+              botId.isEmpty ? null : await DBManager().getBotById(botId);
+          if (bot == null ||
+              bot['is_disabled'] == 1 ||
+              bot['is_disabled'] == true) {
+            await DBManager().updateFutureTask(id, {'status': 'pending'});
+            continue;
+          }
           final prompt =
               task['prompt']?.toString() ?? task['note']?.toString() ?? '';
           if (botId.isEmpty || prompt.isEmpty) continue;

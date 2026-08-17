@@ -243,6 +243,7 @@ class LifeScheduleService {
         '${current.hour.toString().padLeft(2, '0')}:${current.minute.toString().padLeft(2, '0')}';
     for (final bot in await db.getAllBots()) {
       final botId = bot['id']?.toString() ?? '';
+      if (bot['is_disabled'] == 1 || bot['is_disabled'] == true) continue;
       final row = await db.getLifeSchedule(botId, key);
       if (botId.isEmpty || row == null) continue;
       final timeline = _timeline(row);

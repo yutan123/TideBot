@@ -2130,9 +2130,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // ========== 长按消息 ==========
   void _msgLongPress(Map<String, dynamic> msg) {
     final text = msg['content']?.toString() ?? '';
+    final botDisabled = _bot['is_disabled'] == 1 || _bot['is_disabled'] == true;
     showTideSheet(
       context: context,
-      height: 230,
+      height: 300,
       child: Builder(
         builder: (sheetContext) => ListView(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -2154,6 +2155,34 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               },
             ),
             // 引用功能已移除，避免生成和维护 reply_to_id 关联。
+            ListTile(
+              leading: Icon(
+                botDisabled
+                    ? Icons.smart_toy_outlined
+                    : Icons.pause_circle_outline_rounded,
+                color: botDisabled
+                    ? TideTheme.of(sheetContext).primary
+                    : const Color(0xFFE68A00),
+              ),
+              title: Text(botDisabled ? '启用机器人' : '禁用机器人',
+                  style: TextStyle(
+                      fontFamily: 'TideFont',
+                      color: botDisabled
+                          ? TideTheme.of(sheetContext).textStrong
+                          : const Color(0xFFE68A00))),
+              subtitle: Text(
+                  botDisabled ? '恢复回复、定时任务和主动服务' : '保留聊天记录与设定，但停止一切回复和服务',
+                  style: const TextStyle(fontFamily: 'TideFont', fontSize: 11)),
+              onTap: () async {
+                await DBManager().updateBot(_bot['id'].toString(),
+                    {'is_disabled': botDisabled ? 0 : 1});
+                if (mounted) {
+                  setState(() => _bot['is_disabled'] = botDisabled ? 0 : 1);
+                }
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                GlobalNotice.show(botDisabled ? '机器人已启用' : '机器人已禁用');
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),
@@ -2664,7 +2693,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                               onTap: () async {
                                 if (documentPath != null &&
                                     await File(documentPath).exists()) {
-                                  GlobalNotice.show('文件已保存在：$documentName');
+                                  final opened = await launchUrl(
+                                    Uri.file(documentPath),
+                                    mode: LaunchMode.externalApplication,
+                                  );
+                                  if (!opened && mounted) {
+                                    GlobalNotice.show('没有可打开此文件的应用');
+                                  }
                                 }
                               },
                               child: Container(
@@ -2737,7 +2772,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                                           .textStrong,
                                                   fontFamily: 'TideFont')),
                                           const SizedBox(height: 3),
-                                          Text('文件附件 · 点击查看保存位置',
+                                          Text('文件附件 · 点击选择应用打开',
                                               style: TextStyle(
                                                   fontSize: 11,
                                                   color: isUser

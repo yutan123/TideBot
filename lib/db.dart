@@ -50,7 +50,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 18,
+      version: 19,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -61,7 +61,8 @@ class DBManager {
             avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
             max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
             last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0,
-            last_read_at INTEGER DEFAULT 0
+            last_read_at INTEGER DEFAULT 0,
+            is_disabled INTEGER DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -289,6 +290,12 @@ class DBManager {
           try {
             await db.execute(
                 'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0');
+          } catch (_) {}
+        }
+        if (oldVersion < 19) {
+          try {
+            await db.execute(
+                'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0');
           } catch (_) {}
         }
         if (oldVersion < 15) {

@@ -226,6 +226,10 @@ class AIManager {
 
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
+    if (bot['is_disabled'] == 1 || bot['is_disabled'] == true) {
+      AppLogService.instance.add('AI', '机器人已禁用，跳过回复：$botId');
+      return {'success': true, 'silent': true, 'reply': ''};
+    }
 
     // 已选择本地 GGUF 时，绕过远程 provider，执行真实 llama.cpp 推理。
     final prefs = await SharedPreferences.getInstance();
@@ -1410,12 +1414,15 @@ $transcript''';
             },
           },
         'mimo' => {
+            // MiMo TTS is chat-completions compatible, but the TTS model
+            // expects audio-only output. Including `text` in modalities makes
+            // the gateway reject the request with HTTP 400.
             'model': model,
             'stream': false,
             'messages': [
               {'role': 'user', 'content': text}
             ],
-            'modalities': ['text', 'audio'],
+            'modalities': ['audio'],
             'audio': {
               'voice': voice,
               'format': 'wav',
@@ -2555,8 +2562,20 @@ $transcript''';
           }
           if (path == '/chat/completions') {
             final content = _extractChatContent(decoded);
-            if (content.isEmpty) lastError = 'HTTP 200，但未解析到聊天正文';
-            return content.isNotEmpty;
+            // Some OpenAI-compatible gateways deliberately return an empty
+            // probe completion (or only reasoning/tool metadata) while normal
+            // conversations work. HTTP 2xx plus a valid choices envelope is a
+            // usable connectivity result; keep the parsing note for diagnosis.
+            final choices = decoded['choices'];
+            final hasChoices = choices is List && choices.isNotEmpty;
+            if (content.isEmpty && !hasChoices) {
+              lastError = 'HTTP 200，但响应中没有 choices';
+              return false;
+            }
+            if (content.isEmpty) {
+              lastError = 'HTTP 200，服务已连通但测试响应未包含可见正文';
+            }
+            return true;
           }
           if (path == '/images/generations') {
             return decoded['data'] is List &&

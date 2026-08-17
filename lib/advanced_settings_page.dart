@@ -23,6 +23,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
     with WidgetsBindingObserver {
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
+  bool _botUiEditing = false;
   bool _extraContext = false;
   bool _operationProactive = false;
   bool _deviceControl = false;
@@ -73,6 +74,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
     }
     final policy = await capability.actionPolicy();
     final overlayIntent = prefs.getBool('assistant_overlay_enabled') ?? false;
+    final botUiEditing = prefs.getBool('bot_ui_editing_enabled') ?? false;
     final hasOverlayPermission = await capability.overlayEnabled();
     final overlayRunning = await capability.overlayRunning();
     final overlay = overlayIntent && hasOverlayPermission && overlayRunning;
@@ -85,6 +87,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
       setState(() {
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
+        _botUiEditing = botUiEditing;
         _extraContext = prefs.getBool('extra_context_enabled') ?? false;
         _operationProactive =
             prefs.getBool('operation_proactive_enabled') ?? false;
@@ -565,6 +568,25 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
                 },
               ),
             ]),
+          ),
+          const SizedBox(height: 12),
+          FrostCard(
+            padding: const EdgeInsets.all(16),
+            child: SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('机器人修改主题',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              subtitle: const Text(
+                  '默认关闭。开启后，机器人仅在你明确要求时可调用 UI 外观工具；不会改动功能、权限、数据或安全设置。',
+                  style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+              value: _botUiEditing,
+              activeThumbColor: theme.primary,
+              onChanged: (value) async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('bot_ui_editing_enabled', value);
+                if (mounted) setState(() => _botUiEditing = value);
+              },
+            ),
           ),
           const SizedBox(height: 12),
           FrostCard(

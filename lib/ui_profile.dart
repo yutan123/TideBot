@@ -1811,7 +1811,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     },
     {
       'name': 'MiMo TTS',
-      'url': 'https://api.xiaomimimo.com/v1',
+      'url': 'https://api.xiaomimimo.com/v1/chat/completions',
       'models': 'mimo-v2.5-tts',
       'voice': 'default',
       'protocol': 'mimo'
@@ -2783,7 +2783,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       final text = await AIManager().transcribeWithProvider(p, path);
       if (text != null && text.isNotEmpty) {
         GlobalNotice.show(
-            '测试通过，${DateTime.now().difference(started).inMilliseconds}ms：$text',
+            '测试通过，延迟 ${DateTime.now().difference(started).inMilliseconds}ms',
             color: const Color(0xFF34C759));
       } else {
         GlobalNotice.show('测试失败，请查看开发日志中的 HTTP 响应',
