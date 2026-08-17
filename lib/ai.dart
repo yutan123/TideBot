@@ -1414,15 +1414,19 @@ $transcript''';
             },
           },
         'mimo' => {
-            // MiMo TTS is chat-completions compatible, but the TTS model
-            // expects audio-only output. Including `text` in modalities makes
-            // the gateway reject the request with HTTP 400.
+            // MiMo V2.5 TTS uses standard chat completions, but differs from
+            // the audio-modalities schema: the text to synthesize MUST be in
+            // an assistant message. A preceding user message is optional and
+            // only carries voice/style instructions. `modalities` is not part
+            // of MiMo's documented TTS payload and causes HTTP 400.
             'model': model,
             'stream': false,
             'messages': [
-              {'role': 'user', 'content': text}
+              {
+                'role': 'assistant',
+                'content': text,
+              },
             ],
-            'modalities': ['audio'],
             'audio': {
               'voice': voice,
               'format': 'wav',
@@ -1448,7 +1452,9 @@ $transcript''';
       if (res.statusCode < 200 ||
           res.statusCode >= 300 ||
           res.bodyBytes.isEmpty) {
-        AppLogService.instance.add('TTS', '语音合成失败：HTTP ${res.statusCode}');
+        final responseText = utf8.decode(res.bodyBytes, allowMalformed: true);
+        AppLogService.instance.add('TTS',
+            '语音合成失败：HTTP ${res.statusCode}${responseText.isEmpty ? '' : '，响应：${responseText.substring(0, responseText.length.clamp(0, 1000))}'}');
         return null;
       }
 
