@@ -21,6 +21,7 @@ import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
+import 'device_capability_service.dart';
 import 'emotion_state_service.dart';
 import 'ui_call.dart';
 
@@ -481,6 +482,56 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
+  Future<void> _confirmDeviceAction(
+      String botId, Map<String, dynamic> request) async {
+    if (!mounted) return;
+    final action = request['action']?.toString() ?? '';
+    final reason = request['reason']?.toString() ?? '未提供原因';
+    final confirmed = await TideDialogs.show<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => TideDialogSurface(
+            title:
+                const Text('确认手机操作', style: TextStyle(fontFamily: 'TideFont')),
+            content: Text('机器人请求执行：$action\n原因：$reason\n\n本次确认只对这一项操作有效。',
+                style: const TextStyle(fontFamily: 'TideFont')),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('拒绝')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('确认执行')),
+            ],
+          ),
+        ) ??
+        false;
+    var ok = false;
+    if (confirmed) {
+      ok = await DeviceCapabilityService.instance.requestControl(
+        botId: botId,
+        action: action,
+        x: request['x'] as int?,
+        y: request['y'] as int?,
+        text: request['text']?.toString(),
+      );
+    }
+    await DBManager().setKV(
+      'device_action_audit_${DateTime.now().millisecondsSinceEpoch}',
+      jsonEncode({
+        'bot_id': botId,
+        'action': action,
+        'reason': reason,
+        'confirmed': confirmed,
+        'ok': ok
+      }),
+    );
+    if (mounted) {
+      GlobalNotice.show(
+          confirmed ? (ok ? '已执行本次手机操作' : '未执行：无障碍服务未启用或操作失败') : '已拒绝本次手机操作');
+    }
+  }
+
   // ========== 发送消息 ==========
   Future<void> _send({
     List<String>? images,
@@ -632,10 +683,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
-      // Persisted replies may be split for future history, but foreground streaming
-      // owns a single live bubble. Rendering segments here used to duplicate the
-      // same answer when the database sync saw persisted segment rows.
-      final segmentedReply = !streamEnabled &&
+      // Segmenting is a presentation preference, independent from the local
+      // typewriter effect. A complete reply is always received before either
+      // presentation starts, so segment IDs can safely match persisted rows.
+      final segmentedReply =
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
@@ -734,6 +785,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final content = (result['reply']?.toString() ?? '').trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
+      final pendingAction = result['pending_device_action'];
+      if (pendingAction is Map) {
+        await _confirmDeviceAction(
+          botId,
+          Map<String, dynamic>.from(pendingAction),
+        );
+      }
       final aiMsg = <String, dynamic>{
         'id': result['message_id']?.toString() ??
             'm_${DateTime.now().millisecondsSinceEpoch}',
@@ -830,11 +888,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } else if (segmentedReply) {
           final segments = _splitReplySegments(content);
           final baseTimestamp = aiMsg['timestamp'] as int;
-          // Below delays affect only the visible foreground animation.
+          // Each segment is already persisted by AIManager. Keep the same IDs
+          // here, then defer database refresh until all segments are visible.
           for (var index = 0; index < segments.length; index++) {
-            // 句间自然等待：首句立即上屏（保证响应感），之后每句间 400–1000ms。
             if (index > 0) await _applyRandomReplyDelay(db);
-            if (!mounted) return;
+            if (!mounted || myGen != _requestGen) return;
             final segId = index == 0
                 ? aiMsg['id'].toString()
                 : '${aiMsg['id']}_segment_$index';
@@ -868,11 +926,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final sticker = result['sticker'];
         if (sticker is Map &&
             !_msgs.any((m) =>
-                m['type'] == 'sticker' &&
-                m['file_path']?.toString() ==
-                    sticker['file_path']?.toString())) {
-          // sticker 已由 AIManager 落库；content 只用于内部分类，不能作为
-          // 可见正文展示，避免把“开心/表情包类型”等协议泄漏给用户。
+                m['id']?.toString() ==
+                'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}')) {
+          // Text segments are deliberately rendered first. A sticker is a
+          // follow-up message, never a competing response or protocol label.
           setState(() => _msgs.add({
                 'id':
                     'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}',
@@ -2477,6 +2534,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final hasImg = imagePath?.isNotEmpty == true;
         final hasAudio = audioPath?.isNotEmpty == true;
         final hasDocument = documentPath?.isNotEmpty == true;
+        final hasPreviousDocument = i < _msgs.length - 1 &&
+            _msgs[_msgs.length - 2 - i]['type'] == 'document';
         final documentName =
             m['document_name']?.toString().trim().isNotEmpty == true
                 ? m['document_name'].toString()
@@ -2554,10 +2613,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     ),
                             ),
                           if (hasDocument) ...[
-                            if (i > 0)
-                              Divider(
-                                  height: 1,
-                                  color: TideTheme.of(context).border),
+                            if (hasPreviousDocument)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 6, horizontal: 4),
+                                child: Divider(
+                                    height: 1,
+                                    color: TideTheme.of(context).border),
+                              ),
                             Container(
                               margin: const EdgeInsets.only(bottom: 4),
                               padding: const EdgeInsets.symmetric(

@@ -1,5 +1,8 @@
 package com.yutan123.tidebot
 import android.content.Intent
+import android.content.Context
+import android.os.BatteryManager
+import android.provider.Settings
 import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -98,8 +101,33 @@ class MainActivity: FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "deviceContext" -> {
+                    val allowed = call.argument<List<String>>("allowed")?.toSet() ?: emptySet()
+                    val context = mutableMapOf<String, Any>()
+                    if (allowed.contains("battery")) {
+                        val manager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+                        val level = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                        if (level >= 0) context["battery"] = "$level%"
+                    }
+                    if (allowed.contains("foreground_app")) {
+                        context["foreground_app"] = TideAccessibilityService.state()["packageName"] ?: ""
+                    }
+                    if (allowed.contains("screen_text")) {
+                        context["screen_text"] = TideAccessibilityService.visibleText()
+                    }
+                    result.success(context)
+                }
+                "accessibilityState" -> result.success(TideAccessibilityService.state())
+                "openAccessibilitySettings" -> {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    result.success(null)
+                }
                 "executeAccessibilityAction" -> {
-                    result.success("Action Received")
+                    val action = call.argument<String>("action") ?: ""
+                    val x = call.argument<Int>("x")
+                    val y = call.argument<Int>("y")
+                    val text = call.argument<String>("text")
+                    result.success(TideAccessibilityService.instance?.performAction(action, x, y, text) == true)
                 }
                 "installApk" -> {
                     val path = call.argument<String>("path")

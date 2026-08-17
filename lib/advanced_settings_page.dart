@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_log_service.dart';
+import 'db.dart';
+import 'device_capability_service.dart';
 import 'log_session_detail_page.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -18,6 +20,9 @@ class AdvancedSettingsPage extends StatefulWidget {
 class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
+  bool _extraContext = false;
+  bool _operationProactive = false;
+  bool _deviceControl = false;
   Timer? _ticker;
   final _scroll = ScrollController();
 
@@ -45,8 +50,156 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       setState(() {
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
+        _extraContext = prefs.getBool('extra_context_enabled') ?? false;
+        _operationProactive =
+            prefs.getBool('operation_proactive_enabled') ?? false;
+        _deviceControl = prefs.getBool('device_control_enabled') ?? false;
       });
     }
+  }
+
+  Future<void> _setProtectedToggle({
+    required String key,
+    required String feature,
+    required bool value,
+    required String title,
+    required String description,
+    required Set<String> defaultWhitelist,
+    required ValueChanged<bool> update,
+  }) async {
+    final capability = DeviceCapabilityService.instance;
+    if (!value) {
+      await (await SharedPreferences.getInstance()).setBool(key, false);
+      if (mounted) setState(() => update(false));
+      return;
+    }
+    if (!mounted) return;
+    final approved = await TideDialogs.show<bool>(
+          context: context,
+          builder: (ctx) => TideDialogSurface(
+            title: Text(title, style: const TextStyle(fontFamily: 'TideFont')),
+            content: Text(description,
+                style: const TextStyle(fontFamily: 'TideFont')),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('取消')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('配置授权')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!approved || !mounted) return;
+    final bots = await DBManager().getAllBots();
+    if (!mounted || bots.isEmpty) return;
+    final botId = await showTideSheet<String>(
+      context: context,
+      child: SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('选择可使用此能力的机器人')),
+            for (final bot in bots)
+              ListTile(
+                title: Text(bot['name']?.toString() ?? '未命名机器人'),
+                subtitle: Text(bot['id']?.toString() ?? ''),
+                onTap: () => Navigator.pop(context, bot['id']?.toString()),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (botId == null || botId.isEmpty) return;
+    await capability.bindBot(feature, botId);
+    final selected = await _chooseWhitelist(feature, defaultWhitelist);
+    if (selected == null || selected.isEmpty) return;
+    await capability.setWhitelist(feature, selected);
+    if (feature == DeviceCapabilityService.controlFeature &&
+        !await capability.accessibilityEnabled()) {
+      if (!mounted) return;
+      final openSettings = await TideDialogs.show<bool>(
+            context: context,
+            builder: (ctx) => TideDialogSurface(
+              title: const Text('需要无障碍授权',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              content: const Text(
+                  '仅在 Android 系统设置中单独启用 TideBot 受控自动化后，已确认的操作才能执行。',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('稍后')),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('打开系统设置')),
+              ],
+            ),
+          ) ??
+          false;
+      if (openSettings) await capability.openAccessibilitySettings();
+    }
+    await (await SharedPreferences.getInstance()).setBool(key, true);
+    if (mounted) setState(() => update(true));
+  }
+
+  Future<Set<String>?> _chooseWhitelist(
+      String feature, Set<String> defaults) async {
+    final existing = await DeviceCapabilityService.instance.whitelist(feature);
+    final values = <String>{...defaults, ...existing};
+    final labels = feature == DeviceCapabilityService.contextFeature
+        ? const {
+            'battery': '电量',
+            'foreground_app': '当前前台应用',
+            'screen_text': '当前屏幕文字（无障碍）',
+          }
+        : feature == DeviceCapabilityService.proactiveFeature
+            ? const {'app_opened': '打开 TideBot'}
+            : const {
+                'back': '返回',
+                'home': '回到桌面',
+                'recents': '打开最近任务',
+                'click': '按坐标点击',
+                'input': '向当前输入框填入文字',
+              };
+    values.removeWhere((value) => !labels.containsKey(value));
+    values.addAll(defaults);
+    if (!mounted) return null;
+    return TideDialogs.show<Set<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (_, setLocal) => TideDialogSurface(
+          title: const Text('选择允许项目', style: TextStyle(fontFamily: 'TideFont')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final entry in labels.entries)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: values.contains(entry.key),
+                  title: Text(entry.value,
+                      style: const TextStyle(fontFamily: 'TideFont')),
+                  onChanged: (checked) => setLocal(() {
+                    if (checked == true) {
+                      values.add(entry.key);
+                    } else {
+                      values.remove(entry.key);
+                    }
+                  }),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, values),
+                child: const Text('保存')),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleLog(bool value) async {
@@ -150,7 +303,59 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
             ]),
           ),
           const SizedBox(height: 12),
-          // Logs must always remain the final advanced-settings section.
+          FrostCard(
+            padding: const EdgeInsets.all(16),
+            child: Column(children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('额外信息感知',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('仅在你绑定机器人并授予所需权限后，按需提供设备状态。',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                value: _extraContext,
+                onChanged: (value) => _setProtectedToggle(
+                    key: 'extra_context_enabled',
+                    feature: DeviceCapabilityService.contextFeature,
+                    value: value,
+                    title: '授权额外信息感知',
+                    description: '启用后仍需逐项选择允许的信息；信息只在与当前问题有关时注入上下文。',
+                    defaultWhitelist: const {'battery'},
+                    update: (v) => _extraContext = v),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('操作触发主动回复',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('打开应用等操作可低概率触发已绑定机器人的主动消息。',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                value: _operationProactive,
+                onChanged: (value) => _setProtectedToggle(
+                    key: 'operation_proactive_enabled',
+                    feature: DeviceCapabilityService.proactiveFeature,
+                    value: value,
+                    title: '授权操作触发主动回复',
+                    description: '机器人只会收到你允许的触发类型。消息发送仍受主动回复设置、频率限制和绑定机器人约束。',
+                    defaultWhitelist: const {'app_opened'},
+                    update: (v) => _operationProactive = v),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('机器人操控手机',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('需要无障碍授权；每次实际执行前必须展示确认。',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                value: _deviceControl,
+                onChanged: (value) => _setProtectedToggle(
+                    key: 'device_control_enabled',
+                    feature: DeviceCapabilityService.controlFeature,
+                    value: value,
+                    title: '授权机器人操控手机',
+                    description: '启用不会自动授予控制。功能须绑定机器人、限制动作白名单，并对每次实际操作要求明确确认。',
+                    defaultWhitelist: const {'back', 'home'},
+                    update: (v) => _deviceControl = v),
+              ),
+            ]),
+          ),
           FrostCard(
             padding: const EdgeInsets.all(16),
             child:

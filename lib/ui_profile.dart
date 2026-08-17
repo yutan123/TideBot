@@ -1786,13 +1786,13 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       'protocol': 'openai'
     },
     {
-      'name': 'MiMo ASR',
+      'name': 'MiMo STT',
       'url': 'https://api.xiaomimimo.com/v1',
       'models': 'mimo-v2.5-asr',
       'protocol': 'mimo'
     },
     {
-      'name': 'MiniMax ASR',
+      'name': 'MiniMax STT',
       // MiniMax does not publish an official ASR endpoint in its current API
       // reference. Keep this as an editable OpenAI-compatible preset instead
       // of sending a fabricated request to an unrelated legacy endpoint.

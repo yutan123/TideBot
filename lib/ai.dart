@@ -14,6 +14,7 @@ import 'ops.dart';
 import 'app_state.dart';
 import 'app_log_service.dart';
 import 'emotion_state_service.dart';
+import 'device_capability_service.dart';
 import 'local_llama.dart';
 
 const bool _localInferenceEnabled = false;
@@ -403,11 +404,17 @@ class AIManager {
         ? await _buildToolContext(db, allowSticker: allowSticker)
         : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
+    final deviceContext =
+        await DeviceCapabilityService.instance.contextFor(botId);
+    final deviceContextPrompt = deviceContext.isEmpty
+        ? ''
+        : '\n【经用户逐项授权的设备上下文】${DeviceCapabilityService.instance.encodeContext(deviceContext)}。仅在当前问题直接相关时使用；不得主动逐项复述、推断未授权信息或声称持续监控。';
     final emotionContext =
         await EmotionStateService.instance.promptContext(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         _safetyContext(text) +
         lifeContext +
+        deviceContextPrompt +
         emotionContext +
         (longMemoryContext.isEmpty
             ? ''
@@ -553,7 +560,8 @@ class AIManager {
       AppLogService.instance.add('AI',
           '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
-          ? await _buildNativeTools(db, allowSticker: allowSticker)
+          ? await _buildNativeTools(db,
+              botId: botId, allowSticker: allowSticker)
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -578,6 +586,7 @@ class AIManager {
       String replyText = '';
       String? generatedImagePath;
       var toolSilenced = false;
+      Map<String, dynamic>? pendingDeviceAction;
       Map usage = const {};
       String errorBody = '';
       int statusCode;
@@ -636,6 +645,7 @@ class AIManager {
                 searchSourcesSetter: (l) => searchSources = l,
                 generatedImageSetter: (p) => generatedImagePath = p,
                 stickerSetter: (p) => toolSticker = p,
+                pendingDeviceActionSetter: (p) => pendingDeviceAction = p,
                 silenceSetter: () => toolSilenced = true);
           }
         }
@@ -828,6 +838,8 @@ class AIManager {
           if (searchSources.isNotEmpty) 'sources': searchSources,
           if (generatedImagePath != null) 'image_path': generatedImagePath,
           if (sticker != null) 'sticker': sticker,
+          if (pendingDeviceAction != null)
+            'pending_device_action': pendingDeviceAction,
         };
       } else {
         final detail = errorBody.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -1121,9 +1133,10 @@ $transcript''';
     }
   }
 
-  /// Transcribe with a bot-specific STT provider. OpenAI-compatible providers
-  /// use multipart `/audio/transcriptions`; MiMo ASR uses chat completions with
-  /// Base64 input_audio as required by its official API.
+  /// Transcribe with a bot-specific STT provider. MiMo exposes the same
+  /// `/audio/transcriptions` resource as other OpenAI-compatible audio APIs.
+  /// The request must be multipart: audio base64 in JSON is not accepted by
+  /// that endpoint and was the source of the previous 404/422 failures.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
@@ -1160,20 +1173,12 @@ $transcript''';
         AppLogService.instance.add('STT', '不支持的 STT 协议：$protocol');
         return null;
       }
-      if (protocol == 'mimo') {
-        return _transcribeMiMoAudio(
-          baseUrl: baseUrl,
-          apiKey: apiKey,
-          model: model,
-          audioPath: audioPath,
-          providerName: provider['name']?.toString() ?? providerId,
-        );
-      }
-      final endpoint = '$baseUrl/audio/transcriptions';
+      final endpoint = _sttTranscriptionEndpoint(baseUrl);
       AppLogService.instance.add('STT',
-          '请求转写：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint');
+          '请求语音转文字：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint');
       final request = http.MultipartRequest('POST', Uri.parse(endpoint))
         ..headers['Authorization'] = 'Bearer $apiKey'
+        ..headers['api-key'] = apiKey
         ..fields['model'] = model
         ..fields['response_format'] = 'json'
         ..files.add(await http.MultipartFile.fromPath('file', audioPath));
@@ -1196,11 +1201,18 @@ $transcript''';
     }
   }
 
-  String _mimoChatCompletionsEndpoint(String configuredUrl) {
+  String _sttTranscriptionEndpoint(String configuredUrl) {
     final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
-    if (root.endsWith('/chat/completions')) return root;
-    if (root.endsWith('/v1')) return '$root/chat/completions';
-    return '$root/v1/chat/completions';
+    if (root.endsWith('/audio/transcriptions')) return root;
+    if (root.endsWith('/v1')) return '$root/audio/transcriptions';
+    return '$root/v1/audio/transcriptions';
+  }
+
+  String _mimoTtsEndpoint(String configuredUrl) {
+    final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (root.endsWith('/audio/speech')) return root;
+    if (root.endsWith('/v1')) return '$root/audio/speech';
+    return '$root/v1/audio/speech';
   }
 
   String _miniMaxTtsEndpoint(String configuredUrl) {
@@ -1208,71 +1220,6 @@ $transcript''';
     if (root.endsWith('/t2a_v2')) return root;
     if (root.endsWith('/v1')) return '$root/t2a_v2';
     return '$root/v1/t2a_v2';
-  }
-
-  Future<String?> _transcribeMiMoAudio({
-    required String baseUrl,
-    required String apiKey,
-    required String model,
-    required String audioPath,
-    required String providerName,
-  }) async {
-    final file = File(audioPath);
-    final bytes = await file.readAsBytes();
-    if (bytes.length > 10 * 1024 * 1024) {
-      AppLogService.instance.add('STT', 'MiMo ASR 音频超过官方 10MB Base64 输入上限');
-      return null;
-    }
-    final lowerPath = audioPath.toLowerCase();
-    if (!lowerPath.endsWith('.wav') && !lowerPath.endsWith('.mp3')) {
-      AppLogService.instance.add('STT', 'MiMo ASR 仅接受 WAV 或 MP3 音频');
-      return null;
-    }
-    final mime = lowerPath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav';
-    final endpoint = _mimoChatCompletionsEndpoint(baseUrl);
-    AppLogService.instance.add(
-      'STT',
-      '请求 MiMo ASR：provider=$providerName，model=$model，endpoint=$endpoint，bytes=${bytes.length}',
-    );
-    final response = await http
-        .post(
-          Uri.parse(endpoint),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-            'api-key': apiKey,
-          },
-          body: jsonEncode({
-            'model': model,
-            'messages': [
-              {
-                'role': 'user',
-                'content': [
-                  {
-                    'type': 'input_audio',
-                    'input_audio': {
-                      'data': 'data:$mime;base64,${base64Encode(bytes)}',
-                      'format': lowerPath.endsWith('.mp3') ? 'mp3' : 'wav',
-                    },
-                  },
-                ],
-              },
-            ],
-            'asr_options': {'language': 'auto'},
-          }),
-        )
-        .timeout(const Duration(seconds: 50));
-    final body = utf8.decode(response.bodyBytes, allowMalformed: true);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      AppLogService.instance.add(
-        'STT',
-        'MiMo ASR 失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 300))}',
-      );
-      return null;
-    }
-    final decoded = jsonDecode(body);
-    final transcript = _extractChatContent(decoded).trim();
-    return transcript.isEmpty ? null : transcript;
   }
 
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
@@ -1311,7 +1258,7 @@ $transcript''';
     try {
       final endpoint = switch (protocol) {
         'minimax' => _miniMaxTtsEndpoint(baseUrl),
-        'mimo' => _mimoChatCompletionsEndpoint(baseUrl),
+        'mimo' => _mimoTtsEndpoint(baseUrl),
         _ => '$baseUrl/audio/speech',
       };
       final payload = switch (protocol) {
@@ -1334,15 +1281,9 @@ $transcript''';
           },
         'mimo' => {
             'model': model,
-            // MiMo TTS requires the spoken text in an assistant message.
-            'messages': [
-              {'role': 'assistant', 'content': text},
-            ],
-            'audio': {
-              'format': 'wav',
-              'voice': voice == 'default' ? 'mimo_default' : voice,
-            },
-            'stream': false,
+            'input': text,
+            'voice': voice == 'default' ? 'mimo_default' : voice,
+            'response_format': 'wav',
           },
         _ => {'model': model, 'input': text, 'voice': voice},
       };
@@ -1881,6 +1822,7 @@ $transcript''';
     required void Function(List<Map<String, String>>) searchSourcesSetter,
     required void Function(String) generatedImageSetter,
     required void Function(Map<String, dynamic>) stickerSetter,
+    required void Function(Map<String, dynamic>) pendingDeviceActionSetter,
     required void Function() silenceSetter,
   }) async {
     for (final call in calls) {
@@ -1905,6 +1847,9 @@ $transcript''';
       if (toolResult is Map &&
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
+      }
+      if (toolResult is Map && toolResult['pending_confirmation'] == true) {
+        pendingDeviceActionSetter(Map<String, dynamic>.from(toolResult));
       }
       if (toolResult is Map) {
         final stickerValue = toolResult['sticker'];
@@ -1966,7 +1911,7 @@ $transcript''';
   }
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
-      {bool allowSticker = true}) async {
+      {required String botId, bool allowSticker = true}) async {
     final tools = <Map<String, dynamic>>[];
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
@@ -2067,6 +2012,33 @@ $transcript''';
         },
       });
     }
+    if (await DeviceCapabilityService.instance
+        .isAuthorized(DeviceCapabilityService.controlFeature, botId)) {
+      final allowed = await DeviceCapabilityService.instance
+          .whitelist(DeviceCapabilityService.controlFeature);
+      if (allowed.isNotEmpty) {
+        tools.add({
+          'type': 'function',
+          'function': {
+            'name': 'request_device_action',
+            'description':
+                '请求执行已授权的手机操作。不会立即执行，TideBot 会向用户显示具体操作并等待一次明确确认。只能用于用户当前明确要求的操作。',
+            'parameters': {
+              'type': 'object',
+              'properties': {
+                'action': {'type': 'string', 'enum': allowed.toList()..sort()},
+                'x': {'type': 'integer'},
+                'y': {'type': 'integer'},
+                'text': {'type': 'string'},
+                'reason': {'type': 'string', 'description': '向用户说明这一步将做什么'}
+              },
+              'required': ['action', 'reason'],
+              'additionalProperties': false,
+            },
+          },
+        });
+      }
+    }
     return tools;
   }
 
@@ -2134,6 +2106,31 @@ $transcript''';
     } catch (_) {
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
+      };
+    }
+    if (name == 'request_device_action') {
+      final action = args['action']?.toString() ?? '';
+      final reason = args['reason']?.toString().trim() ?? '';
+      final allowed = await DeviceCapabilityService.instance
+          .isAuthorized(DeviceCapabilityService.controlFeature, botId);
+      final whitelisted = await DeviceCapabilityService.instance
+          .whitelist(DeviceCapabilityService.controlFeature);
+      if (!allowed || !whitelisted.contains(action) || reason.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '该设备操作未获授权'}
+        };
+      }
+      return {
+        'result': {
+          'ok': true,
+          'pending_confirmation': true,
+          'message': '操作尚未执行，必须由用户在界面中逐次确认。',
+          'action': action,
+          'reason': reason,
+          if (args['x'] is num) 'x': (args['x'] as num).toInt(),
+          if (args['y'] is num) 'y': (args['y'] as num).toInt(),
+          if (args['text'] != null) 'text': args['text'].toString(),
+        },
       };
     }
     if (name == 'choose_silence') {
@@ -2552,11 +2549,8 @@ $transcript''';
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【底层强制核心规则】: 你必须在每次回复的最开头，输出当前的心情标签，格式只能是[心情:开心]、[心情:伤心]、[心情:生气]、[心情:平静]四个中的一个。"
-        "【记忆工具】：如果你从用户的话里捕捉到值得记住的确定信息，请在本条回复末尾另起一行输出机器指令。\n"
-        "- 稳定的长期信息（用户的名字、喜好、身份、你们的关系状态、对我的称呼、我对自我的认识等）用 [记忆:长期|内容]，例如 [记忆:长期|京太郎每天睡够8小时]。长期记忆正文要自然、稳定，绝对不要出现“我记得”“我知道”这类口头语；也绝不能出现“今天、昨天、明天、近日、上周、刚才、现在”等任何时间相关词汇。称呼用户时，若已知道对方的名字/称呼就必须用那个称呼（如“京太郎”），绝不能用“用户”这两个字。\n"
-        "- 近期发生过的、带有明显时间属性的事件/感受用 [记忆:内容]，此类型可以自然使用“今天、昨天、今天早上、近日”等时间词。标签内只能写本轮对话中明确陈述的真实内容；格式说明不是事实，绝不能把任何示例、假设或模型自行补全的情节写入记忆。\n"
-        "一条记忆一个标签，多条则连续输出；记忆整体用第一人称写，但不必在句首硬加“我”（例如直接写“京太郎每天睡够8小时”而不是“我京太郎每天睡够8小时”）。称呼用户时不要用第二人称“你”，也禁止出现“用户”这个词：已知用户的名字就写名字，不知道性别就写“他”，从聊天中推断出性别后写“他/她”。该指令是内部协议，绝不能出现在发给用户的可见正文里，也绝不能把“记忆”字样泄露给用户。";
+        "【输出规则】只输出给用户看的自然聊天正文。严禁输出心情、情绪、记忆、工具、表情包类型、系统规则或任何方括号协议标签。情绪由系统内部状态管理，不需要你用文本声明。"
+        "【记忆】如有稳定且重要的用户信息，使用原生记忆工具；不要在正文中写记忆标签。\n";
 
     if (activeGame == 'poker') {
       p +=
@@ -2566,10 +2560,10 @@ $transcript''';
           "\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的“是”或“否”推断出答案；如果你是出题人，你只能回答“是”或“否”。在 20 问内未能猜出则判定输。";
     } else if (activeGame == 'gomoku') {
       p +=
-          "\n【游戏规则】：你正与用户真实进行 9×9 五子棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-9）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
+          "\n【游戏规则】你正与用户真实进行 9×9 五子棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-9），再简短聊天。";
     } else if (activeGame == 'tic_tac_toe') {
       p +=
-          "\n【游戏规则】：你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复最开头紧接心情标签后输出唯一机器可读指令 [落子:行,列]（行列范围 1-3）。不得输出不存在的落子，不得跳过回合；再简短聊天。";
+          "\n【游戏规则】你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-3），再简短聊天。";
     }
     p +=
         '\n【适时沉默】当 choose_silence 工具可用时，你可在用户明确暂不希望回复、对话自然结束且不需回应、或主动问候不宜打扰时调用它；调用后不要输出文本。不得在求助、悲伤、愤怒、困惑、危机、提问或任何需要回应时调用，绝不可作为惩罚、冷暴力、控制或施压。\n【日记】你拥有 write_diary 工具。遇到值得保留的经历、感受或事件时可按需调用，把日记写入工具；绝不把日记正文当作聊天消息发送。';

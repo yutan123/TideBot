@@ -22,6 +22,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'ota_update.dart';
 import 'ai.dart';
 import 'life_schedule_service.dart';
+import 'device_capability_service.dart';
 import 'daily_launch_animation.dart';
 
 final TideTheme tideTheme = TideTheme();
@@ -46,6 +47,7 @@ void main() async {
   await AppLogService.instance.restoreForLaunch();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
   runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
+  unawaited(_runOperationTriggeredReply());
   Future<void>.delayed(const Duration(seconds: 2), OtaUpdate.checkOncePerDay);
 
   // 通知回调需要在根导航器建立后才能打开对应聊天室。
@@ -164,6 +166,38 @@ Future<void> _generateMissingLifeSchedules() async {
   } catch (e) {
     debugPrint('[schedule] generation skipped: $e');
   }
+}
+
+Future<void> _runOperationTriggeredReply() async {
+  final db = DBManager();
+  if (await db.getKV('proactive_reply') == 'false') return;
+  final botId = await DeviceCapabilityService.instance
+      .boundBot(DeviceCapabilityService.proactiveFeature);
+  if (botId == null ||
+      !await DeviceCapabilityService.instance
+          .isAuthorized(DeviceCapabilityService.proactiveFeature, botId) ||
+      !(await DeviceCapabilityService.instance
+              .whitelist(DeviceCapabilityService.proactiveFeature))
+          .contains('app_opened')) return;
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final cooldownKey = 'operation_proactive_last_$botId';
+  final previous = int.tryParse(await db.getKV(cooldownKey) ?? '') ?? 0;
+  if (now - previous < const Duration(hours: 4).inMilliseconds) return;
+  final unanswered =
+      int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
+  if (unanswered >= 3) return;
+  await db.setKV(cooldownKey, '$now');
+  try {
+    final result = await AIManager().sendMessage(
+      botId: botId,
+      text:
+          '【操作触发】用户刚刚打开 TideBot。仅在确实自然且不打扰时，发一条不超过两句的简短问候；否则调用 choose_silence。不得提及系统、操作触发或指令。',
+      persistResponse: true,
+    );
+    if (result['success'] == true && result['silent'] != true) {
+      await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+    }
+  } catch (_) {}
 }
 
 Future<void> _runDueProactiveReplies() async {
