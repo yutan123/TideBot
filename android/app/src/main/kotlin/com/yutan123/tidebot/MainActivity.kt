@@ -2,6 +2,8 @@ package com.yutan123.tidebot
 import android.content.Intent
 import android.content.Context
 import android.content.ComponentName
+import android.net.Uri
+
 import android.os.BatteryManager
 import android.provider.Settings
 import android.graphics.Bitmap
