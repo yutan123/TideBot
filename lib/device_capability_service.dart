@@ -12,6 +12,22 @@ class DeviceCapabilityService {
   static const proactiveFeature = 'operation_proactive';
   static const controlFeature = 'device_control';
 
+  static const actionPolicyOff = 'off';
+  static const actionPolicyAsk = 'ask';
+  static const actionPolicyAllow = 'allow';
+
+  Future<String> actionPolicy() async =>
+      (await SharedPreferences.getInstance())
+          .getString('device_action_policy') ??
+      actionPolicyAsk;
+
+  Future<void> setActionPolicy(String value) async {
+    if (!const {actionPolicyOff, actionPolicyAsk, actionPolicyAllow}
+        .contains(value)) return;
+    await (await SharedPreferences.getInstance())
+        .setString('device_action_policy', value);
+  }
+
   Future<String?> boundBot(String feature) async =>
       (await SharedPreferences.getInstance()).getString('${feature}_bot_id');
 
@@ -110,6 +126,26 @@ class DeviceCapabilityService {
 
   Future<void> openLocationSettings() =>
       _channel.invokeMethod<void>('openLocationSettings');
+
+  Future<bool> overlayEnabled() async =>
+      await _channel.invokeMethod<bool>('overlayEnabled') == true;
+
+  Future<void> openOverlaySettings() =>
+      _channel.invokeMethod<void>('openOverlaySettings');
+
+  Future<bool> setAssistantOverlay({
+    required bool enabled,
+    String? botId,
+    String? botName,
+    String? avatarPath,
+  }) async =>
+      await _channel.invokeMethod<bool>('setAssistantOverlay', {
+        'enabled': enabled,
+        'botId': botId,
+        'botName': botName,
+        'avatarPath': avatarPath,
+      }) ==
+      true;
 
   String encodeContext(Map<String, dynamic> context) => jsonEncode(context);
 }

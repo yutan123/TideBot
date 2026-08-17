@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'app_log_service.dart';
 import 'db.dart';
 import 'device_capability_service.dart';
+import 'global_notice.dart';
 import 'log_session_detail_page.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -24,6 +25,9 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _extraContext = false;
   bool _operationProactive = false;
   bool _deviceControl = false;
+  String _actionPolicy = DeviceCapabilityService.actionPolicyAsk;
+  bool _overlayEnabled = false;
+  final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
   final _scroll = ScrollController();
 
@@ -47,6 +51,25 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     await TideHaptics.load();
     final prefs = await SharedPreferences.getInstance();
     final enabled = AppLogService.instance.enabled;
+    final capability = DeviceCapabilityService.instance;
+    final bots = await DBManager().getAllBots();
+    final botNames = <String, String>{};
+    for (final feature in const [
+      DeviceCapabilityService.contextFeature,
+      DeviceCapabilityService.proactiveFeature,
+      DeviceCapabilityService.controlFeature,
+    ]) {
+      final id = await capability.boundBot(feature);
+      if (id != null && id.isNotEmpty) {
+        final bot = bots.cast<Map<String, dynamic>>().firstWhere(
+              (item) => item['id']?.toString() == id,
+              orElse: () => const {},
+            );
+        botNames[feature] = bot['name']?.toString() ?? id;
+      }
+    }
+    final policy = await capability.actionPolicy();
+    final overlay = await capability.overlayEnabled();
     if (mounted) {
       setState(() {
         _logging = enabled;
@@ -55,6 +78,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         _operationProactive =
             prefs.getBool('operation_proactive_enabled') ?? false;
         _deviceControl = prefs.getBool('device_control_enabled') ?? false;
+        _actionPolicy = policy;
+        _overlayEnabled = overlay;
+        _boundBotNames
+          ..clear()
+          ..addAll(botNames);
       });
     }
   }
@@ -210,24 +238,31 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (_, setLocal) => TideDialogSurface(
           title: const Text('选择允许项目', style: TextStyle(fontFamily: 'TideFont')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final entry in labels.entries)
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: values.contains(entry.key),
-                  title: Text(entry.value,
-                      style: const TextStyle(fontFamily: 'TideFont')),
-                  onChanged: (checked) => setLocal(() {
-                    if (checked == true) {
-                      values.add(entry.key);
-                    } else {
-                      values.remove(entry.key);
-                    }
-                  }),
-                ),
-            ],
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.58,
+            ),
+            child: Scrollbar(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final entry in labels.entries)
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: values.contains(entry.key),
+                      title: Text(entry.value,
+                          style: const TextStyle(fontFamily: 'TideFont')),
+                      onChanged: (checked) => setLocal(() {
+                        if (checked == true) {
+                          values.add(entry.key);
+                        } else {
+                          values.remove(entry.key);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            ),
           ),
           actions: [
             TextButton(
@@ -239,6 +274,132 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _manageFeature(String feature, Set<String> defaults) async {
+    final bots = await DBManager().getAllBots();
+    if (!mounted || bots.isEmpty) {
+      if (mounted) GlobalNotice.show('请先创建机器人');
+      return;
+    }
+    final currentId = await DeviceCapabilityService.instance.boundBot(feature);
+    final selectedId = await showTideSheet<String>(
+      context: context,
+      child: SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('选择授权机器人')),
+            for (final bot in bots)
+              ListTile(
+                selected: bot['id']?.toString() == currentId,
+                title: Text(bot['name']?.toString() ?? '未命名机器人'),
+                subtitle: Text(bot['id']?.toString() ?? ''),
+                onTap: () => Navigator.pop(context, bot['id']?.toString()),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selectedId == null || selectedId.isEmpty) return;
+    await DeviceCapabilityService.instance.bindBot(feature, selectedId);
+    final selected = await _chooseWhitelist(feature, defaults);
+    if (selected == null) return;
+    await DeviceCapabilityService.instance.setWhitelist(feature, selected);
+    await _requestMissingSystemPermissions(feature, selected);
+    await _load();
+  }
+
+  Future<void> _requestMissingSystemPermissions(
+      String feature, Set<String> selected) async {
+    final capability = DeviceCapabilityService.instance;
+    final state = await capability.capabilityState();
+    Future<void> explain(String message, Future<void> Function() open) async {
+      if (!mounted) return;
+      GlobalNotice.show(message, color: TideTheme.of(context).primary);
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      await open();
+    }
+
+    if (feature == DeviceCapabilityService.contextFeature) {
+      if (selected.contains('location') &&
+          state['locationPermission'] != true) {
+        await Permission.location.request();
+      }
+      if (selected.contains('app_usage') && state['usageAccess'] != true) {
+        await explain(
+            '请在系统页面允许 TideBot 查看使用情况访问权限', capability.openUsageAccessSettings);
+      }
+      if (selected.contains('notifications') &&
+          state['notificationAccess'] != true) {
+        await explain('请在系统页面开启 TideBot 通知使用权',
+            capability.openNotificationListenerSettings);
+      }
+    }
+    final needsAccessibility =
+        (feature == DeviceCapabilityService.contextFeature &&
+                (selected.contains('screen_text') ||
+                    selected.contains('foreground_app'))) ||
+            (feature == DeviceCapabilityService.proactiveFeature &&
+                (selected.contains('app_opened') ||
+                    selected.contains('screen_event'))) ||
+            feature == DeviceCapabilityService.controlFeature;
+    if (needsAccessibility && state['accessibility'] != true) {
+      await explain(
+          '请在系统无障碍页面开启“TideBot 受控自动化”', capability.openAccessibilitySettings);
+    }
+    if (feature == DeviceCapabilityService.proactiveFeature &&
+        selected.contains('new_notification') &&
+        state['notificationAccess'] != true) {
+      await explain('请在系统页面开启 TideBot 通知使用权',
+          capability.openNotificationListenerSettings);
+    }
+  }
+
+  Widget _featureFooter(String feature, Set<String> defaults) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('启用的机器人：${_boundBotNames[feature] ?? '未绑定'}',
+              style: const TextStyle(fontFamily: 'TideFont', fontSize: 13)),
+          const SizedBox(height: 6),
+          OutlinedButton.icon(
+            onPressed: () => _manageFeature(feature, defaults),
+            icon: const Icon(Icons.admin_panel_settings_outlined),
+            label: const Text('管理权限'),
+          ),
+        ],
+      );
+
+  Future<void> _toggleOverlay(bool value) async {
+    final capability = DeviceCapabilityService.instance;
+    if (!value) {
+      await capability.setAssistantOverlay(enabled: false);
+      if (mounted) setState(() => _overlayEnabled = false);
+      return;
+    }
+    if (!await capability.overlayEnabled()) {
+      if (mounted) {
+        GlobalNotice.show('请在系统页面允许 TideBot 显示在其他应用上层',
+            color: TideTheme.of(context).primary);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      await capability.openOverlaySettings();
+      return;
+    }
+    final botId =
+        await capability.boundBot(DeviceCapabilityService.controlFeature);
+    final bots = await DBManager().getAllBots();
+    final bot = bots.cast<Map<String, dynamic>>().firstWhere(
+          (item) => item['id']?.toString() == botId,
+          orElse: () => const {},
+        );
+    final ok = await capability.setAssistantOverlay(
+      enabled: true,
+      botId: botId,
+      botName: bot['name']?.toString(),
+      avatarPath: bot['avatar']?.toString(),
+    );
+    if (mounted) setState(() => _overlayEnabled = ok);
   }
 
   Future<void> _toggleLog(bool value) async {
@@ -361,6 +522,9 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     defaultWhitelist: const {'battery', 'foreground_app'},
                     update: (v) => _extraContext = v),
               ),
+              _featureFooter(DeviceCapabilityService.contextFeature,
+                  const {'battery', 'foreground_app'}),
+              const Divider(),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('操作触发主动回复',
@@ -377,6 +541,9 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     defaultWhitelist: const {'app_opened'},
                     update: (v) => _operationProactive = v),
               ),
+              _featureFooter(DeviceCapabilityService.proactiveFeature,
+                  const {'app_opened'}),
+              const Divider(),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('机器人操控手机',
@@ -397,6 +564,41 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                       'click_selector'
                     },
                     update: (v) => _deviceControl = v),
+              ),
+              _featureFooter(DeviceCapabilityService.controlFeature,
+                  const {'back', 'home', 'open_app', 'click_selector'}),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _actionPolicy,
+                decoration: const InputDecoration(
+                  labelText: '机器人执行操作',
+                  helperText: '关闭：拒绝执行；每次询问：逐步确认；允许：白名单内直接执行。',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                      value: DeviceCapabilityService.actionPolicyOff,
+                      child: Text('关闭')),
+                  DropdownMenuItem(
+                      value: DeviceCapabilityService.actionPolicyAsk,
+                      child: Text('每次询问')),
+                  DropdownMenuItem(
+                      value: DeviceCapabilityService.actionPolicyAllow,
+                      child: Text('允许')),
+                ],
+                onChanged: (value) async {
+                  if (value == null) return;
+                  await DeviceCapabilityService.instance.setActionPolicy(value);
+                  if (mounted) setState(() => _actionPolicy = value);
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('机器人悬浮窗',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                subtitle: const Text('在其他应用上显示机器人头像和快捷输入栏。',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                value: _overlayEnabled,
+                onChanged: _toggleOverlay,
               ),
             ]),
           ),

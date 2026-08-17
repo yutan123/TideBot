@@ -185,6 +185,29 @@ class MainActivity: FlutterActivity() {
                     startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                     result.success(null)
                 }
+                "overlayEnabled" -> result.success(Settings.canDrawOverlays(this))
+                "openOverlaySettings" -> {
+                    startActivity(Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    ))
+                    result.success(null)
+                }
+                "setAssistantOverlay" -> {
+                    val enabled = call.argument<Boolean>("enabled") == true
+                    if (enabled && !Settings.canDrawOverlays(this)) {
+                        result.success(false)
+                    } else {
+                        val intent = Intent(this, TideOverlayService::class.java).apply {
+                            action = if (enabled) TideOverlayService.ACTION_SHOW else TideOverlayService.ACTION_HIDE
+                            putExtra("botId", call.argument<String>("botId"))
+                            putExtra("botName", call.argument<String>("botName"))
+                            putExtra("avatarPath", call.argument<String>("avatarPath"))
+                        }
+                        startService(intent)
+                        result.success(true)
+                    }
+                }
                 "executeAccessibilityAction" -> {
                     val action = call.argument<String>("action") ?: ""
                     val x = call.argument<Int>("x")

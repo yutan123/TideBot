@@ -154,7 +154,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _syncLatestMessages();
+    if (state == AppLifecycleState.resumed) {
+      _syncLatestMessages();
+      return;
+    }
+    // Typewriter animation belongs to the visible chat only. The complete reply
+    // is already persisted, so leaving the app stops animation and the next
+    // foreground sync adopts the final rows directly.
+    _streamDisplayTimer?.cancel();
+    _streamDisplayTimer = null;
+    _deferredPersistedMessageIds.clear();
   }
 
   void _loadBg() async {
@@ -487,25 +496,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (!mounted) return;
     final action = request['action']?.toString() ?? '';
     final reason = request['reason']?.toString() ?? '未提供原因';
-    final confirmed = await TideDialogs.show<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => TideDialogSurface(
-            title:
-                const Text('确认手机操作', style: TextStyle(fontFamily: 'TideFont')),
-            content: Text('机器人请求执行：$action\n原因：$reason\n\n本次确认只对这一项操作有效。',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('拒绝')),
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('确认执行')),
-            ],
-          ),
-        ) ??
-        false;
+    final policy = await DeviceCapabilityService.instance.actionPolicy();
+    if (policy == DeviceCapabilityService.actionPolicyOff) {
+      await DBManager().setKV(
+        'device_action_audit_${DateTime.now().millisecondsSinceEpoch}',
+        jsonEncode({
+          'bot_id': botId,
+          'action': action,
+          'reason': reason,
+          'confirmed': false,
+          'ok': false,
+          'policy': policy,
+        }),
+      );
+      return;
+    }
+    final confirmed = policy == DeviceCapabilityService.actionPolicyAllow
+        ? true
+        : await TideDialogs.show<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => TideDialogSurface(
+                title: const Text('确认手机操作',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                content: Text('机器人请求执行：$action\n原因：$reason\n\n本次确认只对这一项操作有效。',
+                    style: const TextStyle(fontFamily: 'TideFont')),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('拒绝')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('确认执行')),
+                ],
+              ),
+            ) ??
+            false;
     var ok = false;
     if (confirmed) {
       ok = await DeviceCapabilityService.instance.requestControl(

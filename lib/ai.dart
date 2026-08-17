@@ -400,8 +400,12 @@ class AIManager {
     const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
+    final forcedStickerEmotion =
+        allowSticker ? await _chooseStickerEmotion(db) : null;
     final toolContext = allowTools
-        ? await _buildToolContext(db, allowSticker: allowSticker)
+        ? await _buildToolContext(db,
+            allowSticker: allowSticker,
+            forcedStickerEmotion: forcedStickerEmotion)
         : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
     final deviceContext =
@@ -560,8 +564,7 @@ class AIManager {
       AppLogService.instance.add('AI',
           '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
-          ? await _buildNativeTools(db,
-              botId: botId, allowSticker: allowSticker)
+          ? await _buildNativeTools(db, botId: botId, allowSticker: false)
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -702,10 +705,18 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // A sticker is only sent when the model explicitly selected one through its
-        // native tool. Do not also generate a random fallback: one reply has at
-        // most one sticker, and the UI inserts it only after all text segments.
-        final Map<String, dynamic>? sticker = toolSticker;
+        // Sticker probability is decided by TideBot, not by a model tool. Once the
+        // roll hits, one category is selected up front and one asset is sampled
+        // from that category after the complete reply has been processed.
+        Map<String, dynamic>? sticker = toolSticker;
+        if (sticker == null && forcedStickerEmotion != null) {
+          final candidates =
+              await db.queryStickers(emotion: forcedStickerEmotion);
+          if (candidates.isNotEmpty) {
+            sticker = Map<String, dynamic>.from(
+                candidates[Random.secure().nextInt(candidates.length)]);
+          }
+        }
         if (persistResponse) {
           // Streaming uses one persisted row as well as one foreground bubble.
           // Sentence splitting remains available for non-streaming replies.
@@ -1268,10 +1279,9 @@ $transcript''';
           'content': [
             {'type': 'text', 'text': '请将这段音频准确转写为文字。'},
             {
-              'type': 'input_audio',
-              'input_audio': {
-                'data': base64Encode(bytes),
-                'format': extension,
+              'type': 'audio_url',
+              'audio_url': {
+                'url': 'data:audio/$extension;base64,${base64Encode(bytes)}',
               }
             },
           ]
@@ -1386,16 +1396,11 @@ $transcript''';
             'model': model,
             'stream': false,
             'messages': [
-              {'role': 'system', 'content': '你是语音合成引擎。严格按用户提供的文字生成语音，不要输出解释。'},
-              {
-                'role': 'user',
-                'content': [
-                  {'type': 'text', 'text': text},
-                ]
-              }
+              {'role': 'user', 'content': text}
             ],
+            'modalities': ['text', 'audio'],
             'audio': {
-              'voice': voice == 'default' ? 'default' : voice,
+              'voice': voice == 'default' ? 'mimo_default' : voice,
               'format': 'wav',
             },
           },
@@ -1980,32 +1985,67 @@ $transcript''';
         'content': jsonEncode(result['result'] ?? result),
       });
     }
-    // follow-up：把工具结果回传模型，取得最终自然语言回复。
-    final followUp = await http
-        .post(
-          Uri.parse('$baseUrl/chat/completions'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-          },
-          body: jsonEncode({
-            'model': modelName,
-            'messages': messages,
-            'max_tokens': maxTokens,
-          }),
-        )
-        .timeout(const Duration(seconds: 60));
-    if (followUp.statusCode == 200) {
+    // Keep the same transcript across multi-step tools. Each follow-up may ask
+    // for another action; its result is appended and sent back until the model
+    // stops using tools. A hard limit prevents accidental infinite automation.
+    for (var round = 0; round < 12; round++) {
+      final followUp = await http
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': modelName,
+              'messages': messages,
+              'max_tokens': maxTokens,
+              'tools': await _buildNativeTools(db,
+                  botId: botId, allowSticker: false),
+              'tool_choice': 'auto',
+            }),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (followUp.statusCode != 200) return;
       final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
-      final next =
-          decoded['choices']?[0]?['message']?['content']?.toString() ?? '';
-      if (next.isNotEmpty) {
-        replyTextCallback(next);
-        onDelta?.call(next);
-      }
+      final message = decoded['choices']?[0]?['message'];
       final fu = decoded['usage'];
       if (fu is Map) usageCallback(fu);
+      if (message is! Map) return;
+      final next = message['content']?.toString() ?? '';
+      final nextCalls = message['tool_calls'] is List
+          ? (message['tool_calls'] as List)
+              .whereType<Map>()
+              .map((call) => Map<String, dynamic>.from(call))
+              .toList()
+          : <Map<String, dynamic>>[];
+      if (nextCalls.isEmpty) {
+        if (next.isNotEmpty) {
+          replyTextCallback(next);
+          onDelta?.call(next);
+        }
+        return;
+      }
+      messages.add({
+        'role': 'assistant',
+        'content': next,
+        'tool_calls': nextCalls,
+      });
+      for (final call in nextCalls) {
+        final result =
+            await _executeNativeToolCall(db: db, botId: botId, call: call);
+        final toolResult = result['result'];
+        if (toolResult is Map && toolResult['pending_confirmation'] == true) {
+          pendingDeviceActionSetter(Map<String, dynamic>.from(toolResult));
+        }
+        messages.add({
+          'role': 'tool',
+          'tool_call_id': call['id']?.toString() ?? '',
+          'content': jsonEncode(result['result'] ?? result),
+        });
+      }
     }
+    replyTextCallback('任务已达到连续操作上限，请确认当前结果后再继续。');
   }
 
   Future<bool> _shouldOfferSticker(DBManager db) async {
@@ -2019,6 +2059,12 @@ $transcript''';
     AppLogService.instance.add('STICKER',
         selected ? '本轮允许表情包工具（概率 $chance%）' : '本轮不提供表情包工具（概率 $chance%）');
     return selected;
+  }
+
+  Future<String?> _chooseStickerEmotion(DBManager db) async {
+    final emotions = await db.stickerEmotions();
+    if (emotions.isEmpty) return null;
+    return emotions[Random.secure().nextInt(emotions.length)];
   }
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
@@ -2414,7 +2460,7 @@ $transcript''';
   }
 
   Future<String> _buildToolContext(DBManager db,
-      {bool allowSticker = true}) async {
+      {bool allowSticker = true, String? forcedStickerEmotion}) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       final style = (await db.getKV('bot_image_style') ?? '写实').trim();
@@ -2432,12 +2478,9 @@ $transcript''';
             '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索后必须附可点击来源；不要编造搜索结果。');
       }
     }
-    if (allowSticker && await db.getKV('bot_stickers_enabled') == 'true') {
-      final emotions = await db.stickerEmotions();
-      if (emotions.isNotEmpty) {
-        parts.add(
-            '【已授权工具：表情包】现有情绪分类：${emotions.join('、')}。如需发送表情包，调用 send_sticker 工具；不要在正文输出任何贴纸、表情包或内部协议。');
-      }
+    if (allowSticker && forcedStickerEmotion != null) {
+      parts.add(
+          '【本轮表情包】概率已命中，TideBot 将在回复完成后自动从“$forcedStickerEmotion”分类随机发送一张。不要调用工具、不要讨论是否发送，也不要在正文输出贴纸协议。');
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }

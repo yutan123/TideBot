@@ -2148,7 +2148,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _f('API Key', kCtrl, obscure: true),
             const SizedBox(height: 8),
-            _f('STT 模型', mCtrl),
+            _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 16),
             Row(children: [
               Expanded(
