@@ -144,6 +144,36 @@ class ChatListPageState extends State<ChatListPage> {
     }
   }
 
+  Future<void> _openChat(Map<String, dynamic> bot) async {
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
+        transitionDuration: const Duration(milliseconds: 380),
+        reverseTransitionDuration: const Duration(milliseconds: 240),
+        transitionsBuilder: (c, a, s, child) {
+          final anim = CurvedAnimation(
+            parent: a,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).animate(anim),
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.98, end: 1).animate(anim),
+              child: FadeTransition(opacity: anim, child: child),
+            ),
+          );
+        },
+      ),
+    );
+    await DBManager().markBotRead(bot['id']?.toString() ?? '');
+    if (mounted) load();
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget content = Scaffold(
@@ -201,32 +231,7 @@ class ChatListPageState extends State<ChatListPage> {
         final key = _botCardKeys.putIfAbsent(id, GlobalKey.new);
         return GestureDetector(
           key: key,
-          onTap: () async {
-            await Navigator.push(
-                context,
-                PageRouteBuilder(
-                    pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
-                    transitionDuration: const Duration(milliseconds: 380),
-                    reverseTransitionDuration:
-                        const Duration(milliseconds: 240),
-                    transitionsBuilder: (c, a, s, child) {
-                      final anim = CurvedAnimation(
-                          parent: a,
-                          curve: Curves.easeOutCubic,
-                          reverseCurve: Curves.easeInCubic);
-                      return SlideTransition(
-                          position: Tween<Offset>(
-                                  begin: const Offset(0, 0.06),
-                                  end: Offset.zero)
-                              .animate(anim),
-                          child: ScaleTransition(
-                              scale: Tween<double>(begin: 0.98, end: 1)
-                                  .animate(anim),
-                              child:
-                                  FadeTransition(opacity: anim, child: child)));
-                    }));
-            load();
-          },
+          onTap: () => _openChat(bot),
           onLongPress: () => showTideSheet(
               context: context,
               height: 160,

@@ -129,9 +129,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
+    unawaited(DBManager().markBotRead(_bot['id']?.toString() ?? ''));
     WidgetsBinding.instance.removeObserver(this);
     _messageSyncTimer?.cancel();
     _streamDisplayTimer?.cancel();
+    _deferredPersistedMessageIds.clear();
     _proactiveTimer?.cancel();
     _proactiveTimer = null;
     _msgC.removeListener(_msgChanged);
@@ -233,6 +235,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Timer? _streamDisplayTimer;
   Timer? _messageSyncTimer;
+  // IDs already persisted for the current foreground reply but not yet owned by
+  // a visible bubble. The periodic database refresh must not append them early.
+  final Set<String> _deferredPersistedMessageIds = <String>{};
 
   Future<void> _syncLatestMessages() async {
     if (!mounted || _loading) return;
@@ -247,9 +252,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final existingIds = <String>{
         for (final message in _msgs) message['id']?.toString() ?? '',
       };
-      final additions = fresh
-          .where((message) => !existingIds.contains(message['id']?.toString()))
-          .toList();
+      final additions = fresh.where((message) {
+        final id = message['id']?.toString() ?? '';
+        return !existingIds.contains(id) &&
+            !_deferredPersistedMessageIds.contains(id);
+      }).toList();
       var changed = false;
       setState(() {
         for (final message in _msgs) {
@@ -632,9 +639,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
-      var streamRaw = '';
-      var streamVisibleLength = 0;
-      var receivedStreamDelta = false;
       if (streamEnabled && !segmentedReply && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
@@ -686,18 +690,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             imagePaths: images,
             persistResponse: persistThisReply,
             onDelta: streamEnabled && !segmentedReply && localModelId.isEmpty
-                ? (delta) {
-                    receivedStreamDelta = true;
-                    streamRaw += delta;
-                    final visibleLength = _visibleStreamLength(streamRaw);
-                    if (visibleLength > streamVisibleLength) {
-                      pendingDisplay += streamRaw.substring(
-                        streamVisibleLength,
-                        visibleLength,
-                      );
-                      streamVisibleLength = visibleLength;
-                    }
-                  }
+                ? (_) {}
                 : null,
           )
           .timeout(requestTimeout);
@@ -754,14 +747,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final persistedBase = int.tryParse(
               aiMsg['id'].toString().replaceFirst(RegExp(r'^msg_a_'), '')) ??
           (aiMsg['timestamp'] as int) + 1;
-      // AIManager 已将本次 assistant 消息（含情绪/TTS 后台升级）持久化到 chat_history；
-      // 这里仅追加内存气泡，避免同一回复被写入两次、重进页面后出现重复消息。
-
-      // ===== 防抖/合并：代次拦截 =====
+      final persistedMessageIds = <String>{
+        result['message_id']?.toString() ?? '',
+        if (result['image_path']?.toString().isNotEmpty == true)
+          'msg_i_${persistedBase + 1}',
+        if (result['sticker'] is Map)
+          'msg_s_${persistedBase + 1 + _splitReplySegments(content).length}',
+      }..remove('');
+      _deferredPersistedMessageIds.addAll(persistedMessageIds);
+      // AIManager has already persisted this response. The foreground owns these
+      // rows until it adopts them below, preventing periodic sync duplicates.
       // 请求期间用户又发了新消息（_requestGen 变化），本次回复已被合并覆盖：
       // 不再渲染、也不再落库（落库已由 persistThisReply 控制），交给 finally
       // 用合并后的文本统一重发一次。
       if (myGen != _requestGen) {
+        _deferredPersistedMessageIds.removeAll(persistedMessageIds);
         _streamDisplayTimer?.cancel();
         _streamDisplayTimer = null;
         if (streamingMessage != null && mounted) {
@@ -769,17 +769,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         return;
       }
-
-      // ===== 模拟打字机（流式开启、非分段）=====
-      // 用户需求：无论厂商是否回传 SSE 增量，前端都等服务商完整回复后再用打字机
-      // 逐字渲染，而不是边生成边显示。完整 content 收到后统一喂给字幕定时器上屏，
-      // 播完后定格为完整内容。
-      // A provider that emitted actual SSE deltas already owns this bubble.
-      // Only synthesize typing for a provider that returned one complete JSON reply.
-      final needsTypewriter = streamingMessage != null &&
-          !receivedStreamDelta &&
-          !segmentedReply &&
-          content.isNotEmpty;
+      // ===== 模拟打字机（完整回复处理完成后）=====
+      // 传输层不再使用 SSE。AIManager 已完成工具调用、协议过滤和落盘，
+      // 此处才将完整可见正文按速度设置送入唯一的前台占位气泡。
+      final needsTypewriter =
+          streamingMessage != null && !segmentedReply && content.isNotEmpty;
       if (needsTypewriter && mounted) {
         _streamDisplayTimer?.cancel();
         pendingDisplay = content;
@@ -788,9 +782,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
                     50)
                 .clamp(1, 100);
-        // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
         final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
-        final batch = (speed >= 85 ? 2 : 1);
+        final batch = speed >= 85 ? 2 : 1;
         _streamDisplayTimer = Timer.periodic(interval, (timer) {
           if (!mounted) {
             timer.cancel();
@@ -799,6 +792,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           if (pendingDisplay.isEmpty) {
             timer.cancel();
             _streamDisplayTimer = null;
+            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
             setState(() {
               tm['id'] = aiMsg['id'];
               tm['content'] = content;
@@ -821,15 +815,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       if (mounted) {
-        // 流式气泡已通过 SSE 增量逐字上屏。无论是否开启分段，都保留这个气泡并
-        // 直接定格为完整回复——避免“整段文字先消失、再逐句重放”的观感，从而保证
-        // 开启分段后流水输出依旧正常生效。分段的落库与句间节奏仍在分支内处理。
+        // The live placeholder is the only foreground owner for a streamed
+        // request. Never append a second final or segmented copy here.
         if (streamingMessage != null) {
-          // The foreground already owns one live bubble. Its persistence may be
-          // segmented, but adding those rows here would replay the same reply.
-          if (needsTypewriter) {
-            // The timer normalizes this placeholder after the final character.
-          } else {
+          if (!needsTypewriter) {
+            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
             setState(() {
               streamingMessage!['id'] = aiMsg['id'];
               streamingMessage['content'] = content;
@@ -897,6 +887,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _scrollDown();
         }
       }
+      if (!needsTypewriter) {
+        _deferredPersistedMessageIds.removeAll(persistedMessageIds);
+      }
       if (mounted) unawaited(DBManager().markBotRead(botId));
     } catch (e, st) {
       debugPrint('[send] failed: $e');
@@ -941,27 +934,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         await _send(noUserBubble: true);
       }
     }
-  }
-
-  int _visibleStreamLength(String text) {
-    var visible = text;
-    // Do not expose an unfinished bracketed protocol while SSE fragments arrive.
-    final openBracket = visible.lastIndexOf('[');
-    if (openBracket >= 0 && visible.indexOf(']', openBracket) < 0) {
-      visible = visible.substring(0, openBracket);
-    }
-    final lastLine = visible.lastIndexOf('\n');
-    final tailStart = lastLine < 0 ? 0 : lastLine + 1;
-    final tail = visible.substring(tailStart).trimLeft().toLowerCase();
-    if (tail.startsWith('心情:') ||
-        tail.startsWith('心情：') ||
-        tail.startsWith('记忆:') ||
-        tail.startsWith('记忆：') ||
-        tail.startsWith('mood:') ||
-        tail.startsWith('memory:')) {
-      return tailStart;
-    }
-    return visible.length;
   }
 
   List<Map<String, dynamic>> _buildAttachmentMessages({
@@ -2457,9 +2429,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           GestureDetector(
             onTap: () => _previewImg(imagePath),
             child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(File(imagePath),
-                    width: double.infinity, height: 150, fit: BoxFit.cover)),
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 144,
+                height: 144,
+                child: Image.file(File(imagePath), fit: BoxFit.cover),
+              ),
+            ),
           ),
         ] else if (imagePath.isNotEmpty) ...[
           const SizedBox(height: 8),
@@ -2577,7 +2553,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       size: 28,
                                     ),
                             ),
-                          if (hasDocument)
+                          if (hasDocument) ...[
+                            if (i > 0)
+                              Divider(
+                                  height: 1,
+                                  color: TideTheme.of(context).border),
                             Container(
                               margin: const EdgeInsets.only(bottom: 4),
                               padding: const EdgeInsets.symmetric(
@@ -2586,7 +2566,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 color: isUser
                                     ? TideTheme.of(context).primary
                                     : TideTheme.of(context).buttonSecondary,
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2612,22 +2592,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 ],
                               ),
                             ),
-                          // 图片
+                          ],
                           if (hasImg && File(imagePath!).existsSync())
                             GestureDetector(
-                                onTap: () => _previewImg(imagePath),
-                                child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: Container(
-                                        margin:
-                                            const EdgeInsets.only(bottom: 4),
-                                        child: Image.file(
-                                          File(imagePath),
-                                          fit: BoxFit.cover,
-                                          width: isSticker ? 112 : 180,
-                                          height: isSticker ? 112 : null,
-                                          cacheWidth: isSticker ? 224 : 360,
-                                        )))),
+                              onTap: () => _previewImg(imagePath),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: isSticker ? 112 : 144,
+                                  height: isSticker ? 112 : 144,
+                                  child: Image.file(
+                                    File(imagePath),
+                                    fit: BoxFit.cover,
+                                    cacheWidth: isSticker ? 224 : 288,
+                                  ),
+                                ),
+                              ),
+                            ),
                           // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
                           if (hasAudio)
                             _audioBubble(

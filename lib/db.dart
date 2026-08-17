@@ -715,8 +715,16 @@ class DBManager {
   Future<void> markBotRead(String botId) async {
     if (botId.isEmpty) return;
     final db = await database;
-    await db.update(
-        'bots', {'last_read_at': DateTime.now().millisecondsSinceEpoch},
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Assistant segments can be persisted a few milliseconds ahead of `now`.
+    // Record the latest row actually visible in this room, otherwise that final
+    // segment is incorrectly counted as unread immediately after leaving.
+    final rows = await db.rawQuery('''
+      SELECT COALESCE(MAX(timestamp), 0) AS latest FROM chat_history
+      WHERE bot_id = ? AND role = 'assistant'
+    ''', [botId]);
+    final latest = (rows.first['latest'] as num?)?.toInt() ?? 0;
+    await db.update('bots', {'last_read_at': latest > now ? latest : now},
         where: 'id = ?', whereArgs: [botId]);
   }
 

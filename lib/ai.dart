@@ -565,12 +565,10 @@ class AIManager {
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
-        // Streaming is disabled when the reply is configured for sentence bubbles.
-        // One request must have one rendering owner; mixing SSE with segmented rows
-        // was the source of duplicated full and segmented replies.
-        if (onDelta != null &&
-            await db.getKV('segmented_reply_enabled') == 'false')
-          'stream': true,
+        // Replies are always collected in full before visible rendering. The chat
+        // room owns the typewriter animation after filtering and persistence.
+        // Keeping this transport non-streaming prevents raw protocol fragments
+        // from entering a bubble before _cleanVisibleReply() has run.
       };
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
         'url': '$baseUrl/chat/completions',
@@ -583,179 +581,62 @@ class AIManager {
       Map usage = const {};
       String errorBody = '';
       int statusCode;
-      if (onDelta != null) {
-        final request =
-            http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
-              ..headers.addAll({
-                'Content-Type': 'application/json',
-                'Accept': 'text/event-stream',
-                'Authorization': 'Bearer ${provider['api_key']}',
-              })
-              ..body = jsonEncode(payload);
-        final response =
-            await request.send().timeout(const Duration(seconds: 40));
-        statusCode = response.statusCode;
-        if (statusCode == 200) {
-          final contentType =
-              response.headers['content-type']?.toLowerCase() ?? '';
-          if (contentType.contains('application/json')) {
-            final body = await response.stream.bytesToString();
-            final json = jsonDecode(body);
-            replyText = _extractChatContent(json);
-            usage = json['usage'] is Map ? json['usage'] as Map : const {};
-            if (replyText.isNotEmpty) onDelta(replyText);
-          } else {
-            // SSE 流式：逐段回传文本，同时按 index 拼接 tool_calls 分片，
-            // 以便工具调用与流式共存。流式结束后统一执行工具并做 follow-up。
-            final pendingCalls = <int, Map<String, dynamic>>{};
-            await response.stream
-                .transform(utf8.decoder)
-                .transform(const LineSplitter())
-                .forEach((line) {
-              if (!line.startsWith('data:')) return;
-              final data = line.substring(5).trim();
-              if (data == '[DONE]' || data.isEmpty) return;
-              try {
-                final event = jsonDecode(data);
-                final delta =
-                    event['choices']?[0]?['delta'] as Map? ?? const {};
-                final content = _extractChatContent({
-                  'choices': [
-                    {'message': delta}
-                  ]
-                });
-                if (content.isNotEmpty) {
-                  replyText += content;
-                  onDelta(content);
-                }
-                // 累加 tool_calls 片段（每个 index 独立拼接 arguments）。
-                final chunk = delta['tool_calls'];
-                if (chunk is List) {
-                  for (final c in chunk.whereType<Map>()) {
-                    final idx = ((c['index'] as num?)?.toInt() ?? 0);
-                    final call = pendingCalls.putIfAbsent(
-                        idx,
-                        () => {
-                              'id': c['id']?.toString() ?? '',
-                              'type': c['type']?.toString() ?? 'function',
-                              'function': {
-                                'name': '',
-                                'arguments': '',
-                              }
-                            });
-                    final fn = c['function'] as Map?;
-                    if (fn != null) {
-                      final idNow = c['id']?.toString() ?? '';
-                      if (idNow.isNotEmpty) call['id'] = idNow;
-                      final fnMap = call['function'] as Map;
-                      final nameChunk = fn['name']?.toString() ?? '';
-                      if (nameChunk.isNotEmpty) {
-                        fnMap['name'] = (fnMap['name'] as String) + nameChunk;
-                      }
-                      final argsChunk = fn['arguments']?.toString() ?? '';
-                      if (argsChunk.isNotEmpty) {
-                        fnMap['arguments'] =
-                            (fnMap['arguments'] as String) + argsChunk;
-                      }
-                      call['function'] = fnMap;
-                    }
-                  }
-                }
-                if (event['usage'] is Map) usage = event['usage'] as Map;
-              } catch (_) {}
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 40));
+      statusCode = response.statusCode;
+      errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
+      if (statusCode == 200) {
+        final json = jsonDecode(errorBody);
+        final message = json['choices']?[0]?['message'];
+        replyText = _extractChatContent(json);
+        usage = json['usage'] is Map ? json['usage'] as Map : const {};
+        AppLogService.instance.addJson('RESPONSE_DEBUG', 'HTTP 200 解析诊断', {
+          'keys':
+              json is Map ? json.keys.map((e) => e.toString()).toList() : [],
+          'finish_reason': json['choices']?[0]?['finish_reason'],
+          'message_keys': message is Map
+              ? message.keys.map((e) => e.toString()).toList()
+              : [],
+          'has_reasoning_content': message is Map &&
+              (message['reasoning_content'] ?? message['reasoning']) != null,
+          'has_tool_calls': message is Map && message['tool_calls'] is List,
+          'parsed_length': replyText.length,
+        });
+        if (message is Map && message['tool_calls'] is List) {
+          final toolCalls = (message['tool_calls'] as List)
+              .whereType<Map>()
+              .map((call) => Map<String, dynamic>.from(call))
+              .toList();
+          if (toolCalls.isNotEmpty) {
+            messages.add({
+              'role': 'assistant',
+              'content': replyText,
+              'tool_calls': toolCalls,
             });
-            if (pendingCalls.isNotEmpty) {
-              final calls = pendingCalls.values
-                  .where((c) =>
-                      (c['function'] as Map?)?['name']?.toString().isNotEmpty ==
-                      true)
-                  .toList();
-              if (calls.isNotEmpty) {
-                messages.add({
-                  'role': 'assistant',
-                  'content': replyText,
-                  'tool_calls': calls,
-                });
-                await _runStreamedTools(
-                    db: db,
-                    botId: botId,
-                    calls: calls,
-                    messages: messages,
-                    baseUrl: baseUrl,
-                    modelName: modelName,
-                    apiKey: provider['api_key']?.toString() ?? '',
-                    maxTokens: bot['max_tokens'] ?? 10000,
-                    onDelta: onDelta,
-                    replyTextCallback: (t) => replyText = t,
-                    usageCallback: (u) => usage = u,
-                    searchSourcesSetter: (l) => searchSources = l,
-                    generatedImageSetter: (p) => generatedImagePath = p,
-                    stickerSetter: (p) => toolSticker = p,
-                    silenceSetter: () => toolSilenced = true);
-              }
-            }
-          }
-        } else {
-          errorBody = await response.stream.bytesToString();
-        }
-      } else {
-        final response = await http
-            .post(
-              Uri.parse('$baseUrl/chat/completions'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ${provider['api_key']}'
-              },
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 40));
-        statusCode = response.statusCode;
-        errorBody = utf8.decode(response.bodyBytes);
-        if (statusCode == 200) {
-          final json = jsonDecode(errorBody);
-          final message = json['choices']?[0]?['message'];
-          replyText = _extractChatContent(json);
-          usage = json['usage'] is Map ? json['usage'] as Map : const {};
-          AppLogService.instance.addJson('RESPONSE_DEBUG', 'HTTP 200 解析诊断', {
-            'keys':
-                json is Map ? json.keys.map((e) => e.toString()).toList() : [],
-            'finish_reason': json['choices']?[0]?['finish_reason'],
-            'message_keys': message is Map
-                ? message.keys.map((e) => e.toString()).toList()
-                : [],
-            'has_reasoning_content': message is Map &&
-                (message['reasoning_content'] ?? message['reasoning']) != null,
-            'has_tool_calls': message is Map && message['tool_calls'] is List,
-            'parsed_length': replyText.length,
-          });
-          if (message is Map && message['tool_calls'] is List) {
-            final toolCalls = (message['tool_calls'] as List)
-                .whereType<Map>()
-                .map((call) => Map<String, dynamic>.from(call))
-                .toList();
-            if (toolCalls.isNotEmpty) {
-              messages.add({
-                'role': 'assistant',
-                'content': replyText,
-                'tool_calls': toolCalls,
-              });
-              await _runStreamedTools(
-                  db: db,
-                  botId: botId,
-                  calls: toolCalls,
-                  messages: messages,
-                  baseUrl: baseUrl,
-                  modelName: modelName,
-                  apiKey: provider['api_key']?.toString() ?? '',
-                  maxTokens: bot['max_tokens'] ?? 10000,
-                  onDelta: null,
-                  replyTextCallback: (t) => replyText = t,
-                  usageCallback: (u) => usage = u,
-                  searchSourcesSetter: (l) => searchSources = l,
-                  generatedImageSetter: (p) => generatedImagePath = p,
-                  stickerSetter: (p) => toolSticker = p,
-                  silenceSetter: () => toolSilenced = true);
-            }
+            await _runStreamedTools(
+                db: db,
+                botId: botId,
+                calls: toolCalls,
+                messages: messages,
+                baseUrl: baseUrl,
+                modelName: modelName,
+                apiKey: provider['api_key']?.toString() ?? '',
+                maxTokens: bot['max_tokens'] ?? 10000,
+                onDelta: null,
+                replyTextCallback: (t) => replyText = t,
+                usageCallback: (u) => usage = u,
+                searchSourcesSetter: (l) => searchSources = l,
+                generatedImageSetter: (p) => generatedImagePath = p,
+                stickerSetter: (p) => toolSticker = p,
+                silenceSetter: () => toolSilenced = true);
           }
         }
       }
@@ -1013,6 +894,16 @@ class AIManager {
                 caseSensitive: false),
             '');
     final normalized = withoutDsml
+        // Inline protocol suffixes can be emitted after otherwise valid text,
+        // e.g. "晚安。:平静]记忆:...". Strip them before line-oriented rules.
+        .replaceAll(
+            RegExp(r'\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'\s*(?:\[?记忆\]?|memory)\s*[:：][\s\S]*$',
+                caseSensitive: false),
+            '')
         .replaceAll(RegExp(r'\[心情\s*[:：]\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
@@ -1260,7 +1151,8 @@ $transcript''';
           .trim()
           .replaceFirst(RegExp(r'/+$'), '');
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
-      final apiKey = provider['api_key']?.toString().trim() ?? '';
+      final apiKey =
+          (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
       final protocol =
           (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
       if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) return null;
@@ -1304,6 +1196,20 @@ $transcript''';
     }
   }
 
+  String _mimoChatCompletionsEndpoint(String configuredUrl) {
+    final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (root.endsWith('/chat/completions')) return root;
+    if (root.endsWith('/v1')) return '$root/chat/completions';
+    return '$root/v1/chat/completions';
+  }
+
+  String _miniMaxTtsEndpoint(String configuredUrl) {
+    final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (root.endsWith('/t2a_v2')) return root;
+    if (root.endsWith('/v1')) return '$root/t2a_v2';
+    return '$root/v1/t2a_v2';
+  }
+
   Future<String?> _transcribeMiMoAudio({
     required String baseUrl,
     required String apiKey,
@@ -1323,7 +1229,7 @@ $transcript''';
       return null;
     }
     final mime = lowerPath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav';
-    final endpoint = '$baseUrl/chat/completions';
+    final endpoint = _mimoChatCompletionsEndpoint(baseUrl);
     AppLogService.instance.add(
       'STT',
       '请求 MiMo ASR：provider=$providerName，model=$model，endpoint=$endpoint，bytes=${bytes.length}',
@@ -1384,15 +1290,15 @@ $transcript''';
         .replaceFirst(RegExp(r'/+$'), '');
     final apiKey =
         (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
+    final protocol =
+        (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
     final voice = (provider['voice']?.toString() ?? '').trim().isEmpty
-        ? 'alloy'
+        ? (protocol == 'mimo' ? 'mimo_default' : 'alloy')
         : provider['voice'].toString().trim();
     final modelName = (provider['model']?.toString() ?? '').trim();
     final model = modelName.isEmpty
         ? (provider['name']?.toString() ?? 'tts-1')
         : modelName;
-    final protocol =
-        (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
     if (protocol == 'unsupported') {
       AppLogService.instance.add('TTS', '该 TTS 服务暂未提供可验证的调用协议');
       return null;
@@ -1404,9 +1310,8 @@ $transcript''';
 
     try {
       final endpoint = switch (protocol) {
-        'minimax' =>
-          '${baseUrl.endsWith('/v1') ? baseUrl : '$baseUrl/v1'}/t2a_v2',
-        'mimo' => '$baseUrl/chat/completions',
+        'minimax' => _miniMaxTtsEndpoint(baseUrl),
+        'mimo' => _mimoChatCompletionsEndpoint(baseUrl),
         _ => '$baseUrl/audio/speech',
       };
       final payload = switch (protocol) {
@@ -1429,9 +1334,14 @@ $transcript''';
           },
         'mimo' => {
             'model': model,
+            // MiMo TTS requires the spoken text in an assistant message.
             'messages': [
               {'role': 'assistant', 'content': text},
             ],
+            'audio': {
+              'format': 'wav',
+              'voice': voice == 'default' ? 'mimo_default' : voice,
+            },
             'stream': false,
           },
         _ => {'model': model, 'input': text, 'voice': voice},
@@ -1483,10 +1393,20 @@ $transcript''';
         if (raw is Map) {
           final output = raw['output'];
           final data = raw['data'];
+          final choices = raw['choices'];
+          final message =
+              choices is List && choices.isNotEmpty && choices.first is Map
+                  ? (choices.first as Map)['message']
+                  : null;
+          final messageAudio = message is Map ? message['audio'] : null;
           final outputAudio = output is Map ? output['audio'] : null;
           final dataAudio = data is Map ? data['audio'] : null;
           audioUrl = raw['audio_url']?.toString() ??
               raw['url']?.toString() ??
+              (messageAudio is Map
+                  ? (messageAudio['url'] ?? messageAudio['audio_url'])
+                      ?.toString()
+                  : null) ??
               (outputAudio is Map
                   ? (outputAudio['url'] ?? outputAudio['audio_url'])?.toString()
                   : null) ??
@@ -1566,7 +1486,8 @@ $transcript''';
     return readAudio(raw['audio']) ??
         readAudio(output is Map ? output['audio'] : null) ??
         readAudio(data is Map ? data['audio'] : null) ??
-        readAudio(message is Map ? message['audio'] : null);
+        readAudio(message is Map ? message['audio'] : null) ??
+        (message is Map ? message['audio_data']?.toString() : null);
   }
 
   String _audioExtension(Uint8List bytes, String contentType) {
@@ -1985,8 +1906,17 @@ $transcript''';
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
       }
-      if (toolResult is Map && toolResult['sticker'] is Map) {
-        stickerSetter(Map<String, dynamic>.from(toolResult['sticker'] as Map));
+      if (toolResult is Map) {
+        final stickerValue = toolResult['sticker'];
+        if (stickerValue is Map) {
+          stickerSetter(Map<String, dynamic>.from(stickerValue));
+        } else {
+          final stickerPath =
+              toolResult['sticker_path']?.toString().trim() ?? '';
+          if (stickerPath.isNotEmpty) {
+            stickerSetter({'file_path': stickerPath});
+          }
+        }
       }
       messages.add({
         'role': 'tool',
@@ -2340,11 +2270,17 @@ $transcript''';
       final available =
           candidates.isEmpty ? await db.queryStickers() : candidates;
       final selected = available.isEmpty ? null : available.first;
+      final targetPath = selected?['file_path']?.toString().trim() ?? '';
+      if (targetPath.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '选中的表情包缺少文件路径'}
+        };
+      }
       return {
         'result': {
-          'ok': selected != null,
-          'sticker_path': selected?['file_path']?.toString(),
-          'message': selected == null ? '没有可用表情包。' : '表情包已选定。',
+          'ok': true,
+          'sticker': Map<String, dynamic>.from(selected!),
+          'message': '表情包已选定。',
         }
       };
     }

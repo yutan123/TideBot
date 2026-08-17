@@ -1793,6 +1793,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     },
     {
       'name': 'MiniMax ASR',
+      // MiniMax does not publish an official ASR endpoint in its current API
+      // reference. Keep this as an editable OpenAI-compatible preset instead
+      // of sending a fabricated request to an unrelated legacy endpoint.
       'url': 'https://api.minimax.chat/v1',
       'models': 'speech-01',
       'protocol': 'unsupported'
@@ -2631,7 +2634,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     });
   }
 
-  void _editProvider(Map<String, dynamic> p) {
+  void _editProvider(Map<String, dynamic> p, {bool isStt = false}) {
     final nCtrl = TextEditingController(text: p['name']);
     final uCtrl = TextEditingController(text: p['url']);
     final kCtrl = TextEditingController(text: p['key']);
@@ -2649,7 +2652,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 context: ctx,
                 maxWidth: 0.9,
                 children: [
-                  Text('编辑${hasVoice ? ' TTS' : '提供商'}',
+                  Text('编辑${isStt ? ' STT' : (hasVoice ? ' TTS' : '')}提供商',
                       style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,
@@ -2686,8 +2689,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 ])));
   }
 
-  void _deleteProvider(int idx, {bool isTts = false}) {
-    final name = isTts ? _ttsProviders[idx]['name'] : _providers[idx]['name'];
+  void _deleteProvider(int idx, {bool isTts = false, bool isStt = false}) {
+    final collection =
+        isStt ? _sttProviders : (isTts ? _ttsProviders : _providers);
+    final name = collection[idx]['name'];
     TideDialogs.show(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -2695,7 +2700,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             contentPadding: EdgeInsets.zero,
             content: TideDialogs
                 .glassContent(context: ctx, maxWidth: 0.85, children: [
-              Text('删除${isTts ? 'TTS' : ''}提供商',
+              Text('删除${isStt ? 'STT' : (isTts ? 'TTS' : '')}提供商',
                   style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -2714,7 +2719,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 Expanded(
                     child: TideDialogs.glassButton('删除', onTap: () {
                   setState(() {
-                    if (isTts) {
+                    if (isStt) {
+                      _sttProviders.removeAt(idx);
+                    } else if (isTts) {
                       _ttsProviders.removeAt(idx);
                     } else {
                       _providers.removeAt(idx);
@@ -2792,7 +2799,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_providers.isEmpty && _ttsProviders.isEmpty)
+                    if (_providers.isEmpty &&
+                        _sttProviders.isEmpty &&
+                        _ttsProviders.isEmpty)
                       Center(
                           child: Padding(
                               padding: const EdgeInsets.only(top: 80),
@@ -2909,6 +2918,56 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                                         .textFaint,
                                                     fontFamily: 'TideFont'))),
                                     ])));
+                      }),
+                    ],
+                    if (_sttProviders.isNotEmpty) ...[
+                      Padding(
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text('语音识别 (STT)',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'TideFont',
+                                  color: TideTheme.of(context).textStrong))),
+                      ...List.generate(_sttProviders.length, (i) {
+                        final p = _sttProviders[i];
+                        return FrostCard(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(14),
+                          child: Row(children: [
+                            const Icon(Icons.mic_rounded),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(p['name']?.toString() ?? '',
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        fontFamily: 'TideFont')),
+                                const SizedBox(height: 4),
+                                Text('${p['model'] ?? ''}  ${p['url'] ?? ''}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: TideTheme.of(context).textWeak,
+                                        fontFamily: 'TideFont')),
+                              ],
+                            )),
+                            IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 20),
+                                tooltip: '编辑 STT',
+                                onPressed: () => _editProvider(p, isStt: true)),
+                            IconButton(
+                                icon: const Icon(Icons.delete_outline_rounded,
+                                    size: 20, color: Color(0xFFE74C3C)),
+                                tooltip: '删除 STT',
+                                onPressed: () =>
+                                    _deleteProvider(i, isStt: true)),
+                          ]),
+                        );
                       }),
                     ],
                     if (_ttsProviders.isNotEmpty) ...[
