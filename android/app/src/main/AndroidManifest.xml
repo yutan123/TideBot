@@ -86,7 +86,6 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- TideOverlayService 已移除。 -->
 
         <service
             android:name=".TideNotificationListenerService"

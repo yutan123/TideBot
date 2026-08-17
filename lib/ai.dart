@@ -2254,11 +2254,6 @@ $transcript''';
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
       };
     }
-    if (name == 'request_device_action') {
-      return {
-        'result': {'ok': false, 'error': '手机操控功能已移除'}
-      };
-    }
     if (name == 'choose_silence') {
       return {
         'result': {'ok': true, 'silent': true}

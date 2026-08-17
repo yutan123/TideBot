@@ -749,7 +749,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final content = (result['reply']?.toString() ?? '').trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
-      // 手机操控功能已移除；旧版 pending_device_action 将被忽略。
       final aiMsg = <String, dynamic>{
         'id': result['message_id']?.toString() ??
             'm_${DateTime.now().millisecondsSinceEpoch}',
