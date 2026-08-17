@@ -187,25 +187,33 @@ class MainActivity: FlutterActivity() {
                 }
                 "overlayEnabled" -> result.success(Settings.canDrawOverlays(this))
                 "openOverlaySettings" -> {
-                    startActivity(Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")
-                    ))
-                    result.success(null)
+                    try {
+                        startActivity(Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        ))
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("overlay_settings_failed", error.message, null)
+                    }
                 }
                 "setAssistantOverlay" -> {
                     val enabled = call.argument<Boolean>("enabled") == true
                     if (enabled && !Settings.canDrawOverlays(this)) {
                         result.success(false)
                     } else {
-                        val intent = Intent(this, TideOverlayService::class.java).apply {
-                            action = if (enabled) TideOverlayService.ACTION_SHOW else TideOverlayService.ACTION_HIDE
-                            putExtra("botId", call.argument<String>("botId"))
-                            putExtra("botName", call.argument<String>("botName"))
-                            putExtra("avatarPath", call.argument<String>("avatarPath"))
+                        try {
+                            val overlayIntent = Intent(this, TideOverlayService::class.java).apply {
+                                action = if (enabled) TideOverlayService.ACTION_SHOW else TideOverlayService.ACTION_HIDE
+                                putExtra("botId", call.argument<String>("botId"))
+                                putExtra("botName", call.argument<String>("botName"))
+                                putExtra("avatarPath", call.argument<String>("avatarPath"))
+                            }
+                            startService(overlayIntent)
+                            result.success(true)
+                        } catch (error: Exception) {
+                            result.error("overlay_service_failed", error.message, null)
                         }
-                        startService(intent)
-                        result.success(true)
                     }
                 }
                 "executeAccessibilityAction" -> {

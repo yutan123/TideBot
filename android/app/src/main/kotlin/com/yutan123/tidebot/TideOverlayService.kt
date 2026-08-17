@@ -3,6 +3,7 @@ package com.yutan123.tidebot
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
@@ -35,11 +36,14 @@ class TideOverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (root == null) show(intent)
+        if (root == null && !show(intent)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 
-    private fun show(intent: Intent?) {
+    private fun show(intent: Intent?): Boolean {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val botName = intent?.getStringExtra("botName").orEmpty().ifBlank { "TideBot" }
         val container = LinearLayout(this).apply {
@@ -104,28 +108,43 @@ class TideOverlayService : Service() {
         container.addView(avatar)
         container.addView(quick)
         root = container
+        val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            windowType,
+            0,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = 24
             y = 220
         }
-        windowManager.addView(container, params)
-        avatar.setOnLongClickListener {
-            params.flags = params.flags xor WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            windowManager.updateViewLayout(container, params)
+        return runCatching {
+            windowManager.addView(container, params)
             true
+        }.getOrElse {
+            root = null
+            panel = null
+            reply = null
+            false
         }
     }
 
     override fun onDestroy() {
-        root?.let { runCatching { windowManager.removeView(it) } }
+        root?.let { view ->
+            if (::windowManager.isInitialized) {
+                runCatching { windowManager.removeView(view) }
+            }
+        }
         root = null
+        panel = null
+        reply = null
         super.onDestroy()
     }
 }
