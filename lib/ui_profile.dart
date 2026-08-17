@@ -33,7 +33,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String _avatarPath = '';
   final _settings = [
     {'icon': Icons.api_rounded, 'title': 'API 设置', 'page': 'api'},
-    {'icon': Icons.cloud_download_rounded, 'title': '本地模型', 'page': 'local'},
+    {'icon': Icons.cloud_off_rounded, 'title': '本地模型（已停用）', 'page': 'local'},
     {'icon': Icons.palette_rounded, 'title': '主题设置', 'page': 'theme'},
     {'icon': Icons.tune_rounded, 'title': '普通设置', 'page': 'general'},
     {
@@ -370,13 +370,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 transitionDuration: const Duration(milliseconds: 300)));
         break;
       case 'local':
-        Navigator.push(
-            context,
-            PageRouteBuilder(
-                pageBuilder: (_, __, ___) => const LocalModelPage(),
-                transitionsBuilder: (_, a, __, c) =>
-                    FadeTransition(opacity: a, child: c),
-                transitionDuration: const Duration(milliseconds: 300)));
+        GlobalNotice.show('本地模型推理已临时停用，等待闪退问题修复');
         break;
       case 'theme':
         _showThemePicker();

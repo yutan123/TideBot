@@ -1431,17 +1431,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     int curTok = prefs.getInt('max_token_$botId') ??
         (_bot['max_tokens'] as int? ?? 10000);
 
-    final localDir = await getApplicationDocumentsDirectory();
-    final localFiles = (await localDir
-            .list()
-            .where((entity) => entity is File && entity.path.endsWith('.gguf'))
-            .toList())
-        .whereType<File>()
-        .toList();
-    String localChatId =
-        (prefs.getString('local_chat_model_$botId') ?? '').trim();
-    String localBackupId =
-        (prefs.getString('local_backup_model_$botId') ?? '').trim();
+    String localChatId = '';
+    String localBackupId = '';
+    const localFiles = <File>[];
 
     TideDialogs.show(
         context: context,

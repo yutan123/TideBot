@@ -31,6 +31,16 @@ void main() async {
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   final prefs = await SharedPreferences.getInstance();
+  // Local GGUF inference is temporarily disabled: native inference can abort the
+  // process before Dart is able to return an error. Clear every persisted local
+  // selection before any launch-time generation (such as the daily quote) runs.
+  for (final key in prefs.getKeys().where(
+        (key) =>
+            key.startsWith('local_chat_model_') ||
+            key.startsWith('local_backup_model_'),
+      )) {
+    await prefs.remove(key);
+  }
   await tideTheme.loadFromDB();
   await TideHaptics.load();
   await AppLogService.instance.restoreForLaunch();

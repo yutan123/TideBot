@@ -16,6 +16,8 @@ import 'app_log_service.dart';
 import 'emotion_state_service.dart';
 import 'local_llama.dart';
 
+const bool _localInferenceEnabled = false;
+
 class AIManager {
   static final AIManager _instance = AIManager._internal();
   factory AIManager() => _instance;
@@ -85,10 +87,12 @@ class AIManager {
     void Function(String delta)? onDelta,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final primaryLocal =
-        (prefs.getString('local_chat_model_$botId') ?? '').trim();
-    final backupLocal =
-        (prefs.getString('local_backup_model_$botId') ?? '').trim();
+    final primaryLocal = _localInferenceEnabled
+        ? (prefs.getString('local_chat_model_$botId') ?? '').trim()
+        : '';
+    final backupLocal = _localInferenceEnabled
+        ? (prefs.getString('local_backup_model_$botId') ?? '').trim()
+        : '';
     final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
     final matchingBots = (await DBManager().getAllBots())
         .where((bot) => bot['id']?.toString() == botId)
@@ -224,9 +228,11 @@ class AIManager {
 
     // 已选择本地 GGUF 时，绕过远程 provider，执行真实 llama.cpp 推理。
     final prefs = await SharedPreferences.getInstance();
-    final localId = forcedLocalId.isNotEmpty
-        ? forcedLocalId
-        : (prefs.getString('local_chat_model_$botId') ?? '').trim();
+    final localId = _localInferenceEnabled
+        ? (forcedLocalId.isNotEmpty
+            ? forcedLocalId
+            : (prefs.getString('local_chat_model_$botId') ?? '').trim())
+        : '';
     if (localId.isNotEmpty) {
       try {
         final history = includeChatHistory
