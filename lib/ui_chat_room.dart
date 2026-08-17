@@ -1994,11 +1994,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ? Colors.white.withValues(alpha: 0.78)
         : TideTheme.of(context).textWeak;
     final knownDuration = duration.inMilliseconds > 0;
-    final width = MediaQuery.sizeOf(context).width.clamp(280.0, 520.0) - 146;
+    final width = MediaQuery.sizeOf(context).width.clamp(250.0, 420.0) - 175;
     return Container(
-      constraints: BoxConstraints(minWidth: 190, maxWidth: width),
+      constraints: BoxConstraints(minWidth: 154, maxWidth: width),
       margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
+      padding: const EdgeInsets.fromLTRB(7, 5, 8, 5),
       decoration: BoxDecoration(
         color: isUser
             ? TideTheme.of(context).primary
@@ -2021,7 +2021,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     ? Icons.pause_circle_filled_rounded
                     : Icons.play_circle_filled_rounded,
                 color: foreground,
-                size: 30,
+                size: 25,
               ),
             ),
           ),
@@ -2066,7 +2066,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // ========== 长按消息 ==========
   void _msgLongPress(Map<String, dynamic> msg) {
     final text = msg['content']?.toString() ?? '';
-    final botDisabled = _bot['is_disabled'] == 1 || _bot['is_disabled'] == true;
     showTideSheet(
       context: context,
       height: 300,
@@ -2091,34 +2090,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               },
             ),
             // 引用功能已移除，避免生成和维护 reply_to_id 关联。
-            ListTile(
-              leading: Icon(
-                botDisabled
-                    ? Icons.smart_toy_outlined
-                    : Icons.pause_circle_outline_rounded,
-                color: botDisabled
-                    ? TideTheme.of(sheetContext).primary
-                    : const Color(0xFFE68A00),
-              ),
-              title: Text(botDisabled ? '启用机器人' : '禁用机器人',
-                  style: TextStyle(
-                      fontFamily: 'TideFont',
-                      color: botDisabled
-                          ? TideTheme.of(sheetContext).textStrong
-                          : const Color(0xFFE68A00))),
-              subtitle: Text(
-                  botDisabled ? '恢复回复、定时任务和主动服务' : '保留聊天记录与设定，但停止一切回复和服务',
-                  style: const TextStyle(fontFamily: 'TideFont', fontSize: 11)),
-              onTap: () async {
-                await DBManager().updateBot(_bot['id'].toString(),
-                    {'is_disabled': botDisabled ? 0 : 1});
-                if (mounted) {
-                  setState(() => _bot['is_disabled'] = botDisabled ? 0 : 1);
-                }
-                if (sheetContext.mounted) Navigator.pop(sheetContext);
-                GlobalNotice.show(botDisabled ? '机器人已启用' : '机器人已禁用');
-              },
-            ),
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
                   color: Color(0xFFE74C3C)),

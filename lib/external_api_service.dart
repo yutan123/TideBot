@@ -16,6 +16,35 @@ class ExternalApiService {
   int? get activePort => _server?.port;
   bool get running => _server != null;
 
+  /// The LAN address is device-dependent. `anyIPv4` makes the server listen on
+  /// every interface, while clients must use a concrete private IPv4 address.
+  Future<List<String>> baseUrls({int? port}) async {
+    final effectivePort = port ?? _server?.port ?? 6666;
+    final addresses = <String>{};
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        includeLinkLocal: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          if (!address.isLoopback && address.type == InternetAddressType.IPv4) {
+            addresses.add('http://${address.address}:$effectivePort/v1');
+          }
+        }
+      }
+    } catch (_) {}
+    return addresses.toList()..sort();
+  }
+
+  Future<String> preferredBaseUrl({int? port}) async {
+    final urls = await baseUrls(port: port);
+    return urls.isNotEmpty
+        ? urls.first
+        : 'http://127.0.0.1:${port ?? _server?.port ?? 6666}/v1';
+  }
+
   Future<bool> start() async {
     if (_server != null) return true;
     final db = DBManager();
@@ -86,7 +115,7 @@ class ExternalApiService {
           'object': 'list',
           'data': [
             {
-              'id': bot['name']?.toString() ?? 'tidebot',
+              'id': _modelId(bot),
               'object': 'model',
               'owned_by': 'tidebot',
             }
@@ -144,9 +173,7 @@ class ExternalApiService {
           'id': 'chatcmpl-tidebot-$now',
           'object': 'chat.completion',
           'created': now,
-          'model': decoded['model']?.toString() ??
-              bot['name']?.toString() ??
-              'tidebot',
+          'model': _modelId(bot),
           'choices': [
             {
               'index': 0,
@@ -161,6 +188,11 @@ class ExternalApiService {
       AppLogService.instance.add('EXTERNAL_API', '请求处理失败：$error');
       _error(request, 500, 'Internal server error');
     }
+  }
+
+  String _modelId(Map<String, dynamic> bot) {
+    final name = bot['name']?.toString().trim() ?? '';
+    return name.isEmpty ? 'tidebot' : name;
   }
 
   void _error(HttpRequest request, int code, String message) =>

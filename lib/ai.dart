@@ -2385,9 +2385,10 @@ $transcript''';
     if (name == 'send_sticker') {
       final emotion = args['emotion']?.toString().trim() ?? '';
       final candidates = await db.queryStickers(emotion: emotion);
-      final available =
-          candidates.isEmpty ? await db.queryStickers() : candidates;
-      final selected = available.isEmpty ? null : available.first;
+      final available = candidates;
+      final selected = available.isEmpty
+          ? null
+          : available[Random.secure().nextInt(available.length)];
       final targetPath = selected?['file_path']?.toString().trim() ?? '';
       if (targetPath.isEmpty) {
         return {
@@ -2426,9 +2427,9 @@ $transcript''';
             '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索后必须附可点击来源；不要编造搜索结果。');
       }
     }
-    if (allowSticker && forcedStickerEmotion != null) {
+    if (allowSticker) {
       parts.add(
-          '【本轮表情包】概率已命中，TideBot 将在回复完成后自动从“$forcedStickerEmotion”分类随机发送一张。不要调用工具、不要讨论是否发送，也不要在正文输出贴纸协议。');
+          '【本轮表情包】概率已命中。请根据当前语境选择已有情绪分类并调用 send_sticker；系统会从所选分类随机发送一张，不要在正文输出贴纸协议。');
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }
