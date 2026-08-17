@@ -255,6 +255,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         for (final message in _msgs) {
           final replacement = freshById[message['id']?.toString()];
           if (replacement != null &&
+              message['is_streaming'] != true &&
               replacement['content']?.toString() !=
                   message['content']?.toString()) {
             message['content'] = replacement['content'];
@@ -634,7 +635,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       var streamRaw = '';
       var streamVisibleLength = 0;
       var receivedStreamDelta = false;
-      if (streamEnabled && localModelId.isEmpty && mounted) {
+      if (streamEnabled && !segmentedReply && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
           'bot_id': botId,
@@ -642,6 +643,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'type': 'text',
           'content': '',
           'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'is_streaming': true,
         };
         final speed =
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
@@ -683,7 +685,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             text: modelText,
             imagePaths: images,
             persistResponse: persistThisReply,
-            onDelta: streamEnabled && localModelId.isEmpty
+            onDelta: streamEnabled && !segmentedReply && localModelId.isEmpty
                 ? (delta) {
                     receivedStreamDelta = true;
                     streamRaw += delta;
@@ -801,6 +803,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               tm['id'] = aiMsg['id'];
               tm['content'] = content;
               tm['timestamp'] = aiMsg['timestamp'];
+              tm.remove('is_streaming');
             });
             _scrollDown(animated: false);
             return;
@@ -831,6 +834,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               streamingMessage!['id'] = aiMsg['id'];
               streamingMessage['content'] = content;
               streamingMessage['timestamp'] = aiMsg['timestamp'];
+              streamingMessage.remove('is_streaming');
             });
           }
         } else if (segmentedReply) {

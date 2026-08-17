@@ -559,9 +559,12 @@ class AIManager {
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
-        // 流式与工具调用共存：始终开启 stream，SSE 分片同时收集 tool_calls，
-        // 流式结束后若命中工具再执行并做一次非流式 follow-up 取得最终回答。
-        if (onDelta != null) 'stream': true,
+        // Streaming is disabled when the reply is configured for sentence bubbles.
+        // One request must have one rendering owner; mixing SSE with segmented rows
+        // was the source of duplicated full and segmented replies.
+        if (onDelta != null &&
+            await db.getKV('segmented_reply_enabled') == 'false')
+          'stream': true,
       };
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
         'url': '$baseUrl/chat/completions',
@@ -802,8 +805,23 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // 贴纸只能来自 send_sticker 工具；概率决定本轮是否将该工具暴露给模型。
-        final Map<String, dynamic>? sticker = toolSticker;
+        // A forced sticker turn must not depend on the model deciding to call a
+        // tool. Select one concrete asset after the reply is generated.
+        Map<String, dynamic>? sticker = toolSticker;
+        if (sticker == null && allowSticker) {
+          final emotions = await db.stickerEmotions();
+          if (emotions.isNotEmpty) {
+            final emotion = emotions[Random.secure().nextInt(emotions.length)];
+            final candidates = await db.queryStickers(emotion: emotion);
+            if (candidates.isNotEmpty) {
+              sticker = Map<String, dynamic>.from(
+                candidates[Random.secure().nextInt(candidates.length)],
+              );
+              AppLogService.instance
+                  .add('STICKER', '本轮概率命中，已直接发送「$emotion」表情包');
+            }
+          }
+        }
         if (persistResponse) {
           // Streaming uses one persisted row as well as one foreground bubble.
           // Sentence splitting remains available for non-streaming replies.
@@ -1310,6 +1328,7 @@ $transcript''';
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $apiKey',
+            'api-key': apiKey,
           },
           body: jsonEncode({
             'model': model,
@@ -1321,6 +1340,7 @@ $transcript''';
                     'type': 'input_audio',
                     'input_audio': {
                       'data': 'data:$mime;base64,${base64Encode(bytes)}',
+                      'format': lowerPath.endsWith('.mp3') ? 'mp3' : 'wav',
                     },
                   },
                 ],
@@ -1367,6 +1387,10 @@ $transcript''';
         : modelName;
     final protocol =
         (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
+    if (protocol == 'unsupported') {
+      AppLogService.instance.add('TTS', '该 TTS 服务暂未提供可验证的调用协议');
+      return null;
+    }
     if (baseUrl.isEmpty || apiKey.isEmpty || text.trim().isEmpty) {
       AppLogService.instance.add('TTS', '语音合成失败：缺少地址、Key 或文本');
       return null;
@@ -1408,13 +1432,17 @@ $transcript''';
       };
       AppLogService.instance.add('TTS',
           '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
+      // MiMo requires its API key header. Keep Bearer too for gateways that
+      // expose the OpenAI-compatible authentication variant.
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+        if (protocol == 'mimo') 'api-key': apiKey,
+      };
       final res = await http
           .post(
             Uri.parse(endpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $apiKey',
-            },
+            headers: headers,
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 30));
@@ -1436,6 +1464,15 @@ $transcript''';
           'body': utf8.decode(bytes, allowMalformed: true),
         });
         final raw = jsonDecode(utf8.decode(bytes));
+        if (raw is Map &&
+            (raw['base_resp'] is Map) &&
+            ((raw['base_resp'] as Map)['status_code'] as num?) != 0) {
+          AppLogService.instance.add(
+            'TTS',
+            '语音服务返回错误：${(raw['base_resp'] as Map)['status_msg'] ?? raw['base_resp']}',
+          );
+          return null;
+        }
         String? audioUrl;
         if (raw is Map) {
           final output = raw['output'];
