@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -234,9 +235,7 @@ class AIManager {
         final localMessages = <Map<String, dynamic>>[
           {
             'role': 'system',
-            'content': _buildSystemPrompt(bot, activeGame) +
-                (skipLifeState ? '' : await _lifeStateContext(botId)) +
-                await EmotionStateService.instance.promptContext(botId),
+            'content': _localSystemPrompt(bot),
           },
         ];
         final recentHistory = history
@@ -245,11 +244,7 @@ class AIManager {
                 msg['error_log']?.toString().isNotEmpty != true &&
                 msg['error_code']?.toString().isNotEmpty != true)
             .toList();
-        final maxContext = (prefs.getInt('max_token_$botId') ??
-                bot['max_tokens'] as int? ??
-                10000)
-            .clamp(1000, 128000);
-        final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
+        const historyBudget = 350;
         final selectedReversed = <Map<String, dynamic>>[];
         var usedTokens = 0;
         for (final msg in recentHistory.reversed) {
@@ -397,7 +392,10 @@ class AIManager {
     final longMemoryContext = memoryLines(longMemories, 1200);
     const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
-    final toolContext = allowTools ? await _buildToolContext(db) : '';
+    final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
+    final toolContext = allowTools
+        ? await _buildToolContext(db, allowSticker: allowSticker)
+        : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
     final emotionContext =
         await EmotionStateService.instance.promptContext(botId);
@@ -549,7 +547,7 @@ class AIManager {
       AppLogService.instance.add('AI',
           '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
-          ? await _buildNativeTools(db)
+          ? await _buildNativeTools(db, allowSticker: allowSticker)
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -804,10 +802,12 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // 贴纸只能来自 send_sticker 工具；禁止随机兜底，确保每轮最多一张。
+        // 贴纸只能来自 send_sticker 工具；概率决定本轮是否将该工具暴露给模型。
         final Map<String, dynamic>? sticker = toolSticker;
         if (persistResponse) {
-          final segmented =
+          // Streaming uses one persisted row as well as one foreground bubble.
+          // Sentence splitting remains available for non-streaming replies.
+          final segmented = onDelta == null &&
               await db.getKV('segmented_reply_enabled') != 'false';
           final segments =
               segmented ? _replySegments(replyText) : <String>[replyText];
@@ -955,8 +955,24 @@ class AIManager {
   }
 
   String _cleanVisibleReply(String raw) {
+    // Some providers leak internal labels into normal text. Remove whole
+    // protocol lines before rendering so content such as ":平静]" or
+    // "记忆:..." never becomes a chat bubble.
+    final withoutProtocolLines = raw
+        .replaceAll(
+            RegExp(r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
+                multiLine: true, caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'^\s*\]?\s*(?:记忆|memory)\s*[:：][^\n]*$',
+                multiLine: true, caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'^\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?\s*$',
+                multiLine: true),
+            '');
     // 部分模型以 DSML/XML 文本模拟工具调用；这是内部协议，绝不能进入消息气泡。
-    final withoutDsml = raw
+    final withoutDsml = withoutProtocolLines
         .replaceAll(
             RegExp(
                 r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
@@ -1190,8 +1206,9 @@ $transcript''';
     }
   }
 
-  /// Transcribe with the bot's independently selected OpenAI-compatible STT
-  /// provider. MiMo's compatible endpoint uses this same multipart contract.
+  /// Transcribe with a bot-specific STT provider. OpenAI-compatible providers
+  /// use multipart `/audio/transcriptions`; MiMo ASR uses chat completions with
+  /// Base64 input_audio as required by its official API.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
@@ -1220,10 +1237,25 @@ $transcript''';
           .replaceFirst(RegExp(r'/+$'), '');
       final model = provider['model']?.toString().split(',').first.trim() ?? '';
       final apiKey = provider['api_key']?.toString().trim() ?? '';
+      final protocol =
+          (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
       if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) return null;
+      if (protocol != 'openai' && protocol != 'mimo') {
+        AppLogService.instance.add('STT', '不支持的 STT 协议：$protocol');
+        return null;
+      }
+      if (protocol == 'mimo') {
+        return _transcribeMiMoAudio(
+          baseUrl: baseUrl,
+          apiKey: apiKey,
+          model: model,
+          audioPath: audioPath,
+          providerName: provider['name']?.toString() ?? providerId,
+        );
+      }
       final endpoint = '$baseUrl/audio/transcriptions';
       AppLogService.instance.add('STT',
-          '请求转写：provider=${provider['name'] ?? providerId}，model=$model，endpoint=$endpoint');
+          '请求转写：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint');
       final request = http.MultipartRequest('POST', Uri.parse(endpoint))
         ..headers['Authorization'] = 'Bearer $apiKey'
         ..fields['model'] = model
@@ -1248,6 +1280,69 @@ $transcript''';
     }
   }
 
+  Future<String?> _transcribeMiMoAudio({
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+    required String audioPath,
+    required String providerName,
+  }) async {
+    final file = File(audioPath);
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 10 * 1024 * 1024) {
+      AppLogService.instance.add('STT', 'MiMo ASR 音频超过官方 10MB Base64 输入上限');
+      return null;
+    }
+    final lowerPath = audioPath.toLowerCase();
+    if (!lowerPath.endsWith('.wav') && !lowerPath.endsWith('.mp3')) {
+      AppLogService.instance.add('STT', 'MiMo ASR 仅接受 WAV 或 MP3 音频');
+      return null;
+    }
+    final mime = lowerPath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav';
+    final endpoint = '$baseUrl/chat/completions';
+    AppLogService.instance.add(
+      'STT',
+      '请求 MiMo ASR：provider=$providerName，model=$model，endpoint=$endpoint，bytes=${bytes.length}',
+    );
+    final response = await http
+        .post(
+          Uri.parse(endpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: jsonEncode({
+            'model': model,
+            'messages': [
+              {
+                'role': 'user',
+                'content': [
+                  {
+                    'type': 'input_audio',
+                    'input_audio': {
+                      'data': 'data:$mime;base64,${base64Encode(bytes)}',
+                    },
+                  },
+                ],
+              },
+            ],
+            'asr_options': {'language': 'auto'},
+          }),
+        )
+        .timeout(const Duration(seconds: 50));
+    final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      AppLogService.instance.add(
+        'STT',
+        'MiMo ASR 失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 300))}',
+      );
+      return null;
+    }
+    final decoded = jsonDecode(body);
+    final transcript = _extractChatContent(decoded).trim();
+    return transcript.isEmpty ? null : transcript;
+  }
+
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
   Future<String?> _generateTTS(String text, String providerId) async {
     final list = await DBManager().queryTtsProviders();
@@ -1270,15 +1365,49 @@ $transcript''';
     final model = modelName.isEmpty
         ? (provider['name']?.toString() ?? 'tts-1')
         : modelName;
+    final protocol =
+        (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
     if (baseUrl.isEmpty || apiKey.isEmpty || text.trim().isEmpty) {
       AppLogService.instance.add('TTS', '语音合成失败：缺少地址、Key 或文本');
       return null;
     }
 
     try {
-      final endpoint = '$baseUrl/audio/speech';
+      final endpoint = switch (protocol) {
+        'minimax' =>
+          '${baseUrl.endsWith('/v1') ? baseUrl : '$baseUrl/v1'}/t2a_v2',
+        'mimo' => '$baseUrl/chat/completions',
+        _ => '$baseUrl/audio/speech',
+      };
+      final payload = switch (protocol) {
+        'minimax' => {
+            'model': model,
+            'text': text,
+            'stream': false,
+            'voice_setting': {
+              'voice_id': voice,
+              'speed': 1.0,
+              'vol': 1.0,
+              'pitch': 0,
+            },
+            'audio_setting': {
+              'sample_rate': 32000,
+              'bitrate': 128000,
+              'format': 'mp3',
+              'channel': 1,
+            },
+          },
+        'mimo' => {
+            'model': model,
+            'messages': [
+              {'role': 'assistant', 'content': text},
+            ],
+            'stream': false,
+          },
+        _ => {'model': model, 'input': text, 'voice': voice},
+      };
       AppLogService.instance.add('TTS',
-          '请求语音：provider=${provider['name'] ?? providerId}，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
+          '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
       final res = await http
           .post(
             Uri.parse(endpoint),
@@ -1286,7 +1415,7 @@ $transcript''';
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $apiKey',
             },
-            body: jsonEncode({'model': model, 'input': text, 'voice': voice}),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 30));
       AppLogService.instance.add('TTS',
@@ -1312,10 +1441,14 @@ $transcript''';
           final output = raw['output'];
           final data = raw['data'];
           final outputAudio = output is Map ? output['audio'] : null;
+          final dataAudio = data is Map ? data['audio'] : null;
           audioUrl = raw['audio_url']?.toString() ??
               raw['url']?.toString() ??
               (outputAudio is Map
                   ? (outputAudio['url'] ?? outputAudio['audio_url'])?.toString()
+                  : null) ??
+              (dataAudio is Map
+                  ? (dataAudio['url'] ?? dataAudio['audio_url'])?.toString()
                   : null) ??
               (output is Map
                   ? (output['audio_url'] ?? output['url'])?.toString()
@@ -1323,27 +1456,46 @@ $transcript''';
               (data is Map
                   ? (data['audio_url'] ?? data['url'])?.toString()
                   : null);
+          final inlineAudio = _inlineAudioFromTtsResponse(raw);
+          if (inlineAudio != null && inlineAudio.isNotEmpty) {
+            try {
+              final compact = inlineAudio.replaceAll(RegExp(r'\s+'), '');
+              bytes = RegExp(r'^[0-9a-fA-F]+$').hasMatch(compact) &&
+                      compact.length.isEven
+                  ? Uint8List.fromList(List<int>.generate(
+                      compact.length ~/ 2,
+                      (index) => int.parse(
+                          compact.substring(index * 2, index * 2 + 2),
+                          radix: 16)))
+                  : base64Decode(compact);
+            } catch (_) {
+              AppLogService.instance.add('TTS', '语音服务返回的内嵌音频无法解码');
+              return null;
+            }
+          }
+          if (audioUrl != null && audioUrl.isNotEmpty) {
+            final audioResponse = await http
+                .get(Uri.parse(audioUrl))
+                .timeout(const Duration(seconds: 30));
+            if (audioResponse.statusCode < 200 ||
+                audioResponse.statusCode >= 300 ||
+                audioResponse.bodyBytes.isEmpty) {
+              AppLogService.instance
+                  .add('TTS', '语音文件下载失败：HTTP ${audioResponse.statusCode}');
+              return null;
+            }
+            bytes = audioResponse.bodyBytes;
+          } else if (inlineAudio == null || inlineAudio.isEmpty) {
+            AppLogService.instance.add('TTS', '语音合成返回 JSON，但没有可用音频');
+            return null;
+          }
         }
-        if (audioUrl == null || audioUrl.isEmpty) {
-          AppLogService.instance.add('TTS', '语音合成返回 JSON，但没有可下载的音频地址');
-          return null;
-        }
-        final audioResponse = await http
-            .get(Uri.parse(audioUrl))
-            .timeout(const Duration(seconds: 30));
-        if (audioResponse.statusCode < 200 ||
-            audioResponse.statusCode >= 300 ||
-            audioResponse.bodyBytes.isEmpty) {
-          AppLogService.instance
-              .add('TTS', '语音文件下载失败：HTTP ${audioResponse.statusCode}');
-          return null;
-        }
-        bytes = audioResponse.bodyBytes;
       }
 
       final directory = await getApplicationDocumentsDirectory();
+      final extension = _audioExtension(bytes, contentType);
       final path =
-          '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.wav';
+          '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.$extension';
       await File(path).writeAsBytes(bytes);
       AppLogService.instance.add(
           'TTS', '语音合成成功：${text.length} 字，${bytes.length} bytes，已保存 $path');
@@ -1352,6 +1504,49 @@ $transcript''';
       AppLogService.instance.add('TTS', '语音合成异常：$e');
       return null;
     }
+  }
+
+  String? _inlineAudioFromTtsResponse(dynamic raw) {
+    if (raw is! Map) return null;
+    String? readAudio(dynamic value) {
+      if (value is! Map) return null;
+      return (value['hex'] ?? value['audio_hex'] ?? value['data'])?.toString();
+    }
+
+    final output = raw['output'];
+    final data = raw['data'];
+    final choices = raw['choices'];
+    final message =
+        choices is List && choices.isNotEmpty && choices.first is Map
+            ? (choices.first as Map)['message']
+            : null;
+    return readAudio(raw['audio']) ??
+        readAudio(output is Map ? output['audio'] : null) ??
+        readAudio(data is Map ? data['audio'] : null) ??
+        readAudio(message is Map ? message['audio'] : null);
+  }
+
+  String _audioExtension(Uint8List bytes, String contentType) {
+    final type = contentType.toLowerCase();
+    if (type.contains('mpeg') || type.contains('mp3')) return 'mp3';
+    if (type.contains('ogg')) return 'ogg';
+    if (type.contains('aac')) return 'aac';
+    if (type.contains('wav') || type.contains('wave')) return 'wav';
+    if (bytes.length >= 3 &&
+        bytes[0] == 0x49 &&
+        bytes[1] == 0x44 &&
+        bytes[2] == 0x33) return 'mp3';
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46) return 'wav';
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x4f &&
+        bytes[1] == 0x67 &&
+        bytes[2] == 0x67 &&
+        bytes[3] == 0x53) return 'ogg';
+    return 'wav';
   }
 
   // 空间广场：今日一言生成逻辑
@@ -1784,7 +1979,21 @@ $transcript''';
     }
   }
 
-  Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db) async {
+  Future<bool> _shouldOfferSticker(DBManager db) async {
+    if (await db.getKV('bot_stickers_enabled') != 'true') return false;
+    if ((await db.stickerEmotions()).isEmpty) return false;
+    final chance =
+        (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 30)
+            .clamp(0, 100);
+    final selected =
+        chance >= 100 || (chance > 0 && Random.secure().nextInt(100) < chance);
+    AppLogService.instance.add('STICKER',
+        selected ? '本轮允许表情包工具（概率 $chance%）' : '本轮不提供表情包工具（概率 $chance%）');
+    return selected;
+  }
+
+  Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
+      {bool allowSticker = true}) async {
     final tools = <Map<String, dynamic>>[];
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
@@ -1866,7 +2075,8 @@ $transcript''';
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_diaryToolSchema());
-    if (await db.getKV('bot_stickers_enabled') == 'true' &&
+    if (allowSticker &&
+        (await db.getKV('bot_stickers_enabled') == 'true') &&
         (await db.stickerEmotions()).isNotEmpty) {
       tools.add({
         'type': 'function',
@@ -2100,7 +2310,8 @@ $transcript''';
     };
   }
 
-  Future<String> _buildToolContext(DBManager db) async {
+  Future<String> _buildToolContext(DBManager db,
+      {bool allowSticker = true}) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       final style = (await db.getKV('bot_image_style') ?? '写实').trim();
@@ -2118,7 +2329,7 @@ $transcript''';
             '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索后必须附可点击来源；不要编造搜索结果。');
       }
     }
-    if (await db.getKV('bot_stickers_enabled') == 'true') {
+    if (allowSticker && await db.getKV('bot_stickers_enabled') == 'true') {
       final emotions = await db.stickerEmotions();
       if (emotions.isNotEmpty) {
         parts.add(
@@ -2344,6 +2555,19 @@ $transcript''';
     return risky
         ? '\n【安全处理】用户消息可能涉及违法、危险、露骨、仇恨、欺诈、隐私或自伤内容。不要生成、补全、鼓励或提供可执行细节；保持你的人设，以温和、不评判的方式拒绝或转移到安全话题。若涉及即时自伤或他伤风险，优先鼓励联系当地紧急服务、可信赖的人或专业支持。'
         : '\n【安全规则】不得生成违法、危险、露骨色情、剥削未成年人、仇恨骚扰、欺诈、隐私侵害或自伤他伤的可执行内容；遇到此类请求应保持人设并温和转移到安全话题。';
+  }
+
+  String _localSystemPrompt(Map<String, dynamic> bot) {
+    final name = bot['name']?.toString().trim();
+    final desc = bot['desc']?.toString().trim() ?? '';
+    final style = bot['prompt']?.toString().trim() ?? '';
+    String clip(String value, int limit) =>
+        value.length <= limit ? value : value.substring(0, limit);
+    return '你是${name == null || name.isEmpty ? 'TideBot' : clip(name, 40)}。'
+        '保持自然、简短的中文对话。'
+        '${desc.isEmpty ? '' : '人设：${clip(desc, 240)}。'}'
+        '${style.isEmpty ? '' : '说话方式：${clip(style, 240)}。'}'
+        '不要输出心情、记忆、工具或其他内部标签。';
   }
 
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {

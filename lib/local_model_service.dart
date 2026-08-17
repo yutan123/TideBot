@@ -89,8 +89,9 @@ class LocalModelService {
     final target = File('${dir.path}/$id.gguf');
     final part = File('${target.path}.part');
     final prefs = await SharedPreferences.getInstance();
-    final installed =
-        await target.exists() && await target.length() > 1024 * 1024;
+    final installed = await target.exists() &&
+        await target.length() > 1024 * 1024 &&
+        await _hasGgufMagic(target);
     final received = installed
         ? await target.length()
         : (await part.exists() ? await part.length() : 0);

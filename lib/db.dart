@@ -1036,6 +1036,7 @@ class DBManager {
           'base_url': m['url'] ?? m['base_url'] ?? '',
           'api_key': m['key'] ?? m['api_key'] ?? '',
           'model': m['model'] ?? '',
+          'protocol': m['protocol'] ?? 'openai',
         };
       }).toList();
     } catch (_) {
@@ -1072,6 +1073,7 @@ class DBManager {
           'api_key': m['key'] ?? '',
           'model': m['model'] ?? '',
           'voice': m['voice'] ?? '',
+          'protocol': m['protocol'] ?? 'openai',
         });
       }
     } catch (_) {}

@@ -237,19 +237,39 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Future<void> _syncLatestMessages() async {
     if (!mounted || _loading) return;
     try {
-      final fresh = await DBManager()
-          .queryMessages(_bot['id'] as String, limit: 80, descending: true);
-      if (!mounted || fresh.isEmpty) return;
-      final known = <String>{for (final m in _msgs) m['id']?.toString() ?? ''};
-      final additions =
-          fresh.where((m) => !known.contains(m['id']?.toString())).toList();
-      if (additions.isEmpty) return;
+      final botId = _bot['id']?.toString() ?? '';
+      if (botId.isEmpty) return;
+      final fresh = await DBManager().queryMessages(botId);
+      if (!mounted) return;
+      final freshById = <String, Map<String, dynamic>>{
+        for (final message in fresh) message['id']?.toString() ?? '': message,
+      };
+      final existingIds = <String>{
+        for (final message in _msgs) message['id']?.toString() ?? '',
+      };
+      final additions = fresh
+          .where((message) => !existingIds.contains(message['id']?.toString()))
+          .toList();
+      var changed = false;
       setState(() {
-        _msgs.addAll(additions);
-        _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
-            .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+        for (final message in _msgs) {
+          final replacement = freshById[message['id']?.toString()];
+          if (replacement != null &&
+              replacement['content']?.toString() !=
+                  message['content']?.toString()) {
+            message['content'] = replacement['content'];
+            changed = true;
+          }
+        }
+        if (additions.isNotEmpty) {
+          _msgs.addAll(additions);
+          _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
+              .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+          changed = true;
+        }
       });
-      _scrollDown(animated: false);
+      if (changed) _scrollDown(animated: false);
+      await DBManager().markBotRead(botId);
     } catch (_) {}
   }
 
@@ -472,33 +492,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (mounted) setState(() => _hasText = false);
       return;
     }
-    final primaryDocument = documents.isEmpty ? null : documents.first;
-    final attachmentPaths = [...images, ...documents];
+    final botId = _bot['id']?.toString() ?? '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final userMessages = _buildAttachmentMessages(
+      botId: botId,
+      timestamp: now,
+      text: text,
+      images: images,
+      documents: documents,
+    );
 
     // 用户主动发言：清零主动回复未应答计数并重置计时。
     _onUserInteracted();
-
-    final botId = _bot['id']?.toString() ?? '';
     unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
-    final now = DateTime.now().millisecondsSinceEpoch;
 
     // ===== 防抖/合并 =====
     // 上一条请求还在飞（机器人尚未回完）时再发消息：不再像旧实现那样直接丢弃，
     // 而是作废在途请求的渲染（_requestGen++），把新文本并入待重发队列，先上屏
     // 气泡并入库存档；等旧请求 finally 结束后用合并文本统一重发一次。
     if (_loading) {
-      final mergedMsg = <String, dynamic>{
-        'id': 'm_${now}_q',
-        'bot_id': botId,
-        'role': 'user',
-        'type': attachmentPaths.isNotEmpty
-            ? (primaryDocument != null ? 'document' : 'image')
-            : 'text',
-        'content': text,
-        'file_path': attachmentPaths.isEmpty ? null : attachmentPaths.join('|'),
-        'document_name': primaryDocument?.split(Platform.pathSeparator).last,
-        'timestamp': now,
-      };
+      final queuedMessages = userMessages;
       if (_queued) {
         // 已有待重发队列，合并进同一批文本，避免产生多余第三次请求。
         final prev = _queuedText;
@@ -511,23 +524,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _requestGen++; // 作废在途请求的渲染结果
       if (mounted) {
         setState(() {
-          _msgs.add(mergedMsg);
+          _msgs.addAll(queuedMessages);
           _msgC.clear();
           _hasText = false;
         });
         _scrollDown();
       }
       try {
-        await DBManager().insertMessage({
-          'id': mergedMsg['id'],
-          'bot_id': botId,
-          'role': 'user',
-          'type': mergedMsg['type'],
-          'content': text,
-          'file_path': mergedMsg['file_path'],
-          'mood': null,
-          'timestamp': now,
-        }).timeout(const Duration(seconds: 12));
+        for (final queuedMessage in queuedMessages) {
+          await DBManager().insertMessage({
+            'id': queuedMessage['id'],
+            'bot_id': botId,
+            'role': 'user',
+            'type': queuedMessage['type'],
+            'content': queuedMessage['content'],
+            'file_path': queuedMessage['file_path'],
+            'mood': null,
+            'timestamp': queuedMessage['timestamp'],
+          }).timeout(const Duration(seconds: 12));
+        }
       } catch (e) {
         debugPrint('[send] persist queued user message failed: $e');
       }
@@ -540,28 +555,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 被合并拦截的过期请求不再落库，避免聊天记录顺序混乱。
     final persistThisReply = myGen == _requestGen;
 
-    late final Map<String, dynamic> msg;
+    final msg = userMessages.first;
     if (!noUserBubble) {
-      msg = <String, dynamic>{
-        'id': 'm_$now',
-        'bot_id': botId,
-        'role': 'user',
-        'type': attachmentPaths.isNotEmpty
-            ? (primaryDocument != null ? 'document' : 'image')
-            : 'text',
-        'content': text,
-        'file_path': attachmentPaths.isEmpty ? null : attachmentPaths.join('|'),
-        'document_name': primaryDocument?.split(Platform.pathSeparator).last,
-        'timestamp': now,
-      };
-
       // 先更新界面，确保点击后立即看到气泡并清空输入框。
       if (mounted) {
         setState(() {
           _loading = true;
           _typing = true;
           _msgsLoading = false;
-          _msgs.add(msg);
+          _msgs.addAll(userMessages);
           _msgC.clear();
           _pendingImages.clear();
           _pendingDocuments.clear();
@@ -577,16 +579,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         try {
           // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
           // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
-          await DBManager().insertMessage({
-            'id': msg['id'],
-            'bot_id': botId,
-            'role': 'user',
-            'type': msg['type'],
-            'content': text,
-            'file_path': msg['file_path'],
-            'mood': null,
-            'timestamp': now,
-          }).timeout(const Duration(seconds: 12));
+          for (final userMessage in userMessages) {
+            await DBManager().insertMessage({
+              'id': userMessage['id'],
+              'bot_id': botId,
+              'role': 'user',
+              'type': userMessage['type'],
+              'content': userMessage['content'],
+              'file_path': userMessage['file_path'],
+              'mood': null,
+              'timestamp': userMessage['timestamp'],
+            }).timeout(const Duration(seconds: 12));
+          }
         } catch (e) {
           debugPrint('[send] persist user message failed: $e');
         }
@@ -620,11 +624,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
-      // 分段逐句展示会取消打字机计时器；开启流式时必须由流式/打字机独占。
+      // Persisted replies may be split for future history, but foreground streaming
+      // owns a single live bubble. Rendering segments here used to duplicate the
+      // same answer when the database sync saw persisted segment rows.
       final segmentedReply = !streamEnabled &&
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
+      var streamRaw = '';
+      var streamVisibleLength = 0;
       var receivedStreamDelta = false;
       if (streamEnabled && localModelId.isEmpty && mounted) {
         streamingMessage = <String, dynamic>{
@@ -678,7 +686,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             onDelta: streamEnabled && localModelId.isEmpty
                 ? (delta) {
                     receivedStreamDelta = true;
-                    pendingDisplay += delta;
+                    streamRaw += delta;
+                    final visibleLength = _visibleStreamLength(streamRaw);
+                    if (visibleLength > streamVisibleLength) {
+                      pendingDisplay += streamRaw.substring(
+                        streamVisibleLength,
+                        visibleLength,
+                      );
+                      streamVisibleLength = visibleLength;
+                    }
                   }
                 : null,
           )
@@ -806,34 +822,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         // 直接定格为完整回复——避免“整段文字先消失、再逐句重放”的观感，从而保证
         // 开启分段后流水输出依旧正常生效。分段的落库与句间节奏仍在分支内处理。
         if (streamingMessage != null) {
-          if (segmentedReply) {
-            // 分段开启：先移除流式占位气泡，首句立即出现，之后每句随机延迟
-            // 0.5–1s（配合全局随机延迟叠加）逐条上屏，并逐句落库。
-            _streamDisplayTimer?.cancel();
-            _streamDisplayTimer = null;
-            final segments = _splitReplySegments(content);
-            final baseTimestamp = aiMsg['timestamp'] as int;
-            // AIManager already persisted all segments before this UI-only animation.
-            if (!mounted) return;
-            setState(() => _msgs.remove(streamingMessage));
-            for (var index = 0; index < segments.length; index++) {
-              if (index > 0) await _applyRandomReplyDelay(db);
-              if (!mounted) return;
-              final segMsg = Map<String, dynamic>.from(aiMsg)
-                ..['id'] = index == 0
-                    ? aiMsg['id'].toString()
-                    : '${aiMsg['id']}_segment_$index'
-                ..['content'] = segments[index]
-                ..['timestamp'] = baseTimestamp + index;
-              setState(() => _msgs.add(segMsg));
-              _scrollDown();
-            }
-          } else if (needsTypewriter) {
-            // 模拟打字机正在逐字上屏（provider 整段返回、未触发真实 SSE）。
-            // 这里不动气泡，由打字机定时器播完后再统一定格 id / 时间戳 / 完整内容。
+          // The foreground already owns one live bubble. Its persistence may be
+          // segmented, but adding those rows here would replay the same reply.
+          if (needsTypewriter) {
+            // The timer normalizes this placeholder after the final character.
           } else {
-            // The bubble has already been updated from real SSE deltas. Keep its
-            // in-memory identity but normalize its final text and database ID.
             setState(() {
               streamingMessage!['id'] = aiMsg['id'];
               streamingMessage['content'] = content;
@@ -946,6 +939,69 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
+  int _visibleStreamLength(String text) {
+    var visible = text;
+    // Do not expose an unfinished bracketed protocol while SSE fragments arrive.
+    final openBracket = visible.lastIndexOf('[');
+    if (openBracket >= 0 && visible.indexOf(']', openBracket) < 0) {
+      visible = visible.substring(0, openBracket);
+    }
+    final lastLine = visible.lastIndexOf('\n');
+    final tailStart = lastLine < 0 ? 0 : lastLine + 1;
+    final tail = visible.substring(tailStart).trimLeft().toLowerCase();
+    if (tail.startsWith('心情:') ||
+        tail.startsWith('心情：') ||
+        tail.startsWith('记忆:') ||
+        tail.startsWith('记忆：') ||
+        tail.startsWith('mood:') ||
+        tail.startsWith('memory:')) {
+      return tailStart;
+    }
+    return visible.length;
+  }
+
+  List<Map<String, dynamic>> _buildAttachmentMessages({
+    required String botId,
+    required int timestamp,
+    required String text,
+    required List<String> images,
+    required List<String> documents,
+  }) {
+    final attachments = <Map<String, String>>[
+      for (final path in images) {'type': 'image', 'path': path},
+      for (final path in documents) {'type': 'document', 'path': path},
+    ];
+    if (attachments.isEmpty) {
+      return [
+        {
+          'id': 'm_$timestamp',
+          'bot_id': botId,
+          'role': 'user',
+          'type': 'text',
+          'content': text,
+          'file_path': null,
+          'timestamp': timestamp,
+        }
+      ];
+    }
+    return [
+      for (var index = 0; index < attachments.length; index++)
+        {
+          'id': 'm_$timestamp' '_$index',
+          'bot_id': botId,
+          'role': 'user',
+          'type': attachments[index]['type'],
+          // Keep user text exactly once so history and model context do not repeat it.
+          'content': index == 0 ? text : '',
+          'file_path': attachments[index]['path'],
+          'document_name': attachments[index]['type'] == 'document'
+              ? attachments[index]['path']!.split(Platform.pathSeparator).last
+              : null,
+          'timestamp': timestamp + index,
+        }
+    ];
+  }
+
   Future<void> _transcribeRecordedAudio(
     Map<String, dynamic> message,
     String audioPath,
@@ -1042,10 +1098,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       final dir = await getApplicationDocumentsDirectory();
       final path =
-          '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
       await _rec.start(
         const RecordConfig(
-          encoder: AudioEncoder.aacLc,
+          encoder: AudioEncoder.wav,
           bitRate: 128000,
         ),
         path: path,
@@ -1070,6 +1126,47 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
         GlobalNotice.show('[X] 录音不可用：$e', color: const Color(0xFFE74C3C));
       }
+    }
+  }
+
+  Future<void> _sendPickedAudio(String path) async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty || _loading) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final message = <String, dynamic>{
+      'id': 'm_$now',
+      'bot_id': botId,
+      'role': 'user',
+      'type': 'audio',
+      'content': '',
+      'audio': path,
+      'file_path': path,
+      'mood': null,
+      'duration': 0,
+      'timestamp': now,
+    };
+    try {
+      await DBManager().insertMessage({
+        'id': message['id'],
+        'bot_id': botId,
+        'role': 'user',
+        'type': 'audio',
+        'content': '',
+        'file_path': path,
+        'mood': null,
+        'duration': 0,
+        'timestamp': now,
+      }).timeout(const Duration(seconds: 5));
+      if (mounted) {
+        setState(() => _msgs.add(message));
+        _scrollDown();
+      }
+      // Files chosen from the picker follow the same presentation path as
+      // recordings: the source audio is never rendered as a document bubble.
+      unawaited(_transcribeRecordedAudio(message, path));
+    } catch (e) {
+      debugPrint('[audio] persist selected file failed: $e');
+      if (mounted) GlobalNotice.show('发送音频失败', color: const Color(0xFFE74C3C));
     }
   }
 
@@ -1122,16 +1219,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         if (imageExtensions.contains(extension)) {
           stagedImages.add(path);
         } else if (audioExtensions.contains(extension)) {
-          final transcript = await AIManager().transcribeAudio(
-            botId: _bot['id']?.toString() ?? '',
-            audioPath: path,
-          );
-          await _send(
-            documents: [path],
-            mediaContext: transcript == null || transcript.isEmpty
-                ? '[已附加音频：${path.split(Platform.pathSeparator).last}。未配置可用的语音识别服务或转写失败，无法向文本模型提供语音内容。]'
-                : '[音频转写]\n$transcript',
-          );
+          await _sendPickedAudio(path);
         } else {
           stagedDocuments.add(path);
         }
@@ -1908,9 +1996,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final muted = isUser
         ? Colors.white.withValues(alpha: 0.78)
         : TideTheme.of(context).textWeak;
+    final knownDuration = duration.inMilliseconds > 0;
+    final width = MediaQuery.sizeOf(context).width.clamp(280.0, 520.0) - 146;
     return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+      constraints: BoxConstraints(minWidth: 190, maxWidth: width),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
       decoration: BoxDecoration(
         color: isUser
             ? TideTheme.of(context).primary
@@ -1920,19 +2011,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            onPressed: () => _toggleAudio(path),
-            icon: Icon(
-              active && _audioPlaying
-                  ? Icons.pause_circle_filled_rounded
-                  : Icons.play_circle_filled_rounded,
-              color: foreground,
-              size: 28,
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              tooltip: active && _audioPlaying ? '暂停语音' : '播放语音',
+              onPressed: () => _toggleAudio(path),
+              icon: Icon(
+                active && _audioPlaying
+                    ? Icons.pause_circle_filled_rounded
+                    : Icons.play_circle_filled_rounded,
+                color: foreground,
+                size: 30,
+              ),
             ),
           ),
-          SizedBox(
-            width: 150,
+          const SizedBox(width: 6),
+          Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1940,7 +2037,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   min: 0,
                   max: max,
                   value: value,
-                  onChanged: !active || duration.inMilliseconds <= 0
+                  onChanged: !active || !knownDuration
                       ? null
                       : (v) => _player.seek(Duration(milliseconds: v.round())),
                   activeColor: foreground,
@@ -1954,7 +2051,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             color: muted,
                             fontSize: 11,
                             fontFamily: 'TideFont')),
-                    Text(_formatAudioTime(duration),
+                    Text(knownDuration ? _formatAudioTime(duration) : '语音',
                         style: TextStyle(
                             color: muted,
                             fontSize: 11,

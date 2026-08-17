@@ -1784,24 +1784,47 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       'models': 'Qwen2.5-7B-Instruct'
     },
   ];
+  final _sttPresets = [
+    {
+      'name': 'SiliconFlow STT',
+      'url': 'https://api.siliconflow.cn/v1',
+      'models': 'FunAudioLLM/SenseVoiceSmall',
+      'protocol': 'openai'
+    },
+    {
+      'name': 'MiMo ASR',
+      'url': 'https://api.xiaomimimo.com/v1',
+      'models': 'mimo-v2.5-asr',
+      'protocol': 'mimo'
+    },
+    {
+      'name': 'MiniMax ASR',
+      'url': 'https://api.minimax.chat/v1',
+      'models': 'speech-01',
+      'protocol': 'unsupported'
+    },
+  ];
   final _ttsPresets = [
     {
       'name': 'SiliconFlow TTS',
       'url': 'https://api.siliconflow.cn/v1',
       'models': 'FunAudioLLM/CosyVoice2-0.5B',
-      'voice': 'default'
+      'voice': 'default',
+      'protocol': 'openai'
     },
     {
-      'name': 'Mimo TTS',
+      'name': 'MiMo TTS',
       'url': 'https://api.xiaomimimo.com/v1',
-      'models': 'mimo-v2-tts',
-      'voice': 'default'
+      'models': 'mimo-v2.5-tts',
+      'voice': 'default',
+      'protocol': 'mimo'
     },
     {
       'name': 'MiniMax TTS',
-      'url': 'https://api.minimax.chat/v1',
-      'models': 'speech-01',
-      'voice': 'default'
+      'url': 'https://api.minimax.chat',
+      'models': 'speech-02-turbo',
+      'voice': 'male-qn-qingse',
+      'protocol': 'minimax'
     },
   ];
   @override
@@ -1936,6 +1959,32 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                             fontWeight: FontWeight.w600,
                             fontFamily: 'TideFont')),
                     const SizedBox(height: 12),
+                    Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _sttPresets
+                            .map((p) => BouncyTap(
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  _showSttDialog(
+                                      p['name']!, p['url']!, '', p['models']!,
+                                      protocol: p['protocol']!);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(16),
+                                        color: TideTheme.of(context)
+                                            .surfaceVariant),
+                                    child: Text(p['name']!,
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: TideTheme.of(context)
+                                                .textStrong,
+                                            fontFamily: 'TideFont')))))
+                            .toList()),
+                    const SizedBox(height: 12),
                     BouncyTap(
                         onTap: () {
                           Navigator.pop(context);
@@ -1969,7 +2018,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                                 onTap: () {
                                   Navigator.pop(context);
                                   _showTtsDialog(p['name']!, p['url']!, '',
-                                      p['models']!, p['voice']!);
+                                      p['models']!, p['voice']!,
+                                      protocol: p['protocol']!);
                                 },
                                 child: Container(
                                     padding: const EdgeInsets.symmetric(
@@ -2074,7 +2124,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 ])));
   }
 
-  void _showSttDialog(String name, String url, String key, String model) {
+  void _showSttDialog(String name, String url, String key, String model,
+      {String protocol = 'openai'}) {
     final nCtrl = TextEditingController(text: name);
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
@@ -2122,6 +2173,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       'url': uCtrl.text.trim(),
                       'key': kCtrl.text.trim(),
                       'model': mCtrl.text.trim(),
+                      'protocol': protocol,
                       'id': 'stt_${DateTime.now().microsecondsSinceEpoch}',
                     }));
                 Navigator.pop(ctx);
@@ -2135,7 +2187,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   void _showTtsDialog(
-      String name, String url, String key, String models, String voice) {
+      String name, String url, String key, String models, String voice,
+      {String protocol = 'openai'}) {
     final nCtrl = TextEditingController(text: name);
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
@@ -2190,6 +2243,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'key': kCtrl.text.trim(),
                           'model': model,
                           'voice': vCtrl.text.trim(),
+                          'protocol': protocol,
                           'id': 'tts_${DateTime.now().microsecondsSinceEpoch}',
                         };
                         _ttsProviders.add(p);

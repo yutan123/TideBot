@@ -4,7 +4,11 @@ import 'dart:io';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'app_log_service.dart';
+
 class LocalLlama {
+  static const int contextSize = 768;
+  static const int maxOutputTokens = 128;
   static final LocalLlama instance = LocalLlama._();
   LocalLlama._();
 
@@ -34,15 +38,21 @@ class LocalLlama {
     final controller = LlamaController();
     LlamaController? loaded;
     try {
+      AppLogService.instance.add(
+        'LOCAL_LLAMA',
+        '加载模型：${file.path.split(Platform.pathSeparator).last}，'
+            'size=${(size / 1024 / 1024).toStringAsFixed(1)}MB，context=$contextSize',
+      );
       await controller.loadModel(
         modelPath: path,
-        threads: 2,
-        contextSize: 1024,
+        threads: 1,
+        contextSize: contextSize,
         gpuLayers: 0,
       );
       if (!await controller.isModelLoaded()) {
         throw StateError('GGUF 模型加载回执异常');
       }
+      AppLogService.instance.add('LOCAL_LLAMA', '模型加载完成，开始准备推理');
       loaded = controller;
     } catch (e) {
       await controller.dispose();
@@ -105,15 +115,21 @@ class LocalLlama {
     _queue = _queue.catchError((_) {}).then((_) async {
       try {
         final controller = await _ensureLoaded(path);
+        final safeMessages = _fitMessages(messages);
+        AppLogService.instance.add(
+            'LOCAL_LLAMA',
+            '开始推理：${File(path).path.split(Platform.pathSeparator).last}，'
+                'context=$contextSize，messages=${safeMessages.length}，'
+                'chars=${safeMessages.fold<int>(0, (sum, item) => sum + item['content'].toString().length)}');
         final output = StringBuffer();
         await for (final token in controller.generateChat(
-          messages: messages
+          messages: safeMessages
               .map((message) => ChatMessage(
                     role: message['role'].toString(),
                     content: message['content'].toString(),
                   ))
               .toList(),
-          maxTokens: 512,
+          maxTokens: maxOutputTokens,
           temperature: 0.7,
           topP: 0.9,
           topK: 40,
@@ -141,6 +157,25 @@ class LocalLlama {
       }
     });
     return result.future;
+  }
+
+  List<Map<String, dynamic>> _fitMessages(List<Map<String, dynamic>> messages) {
+    // Keep generation headroom inside the native context. Character budgeting is
+    // intentionally conservative for mixed Chinese/English prompts.
+    const maxInputChars = 1500;
+    final fitted = <Map<String, dynamic>>[];
+    var remaining = maxInputChars;
+    for (final message in messages.reversed) {
+      final content = message['content']?.toString().trim() ?? '';
+      if (content.isEmpty || remaining <= 0) continue;
+      final clipped = content.length <= remaining
+          ? content
+          : content.substring(content.length - remaining);
+      fitted.add(
+          {'role': message['role']?.toString() ?? 'user', 'content': clipped});
+      remaining -= clipped.length;
+    }
+    return fitted.reversed.toList();
   }
 
   Future<String> pathFor(String id) async {
@@ -184,10 +219,13 @@ class LocalLlama {
     await _validateGgufMagic(file);
     final controller = LlamaController();
     try {
+      // Native validation only proves the GGUF can be opened. Keep runtime
+      // settings identical so a successfully verified file is not later loaded
+      // with a larger, unsafe context during chat.
       await controller.loadModel(
         modelPath: path,
         threads: 1,
-        contextSize: 512,
+        contextSize: contextSize,
         gpuLayers: 0,
       );
       if (!await controller.isModelLoaded()) {
