@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'app_log_service.dart';
 import 'db.dart';
@@ -116,6 +117,30 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     final selected = await _chooseWhitelist(feature, defaultWhitelist);
     if (selected == null || selected.isEmpty) return;
     await capability.setWhitelist(feature, selected);
+    if (feature == DeviceCapabilityService.contextFeature) {
+      if (selected.contains('location')) await Permission.location.request();
+      if (selected.contains('app_usage')) {
+        await capability.openUsageAccessSettings();
+      }
+      if (selected.contains('notifications')) {
+        await capability.openNotificationListenerSettings();
+      }
+      if ((selected.contains('screen_text') ||
+              selected.contains('foreground_app')) &&
+          !await capability.accessibilityEnabled()) {
+        await capability.openAccessibilitySettings();
+      }
+    }
+    if (feature == DeviceCapabilityService.proactiveFeature &&
+        (selected.contains('app_opened') ||
+            selected.contains('screen_event')) &&
+        !await capability.accessibilityEnabled()) {
+      await capability.openAccessibilitySettings();
+    }
+    if (feature == DeviceCapabilityService.proactiveFeature &&
+        selected.contains('new_notification')) {
+      await capability.openNotificationListenerSettings();
+    }
     if (feature == DeviceCapabilityService.controlFeature &&
         !await capability.accessibilityEnabled()) {
       if (!mounted) return;
@@ -151,17 +176,31 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     final labels = feature == DeviceCapabilityService.contextFeature
         ? const {
             'battery': '电量',
+            'location': '位置（用于当地天气等按需信息）',
+            'notifications': '最近通知内容',
             'foreground_app': '当前前台应用',
+            'app_usage': '应用使用时长',
             'screen_text': '当前屏幕文字（无障碍）',
           }
         : feature == DeviceCapabilityService.proactiveFeature
-            ? const {'app_opened': '打开 TideBot'}
+            ? const {
+                'app_opened': '打开或切换应用',
+                'new_notification': '收到新通知',
+                'screen_event': '屏幕操作事件',
+              }
             : const {
                 'back': '返回',
                 'home': '回到桌面',
                 'recents': '打开最近任务',
+                'notifications': '展开通知栏',
                 'click': '按坐标点击',
+                'click_selector': '按文字、描述或资源 ID 点击',
                 'input': '向当前输入框填入文字',
+                'scroll_up': '向上滚动',
+                'scroll_down': '向下滚动',
+                'open_app': '打开应用',
+                'close_app': '关闭应用后台进程',
+                'jump_tidebot': '跳转 TideBot',
               };
     values.removeWhere((value) => !labels.containsKey(value));
     values.addAll(defaults);
@@ -319,7 +358,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     value: value,
                     title: '授权额外信息感知',
                     description: '启用后仍需逐项选择允许的信息；信息只在与当前问题有关时注入上下文。',
-                    defaultWhitelist: const {'battery'},
+                    defaultWhitelist: const {'battery', 'foreground_app'},
                     update: (v) => _extraContext = v),
               ),
               SwitchListTile.adaptive(
@@ -351,7 +390,12 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     value: value,
                     title: '授权机器人操控手机',
                     description: '启用不会自动授予控制。功能须绑定机器人、限制动作白名单，并对每次实际操作要求明确确认。',
-                    defaultWhitelist: const {'back', 'home'},
+                    defaultWhitelist: const {
+                      'back',
+                      'home',
+                      'open_app',
+                      'click_selector'
+                    },
                     update: (v) => _deviceControl = v),
               ),
             ]),

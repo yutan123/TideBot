@@ -82,6 +82,14 @@ class DeviceCapabilityService {
     return result == true;
   }
 
+  Future<Map<String, dynamic>> capabilityState() async =>
+      await _channel.invokeMapMethod<String, dynamic>('capabilityState') ??
+      const {};
+
+  Future<Map<String, dynamic>> latestDeviceEvent() async =>
+      await _channel.invokeMapMethod<String, dynamic>('latestDeviceEvent') ??
+      const {};
+
   Future<List<Map<String, dynamic>>> installedApps() async {
     final raw =
         await _channel.invokeListMethod<dynamic>('installedApps') ?? const [];

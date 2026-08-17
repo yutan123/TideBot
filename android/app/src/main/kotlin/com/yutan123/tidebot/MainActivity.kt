@@ -16,6 +16,12 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.app.AppOpsManager
+import android.app.usage.UsageStatsManager
+import android.location.LocationManager
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
 
 import android.graphics.pdf.PdfRenderer
 import android.provider.AlarmClock
@@ -115,11 +121,68 @@ class MainActivity: FlutterActivity() {
                     if (allowed.contains("screen_text")) {
                         context["screen_text"] = TideAccessibilityService.visibleText()
                     }
+                    if (allowed.contains("notifications") && TideNotificationListenerService.connected) {
+                        context["notifications"] = TideNotificationListenerService.snapshot()
+                    }
+                    if (allowed.contains("app_usage") && hasUsageAccess()) {
+                        val usage = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                        val end = System.currentTimeMillis()
+                        context["app_usage"] = usage.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, end - 86400000L, end)
+                            .filter { it.totalTimeInForeground > 0 }
+                            .sortedByDescending { it.totalTimeInForeground }
+                            .take(15)
+                            .map { mapOf("packageName" to it.packageName, "foregroundMs" to it.totalTimeInForeground) }
+                    }
+                    if (allowed.contains("location") && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                        val location = lm.getProviders(true).mapNotNull { provider -> runCatching { lm.getLastKnownLocation(provider) }.getOrNull() }
+                            .maxByOrNull { it.time }
+                        if (location != null) context["location"] = mapOf("latitude" to location.latitude, "longitude" to location.longitude, "accuracy" to location.accuracy)
+                    }
                     result.success(context)
+                }
+                "installedApps" -> {
+                    val apps = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        packageManager.getInstalledApplications(0)
+                    }).filter { packageManager.getLaunchIntentForPackage(it.packageName) != null }
+                        .map { mapOf("packageName" to it.packageName, "label" to packageManager.getApplicationLabel(it).toString(), "isTideBot" to (it.packageName == packageName)) }
+                        .sortedBy { it["label"].toString() }
+                    result.success(apps)
+                }
+                "capabilityState" -> result.success(mapOf(
+                    "accessibility" to (TideAccessibilityService.instance != null),
+                    "usageAccess" to hasUsageAccess(),
+                    "notificationAccess" to TideNotificationListenerService.connected,
+                    "locationPermission" to (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+                ))
+                "latestDeviceEvent" -> {
+                    val notification = TideNotificationListenerService.lastEvent?.toMutableMap()?.apply {
+                        this["type"] = "new_notification"
+                        this["time"] = (this["postedAt"] as? Number)?.toLong() ?: 0L
+                    }
+                    val accessibility = TideAccessibilityService.lastEvent
+                    val selected = listOfNotNull(notification, accessibility)
+                        .maxByOrNull { (it["time"] as? Number)?.toLong() ?: 0L }
+                    result.success(selected)
                 }
                 "accessibilityState" -> result.success(TideAccessibilityService.state())
                 "openAccessibilitySettings" -> {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    result.success(null)
+                }
+                "openUsageAccessSettings" -> {
+                    startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    result.success(null)
+                }
+                "openNotificationListenerSettings" -> {
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    result.success(null)
+                }
+                "openLocationSettings" -> {
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                     result.success(null)
                 }
                 "executeAccessibilityAction" -> {
@@ -127,7 +190,20 @@ class MainActivity: FlutterActivity() {
                     val x = call.argument<Int>("x")
                     val y = call.argument<Int>("y")
                     val text = call.argument<String>("text")
-                    result.success(TideAccessibilityService.instance?.performAction(action, x, y, text) == true)
+                    val selector = call.argument<String>("selector")
+                    val targetPackage = call.argument<String>("packageName")
+                    val ok = when (action) {
+                        "open_app", "jump_tidebot" -> {
+                            val pkg = if (action == "jump_tidebot") packageName else targetPackage.orEmpty()
+                            packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true } ?: false
+                        }
+                        "close_app" -> {
+                            if (targetPackage.isNullOrBlank() || targetPackage == packageName) false
+                            else { (getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).killBackgroundProcesses(targetPackage); true }
+                        }
+                        else -> TideAccessibilityService.instance?.performAction(action, x, y, text, selector) == true
+                    }
+                    result.success(ok)
                 }
                 "installApk" -> {
                     val path = call.argument<String>("path")
@@ -189,6 +265,17 @@ class MainActivity: FlutterActivity() {
                 }
             }
         }
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, applicationInfo.uid, packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, applicationInfo.uid, packageName)
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     private fun recognizeText(path: String, result: MethodChannel.Result) {

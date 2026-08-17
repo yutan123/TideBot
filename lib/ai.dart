@@ -2128,12 +2128,17 @@ $transcript''';
       final allowed = await DeviceCapabilityService.instance
           .whitelist(DeviceCapabilityService.controlFeature);
       if (allowed.isNotEmpty) {
+        final apps = await DeviceCapabilityService.instance.installedApps();
+        final appSummary = apps
+            .take(120)
+            .map((app) => '${app['label']}(${app['packageName']})')
+            .join('、');
         tools.add({
           'type': 'function',
           'function': {
             'name': 'request_device_action',
             'description':
-                '请求执行已授权的手机操作。不会立即执行，TideBot 会向用户显示具体操作并等待一次明确确认。只能用于用户当前明确要求的操作。',
+                '请求执行已授权的手机操作。不会立即执行，TideBot 会向用户显示具体操作并等待一次明确确认。可按坐标或文字/资源ID操作、打开关闭应用及跳转。当前应用是 TideBot（com.yutan123.tidebot），需要用户及时查看消息可使用 jump_tidebot。已安装可启动应用：$appSummary',
             'parameters': {
               'type': 'object',
               'properties': {

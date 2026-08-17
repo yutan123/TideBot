@@ -514,6 +514,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         x: request['x'] as int?,
         y: request['y'] as int?,
         text: request['text']?.toString(),
+        packageName: request['packageName']?.toString(),
+        selector: request['selector']?.toString(),
       );
     }
     await DBManager().setKV(
