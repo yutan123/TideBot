@@ -19,7 +19,8 @@ class AdvancedSettingsPage extends StatefulWidget {
   State<AdvancedSettingsPage> createState() => _AdvancedSettingsPageState();
 }
 
-class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
+class _AdvancedSettingsPageState extends State<AdvancedSettingsPage>
+    with WidgetsBindingObserver {
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
   bool _extraContext = false;
@@ -27,6 +28,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _deviceControl = false;
   String _actionPolicy = DeviceCapabilityService.actionPolicyAsk;
   bool _overlayEnabled = false;
+  bool _overlayPermissionPending = false;
   final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
   final _scroll = ScrollController();
@@ -34,6 +36,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted && _logging) {
@@ -69,7 +72,15 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       }
     }
     final policy = await capability.actionPolicy();
-    final overlay = await capability.overlayEnabled();
+    final overlayIntent = prefs.getBool('assistant_overlay_enabled') ?? false;
+    final hasOverlayPermission = await capability.overlayEnabled();
+    final overlayRunning = await capability.overlayRunning();
+    final overlay = overlayIntent && hasOverlayPermission && overlayRunning;
+    if (overlayIntent && !hasOverlayPermission) {
+      await prefs.setBool('assistant_overlay_enabled', false);
+    }
+    final pending =
+        prefs.getBool('assistant_overlay_permission_pending') ?? false;
     if (mounted) {
       setState(() {
         _logging = enabled;
@@ -80,6 +91,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         _deviceControl = prefs.getBool('device_control_enabled') ?? false;
         _actionPolicy = policy;
         _overlayEnabled = overlay;
+        _overlayPermissionPending = pending;
         _boundBotNames
           ..clear()
           ..addAll(botNames);
@@ -370,25 +382,30 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         ],
       );
 
-  Future<void> _toggleOverlay(bool value) async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _overlayPermissionPending) {
+      unawaited(_resumeOverlayAfterPermission());
+    }
+  }
+
+  Future<void> _resumeOverlayAfterPermission() async {
     final capability = DeviceCapabilityService.instance;
-    if (!value) {
-      await capability.setAssistantOverlay(enabled: false);
-      if (mounted) setState(() => _overlayEnabled = false);
-      return;
-    }
-    if (!await capability.overlayEnabled()) {
-      if (mounted) {
-        GlobalNotice.show('请在系统页面允许 TideBot 显示在其他应用上层',
-            color: TideTheme.of(context).primary);
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 450));
-      await capability.openOverlaySettings();
-      return;
-    }
-    final botId =
+    if (!await capability.overlayEnabled()) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('assistant_overlay_permission_pending', false);
+    _overlayPermissionPending = false;
+    await _startOverlay();
+  }
+
+  Future<void> _startOverlay() async {
+    final capability = DeviceCapabilityService.instance;
+    var botId =
         await capability.boundBot(DeviceCapabilityService.controlFeature);
     final bots = await DBManager().getAllBots();
+    if ((botId == null || botId.isEmpty) && bots.isNotEmpty) {
+      botId = bots.first['id']?.toString();
+    }
     final bot = bots.cast<Map<String, dynamic>>().firstWhere(
           (item) => item['id']?.toString() == botId,
           orElse: () => const {},
@@ -399,7 +416,53 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       botName: bot['name']?.toString(),
       avatarPath: bot['avatar']?.toString(),
     );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('assistant_overlay_enabled', ok);
+    if (ok && botId != null && botId.isNotEmpty) {
+      await prefs.setString('assistant_overlay_bot_id', botId);
+    }
     if (mounted) setState(() => _overlayEnabled = ok);
+  }
+
+  Future<void> _toggleOverlay(bool value) async {
+    final capability = DeviceCapabilityService.instance;
+    final prefs = await SharedPreferences.getInstance();
+    if (!value) {
+      await prefs.setBool('assistant_overlay_enabled', false);
+      await prefs.setBool('assistant_overlay_permission_pending', false);
+      _overlayPermissionPending = false;
+      await capability.setAssistantOverlay(enabled: false);
+      if (mounted) setState(() => _overlayEnabled = false);
+      return;
+    }
+    if (!await capability.overlayEnabled()) {
+      if (!mounted) return;
+      final open = await TideDialogs.show<bool>(
+            context: context,
+            builder: (ctx) => TideDialogSurface(
+              title: const Text('允许机器人悬浮窗',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              content: const Text(
+                  '接下来会打开 Android 的“显示在其他应用上层”页面。请选择 TideBot 并开启允许；返回 TideBot 后，悬浮窗会自动启动，无需再次拨动开关。',
+                  style: TextStyle(fontFamily: 'TideFont')),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('取消')),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('前往授权')),
+              ],
+            ),
+          ) ??
+          false;
+      if (!open) return;
+      await prefs.setBool('assistant_overlay_permission_pending', true);
+      _overlayPermissionPending = true;
+      await capability.openOverlaySettings();
+      return;
+    }
+    await _startOverlay();
   }
 
   Future<void> _toggleLog(bool value) async {
@@ -451,6 +514,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     _scroll.dispose();
     super.dispose();
@@ -568,28 +632,63 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
               _featureFooter(DeviceCapabilityService.controlFeature,
                   const {'back', 'home', 'open_app', 'click_selector'}),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _actionPolicy,
-                decoration: const InputDecoration(
-                  labelText: '机器人执行操作',
-                  helperText: '关闭：拒绝执行；每次询问：逐步确认；允许：白名单内直接执行。',
-                ),
-                items: const [
-                  DropdownMenuItem(
-                      value: DeviceCapabilityService.actionPolicyOff,
-                      child: Text('关闭')),
-                  DropdownMenuItem(
-                      value: DeviceCapabilityService.actionPolicyAsk,
-                      child: Text('每次询问')),
-                  DropdownMenuItem(
-                      value: DeviceCapabilityService.actionPolicyAllow,
-                      child: Text('允许')),
-                ],
-                onChanged: (value) async {
+              InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () async {
+                  const options = {
+                    DeviceCapabilityService.actionPolicyOff: '关闭',
+                    DeviceCapabilityService.actionPolicyAsk: '每次询问',
+                    DeviceCapabilityService.actionPolicyAllow: '允许',
+                  };
+                  final value = await showTideSheet<String>(
+                    context: context,
+                    height: 300,
+                    child: SafeArea(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+                        children: [
+                          const ListTile(
+                            title: Text('机器人执行操作',
+                                style: TextStyle(
+                                    fontFamily: 'TideFont',
+                                    fontWeight: FontWeight.w700)),
+                            subtitle: Text('选择机器人对已授权白名单操作的执行策略。',
+                                style: TextStyle(fontFamily: 'TideFont')),
+                          ),
+                          for (final entry in options.entries)
+                            ListTile(
+                              leading: Icon(entry.key == _actionPolicy
+                                  ? Icons.radio_button_checked_rounded
+                                  : Icons.radio_button_off_rounded),
+                              title: Text(entry.value,
+                                  style:
+                                      const TextStyle(fontFamily: 'TideFont')),
+                              onTap: () => Navigator.pop(context, entry.key),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
                   if (value == null) return;
                   await DeviceCapabilityService.instance.setActionPolicy(value);
                   if (mounted) setState(() => _actionPolicy = value);
                 },
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: '机器人执行操作',
+                    helperText: '关闭：拒绝执行；每次询问：逐步确认；允许：白名单内直接执行。',
+                    suffixIcon: Icon(Icons.keyboard_arrow_down_rounded),
+                  ),
+                  child: Text(
+                    const {
+                          DeviceCapabilityService.actionPolicyOff: '关闭',
+                          DeviceCapabilityService.actionPolicyAsk: '每次询问',
+                          DeviceCapabilityService.actionPolicyAllow: '允许',
+                        }[_actionPolicy] ??
+                        '每次询问',
+                    style: const TextStyle(fontFamily: 'TideFont'),
+                  ),
+                ),
               ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,

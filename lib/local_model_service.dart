@@ -51,6 +51,38 @@ class LocalModelService {
   }
 
   /// 删除模型，同时取消正在进行的下载。
+  Future<void> deleteAllModels() async {
+    for (final id in _activeClients.keys.toList()) {
+      _cancelRequested[id] = true;
+      _activeClients.remove(id)?.close();
+      await OpsManager().cancelDownloadProgress(_notificationId(id));
+    }
+    final dir = await getApplicationDocumentsDirectory();
+    if (await dir.exists()) {
+      await for (final entity in dir.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final lower = entity.path.toLowerCase();
+        if (!lower.endsWith('.gguf') && !lower.endsWith('.gguf.part')) continue;
+        try {
+          await entity.delete();
+        } catch (_) {}
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys().where((key) =>
+        key.startsWith('local_chat_model_') ||
+        key.startsWith('local_backup_model_') ||
+        key.startsWith('local_model_received_') ||
+        key.startsWith('local_model_total_'))) {
+      await prefs.remove(key);
+    }
+    _completed.clear();
+    for (final notifier in _downloading.values) notifier.value = false;
+    for (final notifier in _progress.values) notifier.value = 0;
+    _receivedBytes.clear();
+    _totalBytes.clear();
+  }
+
   Future<void> deleteModel(String id) async {
     _cancelRequested[id] = true;
     _activeClients.remove(id)?.close();
@@ -69,7 +101,9 @@ class LocalModelService {
 
     final prefs = await SharedPreferences.getInstance();
     for (final key in prefs.getKeys().where(
-          (key) => key.startsWith('local_chat_model_'),
+          (key) =>
+              key.startsWith('local_chat_model_') ||
+              key.startsWith('local_backup_model_'),
         )) {
       if (prefs.getString(key) == id) {
         await prefs.remove(key);

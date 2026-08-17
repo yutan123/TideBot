@@ -2747,7 +2747,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             '测试通过${latency is num ? '，延迟 ${latency.toInt()}ms' : ''}',
             color: const Color(0xFF34C759));
       } else {
-        GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));
+        GlobalNotice.show('测试失败：${result['error'] ?? '聊天模型未返回有效正文'}',
+            color: const Color(0xFFE74C3C));
       }
     } catch (_) {
       GlobalNotice.show('测试失败', color: const Color(0xFFE74C3C));

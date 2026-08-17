@@ -457,26 +457,17 @@ class AIManager {
         if (historyMessages.isEmpty) {
           final keepChars =
               (historyBudget * 2.6).floor().clamp(200, content.length);
-          final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
-          final timeLabel = sentAt == null
-              ? ''
-              : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
           historyMessages.add({
             'role':
                 msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-            'content':
-                '$timeLabel${content.substring(content.length - keepChars)}',
+            'content': content.substring(content.length - keepChars),
           });
         }
         break;
       }
-      final sentAt = int.tryParse(msg['timestamp']?.toString() ?? '');
-      final timeLabel = sentAt == null
-          ? ''
-          : '[发送于 ${DateTime.fromMillisecondsSinceEpoch(sentAt).toIso8601String()}；仅用于理解时间流逝，禁止复述或模仿此标记]\n';
       historyMessages.add({
         'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-        'content': '$timeLabel$content',
+        'content': content,
       });
       usedTokens += tokens;
     }
@@ -546,10 +537,21 @@ class AIManager {
     }
     if (timeAware) {
       final now = DateTime.now();
+      DateTime? firstAt;
+      DateTime? lastAt;
+      for (final item in history) {
+        final stamp = int.tryParse(item['timestamp']?.toString() ?? '');
+        if (stamp == null) continue;
+        firstAt ??= DateTime.fromMillisecondsSinceEpoch(stamp);
+        lastAt = DateTime.fromMillisecondsSinceEpoch(stamp);
+      }
+      final span = firstAt == null || lastAt == null
+          ? ''
+          : '当前所附历史覆盖约 ${lastAt.difference(firstAt).inMinutes.abs()} 分钟；最后一条历史距现在约 ${now.difference(lastAt).inMinutes.abs()} 分钟。';
       messages.add({
         'role': 'system',
         'content':
-            '现实时间附注：${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。仅在用户问题与时间有关时使用。',
+            '时间上下文（内部元数据，不得引用、复述或模仿其格式）：当前本地时间 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。$span仅在确有时间相关性时据此理解时间流逝。',
       });
     }
     try {
@@ -921,6 +923,7 @@ class AIManager {
             '')
         .replaceAll(RegExp(r'\[心情\s*[:：]\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
+        .replaceAll(RegExp(r'\[发送于\s+[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
         .replaceAll(
             RegExp(
@@ -1138,9 +1141,9 @@ $transcript''';
 
   /// Transcribe with the STT provider selected for this bot.
   ///
-  /// MiMo audio models use the OpenAI-compatible chat-completions endpoint,
-  /// rather than /audio/transcriptions.  Audio is therefore sent as a data URL
-  /// in a user content part and the returned assistant text is the transcript.
+  /// MiMo audio models use the OpenAI-compatible chat-completions endpoint.
+  /// The API requires exactly one `input_audio` content part; `audio_url` is an
+  /// image-style field and is rejected by MiMo ASR.
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
@@ -1279,9 +1282,10 @@ $transcript''';
           'content': [
             {'type': 'text', 'text': '请将这段音频准确转写为文字。'},
             {
-              'type': 'audio_url',
-              'audio_url': {
-                'url': 'data:audio/$extension;base64,${base64Encode(bytes)}',
+              'type': 'input_audio',
+              'input_audio': {
+                'data': base64Encode(bytes),
+                'format': extension == 'wave' ? 'wav' : extension,
               }
             },
           ]
@@ -1352,9 +1356,10 @@ $transcript''';
         (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
     final protocol =
         (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
-    final voice = (provider['voice']?.toString() ?? '').trim().isEmpty
+    final configuredVoice = (provider['voice']?.toString() ?? '').trim();
+    final voice = configuredVoice.isEmpty || configuredVoice == 'default'
         ? (protocol == 'mimo' ? 'mimo_default' : 'alloy')
-        : provider['voice'].toString().trim();
+        : configuredVoice;
     final modelName = (provider['model']?.toString() ?? '').trim();
     final model = modelName.isEmpty
         ? (provider['name']?.toString() ?? 'tts-1')
@@ -1400,7 +1405,7 @@ $transcript''';
             ],
             'modalities': ['text', 'audio'],
             'audio': {
-              'voice': voice == 'default' ? 'mimo_default' : voice,
+              'voice': voice,
               'format': 'wav',
             },
           },
@@ -2517,34 +2522,46 @@ $transcript''';
       return {'name': name, 'ok': ok, 'latency': latency};
     }
 
+    String lastError = '';
     Future<bool> postJson(String path, Map<String, dynamic> body) async {
       try {
         final response = await http
             .post(Uri.parse('$root$path'),
                 headers: headers, body: jsonEncode(body))
-            .timeout(const Duration(seconds: 20));
-        if (!success(response) || response.bodyBytes.isEmpty) return false;
-        try {
-          final body = jsonDecode(utf8.decode(response.bodyBytes));
-          if (body is! Map || body['error'] != null) return false;
-          if (path == '/chat/completions') {
-            final content =
-                body['choices'] is List && (body['choices'] as List).isNotEmpty
-                    ? ((body['choices'] as List).first as Map?)?['message']
-                            ?['content']
-                        ?.toString()
-                        .trim()
-                    : null;
-            return content != null && content.isNotEmpty;
-          }
-          if (path == '/images/generations') {
-            return body['data'] is List && (body['data'] as List).isNotEmpty;
-          }
-          return true;
-        } catch (_) {
+            .timeout(const Duration(seconds: 30));
+        final responseText =
+            utf8.decode(response.bodyBytes, allowMalformed: true);
+        if (!success(response) || response.bodyBytes.isEmpty) {
+          final compact = responseText.replaceAll(RegExp(r'\s+'), ' ').trim();
+          final summary =
+              compact.length <= 240 ? compact : compact.substring(0, 240);
+          lastError = 'HTTP ${response.statusCode}: $summary';
           return false;
         }
-      } catch (_) {
+        try {
+          final decoded = jsonDecode(responseText);
+          if (decoded is! Map || decoded['error'] != null) {
+            lastError = decoded is Map
+                ? (decoded['error']?.toString() ?? '响应格式异常')
+                : '响应格式异常';
+            return false;
+          }
+          if (path == '/chat/completions') {
+            final content = _extractChatContent(decoded);
+            if (content.isEmpty) lastError = 'HTTP 200，但未解析到聊天正文';
+            return content.isNotEmpty;
+          }
+          if (path == '/images/generations') {
+            return decoded['data'] is List &&
+                (decoded['data'] as List).isNotEmpty;
+          }
+          return true;
+        } catch (error) {
+          lastError = '响应解析失败：$error';
+          return false;
+        }
+      } catch (error) {
+        lastError = '请求异常：$error';
         return false;
       }
     }
@@ -2629,7 +2646,7 @@ $transcript''';
                 'messages': [
                   {'role': 'user', 'content': 'ping'}
                 ],
-                'max_tokens': 1,
+                'max_tokens': 32,
               })),
       probe('STT', stt),
       probe(
@@ -2681,15 +2698,15 @@ $transcript''';
       }
     }
 
-    final passed = capabilities.isNotEmpty;
+    final passed = capabilities.contains('文本');
     return {
       'capabilities': capabilities,
       'passed': passed,
       'latencies': latencies,
       'fastest_latency': fastest,
       'fastest_name': fastestName,
-      // 任意成功即通过；全部失败才返回错误。
-      if (!passed) 'error': '接口拒绝了所有测试请求',
+      // 基础聊天请求成功才算配置可用；其他能力是附加探测。
+      if (!passed) 'error': lastError.isEmpty ? '聊天模型基础请求失败' : lastError,
     };
   }
 

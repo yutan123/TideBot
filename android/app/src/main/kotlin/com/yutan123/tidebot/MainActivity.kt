@@ -1,6 +1,7 @@
 package com.yutan123.tidebot
 import android.content.Intent
 import android.content.Context
+import android.content.ComponentName
 import android.os.BatteryManager
 import android.provider.Settings
 import android.graphics.Bitmap
@@ -35,15 +36,64 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 
-
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "tidebot.native.channel"
+    private var nativeChannel: MethodChannel? = null
+    private var pendingOverlayMessage: Map<String, String>? = null
+
+    private fun overlayMessage(intent: Intent?): Map<String, String>? {
+        val prompt = intent?.getStringExtra("overlay_prompt")?.trim().orEmpty()
+        if (prompt.isEmpty()) return null
+        return mapOf(
+            "botId" to intent?.getStringExtra("botId").orEmpty(),
+            "prompt" to prompt
+        )
+    }
+
+    private fun dispatchOverlayMessage(message: Map<String, String>) {
+        pendingOverlayMessage = message
+        nativeChannel?.invokeMethod("overlayMessage", message, object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                if (pendingOverlayMessage == message) pendingOverlayMessage = null
+            }
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
+            override fun notImplemented() = Unit
+        })
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        overlayMessage(intent)?.let(::dispatchOverlayMessage)
+    }
+
+
+    private fun accessibilitySystemEnabled(): Boolean {
+        if (Settings.Secure.getInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) != 1) return false
+        val expected = ComponentName(this, TideAccessibilityService::class.java)
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ).orEmpty()
+        return enabled.split(':').any { value ->
+            ComponentName.unflattenFromString(value)?.let {
+                it.packageName == expected.packageName && it.className == expected.className
+            } == true
+        }
+    }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "takePendingOverlayMessage" -> {
+                    val message = pendingOverlayMessage ?: overlayMessage(intent)
+                    pendingOverlayMessage = null
+                    intent?.removeExtra("overlay_prompt")
+                    result.success(message)
+                }
                 "setAlarmManager" -> {
                     val hour = call.argument<Int>("hour") ?: 0
                     val minute = call.argument<Int>("minute") ?: 0
@@ -153,7 +203,8 @@ class MainActivity: FlutterActivity() {
                     result.success(apps)
                 }
                 "capabilityState" -> result.success(mapOf(
-                    "accessibility" to (TideAccessibilityService.instance != null),
+                    "accessibility" to accessibilitySystemEnabled(),
+                    "accessibilityConnected" to (TideAccessibilityService.instance != null),
                     "usageAccess" to hasUsageAccess(),
                     "notificationAccess" to TideNotificationListenerService.connected,
                     "locationPermission" to (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
@@ -168,7 +219,10 @@ class MainActivity: FlutterActivity() {
                         .maxByOrNull { (it["time"] as? Number)?.toLong() ?: 0L }
                     result.success(selected)
                 }
-                "accessibilityState" -> result.success(TideAccessibilityService.state())
+                "accessibilityState" -> result.success(TideAccessibilityService.state().toMutableMap().apply {
+                    this["enabled"] = accessibilitySystemEnabled()
+                    this["connected"] = TideAccessibilityService.instance != null
+                })
                 "openAccessibilitySettings" -> {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     result.success(null)
@@ -186,6 +240,7 @@ class MainActivity: FlutterActivity() {
                     result.success(null)
                 }
                 "overlayEnabled" -> result.success(Settings.canDrawOverlays(this))
+                "overlayRunning" -> result.success(TideOverlayService.running)
                 "openOverlaySettings" -> {
                     try {
                         startActivity(Intent(

@@ -69,10 +69,21 @@ class DeviceCapabilityService {
     );
   }
 
+  Future<Map<String, dynamic>> accessibilityState() async =>
+      await _channel.invokeMapMethod<String, dynamic>('accessibilityState') ??
+      const {};
+
+  /// Whether Android has enabled TideBot in Accessibility settings. The native
+  /// service may still be reconnecting, so this must not depend only on an
+  /// in-process service instance.
   Future<bool> accessibilityEnabled() async {
-    final state =
-        await _channel.invokeMapMethod<String, dynamic>('accessibilityState');
-    return state?['enabled'] == true;
+    final state = await accessibilityState();
+    return state['enabled'] == true;
+  }
+
+  Future<bool> accessibilityConnected() async {
+    final state = await accessibilityState();
+    return state['connected'] == true;
   }
 
   Future<bool> requestControl({
@@ -129,6 +140,9 @@ class DeviceCapabilityService {
 
   Future<bool> overlayEnabled() async =>
       await _channel.invokeMethod<bool>('overlayEnabled') == true;
+
+  Future<bool> overlayRunning() async =>
+      await _channel.invokeMethod<bool>('overlayRunning') == true;
 
   Future<void> openOverlaySettings() =>
       _channel.invokeMethod<void>('openOverlaySettings');
