@@ -582,22 +582,27 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
     final msg = userMessages.first;
     if (!noUserBubble) {
-      // 先更新界面，确保点击后立即看到气泡并清空输入框。
-      if (mounted) {
-        setState(() {
-          _loading = true;
-          _typing = true;
-          _msgsLoading = false;
-          _msgs.addAll(userMessages);
-          _msgC.clear();
-          _pendingImages.clear();
-          _pendingDocuments.clear();
-          _pendingMediaContext = null;
-          _hasText = false;
-        });
-        _scrollDown();
-      }
+      setState(() {
+        _loading = true;
+        _typing = true;
+        _msgsLoading = false;
+        _msgs.addAll(userMessages);
+        _msgC.clear();
+        _pendingImages.clear();
+        _pendingDocuments.clear();
+        _pendingMediaContext = null;
+        _hasText = false;
+      });
+    } else if (mounted) {
+      setState(() {
+        _loading = true;
+        _typing = true;
+        _msgsLoading = false;
+        _msgC.clear();
+        _hasText = false;
+      });
     }
+    _scrollDown();
 
     try {
       if (!noUserBubble) {

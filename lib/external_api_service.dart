@@ -187,6 +187,8 @@ class ExternalApiService {
             'timestamp': now,
           });
         }
+        AppLogService.instance.add('EXTERNAL_API',
+            '已桥接入站消息至 ${bot['name'] ?? botId}，同步记录=${sync ? '开启' : '关闭'}');
         final result = await AIManager().sendMessage(
           botId: botId,
           text: text,
@@ -198,6 +200,8 @@ class ExternalApiService {
               request, 502, result['error']?.toString() ?? 'TideBot 上游模型请求失败');
         }
         final reply = result['reply']?.toString() ?? '';
+        AppLogService.instance
+            .add('EXTERNAL_API', '桥接完成，已将 TideBot 回复返回调用方（${reply.length} 字）');
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         return _json(request, 200, {
           'id': 'chatcmpl-tidebot-$now',

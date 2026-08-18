@@ -12,6 +12,7 @@ import 'ui_components.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'global_notice.dart';
+import 'legal_pages.dart';
 import 'theme.dart';
 import 'data_dashboard.dart';
 import 'sticker_manager_page.dart';
@@ -379,43 +380,8 @@ class _ProfilePageState extends State<ProfilePage> {
         _showNotificationSettings();
         break;
       case 'about':
-        showTideSheet(
-            context: context,
-            height: 300,
-            child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('关于 TideBot',
-                          style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'TideFont')),
-                      const SizedBox(height: 12),
-                      Text('版本: 1.0.0',
-                          style: TextStyle(
-                              fontSize: 14,
-                              color: TideTheme.of(context).textWeak,
-                              fontFamily: 'TideFont')),
-                      Text('本地化沉浸式多模态 AI 伴侣',
-                          style: TextStyle(
-                              fontSize: 14,
-                              color: TideTheme.of(context).textWeak,
-                              fontFamily: 'TideFont')),
-                      const SizedBox(height: 8),
-                      Text('100% 本地运行，隐私无忧。',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: TideTheme.of(context).textWeak,
-                              fontFamily: 'TideFont')),
-                      const SizedBox(height: 16),
-                      Text('开发者: yutan123',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: TideTheme.of(context).textFaint,
-                              fontFamily: 'TideFont'))
-                    ])));
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const TideBotAboutPage()));
         break;
       case 'data':
         showTideSheet(

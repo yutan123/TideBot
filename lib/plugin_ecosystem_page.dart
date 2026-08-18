@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'db.dart';
 import 'global_notice.dart';
+import 'plugin_development_guide.dart';
 import 'plugin_detail_page.dart';
 import 'plugin_security.dart';
 import 'theme.dart';
@@ -41,11 +42,32 @@ class PluginRegistry {
     await installManifestBytes(bytes);
   }
 
+  static Map<String, dynamic> _normalizeManifest(
+      Map<String, dynamic> manifest) {
+    if (manifest['format'] != 'tidebot.plugin/v2') return manifest;
+    final capabilities = manifest['capabilities'];
+    if (capabilities is! Map) return manifest;
+    return <String, dynamic>{
+      ...manifest,
+      'format': 'tidebot.plugin/v1',
+      'skills': capabilities['assistant_rules'] ?? const [],
+      'mcp_servers': capabilities['tools'] ?? const [],
+      'ui': capabilities['views'] is List &&
+              (capabilities['views'] as List).isNotEmpty
+          ? (capabilities['views'] as List).first
+          : null,
+    }..remove('capabilities');
+  }
+
   static Future<void> installManifestBytes(Uint8List bytes) async {
-    final report = PluginSecurityScanner.scanBytes(bytes);
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map) throw const FormatException('插件清单必须是 JSON 对象');
+    final normalized = _normalizeManifest(Map<String, dynamic>.from(decoded));
+    final normalizedBytes =
+        Uint8List.fromList(utf8.encode(jsonEncode(normalized)));
+    final report = PluginSecurityScanner.scanBytes(normalizedBytes);
     if (!report.isSafe) throw FormatException(report.message);
-    final manifest =
-        Map<String, dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map);
+    final manifest = normalized;
     final id = manifest['id'].toString().trim();
     final plugins = await load();
     final index = plugins.indexWhere((plugin) => plugin['id'] == id);
@@ -107,11 +129,11 @@ class _PluginCenterPageState extends State<PluginCenterPage> {
   String _capabilitySummary(Map<String, dynamic> plugin) {
     final labels = <String>[];
     if (plugin['skills'] is List && (plugin['skills'] as List).isNotEmpty)
-      labels.add('Skill');
+      labels.add('助手规则');
     if (plugin['mcp_servers'] is List &&
-        (plugin['mcp_servers'] as List).isNotEmpty) labels.add('MCP');
-    if (plugin['ui'] is Map) labels.add('UI');
-    return labels.isEmpty ? '清单' : labels.join(' ');
+        (plugin['mcp_servers'] as List).isNotEmpty) labels.add('远程工具');
+    if (plugin['ui'] is Map) labels.add('插件页面');
+    return labels.isEmpty ? '基础插件' : labels.join(' · ');
   }
 
   @override
@@ -212,7 +234,7 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
                   {
                     'role': 'system',
                     'content':
-                        '你是 TideBot 插件开发助手。插件是受控的声明式运行时，不执行任意 Dart 或 JavaScript。只输出严格 JSON，不要 markdown。格式：{"format":"tidebot.plugin/v1","id":"lowercase-id","name":"名称","description":"说明","version":"0.1.0","permissions":["network"],"skills":[{"name":"技能名","instructions":"注入机器人系统提示的具体规则，可选 bot_ids"}],"mcp_servers":[{"name":"服务名","url":"https://example.com/mcp","headers":{}}],"ui":{"title":"页面标题","description":"说明","fields":[{"id":"query","label":"输入","multiline":false}],"actions":[{"label":"执行","mcp_server":0,"tool":"MCP tools/list 声明的工具名"}]},"readme":"开发说明"}。仅在需要联网 MCP 时声明 network；MCP 必须提供 HTTP JSON-RPC 的 tools/list 和 tools/call。'
+                        '你是 TideBot 插件开发助手。只输出一个严格 JSON 对象，不要 markdown。\\n$tideBotPluginGuide',
                   },
                   {'role': 'user', 'content': idea}
                 ]
@@ -256,8 +278,20 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
     final theme = TideTheme.of(context);
     return Scaffold(
         backgroundColor: theme.bgColor,
-        appBar:
-            AppBar(title: const Text('开发插件'), backgroundColor: theme.bgColor),
+        appBar: AppBar(
+          title: const Text('开发插件'),
+          backgroundColor: theme.bgColor,
+          actions: [
+            IconButton(
+              tooltip: '插件开发文档',
+              icon: const Icon(Icons.menu_book_rounded),
+              onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const PluginDevelopmentGuidePage())),
+            ),
+          ],
+        ),
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(children: [
@@ -285,9 +319,7 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
             Expanded(
                 child: SingleChildScrollView(
                     child: SelectableText(
-                        _output.isEmpty
-                            ? '插件开发规范：Skill 的 instructions 会随启用插件注入机器人提示；MCP 通过 HTTP JSON-RPC 的 tools/list 和 tools/call 注册给聊天模型；UI 由 fields 和 actions 渲染为实际页面。插件不会执行任意 Dart 或 JavaScript；网络 MCP 必须声明 network 权限，并由用户在插件详情中授权。'
-                            : _output,
+                        _output.isEmpty ? tideBotPluginGuide : _output,
                         style: const TextStyle(fontFamily: 'monospace')))),
             if (_output.isNotEmpty)
               IconButton(

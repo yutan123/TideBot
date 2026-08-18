@@ -146,10 +146,66 @@ class AIManager {
     };
   }
 
+  Map<String, dynamic> _decodeToolArguments(dynamic raw) {
+    final source = raw?.toString().trim() ?? '';
+    if (source.isEmpty) return <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(source);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+
+    // Some compatibility gateways concatenate an empty object with the actual
+    // arguments (for example "{}{\"prompt\":...}"). Keep the last non-empty
+    // JSON object instead of failing an otherwise valid tool invocation.
+    final objects = <Map<String, dynamic>>[];
+    var start = -1;
+    var depth = 0;
+    var quoted = false;
+    var escaped = false;
+    for (var i = 0; i < source.length; i++) {
+      final char = source[i];
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        } else if (char == r'\') {
+          escaped = true;
+        } else if (char == '"') {
+          quoted = false;
+        }
+        continue;
+      }
+      if (char == '"') {
+        quoted = true;
+      } else if (char == '{') {
+        if (depth++ == 0) start = i;
+      } else if (char == '}' && depth > 0 && --depth == 0 && start >= 0) {
+        try {
+          final decoded = jsonDecode(source.substring(start, i + 1));
+          if (decoded is Map) objects.add(Map<String, dynamic>.from(decoded));
+        } catch (_) {}
+        start = -1;
+      }
+    }
+    final usable = objects.lastWhere((item) => item.isNotEmpty,
+        orElse: () => <String, dynamic>{});
+    if (usable.isNotEmpty) {
+      AppLogService.instance.add('TOOLS', '已修复兼容接口返回的拼接工具参数');
+      return usable;
+    }
+    throw const FormatException('工具参数不是合法 JSON');
+  }
+
+  String _stripResponsePrefix(String value) => value
+      .replaceFirst(
+          RegExp(r'^\\s*(?:data\\s*:\\s*)?response\\s*[:：]\\s*',
+              caseSensitive: false),
+          '')
+      .trim();
+
   String _extractChatContent(dynamic payload) {
     if (payload is! Map) return '';
     String fromValue(dynamic value) {
-      if (value is String) return value.trim();
+      if (value is String) return _stripResponsePrefix(value);
       if (value is List) {
         return value
             .map((item) {
@@ -616,8 +672,11 @@ class AIManager {
         await _persistModelMemories(db, bot['name']?.toString() ?? 'TideBot',
             bot['id']?.toString() ?? botId, replyText);
         replyText = _cleanVisibleReply(replyText);
+        if (replyText.isEmpty && generatedImagePath != null) {
+          replyText = '图片已生成。';
+        }
         if (replyText.isEmpty) {
-          const detail = 'HTTP 200，但未解析到可见正文；请查看 RESPONSE_DEBUG 日志';
+          const detail = '工具已完成，但模型没有返回可显示的说明。请查看 RESPONSE_DEBUG 日志或重试。';
           AppLogService.instance.add('RESPONSE_DEBUG', detail);
           return {
             'error': detail,
@@ -1926,7 +1985,7 @@ $transcript''';
       final fu = decoded['usage'];
       if (fu is Map) usageCallback(fu);
       if (message is! Map) return;
-      final next = message['content']?.toString() ?? '';
+      final next = _extractChatContent(decoded);
       final nextCalls = message['tool_calls'] is List
           ? (message['tool_calls'] as List)
               .whereType<Map>()
@@ -2141,12 +2200,10 @@ $transcript''';
         'result': {'ok': false, 'error': '无效工具调用'}
       };
     final name = function['name']?.toString() ?? '';
-    Map<String, dynamic> args = {};
+    Map<String, dynamic> args;
     try {
-      final raw = function['arguments']?.toString() ?? '{}';
-      final parsed = jsonDecode(raw);
-      if (parsed is Map) args = Map<String, dynamic>.from(parsed);
-    } catch (_) {
+      args = _decodeToolArguments(function['arguments']);
+    } on FormatException {
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
       };

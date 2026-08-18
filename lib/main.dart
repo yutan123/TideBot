@@ -8,6 +8,7 @@ import 'app_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'legal_pages.dart';
 import 'theme.dart';
 import 'ui_chat_list.dart';
 // Chat room is opened through app navigation elsewhere.
@@ -41,7 +42,13 @@ void main() async {
   await TideHaptics.load();
   await AppLogService.instance.restoreForLaunch();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
-  runApp(TideBotApp(hasSeenOnboarding: hasSeenOnboarding));
+  final bool hasAcceptedLegal =
+      (prefs.getBool('legal_agreement_accepted') ?? false) &&
+          (prefs.getBool('legal_age_confirmed') ?? false);
+  runApp(TideBotApp(
+    hasSeenOnboarding: hasSeenOnboarding,
+    hasAcceptedLegal: hasAcceptedLegal,
+  ));
   if (await DBManager().getKV('external_api_enabled') == 'true') {
     unawaited(ExternalApiService.instance.start());
   }
@@ -433,7 +440,12 @@ class FlowGlassBg extends StatelessWidget {
 
 class TideBotApp extends StatefulWidget {
   final bool hasSeenOnboarding;
-  const TideBotApp({super.key, required this.hasSeenOnboarding});
+  final bool hasAcceptedLegal;
+  const TideBotApp({
+    super.key,
+    required this.hasSeenOnboarding,
+    required this.hasAcceptedLegal,
+  });
   @override
   State<TideBotApp> createState() => _TideBotAppState();
 }
@@ -541,9 +553,11 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
               ],
             ),
           ),
-          home: widget.hasSeenOnboarding
-              ? const DailyLaunchAnimation(child: TideMainScaffold())
-              : const OnboardingScreen(),
+          home: !widget.hasSeenOnboarding
+              ? const OnboardingScreen()
+              : !widget.hasAcceptedLegal
+                  ? const LegalAgreementPage(requiredAcceptance: true)
+                  : const DailyLaunchAnimation(child: TideMainScaffold()),
         ),
       ),
     );
@@ -594,7 +608,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     Navigator.pushReplacement(
         context,
         PageRouteBuilder(
-            pageBuilder: (c, a, s) => const TideMainScaffold(),
+            pageBuilder: (c, a, s) =>
+                const LegalAgreementPage(requiredAcceptance: true),
             transitionsBuilder: (c, a, s, child) =>
                 FadeTransition(opacity: a, child: child),
             transitionDuration: const Duration(milliseconds: 600)));
