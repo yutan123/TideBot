@@ -1,4 +1,4 @@
-package tidebot.com
+package com.yutan123.tidebot
 
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification

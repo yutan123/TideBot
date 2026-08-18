@@ -1,4 +1,4 @@
-package tidebot.com
+package com.yutan123.tidebot
 import android.content.Intent
 import android.content.Context
 import android.content.ComponentName

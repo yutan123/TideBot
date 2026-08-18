@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="tidebot.com">
+    package="com.yutan123.tidebot">
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- 基础网络与录音权限 -->
