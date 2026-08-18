@@ -13,6 +13,7 @@ import 'media_preprocessor.dart';
 import 'app_log_service.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
+import 'plugin_runtime.dart';
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -319,11 +320,13 @@ class AIManager {
         : '\n【经用户逐项授权的设备上下文】${DeviceCapabilityService.instance.encodeContext(deviceContext)}。仅在当前问题直接相关时使用；不得主动逐项复述、推断未授权信息或声称持续监控。';
     final emotionContext =
         await EmotionStateService.instance.promptContext(botId);
+    final pluginSkillContext = await PluginRuntime.instance.skillPrompt(botId);
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         _safetyContext(text) +
         lifeContext +
         deviceContextPrompt +
         emotionContext +
+        pluginSkillContext +
         (longMemoryContext.isEmpty
             ? ''
             : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
@@ -484,8 +487,11 @@ class AIManager {
       AppLogService.instance.add('AI',
           '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
-          ? await _buildNativeTools(db,
-              botId: botId, allowSticker: allowSticker)
+          ? [
+              ...await _buildNativeTools(db,
+                  botId: botId, allowSticker: allowSticker),
+              ...await PluginRuntime.instance.toolSchemas(),
+            ]
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -1905,8 +1911,11 @@ $transcript''';
               'model': modelName,
               'messages': messages,
               'max_tokens': maxTokens,
-              'tools': await _buildNativeTools(db,
-                  botId: botId, allowSticker: false),
+              'tools': [
+                ...await _buildNativeTools(db,
+                    botId: botId, allowSticker: false),
+                ...await PluginRuntime.instance.toolSchemas(),
+              ],
               'tool_choice': 'auto',
             }),
           )
@@ -2141,6 +2150,9 @@ $transcript''';
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
       };
+    }
+    if (name.startsWith('plugin__')) {
+      return PluginRuntime.instance.executeToolCall(call: call);
     }
     if (name == 'choose_silence') {
       return {

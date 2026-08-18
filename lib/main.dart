@@ -105,68 +105,77 @@ Future<void> _initPersistentService({
 void onStart(ServiceInstance service) {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+  Timer? heartbeat;
+  Future<void> tick() async {
+    try {
+      await DBManager().setKV(
+        'persistent_service_heartbeat',
+        '${DateTime.now().millisecondsSinceEpoch}',
+      );
+      final isForeground = service is AndroidServiceInstance
+          ? await service.isForegroundService()
+          : false;
+      if (!isForeground) return;
+      await _generateMissingLifeSchedules();
+      await LifeScheduleService.instance.runDueEndEvents();
+      await _runDueProactiveReplies();
+      final due = await DBManager()
+          .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
+      for (final task in due) {
+        final id = task['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        await DBManager().updateFutureTask(id, {'status': 'running'});
+        final botId = task['bot_id']?.toString() ?? '';
+        final bot = botId.isEmpty ? null : await DBManager().getBotById(botId);
+        if (bot == null ||
+            bot['is_disabled'] == 1 ||
+            bot['is_disabled'] == true) {
+          await DBManager().updateFutureTask(id, {'status': 'pending'});
+          continue;
+        }
+        final prompt =
+            task['prompt']?.toString() ?? task['note']?.toString() ?? '';
+        if (botId.isEmpty || prompt.isEmpty) continue;
+        try {
+          final result = await AIManager().sendMessage(
+              botId: botId,
+              text: '这是一个定时任务，请完成：$prompt',
+              persistResponse: true);
+          final answer = result['reply']?.toString() ?? '';
+          await OpsManager().showSystemNotification(
+              id: id.hashCode,
+              title: task['title']?.toString() ?? '未来任务完成',
+              body: answer.isEmpty ? '任务已执行' : answer,
+              botId: botId);
+          if (task['frequency']?.toString() == 'daily') {
+            // daily 任务：基于原 run_at 的小时/分钟，推进到明天同一时刻，
+            // 而不是从现在开始加 24 小时，避免因任务延迟执行导致设定时间漂移。
+            final prevMs = int.tryParse(task['run_at']?.toString() ?? '') ??
+                DateTime.now().millisecondsSinceEpoch;
+            final prev = DateTime.fromMillisecondsSinceEpoch(prevMs);
+            final next = DateTime(
+                    prev.year, prev.month, prev.day + 1, prev.hour, prev.minute)
+                .millisecondsSinceEpoch;
+            await DBManager()
+                .updateFutureTask(id, {'run_at': next, 'status': 'pending'});
+          } else {
+            await DBManager().deleteFutureTask(id);
+          }
+        } catch (_) {
+          await DBManager().updateFutureTask(id, {'status': 'pending'});
+        }
+      }
+    } catch (_) {}
+  }
+
   service.on('stopService').listen((_) async {
+    heartbeat?.cancel();
+    await DBManager().setKV('persistent_service_heartbeat', '');
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
-  Timer.periodic(const Duration(minutes: 1), (_) async {
-    final isForeground = service is AndroidServiceInstance
-        ? await service.isForegroundService()
-        : false;
-    if (isForeground) {
-      try {
-        await _generateMissingLifeSchedules();
-        await LifeScheduleService.instance.runDueEndEvents();
-        await _runDueProactiveReplies();
-        final due = await DBManager()
-            .dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
-        for (final task in due) {
-          final id = task['id']?.toString() ?? '';
-          if (id.isEmpty) continue;
-          await DBManager().updateFutureTask(id, {'status': 'running'});
-          final botId = task['bot_id']?.toString() ?? '';
-          final bot =
-              botId.isEmpty ? null : await DBManager().getBotById(botId);
-          if (bot == null ||
-              bot['is_disabled'] == 1 ||
-              bot['is_disabled'] == true) {
-            await DBManager().updateFutureTask(id, {'status': 'pending'});
-            continue;
-          }
-          final prompt =
-              task['prompt']?.toString() ?? task['note']?.toString() ?? '';
-          if (botId.isEmpty || prompt.isEmpty) continue;
-          try {
-            final result = await AIManager().sendMessage(
-                botId: botId,
-                text: '这是一个定时任务，请完成：$prompt',
-                persistResponse: true);
-            final answer = result['reply']?.toString() ?? '';
-            await OpsManager().showSystemNotification(
-                id: id.hashCode,
-                title: task['title']?.toString() ?? '未来任务完成',
-                body: answer.isEmpty ? '任务已执行' : answer,
-                botId: botId);
-            if (task['frequency']?.toString() == 'daily') {
-              // daily 任务：基于原 run_at 的小时/分钟，推进到明天同一时刻，
-              // 而不是从现在开始加 24 小时，避免因任务延迟执行导致设定时间漂移。
-              final prevMs = int.tryParse(task['run_at']?.toString() ?? '') ??
-                  DateTime.now().millisecondsSinceEpoch;
-              final prev = DateTime.fromMillisecondsSinceEpoch(prevMs);
-              final next = DateTime(prev.year, prev.month, prev.day + 1,
-                      prev.hour, prev.minute)
-                  .millisecondsSinceEpoch;
-              await DBManager()
-                  .updateFutureTask(id, {'run_at': next, 'status': 'pending'});
-            } else {
-              await DBManager().deleteFutureTask(id);
-            }
-          } catch (_) {
-            await DBManager().updateFutureTask(id, {'status': 'pending'});
-          }
-        }
-      } catch (_) {}
-    }
-  });
+  unawaited(tick());
+  heartbeat =
+      Timer.periodic(const Duration(minutes: 1), (_) => unawaited(tick()));
 }
 
 Future<void> _generateMissingLifeSchedules() async {

@@ -1,10 +1,14 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'db.dart';
 import 'global_notice.dart';
+import 'plugin_detail_page.dart';
+import 'plugin_security.dart';
 import 'theme.dart';
 
 class PluginRegistry {
@@ -29,22 +33,30 @@ class PluginRegistry {
   static Future<void> importManifest() async {
     final picked = await FilePicker.platform
         .pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
-    final bytes = picked?.files.single.bytes;
+    final file = picked?.files.single;
+    if (file == null) throw const FormatException('未读取到插件文件');
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) throw const FormatException('未读取到插件文件');
-    final manifest = jsonDecode(utf8.decode(bytes));
-    if (manifest is! Map || manifest['format'] != 'tidebot.plugin/v1') {
-      throw const FormatException('不是 TideBot 插件清单');
-    }
-    final id = manifest['id']?.toString().trim() ?? '';
-    final name = manifest['name']?.toString().trim() ?? '';
-    if (!RegExp(r'^[a-z0-9][a-z0-9._-]{2,63}$').hasMatch(id) || name.isEmpty) {
-      throw const FormatException('插件 id 或名称无效');
-    }
+    await installManifestBytes(bytes);
+  }
+
+  static Future<void> installManifestBytes(Uint8List bytes) async {
+    final report = PluginSecurityScanner.scanBytes(bytes);
+    if (!report.isSafe) throw FormatException(report.message);
+    final manifest =
+        Map<String, dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map);
+    final id = manifest['id'].toString().trim();
     final plugins = await load();
-    final entry = Map<String, dynamic>.from(manifest)
-      ..['enabled'] = manifest['enabled'] != false
-      ..['installed_at'] = DateTime.now().millisecondsSinceEpoch;
     final index = plugins.indexWhere((plugin) => plugin['id'] == id);
+    final entry = Map<String, dynamic>.from(manifest)
+      ..['enabled'] = false
+      ..['needs_health_check'] = true
+      ..['granted_permissions'] = index >= 0 &&
+              plugins[index]['granted_permissions'] is List
+          ? List<dynamic>.from(plugins[index]['granted_permissions'] as List)
+          : <String>[]
+      ..['installed_at'] = DateTime.now().millisecondsSinceEpoch;
     if (index >= 0) {
       plugins[index] = entry;
     } else {
@@ -75,9 +87,31 @@ class _PluginCenterPageState extends State<PluginCenterPage> {
 
   Future<void> _toggle(int index, bool enabled) async {
     final next = List<Map<String, dynamic>>.from(_plugins);
-    next[index] = Map<String, dynamic>.from(next[index])..['enabled'] = enabled;
+    if (enabled) {
+      await _openPlugin(next[index]);
+      return;
+    }
+    next[index] = Map<String, dynamic>.from(next[index])..['enabled'] = false;
     await PluginRegistry.save(next);
     if (mounted) setState(() => _plugins = next);
+  }
+
+  Future<void> _openPlugin(Map<String, dynamic> plugin) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => PluginDetailPage(plugin: plugin)),
+    );
+    _load();
+  }
+
+  String _capabilitySummary(Map<String, dynamic> plugin) {
+    final labels = <String>[];
+    if (plugin['skills'] is List && (plugin['skills'] as List).isNotEmpty)
+      labels.add('Skill');
+    if (plugin['mcp_servers'] is List &&
+        (plugin['mcp_servers'] as List).isNotEmpty) labels.add('MCP');
+    if (plugin['ui'] is Map) labels.add('UI');
+    return labels.isEmpty ? '清单' : labels.join(' ');
   }
 
   @override
@@ -98,6 +132,7 @@ class _PluginCenterPageState extends State<PluginCenterPage> {
               itemBuilder: (_, index) {
                 final plugin = _plugins[index];
                 return ListTile(
+                  onTap: () => _openPlugin(plugin),
                   tileColor: theme.surface,
                   leading: Icon(Icons.extension_rounded, color: theme.primary),
                   title: Text(plugin['name']?.toString() ?? '未命名插件',
@@ -107,9 +142,19 @@ class _PluginCenterPageState extends State<PluginCenterPage> {
                           plugin['id']?.toString() ??
                           '',
                       style: const TextStyle(fontFamily: 'TideFont')),
-                  trailing: Switch(
-                      value: plugin['enabled'] != false,
-                      onChanged: (value) => _toggle(index, value)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_capabilitySummary(plugin),
+                          style:
+                              TextStyle(color: theme.textWeak, fontSize: 12)),
+                      const SizedBox(width: 6),
+                      Switch(
+                        value: plugin['enabled'] != false,
+                        onChanged: (value) => _toggle(index, value),
+                      ),
+                    ],
+                  ),
                 );
               },
             ),
@@ -167,7 +212,7 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
                   {
                     'role': 'system',
                     'content':
-                        '你是 TideBot 本地插件开发助手。插件当前是声明式清单，不执行任意第三方代码。请输出严格 JSON，不要 markdown。格式：{"format":"tidebot.plugin/v1","id":"lowercase-id","name":"名称","description":"说明","version":"0.1.0","capabilities":["ui"],"instructions":"给 TideBot 的使用说明","readme":"开发与安装说明"}。'
+                        '你是 TideBot 插件开发助手。插件是受控的声明式运行时，不执行任意 Dart 或 JavaScript。只输出严格 JSON，不要 markdown。格式：{"format":"tidebot.plugin/v1","id":"lowercase-id","name":"名称","description":"说明","version":"0.1.0","permissions":["network"],"skills":[{"name":"技能名","instructions":"注入机器人系统提示的具体规则，可选 bot_ids"}],"mcp_servers":[{"name":"服务名","url":"https://example.com/mcp","headers":{}}],"ui":{"title":"页面标题","description":"说明","fields":[{"id":"query","label":"输入","multiline":false}],"actions":[{"label":"执行","mcp_server":0,"tool":"MCP tools/list 声明的工具名"}]},"readme":"开发说明"}。仅在需要联网 MCP 时声明 network；MCP 必须提供 HTTP JSON-RPC 的 tools/list 和 tools/call。'
                   },
                   {'role': 'user', 'content': idea}
                 ]
@@ -190,13 +235,11 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
     try {
       final manifest = jsonDecode(_output);
       if (manifest is! Map) throw const FormatException('AI 输出不是 JSON');
-      final bytes = utf8.encode(jsonEncode(manifest));
-      final result = await FilePicker.platform.saveFile(
-          fileName: '${manifest['id'] ?? 'plugin'}.json',
-          bytes: bytes,
-          type: FileType.custom,
-          allowedExtensions: const ['json']);
-      if (result != null && mounted) GlobalNotice.show('插件清单已导出，可从本地导入安装');
+      await PluginRegistry.installManifestBytes(
+          Uint8List.fromList(utf8.encode(jsonEncode(manifest))));
+      if (mounted) {
+        GlobalNotice.show('插件已安装，可在插件列表中授权并打开');
+      }
     } catch (_) {
       GlobalNotice.show('请先生成有效插件清单', color: const Color(0xFFE74C3C));
     }
@@ -243,14 +286,14 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
                 child: SingleChildScrollView(
                     child: SelectableText(
                         _output.isEmpty
-                            ? '插件开发规范：清单必须包含 format、id、name、version、capabilities、instructions 和 readme。当前版本只安装声明式插件，后续可在此格式上扩展受限工具能力。'
+                            ? '插件开发规范：Skill 的 instructions 会随启用插件注入机器人提示；MCP 通过 HTTP JSON-RPC 的 tools/list 和 tools/call 注册给聊天模型；UI 由 fields 和 actions 渲染为实际页面。插件不会执行任意 Dart 或 JavaScript；网络 MCP 必须声明 network 权限，并由用户在插件详情中授权。'
                             : _output,
                         style: const TextStyle(fontFamily: 'monospace')))),
             if (_output.isNotEmpty)
               IconButton(
-                  tooltip: '导出插件清单',
+                  tooltip: '安装生成的插件',
                   onPressed: _installOutput,
-                  icon: const Icon(Icons.download_rounded)),
+                  icon: const Icon(Icons.download_for_offline_rounded)),
           ]),
         ));
   }
