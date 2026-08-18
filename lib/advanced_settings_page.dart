@@ -32,6 +32,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   String _externalApiBotId = '';
   bool _externalApiSyncMessages = true;
   List<String> _externalApiUrls = const [];
+  String _externalApiUrl = '';
   List<Map<String, dynamic>> _bots = const [];
   final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
@@ -82,6 +83,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         await db.getKV('external_api_sync_messages') != 'false';
     final urls = await ExternalApiService.instance
         .baseUrls(port: int.tryParse(externalPort));
+    final externalUrl = await ExternalApiService.instance
+        .preferredBaseUrl(port: int.tryParse(externalPort));
     if (mounted) {
       setState(() {
         _logging = enabled;
@@ -95,6 +98,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         _externalApiBotId = externalBotId;
         _externalApiSyncMessages = externalSync;
         _externalApiUrls = urls;
+        _externalApiUrl = externalUrl;
         _bots = bots.cast<Map<String, dynamic>>();
         _boundBotNames
           ..clear()
@@ -497,6 +501,34 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     await _load();
   }
 
+  Future<void> _chooseExternalApiUrl() async {
+    if (_externalApiUrls.isEmpty || !mounted) return;
+    final selected = await showTideSheet<String>(
+      context: context,
+      child: SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('选择 API 地址')),
+            for (final url in _externalApiUrls)
+              ListTile(
+                selected: url == _externalApiUrl,
+                title:
+                    Text(url, style: const TextStyle(fontFamily: 'TideFont')),
+                trailing: url == _externalApiUrl
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(context, url),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null) return;
+    await ExternalApiService.instance.setPreferredBaseUrl(selected);
+    if (mounted) setState(() => _externalApiUrl = selected);
+  }
+
   Future<void> _toggleLog(bool value) async {
     if (value) {
       await AppLogService.instance.setEnabled(true);
@@ -662,23 +694,36 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                 const Text('API Base URL',
                     style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
                 const SizedBox(height: 4),
-                ...(_externalApiUrls.isEmpty
-                        ? <String>['http://127.0.0.1:$_externalApiPort/v1']
-                        : _externalApiUrls)
-                    .map((url) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: Text(url,
-                              style: TextStyle(
-                                  fontFamily: 'TideFont',
-                                  fontSize: 13,
-                                  color: theme.primary)),
-                          trailing: const Icon(Icons.copy_rounded, size: 18),
-                          onTap: () {
-                            Clipboard.setData(ClipboardData(text: url));
-                            GlobalNotice.show('API Base URL 已复制');
-                          },
-                        )),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(
+                    _externalApiUrl.isEmpty
+                        ? 'http://127.0.0.1:$_externalApiPort/v1'
+                        : _externalApiUrl,
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontSize: 13,
+                        color: theme.primary),
+                  ),
+                  trailing: const Icon(Icons.copy_rounded, size: 18),
+                  onTap: () {
+                    final url = _externalApiUrl.isEmpty
+                        ? 'http://127.0.0.1:$_externalApiPort/v1'
+                        : _externalApiUrl;
+                    Clipboard.setData(ClipboardData(text: url));
+                    GlobalNotice.show('API Base URL 已复制');
+                  },
+                ),
+                if (_externalApiUrls.length > 1)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _chooseExternalApiUrl,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 17),
+                      label: const Text('切换地址'),
+                    ),
+                  ),
                 Text(
                     '模型可留空；填写时使用机器人名称。API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
                     style: TextStyle(

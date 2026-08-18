@@ -33,6 +33,7 @@ class _CallPageState extends State<CallPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _wave;
   bool _muted = false;
+  bool _speakerMuted = false;
   bool _processing = false;
   String _caption = '';
   final AudioRecorder _recorder = AudioRecorder();
@@ -102,11 +103,11 @@ class _CallPageState extends State<CallPage>
   /// 监听时的兜底定时器：保证 amplitude 回调不触发时也能自动结束。
   void _ensureAutoStopTimer() {
     _autoStopTimer?.cancel();
-    _autoStopTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!_recording || _processing || _muted || _vadActive) return;
-      _silentTicks++;
-      if (_silentTicks >= _silentStopTicks) {
-        _finishListening();
+    // Amplitude callbacks are authoritative. This only prevents an abandoned
+    // recording from running forever on devices that do not emit amplitudes.
+    _autoStopTimer = Timer(const Duration(seconds: 30), () {
+      if (_recording && !_processing && !_muted && !_vadActive) {
+        unawaited(_finishListening());
       }
     });
   }
@@ -156,34 +157,28 @@ class _CallPageState extends State<CallPage>
         _recordingPath == null) return;
     setState(() {
       _processing = true;
-      _caption = '正在等待录音输入…';
+      _caption = '正在识别语音…';
     });
-    // 录音能力由现有 OpsManager/录音组件提供；未获得录音文件时保持明确状态，不再显示“未集成”。
-    final path = _recordingPath;
-    if (path == null) {
-      if (mounted)
-        setState(() {
-          _processing = false;
-          _caption = '请先开始并结束一次录音';
-        });
-      return;
-    }
-    final text = await AIManager()
-        .transcribeAudio(botId: widget.bot['id'].toString(), audioPath: path);
-    if (text == null || text.trim().isEmpty) {
-      if (mounted)
-        setState(() {
-          _processing = false;
-          _caption = '没有识别到语音';
-        });
-      return;
-    }
-    if (mounted) setState(() => _caption = text);
-    final reply = await AIManager()
-        .sendMessage(botId: widget.bot['id'].toString(), text: text);
-    final answer =
-        reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
-    if (answer.isNotEmpty) {
+    try {
+      final text = await AIManager()
+          .transcribeAudio(
+              botId: widget.bot['id'].toString(), audioPath: _recordingPath!)
+          .timeout(const Duration(seconds: 45));
+      if (text == null || text.trim().isEmpty) {
+        if (mounted) setState(() => _caption = '没有识别到语音');
+        return;
+      }
+      if (mounted) setState(() => _caption = text);
+      final reply = await AIManager()
+          .sendMessage(botId: widget.bot['id'].toString(), text: text)
+          .timeout(const Duration(minutes: 2));
+      final answer =
+          reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
+      if (answer.isEmpty) {
+        if (mounted)
+          setState(() => _caption = reply['error']?.toString() ?? '机器人没有返回回复');
+        return;
+      }
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
       if (ttsId.isNotEmpty) {
@@ -193,10 +188,13 @@ class _CallPageState extends State<CallPage>
           await _playBotReply(audioPath);
         }
       }
-    }
-    if (mounted) {
-      setState(() => _processing = false);
-      await _startListening();
+    } catch (e) {
+      if (mounted) setState(() => _caption = '语音通话失败：$e');
+    } finally {
+      if (mounted) {
+        setState(() => _processing = false);
+        if (!_muted) await _startListening();
+      }
     }
   }
 
@@ -224,6 +222,7 @@ class _CallPageState extends State<CallPage>
         if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
       }
     });
+    await _player.setVolume(_speakerMuted ? 0 : 1);
     await _player.play(DeviceFileSource(audioPath));
     await _playDone?.future.timeout(
       const Duration(minutes: 5),
@@ -413,7 +412,22 @@ class _CallPageState extends State<CallPage>
                             }
                           },
                         ),
-                        const SizedBox(width: 34),
+                        const SizedBox(width: 24),
+                        _roundButton(
+                          icon: _speakerMuted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
+                          label: _speakerMuted ? '声音关闭' : '声音开启',
+                          color: theme.surfaceVariant,
+                          iconColor: theme.textStrong,
+                          onTap: () async {
+                            TideHaptics.tap();
+                            final next = !_speakerMuted;
+                            setState(() => _speakerMuted = next);
+                            await _player.setVolume(next ? 0 : 1);
+                          },
+                        ),
+                        const SizedBox(width: 24),
                         _roundButton(
                           icon: Icons.call_end_rounded,
                           label: '挂断',

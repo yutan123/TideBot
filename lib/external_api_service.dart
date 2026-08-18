@@ -40,9 +40,17 @@ class ExternalApiService {
 
   Future<String> preferredBaseUrl({int? port}) async {
     final urls = await baseUrls(port: port);
+    final selected = await DBManager().getKV('external_api_base_url') ?? '';
+    if (urls.contains(selected)) return selected;
     return urls.isNotEmpty
         ? urls.first
         : 'http://127.0.0.1:${port ?? _server?.port ?? 6666}/v1';
+  }
+
+  Future<void> setPreferredBaseUrl(String url) async {
+    final urls = await baseUrls();
+    if (!urls.contains(url)) throw ArgumentError.value(url, 'url', '不是当前可用地址');
+    await DBManager().setKV('external_api_base_url', url);
   }
 
   Future<bool> start() async {
@@ -91,7 +99,14 @@ class ExternalApiService {
   }
 
   Future<void> _handle(HttpRequest request) async {
+    final requestLabel =
+        '${request.method} ${request.uri.path} from ${request.connectionInfo?.remoteAddress.address ?? 'unknown'}';
     try {
+      if (request.method == 'OPTIONS') {
+        _json(request, 204, const {});
+        return;
+      }
+      AppLogService.instance.add('EXTERNAL_API', requestLabel);
       final db = DBManager();
       final expected = await db.getKV('external_api_key') ?? 'tidebot';
       final authorization =

@@ -739,11 +739,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final content = (result['reply']?.toString() ?? '').trim().isEmpty
           ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
           : result['reply'].toString();
+      final audioPath = result['audio_path']?.toString();
       final aiMsg = <String, dynamic>{
         'id': result['message_id']?.toString() ??
             'm_${DateTime.now().millisecondsSinceEpoch}',
         'bot_id': botId,
         'role': 'assistant',
+        'type': audioPath?.isNotEmpty == true ? 'audio' : 'text',
+        'file_path': audioPath?.isNotEmpty == true ? audioPath : null,
         'content': content,
         'sources_json':
             result['sources'] == null ? null : jsonEncode(result['sources']),
@@ -779,8 +782,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // ===== 模拟打字机（完整回复处理完成后）=====
       // 传输层不再使用 SSE。AIManager 已完成工具调用、协议过滤和落盘，
       // 此处才将完整可见正文按速度设置送入唯一的前台占位气泡。
-      final needsTypewriter =
-          streamingMessage != null && !segmentedReply && content.isNotEmpty;
+      final needsTypewriter = streamingMessage != null &&
+          audioPath?.isNotEmpty != true &&
+          !segmentedReply &&
+          content.isNotEmpty;
 
       void adoptSticker() {
         if (!mounted) return;
@@ -854,6 +859,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             _deferredPersistedMessageIds.removeAll(persistedMessageIds);
             setState(() {
               streamingMessage!['id'] = aiMsg['id'];
+              streamingMessage['type'] = aiMsg['type'];
+              streamingMessage['file_path'] = aiMsg['file_path'];
               streamingMessage['content'] = content;
               streamingMessage['timestamp'] = aiMsg['timestamp'];
               streamingMessage.remove('is_streaming');
@@ -1910,6 +1917,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 Navigator.pop(sheetContext);
               },
             ),
+            if (msg['role'] == 'user' &&
+                msg['error_log']?.toString().isNotEmpty == true)
+              ListTile(
+                leading: Icon(Icons.refresh_rounded,
+                    color: TideTheme.of(sheetContext).primary),
+                title: const Text('重新发送',
+                    style: TextStyle(fontFamily: 'TideFont')),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  _msgC.text = text;
+                  _hasText = text.isNotEmpty;
+                  await _send();
+                },
+              ),
             // 引用功能已移除，避免生成和维护 reply_to_id 关联。
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,

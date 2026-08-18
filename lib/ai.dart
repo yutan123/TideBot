@@ -478,7 +478,8 @@ class AIManager {
       AppLogService.instance.add('AI',
           '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
       final tools = allowTools
-          ? await _buildNativeTools(db, botId: botId, allowSticker: false)
+          ? await _buildNativeTools(db,
+              botId: botId, allowSticker: allowSticker)
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -622,6 +623,7 @@ class AIManager {
         // roll hits, one category is selected up front and one asset is sampled
         // from that category after the complete reply has been processed.
         Map<String, dynamic>? sticker = toolSticker;
+        String? audioPath;
         if (sticker == null && forcedStickerEmotion != null) {
           final candidates =
               await db.queryStickers(emotion: forcedStickerEmotion);
@@ -639,7 +641,6 @@ class AIManager {
           final shouldVoice = voiceEnabled &&
               ttsModel.isNotEmpty &&
               Random.secure().nextInt(100) < voiceChance;
-          String? audioPath;
           if (shouldVoice) {
             AppLogService.instance.add('TTS', '本轮语音回复：先完成合成，再仅发送语音消息。');
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
@@ -707,6 +708,8 @@ class AIManager {
           'success': true,
           'reply': replyText,
           'message_id': msgId,
+          if (audioPath != null && audioPath.isNotEmpty)
+            'audio_path': audioPath,
           if (searchSources.isNotEmpty) 'sources': searchSources,
           if (generatedImagePath != null) 'image_path': generatedImagePath,
           if (sticker != null) 'sticker': sticker,
@@ -2037,18 +2040,24 @@ $transcript''';
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_diaryToolSchema());
+    final stickerEmotions = await db.stickerEmotions();
     if (allowSticker &&
         (await db.getKV('bot_stickers_enabled') == 'true') &&
-        (await db.stickerEmotions()).isNotEmpty) {
+        stickerEmotions.isNotEmpty) {
       tools.add({
         'type': 'function',
         'function': {
           'name': 'send_sticker',
-          'description': '在合适的情绪表达时发送一张已有表情包。',
+          'description':
+              '本轮必须发送一张已有表情包。emotion 必须从以下分类中选择：${stickerEmotions.join('、')}。',
           'parameters': {
             'type': 'object',
             'properties': {
-              'emotion': {'type': 'string', 'description': '已存在的情绪分类'}
+              'emotion': {
+                'type': 'string',
+                'enum': stickerEmotions,
+                'description': '必须选择一个已有情绪分类'
+              }
             },
             'required': ['emotion'],
             'additionalProperties': false,
@@ -2300,8 +2309,9 @@ $transcript''';
       }
     }
     if (allowSticker) {
+      final emotions = await db.stickerEmotions();
       parts.add(
-          '【本轮表情包】概率已命中。请根据当前语境选择已有情绪分类并调用 send_sticker；系统会从所选分类随机发送一张，不要在正文输出贴纸协议。');
+          '【本轮表情包】概率已命中，必须调用 send_sticker 一次。可选分类：${emotions.join('、')}。按当前语境选择其中一个分类；系统会从所选分类随机发送一张，不要在正文输出贴纸协议。');
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }

@@ -45,6 +45,12 @@ class DBManager {
     return _db!;
   }
 
+  Future<void> close() async {
+    final current = _db;
+    _db = null;
+    if (current != null) await current.close();
+  }
+
   // 严格落实 6 大核心表与外键级联约束
   Future<Database> _initDB() async {
     String path = join(await getDatabasesPath(), 'tidebot.db');

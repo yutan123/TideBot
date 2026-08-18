@@ -90,11 +90,26 @@ class AppLogService {
   void addJson(String level, String title, Object? value) => add(
       level, '$title\n${const JsonEncoder.withIndent('  ').convert(value)}');
 
-  String _redact(String text) => text
-      .replaceAll(RegExp(r'Bearer\s+[^\s,}]+', caseSensitive: false),
-          'Bearer [REDACTED]')
-      .replaceAll(RegExp(r'"api_key"\s*:\s*"[^"]*"', caseSensitive: false),
-          '"api_key":"[REDACTED]"');
+  String _redact(String text) {
+    var value = text
+        .replaceAll(RegExp(r'Bearer\s+[^\s,}]+', caseSensitive: false),
+            'Bearer [REDACTED]')
+        .replaceAll(RegExp(r'"api_key"\s*:\s*"[^"]*"', caseSensitive: false),
+            '"api_key":"[REDACTED]"');
+    // Audio payloads are useful to identify in diagnostics but must never make
+    // the live log unreadable. The duration is intentionally approximate.
+    value = value.replaceAllMapped(
+      RegExp(
+          r'(?:data:audio/[^;,\s]+;base64,|"audio_base64"\s*:\s*")[A-Za-z0-9+/=_-]{128,}',
+          caseSensitive: false),
+      (match) {
+        final payload = match.group(0)!;
+        final seconds = (payload.length / 16000).ceil().clamp(1, 999);
+        return '[语音] $seconds秒';
+      },
+    );
+    return value;
+  }
 
   Future<File> _historyFile() async {
     final dir = await getApplicationDocumentsDirectory();

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
+import 'full_backup_service.dart';
 import 'db.dart';
 import 'ops.dart';
 import 'theme.dart';
@@ -111,6 +112,54 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
     }
   }
 
+  Future<void> _backupAll() async {
+    try {
+      await FullBackupService.export();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('完整备份已导出')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('备份失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _restoreAll() async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('恢复完整备份'),
+            content: const Text('恢复会覆盖当前的设置、聊天记录、机器人、记忆和媒体文件。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('取消')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('选择备份文件')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    try {
+      await FullBackupService.restore();
+      await _loadAsync();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('完整备份已恢复，请重新打开页面以刷新运行中的服务')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('恢复失败：$error')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -150,6 +199,29 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                       _format(_database)),
                   _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
                       action: '清理', onTap: _clearCache)
+                ])),
+                const SizedBox(height: 12),
+                FrostCard(
+                    child: Column(children: [
+                  ListTile(
+                    leading: const Icon(Icons.backup_outlined),
+                    title: const Text('备份所有数据',
+                        style: TextStyle(fontFamily: 'TideFont')),
+                    subtitle: const Text('导出设置、聊天记录、机器人、记忆和媒体文件',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: _backupAll,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.restore_rounded),
+                    title: const Text('恢复所有数据',
+                        style: TextStyle(fontFamily: 'TideFont')),
+                    subtitle: const Text('导入完整备份并覆盖当前所有数据',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: _restoreAll,
+                  ),
                 ])),
                 const SizedBox(height: 22),
                 Text('聊天记录管理',
