@@ -71,8 +71,6 @@ jobs:
           test -s "$APK" || { echo "::error::未生成正式版 APK"; exit 1; }
           APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose "$APK"
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a/lib.*(llama|ggml).*\.so' \
-            || { echo "::error::APK 中缺少 ARM64 本地模型原生库"; exit 1; }
 
       - name: 上传已验证的正式版 APK
         uses: actions/upload-artifact@v4

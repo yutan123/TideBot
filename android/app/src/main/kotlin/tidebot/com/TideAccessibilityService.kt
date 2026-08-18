@@ -1,4 +1,4 @@
-package com.yutan123.tidebot
+package tidebot.com
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
