@@ -10,14 +10,9 @@ import 'db.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 
-import 'ops.dart';
-import 'app_state.dart';
 import 'app_log_service.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
-import 'local_llama.dart';
-
-const bool _localInferenceEnabled = false;
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -88,12 +83,8 @@ class AIManager {
     void Function(String delta)? onDelta,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final primaryLocal = _localInferenceEnabled
-        ? (prefs.getString('local_chat_model_$botId') ?? '').trim()
-        : '';
-    final backupLocal = _localInferenceEnabled
-        ? (prefs.getString('local_backup_model_$botId') ?? '').trim()
-        : '';
+    const primaryLocal = '';
+    const backupLocal = '';
     final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
     final matchingBots = (await DBManager().getAllBots())
         .where((bot) => bot['id']?.toString() == botId)
@@ -231,110 +222,14 @@ class AIManager {
       return {'success': true, 'silent': true, 'reply': ''};
     }
 
-    // 已选择本地 GGUF 时，绕过远程 provider，执行真实 llama.cpp 推理。
-    final prefs = await SharedPreferences.getInstance();
-    final localId = _localInferenceEnabled
-        ? (forcedLocalId.isNotEmpty
-            ? forcedLocalId
-            : (prefs.getString('local_chat_model_$botId') ?? '').trim())
-        : '';
-    if (localId.isNotEmpty) {
-      try {
-        final history = includeChatHistory
-            ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
-            : <Map<String, dynamic>>[];
-        final localMessages = <Map<String, dynamic>>[
-          {
-            'role': 'system',
-            'content': _localSystemPrompt(bot),
-          },
-        ];
-        final recentHistory = history
-            .where((msg) =>
-                msg['type'] == 'text' &&
-                msg['error_log']?.toString().isNotEmpty != true &&
-                msg['error_code']?.toString().isNotEmpty != true)
-            .toList();
-        const historyBudget = 350;
-        final selectedReversed = <Map<String, dynamic>>[];
-        var usedTokens = 0;
-        for (final msg in recentHistory.reversed) {
-          final content = msg['content']?.toString().trim() ?? '';
-          if (content.isEmpty) continue;
-          final tokens = estimateTokens(content);
-          if (usedTokens + tokens > historyBudget) break;
-          selectedReversed.add(msg);
-          usedTokens += tokens;
-        }
-        final selected = selectedReversed.reversed.toList();
-        AppLogService.instance.add(
-          'CONTEXT',
-          '本地模型上下文：历史 ${selected.length}/${recentHistory.length} 条，估算 $usedTokens/$historyBudget token${selected.length < recentHistory.length ? '，已截断较早历史' : ''}',
-        );
-        for (final msg in selected) {
-          final role =
-              msg['role']?.toString() == 'assistant' ? 'assistant' : 'user';
-          final content = msg['content']?.toString().trim() ?? '';
-          if (content.isNotEmpty)
-            localMessages.add({'role': role, 'content': content});
-        }
-        // The current turn is authoritative; skip only an identical final user row.
-        if (selected.isEmpty ||
-            selected.last['role']?.toString() != 'user' ||
-            selected.last['content']?.toString() != text) {
-          localMessages.add({'role': 'user', 'content': text});
-        }
-        final path = await LocalLlama.instance.pathFor(localId);
-        final rawReply = await LocalLlama.instance.generate(
-          path: path,
-          messages: localMessages,
-        );
-        final localMood = _extractMood(rawReply);
-        final reply = _cleanVisibleReply(rawReply);
-        final ts = DateTime.now().millisecondsSinceEpoch;
-        final messageId = 'msg_a_${ts + 1}';
-        if (persistResponse) {
-          final segmented =
-              await db.getKV('segmented_reply_enabled') != 'false';
-          final parts = segmented ? _replySegments(reply) : <String>[reply];
-          for (var index = 0; index < parts.length; index++) {
-            await db.insertChatMessage({
-              'id': index == 0 ? messageId : '${messageId}_segment_$index',
-              'bot_id': botId,
-              'role': 'assistant',
-              'type': 'text',
-              'content': parts[index],
-              'file_path': null,
-              'mood': localMood,
-              'timestamp': ts + 1 + index,
-            });
-          }
-        }
-        return {
-          'success': true,
-          'reply': reply,
-          'message_id': messageId,
-          'local': true,
-        };
-      } catch (e, st) {
-        return {
-          'error': '本地模型推理失败：$e',
-          'error_code': 'local_inference',
-          'error_log': '$e\n$st',
-        };
-      }
-    }
-
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     // A newly added provider is usable immediately. Only fill an empty model;
     // never overwrite a deliberate per-bot choice.
     var providerId = forcedProviderId.isNotEmpty
         ? forcedProviderId
         : (bot['chat_model']?.toString().trim() ?? '');
-    print(
-        '[ai] resolve bot=$botId configured_provider=$providerId local=$localId');
-    AppLogService.instance
-        .add('AI', '解析机器人 $botId，provider=$providerId，local=$localId');
+    print('[ai] resolve bot=$botId configured_provider=$providerId');
+    AppLogService.instance.add('AI', '解析机器人 $botId，provider=$providerId');
     if (providerId.isEmpty) {
       final providers = await db.queryChatProviders();
       if (providers.isEmpty) return {'error': '未配置引擎中枢，请先在 API 设置中添加模型'};
@@ -355,9 +250,7 @@ class AIManager {
       modelName = provider['name'].toString().trim();
     }
     if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
-    final maxContext =
-        (prefs.getInt('max_token_$botId') ?? bot['max_tokens'] as int? ?? 10000)
-            .clamp(1000, 128000);
+    final maxContext = (bot['max_tokens'] as int? ?? 10000).clamp(1000, 128000);
     final timeAware = (await db.getKV('time_awareness')) != 'false';
     final history = includeChatHistory
         ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
@@ -365,7 +258,7 @@ class AIManager {
     // A rollover is semantic, not deletion: once the cumulative transcript reaches
     // the configured context size, ask the configured model to retain only durable
     // events/facts and then keep the newest half as live conversation.
-    if (includeChatHistory && enableAutoSummary && localId.isEmpty) {
+    if (includeChatHistory && enableAutoSummary) {
       await _rolloverContextMemory(
         db: db,
         botId: botId,
@@ -465,7 +358,7 @@ class AIManager {
           historyMessages.add({
             'role':
                 msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-            'content': content.substring(content.length - keepChars),
+            'content': content.substring(content.length - keepChars.toInt()),
           });
         }
         break;
@@ -738,46 +631,53 @@ class AIManager {
           }
         }
         if (persistResponse) {
-          // Streaming uses one persisted row as well as one foreground bubble.
-          // Sentence splitting remains available for non-streaming replies.
-          final segmented = onDelta == null &&
+          final ttsModel = bot['tts_model']?.toString().trim() ?? '';
+          final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
+          final voiceChance =
+              (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
+                  .clamp(1, 100);
+          final shouldVoice = voiceEnabled &&
+              ttsModel.isNotEmpty &&
+              Random.secure().nextInt(100) < voiceChance;
+          String? audioPath;
+          if (shouldVoice) {
+            AppLogService.instance.add('TTS', '本轮语音回复：先完成合成，再仅发送语音消息。');
+            audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
+          }
+          final segmented = !shouldVoice &&
+              onDelta == null &&
               await db.getKV('segmented_reply_enabled') != 'false';
           final segments =
               segmented ? _replySegments(replyText) : <String>[replyText];
-          for (var index = 0; index < segments.length; index++) {
+          if (audioPath != null && audioPath.isNotEmpty) {
             await db.insertChatMessage({
-              'id': index == 0 ? msgId : '${msgId}_segment_$index',
+              'id': msgId,
               'bot_id': botId,
               'role': 'assistant',
-              'type': 'text',
-              'content': segments[index],
-              'file_path': null,
+              'type': 'audio',
+              'content': replyText,
+              'file_path': audioPath,
               'mood': mood,
               'sources_json':
                   searchSources.isEmpty ? null : jsonEncode(searchSources),
-              'timestamp': ts + 1 + index,
+              'timestamp': ts + 1,
             });
-          }
-          // 聊天请求可能在等待模型期间进入后台。仅在用户已开启通知且
-          // 应用不在前台时提醒；前台聊天由 UI 气泡承载，不重复打扰。
-          try {
-            final notifyEnabled =
-                (await db.getKV('unread_notifications')) != 'false';
-            if (notifyEnabled && !AppState.isForeground.value) {
-              final title = bot['name']?.toString().trim().isNotEmpty == true
-                  ? bot['name'].toString()
-                  : 'TideBot';
-              await OpsManager().showSystemNotification(
-                id: ts.remainder(1 << 31),
-                title: title,
-                body: replyText.isEmpty ? '收到一条新消息' : replyText,
-                botId: botId,
-              );
+          } else {
+            for (var index = 0; index < segments.length; index++) {
+              await db.insertChatMessage({
+                'id': index == 0 ? msgId : '${msgId}_segment_$index',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'text',
+                'content': segments[index],
+                'file_path': null,
+                'mood': mood,
+                'sources_json':
+                    searchSources.isEmpty ? null : jsonEncode(searchSources),
+                'timestamp': ts + 1 + index,
+              });
             }
-          } catch (_) {
-            // 通知权限或厂商系统限制不应影响已成功落库的聊天回复。
           }
-
           if (generatedImagePath != null) {
             await db.insertChatMessage({
               'id': 'msg_i_${ts + 2}',
@@ -787,66 +687,20 @@ class AIManager {
               'content': '',
               'file_path': generatedImagePath,
               'mood': mood,
-              'timestamp': ts + 2,
+              'timestamp': ts + 2
             });
           }
-
           if (sticker != null) {
             await db.insertChatMessage({
-              'id': 'msg_s_${ts + 2 + segments.length}',
+              'id': 'msg_s_${ts + 3}',
               'bot_id': botId,
               'role': 'assistant',
               'type': 'sticker',
-              // emotion 是素材匹配元数据，不保存为可见聊天正文。
               'content': '',
               'file_path': sticker['file_path']?.toString(),
               'mood': mood,
-              'timestamp': ts + 2 + segments.length,
+              'timestamp': ts + 3
             });
-          }
-
-          final ttsModel = bot['tts_model'];
-          final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
-          final voiceChance =
-              (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
-                  .clamp(1, 100);
-          final voiceRoll = Random().nextInt(100);
-          if (!voiceEnabled) {
-            AppLogService.instance.add('TTS', '本轮未请求：语音回复开关关闭');
-          } else if (ttsModel == null || ttsModel.toString().isEmpty) {
-            AppLogService.instance.add('TTS', '本轮未请求：机器人未绑定 TTS 模型');
-          } else if (voiceRoll >= voiceChance) {
-            AppLogService.instance.add(
-                'TTS', '本轮未请求：语音概率未命中（${voiceRoll + 1}/100，设定 $voiceChance%）');
-          }
-          if (voiceEnabled &&
-              ttsModel != null &&
-              ttsModel.toString().isNotEmpty &&
-              voiceRoll < voiceChance) {
-            AppLogService.instance.add('TTS',
-                '准备请求语音模型：${ttsModel.toString()}，文本 ${replyText.length} 字');
-            // TTS failures intentionally keep the original text message unchanged.
-            unawaited(() async {
-              final audioPath =
-                  await _generateTTS(replyText, ttsModel.toString());
-              if (audioPath != null && audioPath.isNotEmpty) {
-                try {
-                  await db.insertChatMessage({
-                    'id': msgId,
-                    'bot_id': botId,
-                    'role': 'assistant',
-                    'type': 'audio',
-                    'content': replyText,
-                    'file_path': audioPath,
-                    'mood': mood,
-                    'sources_json': searchSources.isEmpty
-                        ? null
-                        : jsonEncode(searchSources),
-                    'timestamp': ts + 1,
-                  });
-                } catch (_) {}
-              }
-            }());
           }
         }
         return {
@@ -1353,7 +1207,8 @@ $transcript''';
   }
 
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
-  Future<String?> _generateTTS(String text, String providerId) async {
+  Future<String?> _generateTTS(String text, String providerId,
+      {String mood = '平静'}) async {
     final list = await DBManager().queryTtsProviders();
     Map<String, dynamic>? provider;
     try {
@@ -1373,6 +1228,18 @@ $transcript''';
     final voice = configuredVoice.isEmpty || configuredVoice == 'default'
         ? (protocol == 'mimo' ? 'mimo_default' : 'alloy')
         : configuredVoice;
+    final moodSpeed = switch (mood) {
+      '开心' || '兴奋' => 1.08,
+      '难过' || '低落' => 0.91,
+      '生气' || '愤怒' => 1.04,
+      _ => 1.0
+    };
+    final moodPitch = switch (mood) {
+      '开心' || '兴奋' => 2,
+      '难过' || '低落' => -2,
+      '生气' || '愤怒' => 1,
+      _ => 0
+    };
     final modelName = (provider['model']?.toString() ?? '').trim();
     final model = modelName.isEmpty
         ? (provider['name']?.toString() ?? 'tts-1')
@@ -1399,9 +1266,9 @@ $transcript''';
             'stream': false,
             'voice_setting': {
               'voice_id': voice,
-              'speed': 1.0,
+              'speed': moodSpeed,
               'vol': 1.0,
-              'pitch': 0,
+              'pitch': moodPitch,
             },
             'audio_setting': {
               'sample_rate': 32000,
@@ -1429,7 +1296,12 @@ $transcript''';
               'format': 'wav',
             },
           },
-        _ => {'model': model, 'input': text, 'voice': voice},
+        _ => {
+            'model': model,
+            'input': text,
+            'voice': voice,
+            if (moodSpeed != 1.0) 'speed': moodSpeed
+          },
       };
       AppLogService.instance.add('TTS',
           '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
@@ -2674,19 +2546,6 @@ $transcript''';
     return risky
         ? '\n【安全处理】用户消息可能涉及违法、危险、露骨、仇恨、欺诈、隐私或自伤内容。不要生成、补全、鼓励或提供可执行细节；保持你的人设，以温和、不评判的方式拒绝或转移到安全话题。若涉及即时自伤或他伤风险，优先鼓励联系当地紧急服务、可信赖的人或专业支持。'
         : '\n【安全规则】不得生成违法、危险、露骨色情、剥削未成年人、仇恨骚扰、欺诈、隐私侵害或自伤他伤的可执行内容；遇到此类请求应保持人设并温和转移到安全话题。';
-  }
-
-  String _localSystemPrompt(Map<String, dynamic> bot) {
-    final name = bot['name']?.toString().trim();
-    final desc = bot['desc']?.toString().trim() ?? '';
-    final style = bot['prompt']?.toString().trim() ?? '';
-    String clip(String value, int limit) =>
-        value.length <= limit ? value : value.substring(0, limit);
-    return '你是${name == null || name.isEmpty ? 'TideBot' : clip(name, 40)}。'
-        '保持自然、简短的中文对话。'
-        '${desc.isEmpty ? '' : '人设：${clip(desc, 240)}。'}'
-        '${style.isEmpty ? '' : '说话方式：${clip(style, 240)}。'}'
-        '不要输出心情、记忆、工具或其他内部标签。';
   }
 
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {

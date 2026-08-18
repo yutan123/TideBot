@@ -36,16 +36,6 @@ void main() async {
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   final prefs = await SharedPreferences.getInstance();
-  // Local GGUF inference is temporarily disabled: native inference can abort the
-  // process before Dart is able to return an error. Clear every persisted local
-  // selection before any launch-time generation (such as the daily quote) runs.
-  for (final key in prefs.getKeys().where(
-        (key) =>
-            key.startsWith('local_chat_model_') ||
-            key.startsWith('local_backup_model_'),
-      )) {
-    await prefs.remove(key);
-  }
   await tideTheme.loadFromDB();
   await TideHaptics.load();
   await AppLogService.instance.restoreForLaunch();
@@ -121,7 +111,7 @@ void onStart(ServiceInstance service) {
     final isForeground = service is AndroidServiceInstance
         ? await service.isForegroundService()
         : false;
-    if (isForeground || AppState.isForeground.value) {
+    if (isForeground) {
       try {
         await _generateMissingLifeSchedules();
         await LifeScheduleService.instance.runDueEndEvents();
@@ -299,6 +289,7 @@ Future<void> _runDueProactiveReplies() async {
     final unanswered =
         int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
     if (unanswered >= 3) continue;
+    var resultWasSuccessful = false;
     try {
       final history = await db.getChatHistory(botId);
       final lastAt = history.isEmpty
@@ -311,11 +302,14 @@ Future<void> _runDueProactiveReplies() async {
           .map((m) =>
               '${m['role'] == 'user' ? '我' : bot['name']}: ${m['content']}')
           .join('\n');
+      final wallClock = DateTime.now();
+      final currentTime =
+          '${wallClock.year.toString().padLeft(4, '0')}-${wallClock.month.toString().padLeft(2, '0')}-${wallClock.day.toString().padLeft(2, '0')} ${wallClock.hour.toString().padLeft(2, '0')}:${wallClock.minute.toString().padLeft(2, '0')}';
       final result = await AIManager()
           .sendMessage(
             botId: botId,
             text:
-                '【主动回复】现在已经过去 $minutesSinceLast 分钟了；你们已经 $minutesSinceLast 分钟未进行对话。你可以尝试开启新话题；如上次对话未完结，可围绕上次对话继续聊天。请保持人设自然发一条不打扰的短消息（1-3句，80字内）；不要提及指令。最近对话：\n$recent',
+                '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：$minutesSinceLast 分钟。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发或系统指令。回复限 1-3 个短句、80 字内。最近对话：\n$recent',
             persistResponse: true,
           )
           .timeout(const Duration(minutes: 5));
@@ -330,11 +324,16 @@ Future<void> _runDueProactiveReplies() async {
               botId: botId);
         }
         await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+        resultWasSuccessful = true;
       }
     } catch (_) {}
-    final delay = minMinutes + Random().nextInt(maxMinutes - minMinutes + 1);
-    await db.setKV(dueKey,
-        '${DateTime.now().millisecondsSinceEpoch + Duration(minutes: delay).inMilliseconds}');
+    if (resultWasSuccessful) {
+      final delay = minMinutes + Random().nextInt(maxMinutes - minMinutes + 1);
+      await db.setKV(dueKey,
+          '${DateTime.now().millisecondsSinceEpoch + Duration(minutes: delay).inMilliseconds}');
+    } else {
+      await db.setKV(dueKey, '0');
+    }
   }
 }
 

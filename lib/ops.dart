@@ -173,8 +173,7 @@ class OpsManager {
     await _notifications.show(id, title, body, details, payload: botId);
   }
 
-  /// 本地模型下载：在通知栏展示带百分比的进度（可平滑更新），下载完成后常驻提示。
-  /// 与聊天通知共用消息通道，payload 为空即可，点击不跳转。
+  /// File download progress notification shown in the status bar.
   Future<void> showDownloadProgress({
     required int notifId,
     required int percent,
@@ -204,7 +203,7 @@ class OpsManager {
         visibility: NotificationVisibility.public,
       ),
     );
-    await _notifications.show(notifId, done ? '下载完成' : '本地模型下载中', body, details,
+    await _notifications.show(notifId, done ? '下载完成' : '文件下载中', body, details,
         payload: botId);
   }
 

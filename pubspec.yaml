@@ -38,7 +38,6 @@ dependencies:
   # 后台守护与保活
   flutter_background_service: ^5.1.0
   flutter_local_notifications: ^17.1.2
-  llama_flutter_android: ^0.2.6
 
   path: any
 dev_dependencies:

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -30,6 +31,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   String _externalApiKey = 'tidebot';
   String _externalApiBotId = '';
   bool _externalApiSyncMessages = true;
+  List<String> _externalApiUrls = const [];
   List<Map<String, dynamic>> _bots = const [];
   final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
@@ -78,6 +80,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     final externalBotId = await db.getKV('external_api_bot_id') ?? '';
     final externalSync =
         await db.getKV('external_api_sync_messages') != 'false';
+    final urls = await ExternalApiService.instance
+        .baseUrls(port: int.tryParse(externalPort));
     if (mounted) {
       setState(() {
         _logging = enabled;
@@ -90,6 +94,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         _externalApiKey = externalKey;
         _externalApiBotId = externalBotId;
         _externalApiSyncMessages = externalSync;
+        _externalApiUrls = urls;
         _bots = bots.cast<Map<String, dynamic>>();
         _boundBotNames
           ..clear()
@@ -654,21 +659,38 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
               ),
               if (_externalApiEnabled) ...[
                 const Divider(),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                      'API Base URL：http://本机局域网 IP:$_externalApiPort/v1',
-                      style: const TextStyle(
-                          fontFamily: 'TideFont', fontSize: 13)),
-                  subtitle: Text(
-                      'API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
-                      style: TextStyle(
-                          fontFamily: 'TideFont',
-                          color: theme.textWeak,
-                          fontSize: 12)),
-                  trailing: const Icon(Icons.settings_outlined),
-                  onTap: _editExternalApi,
-                ),
+                const Text('API Base URL',
+                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                const SizedBox(height: 4),
+                ...(_externalApiUrls.isEmpty
+                        ? <String>['http://127.0.0.1:$_externalApiPort/v1']
+                        : _externalApiUrls)
+                    .map((url) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: Text(url,
+                              style: TextStyle(
+                                  fontFamily: 'TideFont',
+                                  fontSize: 13,
+                                  color: theme.primary)),
+                          trailing: const Icon(Icons.copy_rounded, size: 18),
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(text: url));
+                            GlobalNotice.show('API Base URL 已复制');
+                          },
+                        )),
+                Text(
+                    '模型可留空；填写时使用机器人名称。API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        color: theme.textWeak,
+                        fontSize: 12)),
+                Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                        onPressed: _editExternalApi,
+                        icon: const Icon(Icons.settings_outlined, size: 17),
+                        label: const Text('配置'))),
               ] else
                 TextButton.icon(
                     onPressed: _editExternalApi,

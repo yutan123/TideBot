@@ -41,7 +41,6 @@ android {
     }
     defaultConfig {
         applicationId = "com.yutan123.tidebot"
-        // llama_flutter_android uses SharedMemory and requires Android 8.0/API 26.
         minSdkVersion = 26
 
         targetSdk = flutter.targetSdkVersion

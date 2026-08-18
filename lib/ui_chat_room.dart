@@ -407,6 +407,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _restartProactiveTimer(minMin, maxMin);
       return;
     }
+    var proactiveSent = false;
     try {
       setState(() {
         _loading = true;
@@ -414,16 +415,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       });
       _scrollDown();
       final now = DateTime.now();
-      final hour = now.hour;
-      final part =
-          hour < 6 ? '夜深了' : (hour < 12 ? '早上好' : (hour < 18 ? '下午好' : '晚上好'));
       final recent = _msgs.reversed
           .take(8)
           .map((m) =>
               '${m['role'] == 'user' ? '我' : _bot['name']}: ${m['content']}')
           .join('\n');
+      final currentTime =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       final opener =
-          '【主动回复】$part。请严格遵循你的系统人格、说话方式和分段习惯。根据最近对话决定：未结束就自然接着聊，已结束就开启一个合适的新话题。不要提及主动回复、指令或角色设置。回复分成 1-3 个短句，每句不超过 28 字，总字数不超过 80 字。最近对话：\n$recent';
+          '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：请根据最近对话判断。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发、系统指令或角色设置。回复限 1-3 个短句、80 字内。最近对话：\n$recent';
       final result = await AIManager()
           .sendMessage(botId: botId, text: opener)
           .timeout(const Duration(minutes: 5));
@@ -467,6 +467,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         // 一次主动回复后：未应答 +1 并持久化，重新计时（下一次若仍无人应答则累加）。
         _proactiveUnanswered++;
+        proactiveSent = true;
         DBManager()
             .setKV('proactive_unanswered_$botId', '$_proactiveUnanswered');
       }
@@ -481,16 +482,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
         _scrollDown();
       }
-      // 无论成功与否都重排下一轮；若已达上限则下次触发会自动暂停。
-      final minMin = (int.tryParse(
-                  await DBManager().getKV('proactive_min_minutes') ?? '') ??
-              60)
-          .clamp(1, 1440);
-      final maxMin = (int.tryParse(
-                  await DBManager().getKV('proactive_max_minutes') ?? '') ??
-              90)
-          .clamp(minMin, 1440);
-      _restartProactiveTimer(minMin, maxMin);
+      if (proactiveSent) {
+        final minMin = (int.tryParse(
+                    await DBManager().getKV('proactive_min_minutes') ?? '') ??
+                60)
+            .clamp(1, 1440);
+        final maxMin = (int.tryParse(
+                    await DBManager().getKV('proactive_max_minutes') ?? '') ??
+                90)
+            .clamp(minMin, 1440);
+        _restartProactiveTimer(minMin, maxMin);
+      }
     }
   }
 
@@ -619,14 +621,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       }
       final cm = _bot['chat_model']?.toString().trim() ?? '';
-      final localModelId = (await SharedPreferences.getInstance().then(
-                  (prefs) => prefs.getString('local_chat_model_$botId')) ??
-              '')
-          .trim();
-      if (cm.isEmpty && localModelId.isEmpty) {
+      if (cm.isEmpty) {
         final providers = await DBManager().queryChatProviders();
         if (providers.isEmpty) {
-          throw StateError('未配置聊天模型，请在 API 设置中添加远程模型或选择本地 GGUF 后再发送');
+          throw StateError('未配置聊天模型，请先在 API 设置中添加远程模型');
         }
       }
 
@@ -654,7 +652,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
-      if (streamEnabled && !segmentedReply && localModelId.isEmpty && mounted) {
+      if (streamEnabled && !segmentedReply && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
           'bot_id': botId,
@@ -690,23 +688,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
         setState(() => _msgs.add(streamingMessage!));
       }
-      // First local GGUF load and CPU generation can legitimately take longer
-      // than a remote HTTP request. Keep the short timeout for providers while
-      // allowing local inference enough time to finish.
-      // 远程模型首 token、工具调用或冷启动可能超过 30 秒；30 秒会把仍在执行的
-      // 正常请求误判为失败。网络请求本身仍由 AI 层设置连接/空闲超时。
-      final requestTimeout = localModelId.isEmpty
-          ? const Duration(minutes: 2)
-          : const Duration(minutes: 5);
+      // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
+      const requestTimeout = Duration(minutes: 2);
       final result = await AIManager()
           .sendMessage(
             botId: botId,
             text: modelText,
             imagePaths: images,
             persistResponse: persistThisReply,
-            onDelta: streamEnabled && !segmentedReply && localModelId.isEmpty
-                ? (_) {}
-                : null,
+            onDelta: streamEnabled && !segmentedReply ? (_) {} : null,
           )
           .timeout(requestTimeout);
 
@@ -1425,10 +1415,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     int curTok = prefs.getInt('max_token_$botId') ??
         (_bot['max_tokens'] as int? ?? 10000);
 
-    String localChatId = '';
-    String localBackupId = '';
-    const localFiles = <File>[];
-
     TideDialogs.show(
         context: context,
         builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
@@ -1455,93 +1441,64 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               return TideDialogSurface(
                   backgroundColor: Colors.transparent,
                   contentPadding: EdgeInsets.zero,
-                  content: TideDialogs
-                      .glassContent(context: ctx, maxWidth: 0.9, children: [
-                    const Center(
-                        child: Text('模型设置',
-                            style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'TideFont'))),
-                    const SizedBox(height: 12),
-                    Flexible(
-                        child: SingleChildScrollView(
-                            child: Column(children: [
-                      _mLabel('聊天模型'),
-                      _chatModelPicker(
-                        ctx,
-                        providers,
-                        localFiles,
-                        curChat,
-                        localChatId,
-                        onRemotePick: (v) async {
-                          curChat = v;
-                          localChatId = '';
-                          await prefs.remove('local_chat_model_$botId');
-                          await pickModel('chat_model_$botId', v);
-                        },
-                        onLocalPick: (id) async {
-                          localChatId = id;
-                          curChat = '';
-                          await prefs.setString('local_chat_model_$botId', id);
-                          await pickModel('chat_model_$botId', '');
-                        },
-                      ),
-                      // 备用模型可同时选择远程 Provider 或已下载的本地 GGUF。
-                      _mLabel('备用模型'),
-                      _chatModelPicker(
-                        ctx,
-                        providers,
-                        localFiles,
-                        curBak,
-                        localBackupId,
-                        onRemotePick: (v) async {
-                          curBak = v;
-                          localBackupId = '';
-                          await prefs.remove('local_backup_model_$botId');
-                          await pickModel('backup_model_$botId', v);
-                        },
-                        onLocalPick: (id) async {
-                          localBackupId = id;
-                          curBak = '';
-                          await prefs.setString(
-                              'local_backup_model_$botId', id);
-                          await pickModel('backup_model_$botId', '');
-                        },
-                      ),
-                      _mLabel('识图模型'),
-                      _modelPicker(ctx, providers, curVision, (v) async {
-                        curVision = v;
-                        await pickModel('vision_model_$botId', v);
-                      }),
-                      _mLabel('生图模型'),
-                      _modelPicker(ctx, providers, curImageGen, (v) async {
-                        curImageGen = v;
-                        await pickModel('image_gen_model_$botId', v);
-                      }),
-                      // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
-                      _mLabel('STT模型'),
-                      _modelPicker(ctx, sttProviders, curStt, (v) async {
-                        curStt = v;
-                        await pickModel('stt_model_$botId', v);
-                      }),
-                      _mLabel('TTS模型'),
-                      _modelPicker(ctx, ttsProviders, curTts, (v) async {
-                        curTts = v;
-                        await pickModel('tts_model_$botId', v, isTts: true);
-                      }),
-                      _mLabel('最大上下文Token'),
-                      _tokenField(ctx, curTok, (v) async {
-                        curTok = v;
-                        await prefs.setInt('max_token_$botId', v);
-                        await DBManager().updateBot(botId, {'max_tokens': v});
-                        setSt(() {});
-                      }),
-                    ]))),
-                    const SizedBox(height: 12),
-                    TideDialogs.glassButton('确定',
-                        onTap: () => Navigator.pop(ctx)),
-                  ]));
+                  content: TideDialogs.glassContent(
+                      context: ctx,
+                      maxWidth: 0.9,
+                      children: [
+                        const Center(
+                            child: Text('模型设置',
+                                style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                    fontFamily: 'TideFont'))),
+                        const SizedBox(height: 12),
+                        Flexible(
+                            child: SingleChildScrollView(
+                                child: Column(children: [
+                          _mLabel('聊天模型'),
+                          _modelPicker(ctx, providers, curChat, (v) async {
+                            curChat = v;
+                            await pickModel('chat_model_$botId', v);
+                          }),
+                          _mLabel('备用模型'),
+                          _modelPicker(ctx, providers, curBak, (v) async {
+                            curBak = v;
+                            await pickModel('backup_model_$botId', v);
+                          }),
+                          _mLabel('识图模型'),
+                          _modelPicker(ctx, providers, curVision, (v) async {
+                            curVision = v;
+                            await pickModel('vision_model_$botId', v);
+                          }),
+                          _mLabel('生图模型'),
+                          _modelPicker(ctx, providers, curImageGen, (v) async {
+                            curImageGen = v;
+                            await pickModel('image_gen_model_$botId', v);
+                          }),
+                          // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
+                          _mLabel('STT模型'),
+                          _modelPicker(ctx, sttProviders, curStt, (v) async {
+                            curStt = v;
+                            await pickModel('stt_model_$botId', v);
+                          }),
+                          _mLabel('TTS模型'),
+                          _modelPicker(ctx, ttsProviders, curTts, (v) async {
+                            curTts = v;
+                            await pickModel('tts_model_$botId', v, isTts: true);
+                          }),
+                          _mLabel('最大上下文Token'),
+                          _tokenField(ctx, curTok, (v) async {
+                            curTok = v;
+                            await prefs.setInt('max_token_$botId', v);
+                            await DBManager()
+                                .updateBot(botId, {'max_tokens': v});
+                            setSt(() {});
+                          }),
+                        ]))),
+                        const SizedBox(height: 12),
+                        TideDialogs.glassButton('确定',
+                            onTap: () => Navigator.pop(ctx)),
+                      ]));
             }));
   }
 
@@ -1731,142 +1688,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         fontSize: 13,
                         color: TideTheme.of(ctx).textStrong,
                         fontFamily: 'TideFont')))));
-  }
-
-  Widget _chatModelPicker(
-    BuildContext ctx,
-    List<Map<String, dynamic>> providers,
-    List<File> localFiles,
-    String remoteId,
-    String localId, {
-    required Future<void> Function(String value) onRemotePick,
-    required Future<void> Function(String id) onLocalPick,
-  }) {
-    final remote = providers.firstWhereOrNull((p) => p['id'] == remoteId);
-    final localFile = localFiles.firstWhereOrNull(
-      (file) =>
-          file.path
-              .split(Platform.pathSeparator)
-              .last
-              .replaceFirst(RegExp(r'\.gguf$'), '') ==
-          localId,
-    );
-    final display = localFile != null
-        ? '本地 · $localId'
-        : remote != null
-            ? '${_providerTitle(remote)} · ${remote['model']?.toString().trim().isNotEmpty == true ? remote['model'].toString().trim() : '未填写模型名'}'
-            : providers.isEmpty && localFiles.isEmpty
-                ? '无可用模型'
-                : '未选择';
-
-    return GestureDetector(
-      onTap: () {
-        showTideSheet(
-          context: ctx,
-          height: 420,
-          child: ListView(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.block_rounded),
-                title: const Text('不选择',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
-                subtitle: const Text('清除当前聊天模型配置',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                trailing: remoteId.isEmpty && localId.isEmpty
-                    ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
-                    : null,
-                onTap: () async {
-                  await onLocalPick('');
-                  Navigator.pop(ctx);
-                },
-              ),
-              if (localFiles.isNotEmpty) ...[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Text('已下载的本地模型',
-                      style: TextStyle(
-                          fontFamily: 'TideFont', fontWeight: FontWeight.w600)),
-                ),
-                for (final file in localFiles)
-                  Builder(builder: (context) {
-                    final id = file.path
-                        .split(Platform.pathSeparator)
-                        .last
-                        .replaceFirst(RegExp(r'\.gguf$'), '');
-                    return ListTile(
-                      leading: const Icon(Icons.memory_rounded),
-                      title: Text(id,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontFamily: 'TideFont', fontSize: 14)),
-                      subtitle: Text(
-                        '本地 GGUF · ${(file.lengthSync() / 1024 / 1024).toStringAsFixed(1)} MB',
-                        style: const TextStyle(
-                            fontFamily: 'TideFont', fontSize: 12),
-                      ),
-                      trailing: localId == id
-                          ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
-                          : null,
-                      onTap: () async {
-                        await onLocalPick(id);
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  }),
-              ],
-              if (providers.isNotEmpty) ...[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Text('API 模型',
-                      style: TextStyle(
-                          fontFamily: 'TideFont', fontWeight: FontWeight.w600)),
-                ),
-                for (final provider in providers)
-                  ListTile(
-                    title: Text(_providerTitle(provider),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontFamily: 'TideFont', fontSize: 14)),
-                    subtitle: Text(_providerSub(provider),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontFamily: 'TideFont', fontSize: 12)),
-                    trailing: localId.isEmpty && remoteId == provider['id']
-                        ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
-                        : null,
-                    onTap: () async {
-                      await onRemotePick(provider['id'] as String);
-                      Navigator.pop(ctx);
-                    },
-                  ),
-              ],
-            ],
-          ),
-        );
-      },
-      child: Container(
-        height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: TideTheme.of(ctx).surfaceVariant,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(display,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 13,
-                  color: TideTheme.of(ctx).textStrong,
-                  fontFamily: 'TideFont')),
-        ),
-      ),
-    );
   }
 
   String _providerTitle(Map<String, dynamic> p) {

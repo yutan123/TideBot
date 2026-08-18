@@ -4,7 +4,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'db.dart';
 import 'ops.dart';
-import 'local_model_service.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
@@ -21,8 +20,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _database = 0,
       _apk = 0,
       _appData = 0,
-      _localModels = 0,
-      _localModelCount = 0,
       _total = 0;
   List<Map<String, dynamic>> _bots = [];
   final Map<String, int> _chatBytes = {};
@@ -49,22 +46,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
     return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
   }
 
-  Future<({int bytes, int count})> _modelStorage(Directory docs) async {
-    var bytes = 0;
-    var count = 0;
-    if (!await docs.exists()) return (bytes: 0, count: 0);
-    await for (final entity in docs.list(followLinks: false)) {
-      if (entity is! File) continue;
-      final lower = entity.path.toLowerCase();
-      if (!lower.endsWith('.gguf') && !lower.endsWith('.gguf.part')) continue;
-      count++;
-      try {
-        bytes += await entity.length();
-      } catch (_) {}
-    }
-    return (bytes: bytes, count: count);
-  }
-
   Future<void> _loadAsync() async {
     final docs = await getApplicationDocumentsDirectory();
     final temp = await getTemporaryDirectory();
@@ -77,7 +58,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       dbFile.exists().then((yes) => yes ? dbFile.length() : 0),
       DBManager().getAllBots(),
       DBManager().chatStorageByBot(),
-      _modelStorage(docs),
     ]);
     if (!mounted) return;
     setState(() {
@@ -88,9 +68,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _chatBytes
         ..clear()
         ..addAll(values[4] as Map<String, int>);
-      final modelStorage = values[5] as ({int bytes, int count});
-      _localModels = modelStorage.bytes;
-      _localModelCount = modelStorage.count;
       _total = (native['total'] as num?)?.toInt() ?? 0;
       _apk = (native['apk'] as num?)?.toInt() ?? 0;
       _appData = (native['data'] as num?)?.toInt() ??
@@ -119,35 +96,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
           .showSnackBar(const SnackBar(content: Text('缓存已清理')));
       _loadAsync();
     }
-  }
-
-  Future<void> _clearLocalModels() async {
-    if (_localModelCount == 0) return;
-    final confirmed = await TideDialogs.show<bool>(
-          context: context,
-          builder: (ctx) => TideDialogSurface(
-            title: const Text('删除全部本地模型',
-                style: TextStyle(fontFamily: 'TideFont')),
-            content: Text(
-                '将删除 $_localModelCount 个 GGUF/未完成下载文件，共 ${_format(_localModels)}，并清除所有机器人对这些模型的选择。此操作无法撤销。',
-                style: const TextStyle(fontFamily: 'TideFont')),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('取消')),
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('全部删除')),
-            ],
-          ),
-        ) ??
-        false;
-    if (!confirmed) return;
-    await LocalModelService.instance.deleteAllModels();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('本地模型及下载残留已全部清理')));
-    await _loadAsync();
   }
 
   Future<void> _deleteSelected() async {
@@ -200,10 +148,6 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                   _row(Icons.data_object_rounded, '应用数据', _format(_appData)),
                   _row(Icons.storage_rounded, '聊天数据库（已含于应用数据）',
                       _format(_database)),
-                  _row(Icons.memory_rounded, '本地模型（$_localModelCount 个文件）',
-                      _format(_localModels),
-                      action: _localModelCount == 0 ? null : '全部删除',
-                      onTap: _clearLocalModels),
                   _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
                       action: '清理', onTap: _clearCache)
                 ])),
