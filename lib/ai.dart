@@ -172,6 +172,12 @@ class AIManager {
       if (message is Map) {
         final content = fromValue(message['content']);
         if (content.isNotEmpty) return content;
+        // DeepSeek-compatible endpoints occasionally place the only human
+        // readable answer in reasoning_content while content is empty.
+        final reasoning = fromValue(message['reasoning_content'] ??
+            message['reasoning'] ??
+            message['analysis']);
+        if (reasoning.isNotEmpty) return reasoning;
       }
       final text = fromValue(choice['text']);
       if (text.isNotEmpty) return text;
@@ -2102,7 +2108,8 @@ $transcript''';
         'type': 'function',
         'function': {
           'name': 'generate_image',
-          'description': '仅在用户明确要求生成、绘制或创作图片时调用。',
+          'description':
+              '当用户明确需要照片、图片、插画、绘制或创作视觉内容时必须调用；在你判断图片能明显帮助当前回答时也可以调用。',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -2297,7 +2304,8 @@ $transcript''';
       final styleRule = style.isEmpty || style == '不选择'
           ? '图片风格由你根据用户需求自行决定。'
           : '所有图片必须采用“$style”风格。';
-      parts.add('【已授权工具：生图】当用户明确需要图片时，可建议使用生图；$styleRule 不要声称已生成不存在的图片。');
+      parts.add(
+          '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule 不要声称已生成不存在的图片。');
     }
     if (await db.getKV('web_search_enabled') == 'true') {
       final provider = _normalizeSearchProvider(

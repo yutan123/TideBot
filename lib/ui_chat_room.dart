@@ -955,6 +955,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
+  Future<void> _retryMessage(Map<String, dynamic> message) async {
+    if (_loading) return;
+    final text = message['content']?.toString().trim() ?? '';
+    if (text.isEmpty) return;
+    message.remove('error_log');
+    message.remove('error_code');
+    message.remove('error_message');
+    message.remove('error_text');
+    await DBManager().clearMessageError(message['id'].toString());
+    if (!mounted) return;
+    setState(() {
+      _msgC.text = text;
+      _hasText = true;
+    });
+    await _send(noUserBubble: true);
+  }
+
   List<Map<String, dynamic>> _buildAttachmentMessages({
     required String botId,
     required int timestamp,
@@ -1926,9 +1943,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     style: TextStyle(fontFamily: 'TideFont')),
                 onTap: () async {
                   Navigator.pop(sheetContext);
-                  _msgC.text = text;
-                  _hasText = text.isNotEmpty;
-                  await _send();
+                  await _retryMessage(msg);
                 },
               ),
             // 引用功能已移除，避免生成和维护 reply_to_id 关联。

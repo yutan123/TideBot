@@ -172,6 +172,21 @@ class ExternalApiService {
         }
         if (text.isEmpty) return _error(request, 400, '未找到 user 文本消息');
         final sync = await db.getKV('external_api_sync_messages') != 'false';
+        // Inbound platform traffic is persisted as a normal TideBot turn.
+        // App-originated messages never enter this HTTP handler, so they are
+        // not echoed back to external platforms.
+        if (sync) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          await db.insertMessage({
+            'id': 'external_u_$now',
+            'bot_id': botId,
+            'role': 'user',
+            'type': 'text',
+            'content': text,
+            'file_path': null,
+            'timestamp': now,
+          });
+        }
         final result = await AIManager().sendMessage(
           botId: botId,
           text: text,

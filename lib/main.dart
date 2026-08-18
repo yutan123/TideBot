@@ -27,6 +27,7 @@ import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
 import 'daily_launch_animation.dart';
+import 'plugin_fab_menu.dart';
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
@@ -1060,6 +1061,12 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
               onTap: _onDockTap,
             ),
           ),
+          if (_idx == 3)
+            Positioned(
+              right: 20,
+              bottom: bottomPadding + 76,
+              child: PluginFabMenu(theme: theme),
+            ),
           // 聊天列表创建机器人悬浮球
           if (_idx == 0)
             Positioned(

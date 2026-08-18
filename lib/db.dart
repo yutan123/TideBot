@@ -426,6 +426,16 @@ class DBManager {
     );
   }
 
+  Future<void> clearMessageError(String id) async {
+    final db = await database;
+    await db.update(
+      'chat_history',
+      {'error_log': null, 'error_code': null, 'error_message': null},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
     final db = await database;
     return await db.query('chat_history',
