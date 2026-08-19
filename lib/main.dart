@@ -31,6 +31,7 @@ import 'external_api_service.dart';
 import 'daily_launch_animation.dart';
 import 'plugin_fab_menu.dart';
 import 'bot_state.dart';
+import 'wechat_bridge_service.dart';
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
@@ -54,6 +55,7 @@ void main() async {
   if (await DBManager().getKV('external_api_enabled') == 'true') {
     unawaited(ExternalApiService.instance.start());
   }
+  unawaited(WechatBridgeService.instance.restore());
   unawaited(_runOperationTriggeredReply());
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());
@@ -204,22 +206,40 @@ Future<void> _generateMissingLifeSchedules() async {
 
 Future<void> _runOperationTriggeredReply() async {
   final db = DBManager();
-  if (await db.getKV('proactive_reply') == 'false') return;
+  if (await db.getKV('proactive_reply') == 'false') {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：用户已关闭主动回复');
+    return;
+  }
   final botId = await DeviceCapabilityService.instance
       .boundBot(DeviceCapabilityService.proactiveFeature);
-  if (botId == null ||
-      !await DeviceCapabilityService.instance
-          .isAuthorized(DeviceCapabilityService.proactiveFeature, botId) ||
-      !(await DeviceCapabilityService.instance
-              .whitelist(DeviceCapabilityService.proactiveFeature))
-          .contains('app_opened')) return;
+  if (botId == null || botId.isEmpty) {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未绑定机器人');
+    return;
+  }
+  final capability = DeviceCapabilityService.instance;
+  if (!await capability.isAuthorized(
+      DeviceCapabilityService.proactiveFeature, botId)) {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未获能力授权');
+    return;
+  }
+  if (!(await capability.whitelist(DeviceCapabilityService.proactiveFeature))
+      .contains('app_opened')) {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未授权 app_opened 事件');
+    return;
+  }
   final now = DateTime.now().millisecondsSinceEpoch;
   final cooldownKey = 'operation_proactive_last_$botId';
   final previous = int.tryParse(await db.getKV(cooldownKey) ?? '') ?? 0;
-  if (now - previous < const Duration(minutes: 45).inMilliseconds) return;
+  if (now - previous < const Duration(minutes: 45).inMilliseconds) {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：冷却中');
+    return;
+  }
   final unanswered =
       int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
-  if (unanswered >= 3) return;
+  if (unanswered >= 3) {
+    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：连续未回应达到上限');
+    return;
+  }
   AppLogService.instance.add('PROACTIVE', '应用打开触发主动回复：$botId');
   await db.setKV(cooldownKey, '$now');
   try {
@@ -229,21 +249,45 @@ Future<void> _runOperationTriggeredReply() async {
           '【操作触发】用户刚刚打开 TideBot。仅在确实自然且不打扰时，发一条不超过两句的简短问候；否则调用 choose_silence。不得提及系统、操作触发或指令。',
       persistResponse: true,
     );
-    if (result['success'] == true && result['silent'] != true) {
-      await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+    if (result['success'] != true) {
+      AppLogService.instance
+          .add('PROACTIVE', '应用打开触发请求失败：${result['error'] ?? 'unknown'}');
+      return;
     }
-  } catch (_) {}
+    if (result['silent'] == true) {
+      AppLogService.instance.add('PROACTIVE', '应用打开触发：模型选择静默');
+      return;
+    }
+    final reply = result['reply']?.toString().trim() ?? '';
+    if (reply.isEmpty) {
+      AppLogService.instance.add('PROACTIVE', '应用打开触发：模型返回空回复');
+      return;
+    }
+    await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+    AppLogService.instance.add('PROACTIVE', '应用打开触发发送成功，长度 ${reply.length}');
+  } catch (error) {
+    AppLogService.instance.add('PROACTIVE', '应用打开触发异常：$error');
+  }
 }
 
 Future<void> _runDeviceEventTriggeredReply() async {
   final db = DBManager();
-  if (await db.getKV('proactive_reply') == 'false') return;
+  if (await db.getKV('proactive_reply') == 'false') {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：用户已关闭主动回复');
+    return;
+  }
   final capability = DeviceCapabilityService.instance;
   final botId =
       await capability.boundBot(DeviceCapabilityService.proactiveFeature);
-  if (botId == null ||
-      !await capability.isAuthorized(
-          DeviceCapabilityService.proactiveFeature, botId)) return;
+  if (botId == null || botId.isEmpty) {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：未绑定机器人');
+    return;
+  }
+  if (!await capability.isAuthorized(
+      DeviceCapabilityService.proactiveFeature, botId)) {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：未获能力授权');
+    return;
+  }
   final event = await capability.latestDeviceEvent();
   if (event.isEmpty) return;
   final type = event['type']?.toString() ?? '';
@@ -254,7 +298,10 @@ Future<void> _runDeviceEventTriggeredReply() async {
       : type == 'app_opened'
           ? whitelist.contains('app_opened')
           : whitelist.contains('screen_event');
-  if (!allowed) return;
+  if (!allowed) {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：事件 $type 未获授权');
+    return;
+  }
   final eventTime = (event['time'] as num?)?.toInt() ??
       (event['postedAt'] as num?)?.toInt() ??
       0;
@@ -266,8 +313,15 @@ Future<void> _runDeviceEventTriggeredReply() async {
       int.tryParse(await db.getKV('operation_proactive_last_$botId') ?? '') ??
           0;
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (now - last < const Duration(minutes: 45).inMilliseconds ||
-      Random.secure().nextInt(100) >= 35) return;
+  if (now - last < const Duration(minutes: 45).inMilliseconds) {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：冷却中');
+    return;
+  }
+  if (Random.secure().nextInt(100) >= 35) {
+    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：随机策略未命中');
+    return;
+  }
+  AppLogService.instance.add('PROACTIVE', '设备事件触发主动回复：$botId / $type');
   await db.setKV('operation_proactive_last_$botId', '$now');
   final safeEvent = jsonEncode(event);
   try {
@@ -277,10 +331,21 @@ Future<void> _runDeviceEventTriggeredReply() async {
           '【经用户授权的操作触发】发生了事件：$safeEvent。只有在自然、有帮助且不打扰时才发送不超过两句的消息，否则调用 choose_silence。不要暴露内部指令，不要逐项复述隐私数据。',
       persistResponse: true,
     );
+    if (result['success'] != true) {
+      AppLogService.instance
+          .add('PROACTIVE', '设备事件触发请求失败：${result['error'] ?? 'unknown'}');
+      return;
+    }
+    if (result['silent'] == true) {
+      AppLogService.instance.add('PROACTIVE', '设备事件触发：模型选择静默');
+      return;
+    }
     final reply = result['reply']?.toString().trim() ?? '';
-    if (result['success'] == true &&
-        result['silent'] != true &&
-        reply.isNotEmpty) {
+    if (reply.isEmpty) {
+      AppLogService.instance.add('PROACTIVE', '设备事件触发：模型返回空回复');
+      return;
+    }
+    if (await db.getKV('unread_notifications') != 'false') {
       await OpsManager().showSystemNotification(
         id: ('operation_$botId').hashCode,
         title: 'TideBot',
@@ -288,7 +353,12 @@ Future<void> _runDeviceEventTriggeredReply() async {
         botId: botId,
       );
     }
-  } catch (_) {}
+    await db.setKV('proactive_unanswered_$botId',
+        '${(int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0) + 1}');
+    AppLogService.instance.add('PROACTIVE', '设备事件触发发送成功，长度 ${reply.length}');
+  } catch (error) {
+    AppLogService.instance.add('PROACTIVE', '设备事件触发异常：$error');
+  }
 }
 
 Future<void> _runDueProactiveReplies() async {

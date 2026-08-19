@@ -5,7 +5,37 @@ import 'package:http/http.dart' as http;
 import 'app_log_service.dart';
 import 'db.dart';
 
-/// The executable, declarative part of a TideBot plugin. Plugins never load
+class PluginSandboxPolicy {
+  const PluginSandboxPolicy._();
+
+  static const maxSkills = 20;
+  static const maxSkillInstructionBytes = 4000;
+  static const maxMcpServers = 5;
+  static const maxToolArgumentsBytes = 64 * 1024;
+  static const maxResponseBytes = 1024 * 1024;
+  static const requestTimeout = Duration(seconds: 25);
+}
+
+/// Host-owned capability boundary for declarative plugins.
+/// No plugin-provided code, process, file path, or native library is loaded.
+class PluginSandbox {
+  PluginSandbox._();
+  static final instance = PluginSandbox._();
+
+  Future<T> run<T>(String pluginId, Future<T> Function() operation) async {
+    AppLogService.instance.add('PLUGIN_SANDBOX', '开始执行：$pluginId');
+    try {
+      final result =
+          await operation().timeout(PluginSandboxPolicy.requestTimeout);
+      AppLogService.instance.add('PLUGIN_SANDBOX', '执行完成：$pluginId');
+      return result;
+    } catch (error) {
+      AppLogService.instance.add('PLUGIN_SANDBOX', '执行隔离失败：$pluginId：$error');
+      rethrow;
+    }
+  }
+}
+
 /// Dart or JavaScript: skills are prompt fragments and MCP is JSON-RPC over
 /// explicitly authorised HTTP endpoints.
 class PluginRuntime {
@@ -42,7 +72,8 @@ class PluginRuntime {
     for (final plugin in await _enabledPlugins()) {
       final skills = plugin['skills'];
       if (skills is! List) continue;
-      for (final raw in skills.whereType<Map>()) {
+      for (final raw
+          in skills.take(PluginSandboxPolicy.maxSkills).whereType<Map>()) {
         final skill = Map<String, dynamic>.from(raw);
         if (skill['enabled'] == false) continue;
         final targets = skill['bot_ids'];
@@ -53,10 +84,15 @@ class PluginRuntime {
         }
         final instruction = skill['instructions']?.toString().trim() ?? '';
         if (instruction.isEmpty) continue;
+        final boundedInstruction =
+            instruction.length > PluginSandboxPolicy.maxSkillInstructionBytes
+                ? instruction.substring(
+                    0, PluginSandboxPolicy.maxSkillInstructionBytes)
+                : instruction;
         final name = skill['name']?.toString().trim() ??
             plugin['name']?.toString() ??
             '插件技能';
-        parts.add('【插件 Skill：$name】$instruction');
+        parts.add('【插件 Skill：$name】$boundedInstruction');
       }
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
@@ -217,22 +253,36 @@ class PluginRuntime {
       configuredHeaders
           .forEach((key, value) => headers[key.toString()] = value.toString());
     }
+    final result = await PluginSandbox.instance.run(
+      plugin['id']?.toString() ?? 'unknown',
+      () => _rpcRequest(uri, headers, method, params),
+    );
+    return result;
+  }
+
+  Future<dynamic> _rpcRequest(Uri uri, Map<String, String> headers,
+      String method, Map<String, dynamic> params) async {
+    final encoded = jsonEncode({
+      'jsonrpc': '2.0',
+      'id': DateTime.now().microsecondsSinceEpoch,
+      'method': method,
+      'params': params,
+    });
+    if (encoded.length > PluginSandboxPolicy.maxToolArgumentsBytes) {
+      throw StateError('插件请求超过 64 KB 限制');
+    }
     final response = await http
-        .post(uri,
-            headers: headers,
-            body: jsonEncode({
-              'jsonrpc': '2.0',
-              'id': DateTime.now().microsecondsSinceEpoch,
-              'method': method,
-              'params': params,
-            }))
-        .timeout(const Duration(seconds: 25));
+        .post(uri, headers: headers, body: encoded)
+        .timeout(PluginSandboxPolicy.requestTimeout);
     if (response.contentLength != null &&
-        response.contentLength! > 1024 * 1024) {
+        response.contentLength! > PluginSandboxPolicy.maxResponseBytes) {
       throw StateError('MCP 响应超过 1 MB 限制');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('HTTP ${response.statusCode}');
+    }
+    if (response.bodyBytes.length > PluginSandboxPolicy.maxResponseBytes) {
+      throw StateError('MCP 响应超过 1 MB 限制');
     }
     final body = jsonDecode(utf8.decode(response.bodyBytes));
     if (body is! Map) throw StateError('MCP 返回不是 JSON 对象');

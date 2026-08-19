@@ -2462,6 +2462,45 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             text: TextSpan(children: spans)));
   }
 
+  IconData _attachmentIcon(String path) {
+    final extension = path.split('.').last.toLowerCase();
+    if (const {'zip', 'rar', '7z', 'tar', 'gz'}.contains(extension)) {
+      return Icons.folder_zip_rounded;
+    }
+    if (const {
+      'dart',
+      'js',
+      'ts',
+      'py',
+      'java',
+      'kt',
+      'cpp',
+      'c',
+      'html',
+      'css',
+      'json',
+      'yaml',
+      'yml',
+      'xml',
+      'md'
+    }.contains(extension)) {
+      return Icons.code_rounded;
+    }
+    if (const {'pdf', 'doc', 'docx', 'txt', 'rtf'}.contains(extension)) {
+      return Icons.description_rounded;
+    }
+    if (const {'xls', 'xlsx', 'csv'}.contains(extension)) {
+      return Icons.table_chart_rounded;
+    }
+    if (const {'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'}.contains(extension)) {
+      return Icons.audio_file_rounded;
+    }
+    if (const {'mp4', 'mov', 'mkv', 'avi', 'webm'}.contains(extension)) {
+      return Icons.video_file_rounded;
+    }
+    return Icons.insert_drive_file_rounded;
+  }
+
   Widget _attachmentPreview(dynamic theme) {
     final paths = [..._pendingImages, ..._pendingDocuments];
     if (paths.isEmpty) return const SizedBox.shrink();
@@ -2482,19 +2521,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   borderRadius: BorderRadius.circular(6),
                   child: isImage
                       ? Image.file(File(path), fit: BoxFit.cover)
-                      : Container(
-                          color: theme.surfaceVariant,
-                          alignment: Alignment.center,
-                          padding: const EdgeInsets.all(6),
-                          child: Text(
-                            path.split(Platform.pathSeparator).last,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: theme.textWeak,
-                                fontFamily: 'TideFont'),
+                      : Tooltip(
+                          message: path.split(Platform.pathSeparator).last,
+                          child: Container(
+                            color: theme.surfaceVariant,
+                            alignment: Alignment.center,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Row(children: [
+                              Icon(_attachmentIcon(path),
+                                  size: 22, color: theme.primary),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  path.split(Platform.pathSeparator).last,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      color: theme.textWeak,
+                                      fontFamily: 'TideFont'),
+                                ),
+                              ),
+                            ]),
                           ),
                         ),
                 ),

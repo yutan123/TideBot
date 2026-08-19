@@ -115,24 +115,34 @@ class _CallPageState extends State<CallPage>
 
   Future<void> _startListening() async {
     if (_muted || _processing || _recording) return;
-    if (!await AppPermissions.microphone(context)) return;
-    // 停止任何正在播放的机器人语音后再聆听。
-    if (_player.state == PlayerState.playing) await _player.stop();
-    final dir = await getApplicationDocumentsDirectory();
-    final path =
-        '${dir.path}/call_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
-      path: path,
-    );
-    _startAmpMonitor();
-    _silentTicks = 0;
-    _ensureAutoStopTimer();
-    if (mounted) {
-      setState(() {
-        _recording = true;
-        _caption = '正在聆听，请说话…';
-      });
+    AppLogService.instance.add('VOICE_CALL', '请求麦克风权限');
+    if (!await AppPermissions.microphone(context)) {
+      AppLogService.instance.add('VOICE_CALL', '麦克风权限未授予');
+      return;
+    }
+    try {
+      // 停止任何正在播放的机器人语音后再聆听。
+      if (_player.state == PlayerState.playing) await _player.stop();
+      final dir = await getApplicationDocumentsDirectory();
+      final path =
+          '${dir.path}/call_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
+        path: path,
+      );
+      _startAmpMonitor();
+      _silentTicks = 0;
+      _ensureAutoStopTimer();
+      AppLogService.instance.add('VOICE_CALL', '录音已启动：$path');
+      if (mounted) {
+        setState(() {
+          _recording = true;
+          _caption = '正在聆听，请说话…';
+        });
+      }
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '录音启动失败：$error');
+      if (mounted) setState(() => _caption = '无法开始录音：$error');
     }
   }
 
@@ -140,55 +150,82 @@ class _CallPageState extends State<CallPage>
     _autoStopTimer?.cancel();
     _stopAmpMonitor();
     if (!_recording) return;
-    final path = await _recorder.stop();
-    if (mounted) {
-      setState(() {
-        _recording = false;
-        _recordingPath = path;
-      });
+    try {
+      final path = await _recorder.stop();
+      AppLogService.instance
+          .add('VOICE_CALL', path == null ? '录音未生成文件' : '录音已停止：$path');
+      if (mounted) {
+        setState(() {
+          _recording = false;
+          _recordingPath = path;
+        });
+      }
+      _vadActive = false;
+      if (path != null && path.isNotEmpty) await _runVoiceTurn();
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '录音停止失败：$error');
+      if (mounted) setState(() => _caption = '录音处理失败：$error');
     }
-    _vadActive = false;
-    if (path != null && path.isNotEmpty) await _runVoiceTurn();
   }
 
   Future<void> _runVoiceTurn() async {
-    if (_processing || !widget.hasStt || _recordingPath == null) return;
+    if (_processing || _recordingPath == null) return;
+    if (!widget.hasStt) {
+      AppLogService.instance.add('VOICE_CALL', 'STT 不可用，无法识别本次录音');
+      if (mounted) setState(() => _caption = '未配置语音识别服务，可在设置中启用 STT');
+      return;
+    }
     setState(() {
       _processing = true;
       _caption = '正在识别语音…';
     });
-    AppLogService.instance.add('VOICE_CALL', '开始识别 ${_recordingPath!}');
+    AppLogService.instance.add('VOICE_CALL', 'STT 开始：${_recordingPath!}');
     try {
       final text = await AIManager()
           .transcribeAudio(
               botId: widget.bot['id'].toString(), audioPath: _recordingPath!)
           .timeout(const Duration(seconds: 45));
       if (text == null || text.trim().isEmpty) {
+        AppLogService.instance.add('VOICE_CALL', 'STT 返回空文本');
         if (mounted) setState(() => _caption = '没有识别到语音');
         return;
       }
+      AppLogService.instance
+          .add('VOICE_CALL', 'STT 成功，文本长度 ${text.trim().length}');
       if (mounted) setState(() => _caption = text);
+      AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
       final reply = await AIManager()
           .sendMessage(botId: widget.bot['id'].toString(), text: text)
           .timeout(const Duration(minutes: 2));
       final answer =
           reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
       if (answer.isEmpty) {
-        if (mounted)
+        AppLogService.instance
+            .add('VOICE_CALL', 'AI 返回空回复：${reply['error'] ?? 'unknown'}');
+        if (mounted) {
           setState(() => _caption = reply['error']?.toString() ?? '机器人没有返回回复');
+        }
         return;
       }
+      AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
-      if (ttsId.isNotEmpty) {
-        final audioPath = await AIManager().generateTTS(answer, ttsId);
-        if (audioPath != null && audioPath.isNotEmpty) {
-          if (mounted) setState(() => _caption = '正在说话…');
-          await _playBotReply(audioPath);
-        }
+      if (ttsId.isEmpty || !widget.hasTts) {
+        AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，保留文字回复');
+        return;
       }
-    } catch (e) {
-      if (mounted) setState(() => _caption = '语音通话失败：$e');
+      AppLogService.instance.add('VOICE_CALL', 'TTS 生成开始：$ttsId');
+      final audioPath = await AIManager().generateTTS(answer, ttsId);
+      if (audioPath == null || audioPath.isEmpty) {
+        AppLogService.instance.add('VOICE_CALL', 'TTS 未生成音频，保留文字回复');
+        return;
+      }
+      AppLogService.instance.add('VOICE_CALL', 'TTS 生成成功，开始播放');
+      if (mounted) setState(() => _caption = '正在说话…');
+      await _playBotReply(audioPath);
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '语音轮次失败：$error');
+      if (mounted) setState(() => _caption = '语音通话失败：$error');
     } finally {
       if (mounted) {
         setState(() => _processing = false);
@@ -200,6 +237,7 @@ class _CallPageState extends State<CallPage>
   /// 播放机器人回复；播放期间监听录音，检测到用户声音（超过分贝阈值）即打断，
   /// 让用户随时插话。
   Future<void> _playBotReply(String audioPath) async {
+    AppLogService.instance.add('VOICE_CALL', '开始播放 TTS 音频');
     final dir = await getApplicationDocumentsDirectory();
     final vadPath =
         '${dir.path}/call_vad_${DateTime.now().millisecondsSinceEpoch}.m4a';
@@ -233,6 +271,7 @@ class _CallPageState extends State<CallPage>
     await stateSub.cancel();
     _stopAmpMonitor();
     await _recorder.stop();
+    AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
   }
 
   @override

@@ -15,6 +15,19 @@ import 'theme.dart';
 class PluginRegistry {
   static const _key = 'local_plugin_registry';
 
+  static PluginCheckResult validateManifest(Map<String, dynamic> manifest) {
+    final normalized = _normalizeManifest(manifest);
+    return PluginSecurityScanner.scanBytes(
+      Uint8List.fromList(utf8.encode(jsonEncode(normalized))),
+    );
+  }
+
+  static String _categoryLabel(String category) => switch (category) {
+        'skill' => 'Skills',
+        'mcp' => 'MCP',
+        _ => '插件',
+      };
+
   static Future<List<Map<String, dynamic>>> load() async {
     final raw = await DBManager().getKV(_key);
     if (raw == null || raw.isEmpty) return [];
@@ -30,8 +43,7 @@ class PluginRegistry {
 
   static Future<void> save(List<Map<String, dynamic>> plugins) =>
       DBManager().setKV(_key, jsonEncode(plugins));
-
-  static Future<void> importManifest() async {
+  static Future<void> importManifest({String? expectedCategory}) async {
     final picked = await FilePicker.platform
         .pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
     final file = picked?.files.single;
@@ -39,7 +51,20 @@ class PluginRegistry {
     final bytes = file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) throw const FormatException('未读取到插件文件');
-    await installManifestBytes(bytes);
+    await installManifestBytes(bytes, expectedCategory: expectedCategory);
+  }
+
+  static String categoryOf(Map<String, dynamic> manifest) {
+    final explicit = manifest['category']?.toString() ?? '';
+    if (explicit == 'skill' || explicit == 'mcp' || explicit == 'plugin') {
+      return explicit;
+    }
+    if (manifest['mcp_servers'] is List &&
+        (manifest['mcp_servers'] as List).isNotEmpty) return 'mcp';
+    if (manifest['skills'] is List && (manifest['skills'] as List).isNotEmpty) {
+      return 'skill';
+    }
+    return 'plugin';
   }
 
   static Map<String, dynamic> _normalizeManifest(
@@ -59,10 +84,15 @@ class PluginRegistry {
     }..remove('capabilities');
   }
 
-  static Future<void> installManifestBytes(Uint8List bytes) async {
+  static Future<void> installManifestBytes(Uint8List bytes,
+      {String? expectedCategory}) async {
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is! Map) throw const FormatException('插件清单必须是 JSON 对象');
     final normalized = _normalizeManifest(Map<String, dynamic>.from(decoded));
+    final category = categoryOf(normalized);
+    if (expectedCategory != null && expectedCategory != category) {
+      throw FormatException('该清单属于${_categoryLabel(category)}，请选择对应类别导入');
+    }
     final normalizedBytes =
         Uint8List.fromList(utf8.encode(jsonEncode(normalized)));
     final report = PluginSecurityScanner.scanBytes(normalizedBytes);
@@ -72,6 +102,7 @@ class PluginRegistry {
     final plugins = await load();
     final index = plugins.indexWhere((plugin) => plugin['id'] == id);
     final entry = Map<String, dynamic>.from(manifest)
+      ..['category'] = category
       ..['enabled'] = false
       ..['needs_health_check'] = true
       ..['granted_permissions'] = index >= 0 &&
@@ -94,12 +125,21 @@ class PluginCenterPage extends StatefulWidget {
   State<PluginCenterPage> createState() => _PluginCenterPageState();
 }
 
-class _PluginCenterPageState extends State<PluginCenterPage> {
+class _PluginCenterPageState extends State<PluginCenterPage>
+    with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _plugins = [];
+  late final TabController _tabs;
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 3, vsync: this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -136,50 +176,78 @@ class _PluginCenterPageState extends State<PluginCenterPage> {
     return labels.isEmpty ? '基础插件' : labels.join(' · ');
   }
 
+  List<Map<String, dynamic>> _forCategory(String category) => _plugins
+      .where((plugin) => PluginRegistry.categoryOf(plugin) == category)
+      .toList();
+
+  Widget _categoryList(String category, String emptyText, IconData icon) {
+    final theme = TideTheme.of(context);
+    final entries = _forCategory(category);
+    if (entries.isEmpty) {
+      return Center(
+        child: Text(emptyText,
+            style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: entries.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, index) {
+        final plugin = entries[index];
+        final storedIndex = _plugins.indexOf(plugin);
+        final permissions = (plugin['granted_permissions'] as List? ?? const [])
+            .map((value) => value.toString())
+            .join(', ');
+        final health = plugin['needs_health_check'] == true
+            ? '待检测'
+            : (plugin['enabled'] == true ? '正常' : '已停用');
+        final source =
+            plugin['source']?.toString() ?? _capabilitySummary(plugin);
+        final version = plugin['version']?.toString() ?? '未标注版本';
+        return ListTile(
+          onTap: () => _openPlugin(plugin),
+          tileColor: theme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          leading: Icon(icon, color: theme.primary),
+          title: Text(plugin['name']?.toString() ?? '未命名',
+              style: const TextStyle(fontFamily: 'TideFont')),
+          subtitle: Text(
+              '$source  |  $version\n$health${permissions.isEmpty ? '' : '  |  权限：$permissions'}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+          trailing: Switch(
+            value: plugin['enabled'] == true,
+            onChanged: (value) => _toggle(storedIndex, value),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
       backgroundColor: theme.bgColor,
-      appBar: AppBar(title: const Text('插件'), backgroundColor: theme.bgColor),
-      body: _plugins.isEmpty
-          ? Center(
-              child: Text('还没有本地插件',
-                  style:
-                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')))
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: _plugins.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, index) {
-                final plugin = _plugins[index];
-                return ListTile(
-                  onTap: () => _openPlugin(plugin),
-                  tileColor: theme.surface,
-                  leading: Icon(Icons.extension_rounded, color: theme.primary),
-                  title: Text(plugin['name']?.toString() ?? '未命名插件',
-                      style: const TextStyle(fontFamily: 'TideFont')),
-                  subtitle: Text(
-                      plugin['description']?.toString() ??
-                          plugin['id']?.toString() ??
-                          '',
-                      style: const TextStyle(fontFamily: 'TideFont')),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_capabilitySummary(plugin),
-                          style:
-                              TextStyle(color: theme.textWeak, fontSize: 12)),
-                      const SizedBox(width: 6),
-                      Switch(
-                        value: plugin['enabled'] != false,
-                        onChanged: (value) => _toggle(index, value),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+      appBar: AppBar(
+        title: const Text('插件中心'),
+        backgroundColor: theme.bgColor,
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: const [Tab(text: 'Skills'), Tab(text: 'MCP'), Tab(text: '插件')],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          _categoryList(
+              'skill', '还没有已安装的 Skills', Icons.psychology_alt_rounded),
+          _categoryList('mcp', '还没有已安装的 MCP 服务', Icons.hub_rounded),
+          _categoryList('plugin', '还没有已安装的插件', Icons.extension_rounded),
+        ],
+      ),
     );
   }
 }
@@ -254,16 +322,65 @@ class _PluginDeveloperPageState extends State<PluginDeveloperPage> {
   }
 
   Future<void> _installOutput() async {
+    Map<String, dynamic> manifest;
     try {
-      final manifest = jsonDecode(_output);
-      if (manifest is! Map) throw const FormatException('AI 输出不是 JSON');
-      await PluginRegistry.installManifestBytes(
-          Uint8List.fromList(utf8.encode(jsonEncode(manifest))));
-      if (mounted) {
-        GlobalNotice.show('插件已安装，可在插件列表中授权并打开');
-      }
+      final parsed = jsonDecode(_output);
+      if (parsed is! Map) throw const FormatException('AI 输出不是 JSON');
+      manifest = Map<String, dynamic>.from(parsed);
     } catch (_) {
-      GlobalNotice.show('请先生成有效插件清单', color: const Color(0xFFE74C3C));
+      if (mounted) {
+        GlobalNotice.show('请先生成有效插件清单', color: const Color(0xFFE74C3C));
+      }
+      return;
+    }
+    final report = PluginRegistry.validateManifest(manifest);
+    if (!report.isSafe) {
+      if (mounted) {
+        GlobalNotice.show('校验失败：${report.message}',
+            color: const Color(0xFFE74C3C));
+      }
+      return;
+    }
+    final category = PluginRegistry.categoryOf(manifest);
+    final permissions = (manifest['permissions'] as List? ?? const [])
+        .map((value) => value.toString())
+        .join('、');
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认安装插件'),
+        content: Text(
+          '类型：${category == 'skill' ? 'Skills' : category == 'mcp' ? 'MCP' : '插件'}\n'
+          '名称：${manifest['name'] ?? '未命名'}\n'
+          '版本：${manifest['version'] ?? '未标注'}\n'
+          '权限：${permissions.isEmpty ? '无' : permissions}\n\n'
+          '${report.warnings.isEmpty ? '静态校验通过。' : '提示：${report.warnings.join('；')}'}\n\n'
+          '安装后默认保持停用，需在详情页授权并完成健康检查后再启用。',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('安装')),
+        ],
+      ),
+    );
+    if (approved != true) return;
+    try {
+      await PluginRegistry.installManifestBytes(
+        Uint8List.fromList(utf8.encode(jsonEncode(manifest))),
+        expectedCategory: category,
+      );
+      if (mounted) {
+        GlobalNotice.show(
+            '插件已安装到${category == 'skill' ? 'Skills' : category == 'mcp' ? 'MCP' : '插件'}列表，请先授权并检测');
+      }
+    } catch (error) {
+      if (mounted) {
+        GlobalNotice.show('安装失败：$error', color: const Color(0xFFE74C3C));
+      }
     }
   }
 

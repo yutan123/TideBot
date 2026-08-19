@@ -3,17 +3,33 @@ import 'package:flutter/material.dart';
 import 'db.dart';
 import 'theme.dart';
 
-class DiaryCalendarPage extends StatefulWidget {
+class DiaryCalendarWidget extends StatefulWidget {
+  final String botId;
+  final String botName;
+  const DiaryCalendarWidget(
+      {super.key, required this.botId, required this.botName});
+
+  @override
+  State<DiaryCalendarWidget> createState() => _DiaryCalendarWidgetState();
+}
+
+class DiaryCalendarPage extends StatelessWidget {
   final String botId;
   final String botName;
   const DiaryCalendarPage(
       {super.key, required this.botId, required this.botName});
 
   @override
-  State<DiaryCalendarPage> createState() => _DiaryCalendarPageState();
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: TideTheme.of(context).bgColor,
+        appBar: AppBar(
+            title: Text('$botName的日记'),
+            backgroundColor: TideTheme.of(context).bgColor),
+        body: DiaryCalendarWidget(botId: botId, botName: botName),
+      );
 }
 
-class _DiaryCalendarPageState extends State<DiaryCalendarPage> {
+class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
   Set<String> _dates = <String>{};
   bool _loading = true;
@@ -50,6 +66,7 @@ class _DiaryCalendarPageState extends State<DiaryCalendarPage> {
         ),
       ),
     );
+    await _loadDates();
   }
 
   @override

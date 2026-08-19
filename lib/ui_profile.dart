@@ -20,6 +20,7 @@ import 'life_schedule_service.dart';
 import 'life_schedule_pool_page.dart';
 import 'advanced_settings_page.dart';
 import 'storage_management_page.dart';
+import 'wechat_connection_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -39,6 +40,7 @@ class _ProfilePageState extends State<ProfilePage> {
       'title': '高级设置',
       'page': 'advanced'
     },
+    {'icon': Icons.chat_rounded, 'title': '连接到微信', 'page': 'wechat'},
     {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
     {'icon': Icons.analytics_rounded, 'title': '数据大盘', 'page': 'dashboard'},
     {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
@@ -375,6 +377,10 @@ class _ProfilePageState extends State<ProfilePage> {
         break;
       case 'advanced':
         _showAdvancedSettings();
+        break;
+      case 'wechat':
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const WechatConnectionPage()));
         break;
       case 'notify':
         _showNotificationSettings();
@@ -757,6 +763,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _timeAwareness = true;
   bool _proactiveReply = true;
   bool _botPosts = false;
+  bool _botPostsWithImages = false;
   bool _lifeSchedule = true;
   bool _imageGeneration = true;
   bool _webSearch = false;
@@ -788,6 +795,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       TextEditingController(text: '90');
   final TextEditingController _botPostsPerDayController =
       TextEditingController(text: '1');
+  final TextEditingController _botPostsImageChanceController =
+      TextEditingController(text: '50');
 
   @override
   void initState() {
@@ -818,6 +827,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final timeAwareness = await db.getKV('time_awareness');
     final proactiveReply = await db.getKV('proactive_reply');
     final botPosts = await db.getKV('bot_posts_enabled');
+    final botPostsWithImages = await db.getKV('bot_posts_with_images');
+    final botPostsImageChance =
+        int.tryParse(await db.getKV('bot_posts_image_chance') ?? '');
     final lifeSchedule = await db.getKV('life_schedule_enabled');
     if (mounted) setState(() => _adaptiveSilence = adaptiveSilence != 'false');
     final imageGeneration = await db.getKV('bot_image_generation_enabled');
@@ -852,6 +864,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
+      _botPostsWithImages = botPostsWithImages == 'true';
+      _botPostsImageChanceController.text =
+          (botPostsImageChance ?? 50).clamp(1, 100).toString();
       _lifeSchedule = lifeSchedule != 'false';
       _imageGeneration = imageGeneration != 'false';
       // 自定义风格是任意文本（如“水彩插画”），不能只按预设白名单判定；
@@ -886,6 +901,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     _proactiveMinController.dispose();
     _proactiveMaxController.dispose();
     _botPostsPerDayController.dispose();
+    _botPostsImageChanceController.dispose();
     _searchKeyController.dispose();
     _voiceReplyChanceController.dispose();
     _stickerChanceController.dispose();
@@ -1532,7 +1548,40 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   setState(() => _botPosts = v);
                   _save('bot_posts_enabled', '$v');
                 },
-                child: _botPosts ? _compactPostsPerDay(theme) : null,
+                child: _botPosts
+                    ? Column(children: [
+                        _compactPostsPerDay(theme),
+                        _settingSwitch(
+                          theme: theme,
+                          title: '随机发布带图动态',
+                          help: '默认关闭。命中概率后会使用已授权的生图模型；生成失败时照常发布纯文本。',
+                          value: _botPostsWithImages,
+                          onChanged: (v) {
+                            setState(() => _botPostsWithImages = v);
+                            _save('bot_posts_with_images', '$v');
+                          },
+                          child: _botPostsWithImages
+                              ? TextField(
+                                  controller: _botPostsImageChanceController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: _roundInput(theme,
+                                      label: '带图概率（1–100）',
+                                      icon: Icon(Icons.image_rounded,
+                                          color: theme.primary)),
+                                  onChanged: (value) {
+                                    final chance = int.tryParse(value);
+                                    if (chance != null &&
+                                        chance >= 1 &&
+                                        chance <= 100) {
+                                      _save(
+                                          'bot_posts_image_chance', '$chance');
+                                    }
+                                  },
+                                )
+                              : null,
+                        ),
+                      ])
+                    : null,
               ),
             ]),
           ),

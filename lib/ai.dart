@@ -15,6 +15,7 @@ import 'app_log_service.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
+import 'chat_content.dart';
 import 'plugin_runtime.dart';
 
 class AIManager {
@@ -199,12 +200,7 @@ class AIManager {
     throw const FormatException('工具参数不是合法 JSON');
   }
 
-  String _stripResponsePrefix(String value) => value
-      .replaceFirst(
-          RegExp(r'^\s*(?:(?:data|event)\s*:\s*)?response\s*[:：]\s*',
-              caseSensitive: false),
-          '')
-      .trim();
+  String _stripResponsePrefix(String value) => cleanChatContent(value);
 
   String _extractChatContent(dynamic payload) {
     if (payload is! Map) return '';
@@ -1881,6 +1877,13 @@ $transcript''';
     const cues = ['生成图片', '生成一张图', '画一张', '画个', '帮我画', '生图', '画图', '绘制'];
     return cues.any(text.contains);
   }
+
+  Future<String?> generateImageForBot({
+    required String botId,
+    required String prompt,
+  }) =>
+      _generateImageIfAuthorized(
+          db: DBManager(), botId: botId, prompt: prompt, force: true);
 
   Future<String?> _generateImageIfAuthorized({
     required DBManager db,

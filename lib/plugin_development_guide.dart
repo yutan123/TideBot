@@ -23,7 +23,7 @@ Example:
   "capabilities":{
     "assistant_rules":[{"name":"天气回答规则","instructions":"查询结果要标明地点和时间。","bot_ids":[]}],
     "tools":[{"name":"天气服务","url":"https://example.com/mcp","headers":{}}],
-    "views":[{"title":"天气查询","fields":[{"id":"city","label":"城市"}],"actions":[{"label":"查询","tool_service":0,"tool":"weather"}]}]
+    "views":[{"title":"天气查询","fields":[{"id":"city","label":"城市"}],"actions":[{"label":"查询","mcp_server":0,"tool":"weather"}]}]
   }
 }
 

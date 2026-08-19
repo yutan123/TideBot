@@ -112,7 +112,7 @@ class PluginSecurityScanner {
 
   static void _checkSkills(dynamic value, List<String> errors) {
     if (value == null) return;
-    if (value is! List || value.length > 20) {
+    if (value is! List || value.length > PluginSandboxPolicy.maxSkills) {
       errors.add('skills 必须是不超过 20 项的列表');
       return;
     }
@@ -121,7 +121,8 @@ class PluginSecurityScanner {
         errors.add('Skill 缺少名称');
         continue;
       }
-      _checkText(skill['instructions'], 'Skill instructions', 4000, errors);
+      _checkText(skill['instructions'], 'Skill instructions',
+          PluginSandboxPolicy.maxSkillInstructionBytes, errors);
       if (skill['instructions']?.toString().trim().isEmpty ?? true)
         errors.add('Skill 缺少 instructions');
       if (skill['bot_ids'] != null && skill['bot_ids'] is! List)
@@ -132,7 +133,7 @@ class PluginSecurityScanner {
   static void _checkServers(
       dynamic value, List<String> errors, List<String> warnings) {
     if (value == null) return;
-    if (value is! List || value.length > 5) {
+    if (value is! List || value.length > PluginSandboxPolicy.maxMcpServers) {
       errors.add('mcp_servers 必须是不超过 5 项的列表');
       return;
     }

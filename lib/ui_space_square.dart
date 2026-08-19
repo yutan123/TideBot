@@ -343,16 +343,18 @@ class _SpacePageState extends State<SpacePage> {
                             Expanded(child: _buildSectionTitle('TA 的日记')),
                             TextButton.icon(
                               onPressed: _openDiaryCalendar,
-                              icon: const Icon(Icons.calendar_month_rounded,
+                              icon: const Icon(Icons.open_in_new_rounded,
                                   size: 16),
-                              label: const Text('日历',
+                              label: const Text('展开',
                                   style: TextStyle(fontFamily: 'TideFont')),
                             ),
                           ]),
-                          Text('查看 TA 按日期留下的独立日记',
-                              style: TextStyle(
-                                  color: theme.textFaint,
-                                  fontFamily: 'TideFont')),
+                          const SizedBox(height: 6),
+                          SizedBox(
+                            height: 300,
+                            child: DiaryCalendarWidget(
+                                botId: _botId, botName: _botName),
+                          ),
                         ],
                       ])),
         ));
@@ -623,15 +625,30 @@ class SquarePageState extends State<SquarePage>
         if (res['success'] != true) continue;
         final content = res['reply']?.toString().trim() ?? '';
         if (content.isEmpty) continue;
+        final postId = 'botpost_${botId}_${dayKey}_$index';
+        final withImages = await db.getKV('bot_posts_with_images') == 'true';
+        final imageChance =
+            (int.tryParse(await db.getKV('bot_posts_image_chance') ?? '') ?? 50)
+                .clamp(1, 100);
+        String imagePath = '';
+        if (withImages &&
+            Random('$dayKey:$botId:$index:image'.hashCode).nextInt(100) <
+                imageChance) {
+          imagePath = await AIManager().generateImageForBot(
+                botId: botId,
+                prompt: '为这条机器人生活动态生成自然、真实的配图，不含文字：$content',
+              ) ??
+              '';
+        }
         // scheduledAt was calculated before generation so no future post can
         // enter the feed ahead of its planned local time.
-        final postId = 'botpost_${botId}_${dayKey}_$index';
+
         // 动态本体不含伪造的互动数据——点赞与评论必须来自真实发生的机器人互动。
         await db.insertPost({
           'id': postId,
           'author_id': bot['name'] ?? '机器人',
           'content': content,
-          'image_path': '',
+          'image_path': imagePath,
           'likes': 0,
           'comments': 0,
           'user_liked': 0,
