@@ -91,6 +91,7 @@ Future<void> _initPersistentService({
       androidConfiguration: AndroidConfiguration(
         onStart: onStart,
         autoStart: false,
+        autoStartOnBoot: restoreAfterUserOptIn,
         isForegroundMode: true,
         notificationChannelId: 'tide_bot_alive',
         initialNotificationTitle: 'TideBot 正在运行中',
@@ -99,8 +100,8 @@ Future<void> _initPersistentService({
       ),
       iosConfiguration: IosConfiguration(),
     );
-    // 仅恢复曾由用户主动开启的服务；autoStart 保持 false，避免安装后或
-    // 用户关闭开关后由系统/应用擅自启动。
+    // Only restore after an explicit opt-in. The plugin persists this flag and
+    // restarts its foreground service after boot/package replacement.
     if (restoreAfterUserOptIn) {
       await service.startService();
     }
@@ -120,6 +121,14 @@ void onStart(ServiceInstance service) {
         'persistent_service_heartbeat',
         '${DateTime.now().millisecondsSinceEpoch}',
       );
+      final keepRunning =
+          await DBManager().getKV('persistent_notification') == 'true';
+      if (!keepRunning) {
+        heartbeat?.cancel();
+        await DBManager().setKV('persistent_service_heartbeat', '');
+        if (service is AndroidServiceInstance) await service.stopSelf();
+        return;
+      }
       final isForeground = service is AndroidServiceInstance
           ? await service.isForegroundService()
           : false;

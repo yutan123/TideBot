@@ -57,7 +57,7 @@ class _SpacePageState extends State<SpacePage> {
     super.dispose();
   }
 
-  // 日记按三条一屏循环滚动：短期在上、长期在下，短期结束后接长期再转回短期，
+  // 记忆按三条一屏循环滚动：短期在上、长期在下，短期结束后接长期再转回短期，
   // 打开空间页面即自动滚动，无需手动开启。用户点按可临时暂停/继续。
   void _startDiaryAutoScroll() {
     if (_memories.isEmpty || _diaryTimer != null) return;
@@ -143,7 +143,7 @@ class _SpacePageState extends State<SpacePage> {
         setState(() {
           _loading = false;
         });
-        // 打开空间页面即自动开始日记循环滚动。
+        // 打开空间页面即自动开始记忆循环滚动。
         _startDiaryAutoScroll();
       }
     } else {
@@ -200,7 +200,7 @@ class _SpacePageState extends State<SpacePage> {
             ])));
   }
 
-  // 日记窗口：从短期→长期合并列表中，取 _diaryVisibleStart 开始的 3 条（循环取模），
+  // 记忆窗口：从短期→长期合并列表中，取 _diaryVisibleStart 开始的 3 条（循环取模），
   // 配合 AnimatedSwitcher 做淡入滚动观感。显示不足 3 条时按实际数量铺开。
   Widget _buildDiaryWindow(TideTheme theme) {
     final count = _memories.length;
@@ -314,16 +314,15 @@ class _SpacePageState extends State<SpacePage> {
                           Row(children: [
                             Expanded(child: _buildSectionTitle('TA 的记忆')),
                             TextButton.icon(
-                              onPressed: _openDiaryCalendar,
-                              icon: const Icon(Icons.open_in_full_rounded,
-                                  size: 16),
-                              label: const Text('日记',
+                              onPressed: _openMemoryManager,
+                              icon: const Icon(Icons.tune_rounded, size: 16),
+                              label: const Text('管理',
                                   style: TextStyle(fontFamily: 'TideFont')),
                             ),
                           ]),
                           const SizedBox(height: 8),
                           if (_memories.isEmpty)
-                            Text('TA 还没有写下日记',
+                            Text('TA 还没有留下记忆',
                                 style: TextStyle(
                                     color: theme.textFaint,
                                     fontFamily: 'TideFont'))
@@ -334,16 +333,26 @@ class _SpacePageState extends State<SpacePage> {
                                 if (_diaryTimer != null)
                                   _toggleDiaryAutoScroll();
                               },
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(
-                                    height: 196,
-                                    child: _buildDiaryWindow(theme),
-                                  ),
-                                ],
+                              child: SizedBox(
+                                height: 196,
+                                child: _buildDiaryWindow(theme),
                               ),
                             ),
+                          const SizedBox(height: 24),
+                          Row(children: [
+                            Expanded(child: _buildSectionTitle('TA 的日记')),
+                            TextButton.icon(
+                              onPressed: _openDiaryCalendar,
+                              icon: const Icon(Icons.calendar_month_rounded,
+                                  size: 16),
+                              label: const Text('日历',
+                                  style: TextStyle(fontFamily: 'TideFont')),
+                            ),
+                          ]),
+                          Text('查看 TA 按日期留下的独立日记',
+                              style: TextStyle(
+                                  color: theme.textFaint,
+                                  fontFamily: 'TideFont')),
                         ],
                       ])),
         ));

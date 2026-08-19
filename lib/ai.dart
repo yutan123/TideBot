@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
+import 'holiday_calendar_service.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 
@@ -81,6 +82,7 @@ class AIManager {
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
+    bool forceSingleReply = false,
     void Function(String delta)? onDelta,
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -130,6 +132,7 @@ class AIManager {
         enableAutoSummary: enableAutoSummary,
         skipLifeState: skipLifeState,
         allowTools: allowTools,
+        forceSingleReply: forceSingleReply,
         // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
         // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
         onDelta: onDelta,
@@ -270,6 +273,7 @@ class AIManager {
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
+    bool forceSingleReply = false,
     void Function(String delta)? onDelta,
     String forcedLocalId = '',
     String forcedProviderId = '',
@@ -367,13 +371,11 @@ class AIManager {
     const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
-    // 命中表情包概率后由模型结合当前语境选择分类；应用只在该分类素材池中
-    // 随机抽取一个文件，绝不预先随机指定分类。
-    const forcedStickerEmotion = null;
+    final stickerEmotions =
+        allowSticker ? await db.stickerEmotions() : <String>[];
     final toolContext = allowTools
         ? await _buildToolContext(db,
-            allowSticker: allowSticker,
-            forcedStickerEmotion: forcedStickerEmotion)
+            allowSticker: allowSticker, stickerEmotions: stickerEmotions)
         : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
     final deviceContext =
@@ -402,7 +404,6 @@ class AIManager {
             : '\n【短期记忆：近期详细事件，仅在相关时参考】\n$shortMemoryContext');
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
-    Map<String, dynamic>? toolSticker;
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
     ];
@@ -535,7 +536,7 @@ class AIManager {
       messages.add({
         'role': 'system',
         'content':
-            '时间上下文（内部元数据，不得引用、复述或模仿其格式）：当前本地时间 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。$span仅在确有时间相关性时据此理解时间流逝。',
+            '时间上下文（内部元数据，不得引用、复述或模仿其格式）：当前本地时间 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。${HolidayCalendarService.contextFor(now)}$span仅在确有时间相关性时据此理解时间流逝。',
       });
     }
     try {
@@ -636,7 +637,6 @@ class AIManager {
                 usageCallback: (u) => usage = u,
                 searchSourcesSetter: (l) => searchSources = l,
                 generatedImageSetter: (p) => generatedImagePath = p,
-                stickerSetter: (p) => toolSticker = p,
                 pendingDeviceActionSetter: (_) {},
                 silenceSetter: () => toolSilenced = true);
           }
@@ -679,6 +679,11 @@ class AIManager {
         await _persistModelMemories(db, bot['name']?.toString() ?? 'TideBot',
             bot['id']?.toString() ?? botId, replyText);
         replyText = _cleanVisibleReply(replyText);
+        final stickerEmotion =
+            _extractStickerEmotion(replyText, stickerEmotions);
+        replyText = _cleanVisibleReply(replyText);
+        final wantsSources = _userExplicitlyRequestedSources(text);
+        if (!wantsSources) replyText = _stripSourceLinks(replyText);
         if (replyText.isEmpty && generatedImagePath != null) {
           replyText = '图片已生成。';
         }
@@ -697,17 +702,20 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // Sticker probability is decided by TideBot, not by a model tool. Once the
-        // roll hits, one category is selected up front and one asset is sampled
-        // from that category after the complete reply has been processed.
-        Map<String, dynamic>? sticker = toolSticker;
+        // The model chooses only an allowed category in an internal marker; the app
+        // then randomly samples the actual local file from that category.
+        Map<String, dynamic>? sticker;
         String? audioPath;
-        if (sticker == null && forcedStickerEmotion != null) {
-          final candidates =
-              await db.queryStickers(emotion: forcedStickerEmotion);
+        if (stickerEmotion != null) {
+          final candidates = await db.queryStickers(emotion: stickerEmotion);
           if (candidates.isNotEmpty) {
             sticker = Map<String, dynamic>.from(
                 candidates[Random.secure().nextInt(candidates.length)]);
+            AppLogService.instance.add('STICKER',
+                '模型选择分类 $stickerEmotion，系统从 ${candidates.length} 个素材中随机发送');
+          } else {
+            AppLogService.instance
+                .add('STICKER', '模型选择分类 $stickerEmotion，但素材已不可用');
           }
         }
         if (persistResponse) {
@@ -720,11 +728,19 @@ class AIManager {
               ttsModel.isNotEmpty &&
               Random.secure().nextInt(100) < voiceChance;
           if (shouldVoice) {
-            AppLogService.instance.add('TTS', '本轮语音回复：先完成合成，再仅发送语音消息。');
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
           }
+        }
+        final segmented = !forceSingleReply &&
+            audioPath == null &&
+            (await db.getKV('segmented_reply_enabled')) != 'false';
+        final segments =
+            segmented ? _replySegments(replyText) : <String>[replyText];
+        final replyGroupId = 'reply_$ts';
+        final persistedMessages = <Map<String, dynamic>>[];
+        if (persistResponse) {
           if (audioPath != null && audioPath.isNotEmpty) {
-            await db.insertChatMessage({
+            final row = <String, dynamic>{
               'id': msgId,
               'bot_id': botId,
               'role': 'assistant',
@@ -732,53 +748,70 @@ class AIManager {
               'content': replyText,
               'file_path': audioPath,
               'mood': mood,
+              'reply_group_id': replyGroupId,
               'sources_json':
                   searchSources.isEmpty ? null : jsonEncode(searchSources),
               'timestamp': ts + 1,
-            });
+            };
+            await db.insertChatMessage(row);
+            persistedMessages.add(row);
           } else {
-            await db.insertChatMessage({
-              'id': msgId,
-              'bot_id': botId,
-              'role': 'assistant',
-              'type': 'text',
-              'content': replyText,
-              'file_path': null,
-              'mood': mood,
-              'sources_json':
-                  searchSources.isEmpty ? null : jsonEncode(searchSources),
-              'timestamp': ts + 1,
-            });
-          }
-          if (generatedImagePath != null) {
-            await db.insertChatMessage({
-              'id': 'msg_i_${ts + 2}',
-              'bot_id': botId,
-              'role': 'assistant',
-              'type': 'image',
-              'content': '',
-              'file_path': generatedImagePath,
-              'mood': mood,
-              'timestamp': ts + 2
-            });
-          }
-          if (sticker != null) {
-            await db.insertChatMessage({
-              'id': 'msg_s_${ts + 3}',
-              'bot_id': botId,
-              'role': 'assistant',
-              'type': 'sticker',
-              'content': '',
-              'file_path': sticker['file_path']?.toString(),
-              'mood': mood,
-              'timestamp': ts + 3
-            });
+            for (var index = 0; index < segments.length; index++) {
+              final row = <String, dynamic>{
+                'id': index == 0 ? msgId : '${msgId}_segment_$index',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'text',
+                'content': segments[index],
+                'file_path': null,
+                'mood': mood,
+                'reply_group_id': replyGroupId,
+                'sources_json':
+                    index == segments.length - 1 && searchSources.isNotEmpty
+                        ? jsonEncode(searchSources)
+                        : null,
+                'timestamp': ts + 1 + index,
+              };
+              await db.insertChatMessage(row);
+              persistedMessages.add(row);
+            }
+            if (generatedImagePath != null) {
+              final row = <String, dynamic>{
+                'id': 'msg_i_${ts + 2 + segments.length}',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'image',
+                'content': '',
+                'file_path': generatedImagePath,
+                'mood': mood,
+                'reply_group_id': replyGroupId,
+                'timestamp': ts + 2 + segments.length,
+              };
+              await db.insertChatMessage(row);
+              persistedMessages.add(row);
+            }
+            if (sticker != null) {
+              final row = <String, dynamic>{
+                'id': 'msg_s_${ts + 3 + segments.length}',
+                'bot_id': botId,
+                'role': 'assistant',
+                'type': 'sticker',
+                'content': '',
+                'file_path': sticker['file_path']?.toString(),
+                'mood': mood,
+                'reply_group_id': replyGroupId,
+                'timestamp': ts + 3 + segments.length,
+              };
+              await db.insertChatMessage(row);
+              persistedMessages.add(row);
+            }
           }
         }
         return {
           'success': true,
           'reply': replyText,
           'message_id': msgId,
+          'messages': persistedMessages,
           if (audioPath != null && audioPath.isNotEmpty)
             'audio_path': audioPath,
           if (searchSources.isNotEmpty) 'sources': searchSources,
@@ -806,15 +839,32 @@ class AIManager {
     }
   }
 
-  // ignore: unused_element
   List<String> _replySegments(String content) {
-    final parts = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
+    final parts = RegExp(r'.*?[。！？!?…]+|.+$', multiLine: true)
         .allMatches(content)
         .map((match) => match.group(0)?.trim() ?? '')
         .where((part) => part.isNotEmpty)
         .toList();
     return parts.isEmpty ? <String>[content] : parts;
   }
+
+  String? _extractStickerEmotion(String raw, List<String> allowed) {
+    final match = RegExp(r'\[表情包\s*[:：]\s*([^\]]+)\]', caseSensitive: false)
+        .firstMatch(raw);
+    final emotion = match?.group(1)?.trim();
+    return emotion != null && allowed.contains(emotion) ? emotion : null;
+  }
+
+  bool _userExplicitlyRequestedSources(String text) => RegExp(
+        r'来源|出处|参考|链接|网址|cite|source',
+        caseSensitive: false,
+      ).hasMatch(text);
+
+  String _stripSourceLinks(String text) => text
+      .replaceAll(RegExp(r'!?\[[^\]]*\]\(https?://[^\)]+\)'), '')
+      .replaceAll(RegExp(r'https?://\S+'), '')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
 
   String _cleanVisibleReply(String raw) {
     // Some providers leak internal labels into normal text. Remove whole
@@ -1911,7 +1961,6 @@ $transcript''';
     required void Function(Map) usageCallback,
     required void Function(List<Map<String, String>>) searchSourcesSetter,
     required void Function(String) generatedImageSetter,
-    required void Function(Map<String, dynamic>) stickerSetter,
     required void Function(Map<String, dynamic>) pendingDeviceActionSetter,
     required void Function() silenceSetter,
   }) async {
@@ -1937,18 +1986,6 @@ $transcript''';
       if (toolResult is Map &&
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
-      }
-      if (toolResult is Map) {
-        final stickerValue = toolResult['sticker'];
-        if (stickerValue is Map) {
-          stickerSetter(Map<String, dynamic>.from(stickerValue));
-        } else {
-          final stickerPath =
-              toolResult['sticker_path']?.toString().trim() ?? '';
-          if (stickerPath.isNotEmpty) {
-            stickerSetter({'file_path': stickerPath});
-          }
-        }
       }
       messages.add({
         'role': 'tool',
@@ -2027,10 +2064,9 @@ $transcript''';
     final selected =
         chance >= 100 || (chance > 0 && Random.secure().nextInt(100) < chance);
     AppLogService.instance.add('STICKER',
-        selected ? '本轮允许表情包工具（概率 $chance%）' : '本轮不提供表情包工具（概率 $chance%）');
+        selected ? '本轮允许模型选择表情包分类（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）');
     return selected;
   }
-  // 表情包分类由模型在 send_sticker 工具调用中按当轮语境选择。
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
       {required String botId, bool allowSticker = true}) async {
@@ -2115,32 +2151,7 @@ $transcript''';
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_diaryToolSchema());
-    final stickerEmotions = await db.stickerEmotions();
-    if (allowSticker &&
-        (await db.getKV('bot_stickers_enabled') == 'true') &&
-        stickerEmotions.isNotEmpty) {
-      tools.add({
-        'type': 'function',
-        'function': {
-          'name': 'send_sticker',
-          'description':
-              '本轮必须发送一张已有表情包。emotion 必须从以下分类中选择：${stickerEmotions.join('、')}。',
-          'parameters': {
-            'type': 'object',
-            'properties': {
-              'emotion': {
-                'type': 'string',
-                'enum': stickerEmotions,
-                'description': '必须选择一个已有情绪分类'
-              }
-            },
-            'required': ['emotion'],
-            'additionalProperties': false,
-          },
-        },
-      });
-    }
-    // 手机操控工具已移除。设备上下文与操作触发仍由各自的授权能力提供。
+    // Sticker selection uses an internal text marker, not a callable model tool.
     return tools;
   }
 
@@ -2338,34 +2349,14 @@ $transcript''';
         }
       };
     }
-    if (name == 'send_sticker') {
-      final emotion = args['emotion']?.toString().trim() ?? '';
-      final candidates = await db.queryStickers(emotion: emotion);
-      final available = candidates;
-      final selected = available.isEmpty
-          ? null
-          : available[Random.secure().nextInt(available.length)];
-      final targetPath = selected?['file_path']?.toString().trim() ?? '';
-      if (targetPath.isEmpty) {
-        return {
-          'result': {'ok': false, 'error': '选中的表情包缺少文件路径'}
-        };
-      }
-      return {
-        'result': {
-          'ok': true,
-          'sticker': Map<String, dynamic>.from(selected!),
-          'message': '表情包已选定。',
-        }
-      };
-    }
     return {
       'result': {'ok': false, 'error': '未知工具：$name'}
     };
   }
 
   Future<String> _buildToolContext(DBManager db,
-      {bool allowSticker = true, String? forcedStickerEmotion}) async {
+      {bool allowSticker = true,
+      List<String> stickerEmotions = const []}) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       final style = (await db.getKV('bot_image_style') ?? '写实').trim();
@@ -2381,13 +2372,12 @@ $transcript''';
       final hasKey = (await db.getKV('web_search_api_key') ?? '').isNotEmpty;
       if (hasKey) {
         parts.add(
-            '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索后必须附可点击来源；不要编造搜索结果。');
+            '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索结果会由应用以可展开来源列表附在最终关联气泡底部；除非用户明确要求链接或出处，不要在正文罗列 URL 或来源。不要编造搜索结果。');
       }
     }
-    if (allowSticker) {
-      final emotions = await db.stickerEmotions();
+    if (allowSticker && stickerEmotions.isNotEmpty) {
       parts.add(
-          '【本轮表情包】概率已命中，必须调用 send_sticker 一次。可选分类：${emotions.join('、')}。按当前语境选择其中一个分类；系统会从所选分类随机发送一张，不要在正文输出贴纸协议。');
+          '【本轮表情包】可在正文末尾仅追加一个内部标记 [表情包:分类]，分类必须为 ${stickerEmotions.join('、')} 之一。该标记不会显示；应用会从该分类随机发送一张本地表情包。若不适合发送则不要输出标记。');
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }

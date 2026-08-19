@@ -56,7 +56,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 20,
+      version: 21,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -75,7 +75,7 @@ class DBManager {
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
             content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
-            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, sources_json TEXT, timestamp INTEGER,
+            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, reply_group_id TEXT, sources_json TEXT, timestamp INTEGER,
 
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
@@ -328,7 +328,14 @@ class DBManager {
           await db.execute(
               "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL");
         }
-
+        if (oldVersion < 21) {
+          try {
+            await db.execute(
+                'ALTER TABLE chat_history ADD COLUMN reply_group_id TEXT');
+          } catch (_) {}
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
+        }
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -611,6 +618,7 @@ class DBManager {
                 'mood': m['mood'],
                 'duration': m['duration'],
                 'reply_to_id': m['reply_to_id'],
+                'reply_group_id': m['reply_group_id'],
                 'sources_json': m['sources_json'],
                 'timestamp': m['timestamp'],
               })
@@ -664,6 +672,7 @@ class DBManager {
           'mood': item['mood']?.toString(),
           'duration': item['duration'],
           'reply_to_id': idMap[oldReplyId],
+          'reply_group_id': item['reply_group_id']?.toString(),
           'sources_json': item['sources_json']?.toString(),
           'timestamp': timestamp + i,
         });

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:ui';
@@ -73,12 +72,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String _queuedText = '';
   bool _queued = false;
 
-  // ===== 主动回复调度（前台 UI 层）=====
-  // 后台 isolate 无法使用 AIManager，因此主动回复放在聊天室前台通过 Timer 调度。
-  Timer? _proactiveTimer;
-  // 连续主动回复后用户未应答的次数；达到上限后暂停，等用户下次发言再恢复。
-  int _proactiveUnanswered = 0;
-  final Random _proactiveRng = Random();
   void _msgChanged() {
     if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty);
   }
@@ -116,7 +109,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         const Duration(seconds: 4), (_) => _syncLatestMessages());
     _loadBg();
     _loadChatPreferences();
-    _startProactiveReply();
+    // Proactive replies are scheduled by the persistent background service.
+    // The chat page only refreshes persisted results.
 
     // 底部栏动画控制器
     _bottomBarCtrl = AnimationController(
@@ -135,8 +129,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _messageSyncTimer?.cancel();
     _streamDisplayTimer?.cancel();
     _deferredPersistedMessageIds.clear();
-    _proactiveTimer?.cancel();
-    _proactiveTimer = null;
     _msgC.removeListener(_msgChanged);
     _inputFocus.removeListener(_handleInputFocus);
     _inputFocus.dispose();
@@ -294,15 +286,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     } catch (_) {}
   }
 
-  List<String> _splitReplySegments(String content) {
-    final matches = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
-        .allMatches(content)
-        .map((match) => match.group(0)?.trim() ?? '')
-        .where((part) => part.isNotEmpty)
-        .toList();
-    return matches.isEmpty ? <String>[content] : matches;
-  }
-
   /// 分段回复的句间自然等待。
   /// 基础延迟固定 500–1000ms（每句随机，模拟真人打字/阅读节奏）。
   /// 若用户在设置中开启了全局随机延迟（random_reply_delay_enabled），则在
@@ -333,166 +316,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
-  // ========== 主动回复调度 ==========
-  String get _proactiveDueKey => 'proactive_due_at_${_bot['id']}';
-  Future<void> _startProactiveReply() async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-    try {
-      final db = DBManager();
-      if (await db.getKV('proactive_reply') == 'false') return;
-      final minMin =
-          (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60)
-              .clamp(1, 1440);
-      final maxMin =
-          (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90)
-              .clamp(minMin, 1440);
-      _proactiveUnanswered =
-          (int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ??
-                  0)
-              .clamp(0, 5);
-      final dueAt = int.tryParse(await db.getKV(_proactiveDueKey) ?? '');
-      _scheduleProactive(minMin, maxMin, dueAt: dueAt);
-    } catch (e) {
-      debugPrint('[proactive] start failed: $e');
-    }
-  }
-
-  void _scheduleProactive(int minMinutes, int maxMinutes, {int? dueAt}) {
-    _proactiveTimer?.cancel();
-    if (!mounted || _proactiveUnanswered >= 3) return;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final range = maxMinutes - minMinutes;
-    final target = dueAt ??
-        now +
-            Duration(
-                    minutes: minMinutes +
-                        (range > 0 ? _proactiveRng.nextInt(range + 1) : 0))
-                .inMilliseconds;
-    DBManager().setKV(_proactiveDueKey, '$target');
-    _proactiveTimer = Timer(
-        Duration(milliseconds: (target - now).clamp(0, 604800000)),
-        _fireProactive);
-  }
-
-  void _restartProactiveTimer(int minMinutes, int maxMinutes) =>
-      _scheduleProactive(minMinutes, maxMinutes);
+  // The persistent Android service is the sole proactive scheduler. The chat
+  // page only clears the unanswered counter after an actual user interaction.
   void _onUserInteracted() {
-    _proactiveUnanswered = 0;
     final botId = _bot['id']?.toString() ?? '';
-    if (botId.isNotEmpty) DBManager().setKV('proactive_unanswered_$botId', '0');
-    _startProactiveReply();
-  }
-
-  Future<void> _fireProactive() async {
-    _proactiveTimer = null;
-    DBManager().setKV(_proactiveDueKey, '');
-    final botId = _bot['id']?.toString() ?? '';
-    if (!mounted || botId.isEmpty) return;
-    // 连续 3 次主动回复用户都没回 → 暂停；等用户下次发言再由 _onUserInteracted 恢复。
-    if (_proactiveUnanswered >= 3) {
-      // 连续未回复达到上限后静默暂停，不打扰用户；下次用户发言时恢复。
-      return;
-    }
-    // 上一个请求还没回完，这次主动回复顺延重排。
-    if (_loading) {
-      final minMin = (int.tryParse(
-                  await DBManager().getKV('proactive_min_minutes') ?? '') ??
-              60)
-          .clamp(1, 1440);
-      final maxMin = (int.tryParse(
-                  await DBManager().getKV('proactive_max_minutes') ?? '') ??
-              90)
-          .clamp(minMin, 1440);
-      _restartProactiveTimer(minMin, maxMin);
-      return;
-    }
-    var proactiveSent = false;
-    try {
-      setState(() {
-        _loading = true;
-        _typing = true;
-      });
-      _scrollDown();
-      final now = DateTime.now();
-      final recent = _msgs.reversed
-          .take(8)
-          .map((m) =>
-              '${m['role'] == 'user' ? '我' : _bot['name']}: ${m['content']}')
-          .join('\n');
-      final currentTime =
-          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-      final opener =
-          '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：请根据最近对话判断。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发、系统指令或角色设置。回复限 1-3 个短句、80 字内。最近对话：\n$recent';
-      final result = await AIManager()
-          .sendMessage(botId: botId, text: opener)
-          .timeout(const Duration(minutes: 5));
-      if (result['success'] == true && result['silent'] == true) {
-        // 模型自行选择不打扰：不写空消息，也不记作未回应，重新持久化安排下次。
-        final minMin = (int.tryParse(
-                    await DBManager().getKV('proactive_min_minutes') ?? '') ??
-                60)
-            .clamp(1, 1440);
-        final maxMin = (int.tryParse(
-                    await DBManager().getKV('proactive_max_minutes') ?? '') ??
-                90)
-            .clamp(minMin, 1440);
-        _restartProactiveTimer(minMin, maxMin);
-        return;
-      }
-      if (result['success'] == true && mounted) {
-        final aiMsg = <String, dynamic>{
-          'id': result['message_id']?.toString() ??
-              'm_${DateTime.now().millisecondsSinceEpoch}',
-          'bot_id': botId,
-          'role': 'assistant',
-          'content': result['reply']?.toString() ?? '',
-          'sources_json': null,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        };
-        setState(() => _msgs.add(aiMsg));
-        final imagePath = result['image_path']?.toString();
-        if (imagePath?.isNotEmpty == true) {
-          if (!_msgs.any((m) =>
-              m['type'] == 'image' && m['file_path']?.toString() == imagePath))
-            setState(() => _msgs.add({
-                  'id': 'image_${DateTime.now().millisecondsSinceEpoch}',
-                  'bot_id': botId,
-                  'role': 'assistant',
-                  'type': 'image',
-                  'content': '',
-                  'file_path': imagePath,
-                  'timestamp': DateTime.now().millisecondsSinceEpoch,
-                }));
-        }
-        // 一次主动回复后：未应答 +1 并持久化，重新计时（下一次若仍无人应答则累加）。
-        _proactiveUnanswered++;
-        proactiveSent = true;
-        DBManager()
-            .setKV('proactive_unanswered_$botId', '$_proactiveUnanswered');
-      }
-    } catch (e, st) {
-      debugPrint('[proactive] fire failed: $e');
-      debugPrint(st.toString());
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _typing = false;
-        });
-        _scrollDown();
-      }
-      if (proactiveSent) {
-        final minMin = (int.tryParse(
-                    await DBManager().getKV('proactive_min_minutes') ?? '') ??
-                60)
-            .clamp(1, 1440);
-        final maxMin = (int.tryParse(
-                    await DBManager().getKV('proactive_max_minutes') ?? '') ??
-                90)
-            .clamp(minMin, 1440);
-        _restartProactiveTimer(minMin, maxMin);
-      }
+    if (botId.isNotEmpty) {
+      unawaited(DBManager().setKV('proactive_unanswered_$botId', '0'));
     }
   }
 
@@ -503,6 +332,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     List<String>? images,
     List<String>? documents,
     String? mediaContext,
+    bool forceSingleReply = false,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
     bool noUserBubble = false,
   }) async {
@@ -650,11 +480,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
       final streamEnabled = (await db.getKV('streaming_output')) != 'false';
-      // Segmenting is a presentation preference, independent from the local
-      // typewriter effect. A complete reply is always received before either
-      // presentation starts, so segment IDs can safely match persisted rows.
-      final segmentedReply =
-          (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && mounted) {
@@ -701,6 +526,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             text: modelText,
             imagePaths: images,
             persistResponse: persistThisReply,
+            forceSingleReply: forceSingleReply,
             onDelta: null,
           )
           .timeout(requestTimeout);
@@ -741,179 +567,79 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           setState(() => _msgs.remove(streamingMessage));
         return;
       }
-      final content = (result['reply']?.toString() ?? '').trim().isEmpty
-          ? '[X] 模型返回了空内容，请检查模型名称和 API 配置'
-          : result['reply'].toString();
-      final audioPath = result['audio_path']?.toString();
-      final aiMsg = <String, dynamic>{
-        'id': result['message_id']?.toString() ??
-            'm_${DateTime.now().millisecondsSinceEpoch}',
-        'bot_id': botId,
-        'role': 'assistant',
-        'type': audioPath?.isNotEmpty == true ? 'audio' : 'text',
-        'file_path': audioPath?.isNotEmpty == true ? audioPath : null,
-        'content': content,
-        'sources_json':
-            result['sources'] == null ? null : jsonEncode(result['sources']),
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      };
-      final persistedBase = int.tryParse(
-              aiMsg['id'].toString().replaceFirst(RegExp(r'^msg_a_'), '')) ??
-          (aiMsg['timestamp'] as int) + 1;
-      final segmentCount = _splitReplySegments(content).length;
-      final persistedMessageIds = <String>{
-        result['message_id']?.toString() ?? '',
-        if (result['image_path']?.toString().isNotEmpty == true)
-          'msg_i_${persistedBase + 1}',
-        if (result['sticker'] is Map)
-          // AIManager stores the sticker after its text rows: ts + 2 + count.
-          'msg_s_${persistedBase + 1 + segmentCount}',
-      }..remove('');
-      _deferredPersistedMessageIds.addAll(persistedMessageIds);
-      // AIManager has already persisted this response. The foreground owns these
-      // rows until it adopts them below, preventing periodic sync duplicates.
-      // 请求期间用户又发了新消息（_requestGen 变化），本次回复已被合并覆盖：
-      // 不再渲染、也不再落库（落库已由 persistThisReply 控制），交给 finally
-      // 用合并后的文本统一重发一次。
+      final persisted = (result['messages'] as List? ?? const [])
+          .whereType<Map>()
+          .map((message) => Map<String, dynamic>.from(message))
+          .toList();
+      final audioReply = result['audio_path']?.toString().isNotEmpty == true;
+      final animate = streamEnabled && !audioReply && persisted.isNotEmpty;
+      final persistedIds = persisted
+          .map((message) => message['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      _deferredPersistedMessageIds.addAll(persistedIds);
       if (myGen != _requestGen) {
-        _deferredPersistedMessageIds.removeAll(persistedMessageIds);
-        _streamDisplayTimer?.cancel();
-        _streamDisplayTimer = null;
+        _deferredPersistedMessageIds.removeAll(persistedIds);
         if (streamingMessage != null && mounted) {
           setState(() => _msgs.remove(streamingMessage));
         }
         return;
       }
-      // ===== 模拟打字机（完整回复处理完成后）=====
-      // 传输层不再使用 SSE。AIManager 已完成工具调用、协议过滤和落盘，
-      // 此处才将完整可见正文按速度设置送入唯一的前台占位气泡。
-      final needsTypewriter = streamingMessage != null &&
-          audioPath?.isNotEmpty != true &&
-          !segmentedReply &&
-          content.isNotEmpty;
 
-      void adoptSticker() {
-        if (!mounted) return;
-        final sticker = result['sticker'];
-        final stickerId = 'msg_s_${persistedBase + 1 + segmentCount}';
-        if (sticker is Map &&
-            !_msgs.any((m) => m['id']?.toString() == stickerId)) {
-          setState(() => _msgs.add({
-                'id': stickerId,
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'sticker',
-                'content': '',
-                'file_path': sticker['file_path']?.toString(),
-                'timestamp': persistedBase + 1 + segmentCount,
-              }));
+      Future<void> reveal(Map<String, dynamic> row) async {
+        if (!mounted || myGen != _requestGen) return;
+        if (!animate || row['type'] != 'text') {
+          setState(() => _msgs.add(row));
           _scrollDown();
+          return;
         }
-      }
-
-      if (needsTypewriter && mounted) {
-        // The sticker must follow completed visible text, not the empty
-        // placeholder.  Its insertion is deferred until the timer adopts the
-        // persisted text row below.
-        _streamDisplayTimer?.cancel();
-        pendingDisplay = content;
-        final tm = streamingMessage;
+        final bubble = Map<String, dynamic>.from(row)..['content'] = '';
+        bubble['is_streaming'] = true;
+        setState(() => _msgs.add(bubble));
+        final complete = row['content']?.toString() ?? '';
+        var offset = 0;
         final speed =
-            (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
-                    50)
+            (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
                 .clamp(1, 100);
         final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
         final batch = speed >= 85 ? 2 : 1;
+        final done = Completer<void>();
+        _streamDisplayTimer?.cancel();
         _streamDisplayTimer = Timer.periodic(interval, (timer) {
-          if (!mounted) {
+          if (!mounted || myGen != _requestGen) {
             timer.cancel();
+            if (!done.isCompleted) done.complete();
             return;
           }
-          if (pendingDisplay.isEmpty) {
+          if (offset >= complete.length) {
             timer.cancel();
-            _streamDisplayTimer = null;
-            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
-            setState(() {
-              tm['id'] = aiMsg['id'];
-              tm['content'] = content;
-              tm['timestamp'] = aiMsg['timestamp'];
-              tm.remove('is_streaming');
-            });
-            adoptSticker();
-            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
-            _scrollDown(animated: false);
+            bubble.remove('is_streaming');
+            if (!done.isCompleted) done.complete();
             return;
           }
-          final take =
-              pendingDisplay.length < batch ? pendingDisplay.length : batch;
-          final chunk = pendingDisplay.substring(0, take);
-          pendingDisplay = pendingDisplay.substring(take);
-          setState(() => tm['content'] = '${tm['content']}$chunk');
-          if (pendingDisplay.isEmpty ||
-              tm['content'].toString().length % 80 < batch) {
+          final end = (offset + batch).clamp(0, complete.length);
+          setState(() => bubble['content'] = complete.substring(0, end));
+          offset = end;
+          if (offset % 80 < batch || offset == complete.length) {
             _scrollDown(animated: false);
           }
         });
+        await done.future;
       }
 
-      if (mounted) {
-        // The live placeholder is the only foreground owner for a streamed
-        // request. Never append a second final or segmented copy here.
-        if (streamingMessage != null) {
-          if (!needsTypewriter) {
-            _deferredPersistedMessageIds.removeAll(persistedMessageIds);
-            setState(() {
-              streamingMessage!['id'] = aiMsg['id'];
-              streamingMessage['type'] = aiMsg['type'];
-              streamingMessage['file_path'] = aiMsg['file_path'];
-              streamingMessage['content'] = content;
-              streamingMessage['timestamp'] = aiMsg['timestamp'];
-              streamingMessage.remove('is_streaming');
-            });
-            adoptSticker();
-          }
-        } else if (segmentedReply) {
-          final segments = _splitReplySegments(content);
-          final baseTimestamp = aiMsg['timestamp'] as int;
-          // Each segment is already persisted by AIManager. Keep the same IDs
-          // here, then defer database refresh until all segments are visible.
-          for (var index = 0; index < segments.length; index++) {
-            if (index > 0) await _applyRandomReplyDelay(db);
-            if (!mounted || myGen != _requestGen) return;
-            final segId = index == 0
-                ? aiMsg['id'].toString()
-                : '${aiMsg['id']}_segment_$index';
-            final segmentMessage = Map<String, dynamic>.from(aiMsg)
-              ..['id'] = segId
-              ..['content'] = segments[index]
-              ..['timestamp'] = baseTimestamp + index;
-            setState(() => _msgs.add(segmentMessage));
-            _scrollDown();
-          }
-        } else {
+      if (streamingMessage != null && mounted) {
+        setState(() => _msgs.remove(streamingMessage));
+      }
+      for (var index = 0; index < persisted.length; index++) {
+        if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
-          if (!mounted) return;
-          setState(() => _msgs.add(aiMsg));
         }
-        final imagePath = result['image_path']?.toString();
-        if (imagePath?.isNotEmpty == true &&
-            !_msgs.any((m) =>
-                m['type'] == 'image' &&
-                m['file_path']?.toString() == imagePath)) {
-          setState(() => _msgs.add({
-                'id': 'msg_i_${persistedBase + 1}',
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'image',
-                'content': '',
-                'file_path': imagePath,
-                'timestamp': persistedBase + 1,
-              }));
-        }
+        await reveal(persisted[index]);
       }
-      if (!needsTypewriter) {
-        _deferredPersistedMessageIds.removeAll(persistedMessageIds);
-      }
+      _deferredPersistedMessageIds.removeAll(persistedIds);
+      // Images and stickers are included in `messages` after being persisted by
+      // AIManager. Rendering result metadata again would duplicate the same
+      // media in the visible conversation.
       if (mounted) unawaited(DBManager().markBotRead(botId));
     } catch (e, st) {
       debugPrint('[send] failed: $e');
@@ -1053,7 +779,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (mounted) setState(() => _loading = false);
       // The audio message has already been persisted and rendered. Send only
       // the transcript as model context so no duplicate document bubble exists.
-      await _send(mediaContext: modelContext, noUserBubble: true);
+      await _send(
+        mediaContext: modelContext,
+        noUserBubble: true,
+        forceSingleReply: true,
+      );
     } finally {
       if (mounted && !_loading) setState(() => _typing = false);
     }
@@ -2631,21 +2361,46 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Widget _sourceCards(List<Map<String, String>> sources) {
-    final source = sources.last;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Tooltip(
-        message: source['title'] ?? '打开来源',
-        child: InkWell(
-          onTap: () => launchUrl(Uri.parse(source['url']!),
-              mode: LaunchMode.externalApplication),
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.only(top: 6, left: 8),
-            child: Icon(Icons.language_rounded,
-                size: 16, color: TideTheme.of(context).primary),
-          ),
-        ),
+    final theme = TideTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(Icons.link_rounded, size: 16, color: theme.primary),
+        title: Text('参考 ${sources.length} 个来源',
+            style: TextStyle(
+                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
+        children: sources.map((source) {
+          final uri = Uri.tryParse(source['url'] ?? '');
+          final domain = uri?.host.replaceFirst('www.', '') ?? '';
+          return ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.only(left: 4, right: 2),
+            title: Text(source['title'] ?? '网页来源',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont')),
+            subtitle: Text(domain,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: theme.textFaint,
+                    fontFamily: 'TideFont')),
+            trailing:
+                Icon(Icons.open_in_new_rounded, size: 14, color: theme.primary),
+            onTap: uri == null
+                ? null
+                : () => launchUrl(uri, mode: LaunchMode.externalApplication),
+          );
+        }).toList(),
       ),
     );
   }
