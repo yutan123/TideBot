@@ -970,6 +970,12 @@ class DBManager {
     return rows.isEmpty ? null : rows.first;
   }
 
+  Future<void> deleteDiary(String botId, String dateKey) async {
+    final db = await database;
+    await db.delete('bot_diaries',
+        where: 'bot_id = ? AND date_key = ?', whereArgs: [botId, dateKey]);
+  }
+
   Future<void> upsertDiary(
       {required String botId,
       required String dateKey,

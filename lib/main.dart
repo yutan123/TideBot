@@ -30,6 +30,7 @@ import 'device_capability_service.dart';
 import 'external_api_service.dart';
 import 'daily_launch_animation.dart';
 import 'plugin_fab_menu.dart';
+import 'bot_state.dart';
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
@@ -144,9 +145,7 @@ void onStart(ServiceInstance service) {
         await DBManager().updateFutureTask(id, {'status': 'running'});
         final botId = task['bot_id']?.toString() ?? '';
         final bot = botId.isEmpty ? null : await DBManager().getBotById(botId);
-        if (bot == null ||
-            bot['is_disabled'] == 1 ||
-            bot['is_disabled'] == true) {
+        if (bot == null || isBotDisabled(bot['is_disabled'])) {
           await DBManager().updateFutureTask(id, {'status': 'pending'});
           continue;
         }
@@ -217,10 +216,11 @@ Future<void> _runOperationTriggeredReply() async {
   final now = DateTime.now().millisecondsSinceEpoch;
   final cooldownKey = 'operation_proactive_last_$botId';
   final previous = int.tryParse(await db.getKV(cooldownKey) ?? '') ?? 0;
-  if (now - previous < const Duration(hours: 4).inMilliseconds) return;
+  if (now - previous < const Duration(minutes: 45).inMilliseconds) return;
   final unanswered =
       int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
   if (unanswered >= 3) return;
+  AppLogService.instance.add('PROACTIVE', '应用打开触发主动回复：$botId');
   await db.setKV(cooldownKey, '$now');
   try {
     final result = await AIManager().sendMessage(
@@ -266,8 +266,8 @@ Future<void> _runDeviceEventTriggeredReply() async {
       int.tryParse(await db.getKV('operation_proactive_last_$botId') ?? '') ??
           0;
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (now - last < const Duration(hours: 4).inMilliseconds ||
-      Random.secure().nextInt(100) >= 12) return;
+  if (now - last < const Duration(minutes: 45).inMilliseconds ||
+      Random.secure().nextInt(100) >= 35) return;
   await db.setKV('operation_proactive_last_$botId', '$now');
   final safeEvent = jsonEncode(event);
   try {

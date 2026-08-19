@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 import 'ai.dart';
+import 'app_log_service.dart';
 
 /// 全屏语音通话界面；通过 AIManager 串联 STT、聊天和 TTS。
 class CallPage extends StatefulWidget {
@@ -151,14 +152,12 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _runVoiceTurn() async {
-    if (_processing ||
-        !widget.hasStt ||
-        !widget.hasTts ||
-        _recordingPath == null) return;
+    if (_processing || !widget.hasStt || _recordingPath == null) return;
     setState(() {
       _processing = true;
       _caption = '正在识别语音…';
     });
+    AppLogService.instance.add('VOICE_CALL', '开始识别 ${_recordingPath!}');
     try {
       final text = await AIManager()
           .transcribeAudio(
@@ -243,8 +242,7 @@ class _CallPageState extends State<CallPage>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    // 进入通话立即开始自动监听（需 STT/TTS 均已配置）。
-    if (widget.hasStt && widget.hasTts) {
+    if (widget.hasStt) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _startListening();
       });
@@ -264,7 +262,7 @@ class _CallPageState extends State<CallPage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final ready = widget.hasStt && widget.hasTts;
+    final ready = widget.hasStt;
     final name = widget.bot['name']?.toString().trim().isNotEmpty == true
         ? widget.bot['name'].toString()
         : 'TideBot';
@@ -357,7 +355,7 @@ class _CallPageState extends State<CallPage>
                     Text(
                       ready
                           ? (_caption.isEmpty ? '正在自动监听，请直接说话' : _caption)
-                          : '缺少：${widget.hasStt ? '' : 'STT 转写模型'}${!widget.hasStt && !widget.hasTts ? '、' : ''}${widget.hasTts ? '' : 'TTS 语音模型'}',
+                          : '缺少：${widget.hasStt ? '' : 'STT 转写模型'}${!widget.hasStt ? '' : ''}',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: theme.textFaint,

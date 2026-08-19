@@ -1560,6 +1560,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     required String path,
     required bool isUser,
     required int fallbackSeconds,
+    String transcript = '',
   }) {
     final active = _playingAudioPath == path;
     final position = active ? _audioPosition : Duration.zero;
@@ -1585,59 +1586,73 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : TideTheme.of(context).buttonSecondary,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              tooltip: active && _audioPlaying ? '暂停语音' : '播放语音',
-              onPressed: () => _toggleAudio(path),
-              icon: Icon(
-                active && _audioPlaying
-                    ? Icons.pause_circle_filled_rounded
-                    : Icons.play_circle_filled_rounded,
-                color: foreground,
-                size: 25,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Slider(
-                  min: 0,
-                  max: max,
-                  value: value,
-                  onChanged: !active || !knownDuration
-                      ? null
-                      : (v) => _player.seek(Duration(milliseconds: v.round())),
-                  activeColor: foreground,
-                  inactiveColor: muted,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 36,
+                height: 36,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: active && _audioPlaying ? '暂停语音' : '播放语音',
+                  onPressed: () => _toggleAudio(path),
+                  icon: Icon(
+                    active && _audioPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_filled_rounded,
+                    color: foreground,
+                    size: 25,
+                  ),
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_formatAudioTime(position),
-                        style: TextStyle(
-                            color: muted,
-                            fontSize: 11,
-                            fontFamily: 'TideFont')),
-                    Text(knownDuration ? _formatAudioTime(duration) : '语音',
-                        style: TextStyle(
-                            color: muted,
-                            fontSize: 11,
-                            fontFamily: 'TideFont')),
+                    Slider(
+                      min: 0,
+                      max: max,
+                      value: value,
+                      onChanged: !active || !knownDuration
+                          ? null
+                          : (v) =>
+                              _player.seek(Duration(milliseconds: v.round())),
+                      activeColor: foreground,
+                      inactiveColor: muted,
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(_formatAudioTime(position),
+                            style: TextStyle(
+                                color: muted,
+                                fontSize: 11,
+                                fontFamily: 'TideFont')),
+                        Text(knownDuration ? _formatAudioTime(duration) : '语音',
+                            style: TextStyle(
+                                color: muted,
+                                fontSize: 11,
+                                fontFamily: 'TideFont')),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          if (transcript.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 5),
+              child: Text(transcript,
+                  style: TextStyle(
+                      color: foreground, fontSize: 13, fontFamily: 'TideFont')),
+            ),
         ],
       ),
     );
@@ -2309,12 +2324,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                               path: audioPath!,
                               isUser: isUser,
                               fallbackSeconds: m['duration'] as int? ?? 0,
+                              transcript: txt,
                             ),
-                          // STT 结果放在语音卡片下；无转写时不渲染空白文字。
-                          if (hasAudio && txt.isNotEmpty)
-                            Padding(
-                                padding: const EdgeInsets.only(bottom: 4),
-                                child: _parseText(txt, isUser)),
                           if (replyId != null && replyId.isNotEmpty)
                             _replyCard(replyId, isUser),
                           // 动态分享使用独立卡片，JSON 负载不会直接暴露为聊天正文。

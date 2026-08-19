@@ -12,6 +12,7 @@ import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 
 import 'app_log_service.dart';
+import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
 import 'plugin_runtime.dart';
@@ -200,7 +201,7 @@ class AIManager {
 
   String _stripResponsePrefix(String value) => value
       .replaceFirst(
-          RegExp(r'^\\s*(?:data\\s*:\\s*)?response\\s*[:：]\\s*',
+          RegExp(r'^\s*(?:(?:data|event)\s*:\s*)?response\s*[:：]\s*',
               caseSensitive: false),
           '')
       .trim();
@@ -284,7 +285,7 @@ class AIManager {
 
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
-    if (bot['is_disabled'] == 1 || bot['is_disabled'] == true) {
+    if (isBotDisabled(bot['is_disabled'])) {
       AppLogService.instance.add('AI', '机器人已禁用，跳过回复：$botId');
       return {'success': true, 'silent': true, 'reply': ''};
     }

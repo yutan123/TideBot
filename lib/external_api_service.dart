@@ -5,6 +5,7 @@ import 'dart:io';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
+import 'bot_state.dart';
 
 /// A small OpenAI-compatible LAN gateway backed by one TideBot persona.
 /// It deliberately exposes only models and non-streaming chat completions.
@@ -148,7 +149,12 @@ class ExternalApiService {
         final botId = await db.getKV('external_api_bot_id') ?? '';
         final bot = botId.isEmpty ? null : await db.getBotById(botId);
         if (bot == null) return _error(request, 400, '未选择可用机器人');
-        if (bot['is_disabled'] == 1 || bot['is_disabled'] == true) {
+        final disabled = isBotDisabled(bot['is_disabled']);
+        AppLogService.instance.add(
+          'EXTERNAL_API',
+          '已选择机器人 ${bot['id'] ?? botId}，is_disabled=${bot['is_disabled']}，标准化禁用状态=$disabled',
+        );
+        if (disabled) {
           return _error(request, 403, '所选机器人已禁用');
         }
         final messages = decoded['messages'];

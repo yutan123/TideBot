@@ -43,6 +43,7 @@ class _DiaryCalendarPageState extends State<DiaryCalendarPage> {
       context,
       MaterialPageRoute(
         builder: (_) => DiaryDetailPage(
+          botId: widget.botId,
           botName: widget.botName,
           dateKey: _key(date),
           content: diary['content']?.toString() ?? '',
@@ -159,11 +160,13 @@ class _DiaryCalendarPageState extends State<DiaryCalendarPage> {
 }
 
 class DiaryDetailPage extends StatelessWidget {
+  final String botId;
   final String botName;
   final String dateKey;
   final String content;
   const DiaryDetailPage(
       {super.key,
+      required this.botId,
       required this.botName,
       required this.dateKey,
       required this.content});
@@ -173,8 +176,36 @@ class DiaryDetailPage extends StatelessWidget {
     final theme = TideTheme.of(context);
     return Scaffold(
       backgroundColor: theme.bgColor,
-      appBar:
-          AppBar(title: Text('$botName的日记'), backgroundColor: theme.bgColor),
+      appBar: AppBar(
+        title: Text('$botName的日记'),
+        backgroundColor: theme.bgColor,
+        actions: [
+          IconButton(
+            tooltip: '删除日记',
+            icon: const Icon(Icons.delete_outline_rounded),
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('删除这篇日记？'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('取消')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('删除')),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
+                await DBManager().deleteDiary(botId, dateKey);
+                if (context.mounted) Navigator.pop(context, true);
+              }
+            },
+          ),
+        ],
+      ),
       body: SafeArea(
           child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),

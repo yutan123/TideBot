@@ -3,6 +3,7 @@ import 'db.dart';
 import 'ui_components.dart';
 import 'ui_chat_room.dart';
 import 'theme.dart';
+import 'bot_state.dart';
 
 class ChatListPage extends StatefulWidget {
   final GlobalKey<ChatListPageState>? pageKey;
@@ -265,8 +266,7 @@ class ChatListPageState extends State<ChatListPage> {
                         style: TextStyle(fontFamily: 'TideFont', fontSize: 11)),
                     onTap: () async {
                       Navigator.pop(context);
-                      final disabled =
-                          bot['is_disabled'] == 1 || bot['is_disabled'] == true;
+                      final disabled = isBotDisabled(bot['is_disabled']);
                       await DBManager().updateBot(bot['id'] as String,
                           {'is_disabled': disabled ? 0 : 1});
                       load();
