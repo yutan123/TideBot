@@ -337,13 +337,20 @@ class AIManager {
     // appended last, and history is packed newest-first within the user budget.
     // 稳定记忆放在系统提示的固定位置，动态的中短期记忆限制条数和体积，
     // 避免每轮请求无边界增长，同时尽可能保留服务商前缀缓存命中。
-    final longMemoriesRaw = activeGame == null
-        ? await db.queryMemories(botId, type: 'long', limit: 12)
+    final stableLongMemories = activeGame == null
+        ? await db.queryMemories(botId, type: 'long', limit: 4)
         : <Map<String, dynamic>>[];
-    final longMemories = longMemoriesRaw;
-    final shortMemories = activeGame == null
-        ? await db.queryMemories(botId, type: 'short', limit: 8)
+    final relevantMemories = activeGame == null
+        ? await db.queryMemoriesRelevant(botId, text, limit: 8)
         : <Map<String, dynamic>>[];
+    final longMemories = <Map<String, dynamic>>[
+      ...stableLongMemories,
+      ...relevantMemories.where((m) =>
+          m['type'] == 'long' &&
+          !stableLongMemories.any((stable) => stable['id'] == m['id'])),
+    ].take(8).toList();
+    final shortMemories =
+        relevantMemories.where((m) => m['type'] == 'short').take(6).toList();
     String memoryLines(List<Map<String, dynamic>> items, int budget) {
       var used = 0;
       final lines = <String>[];
@@ -716,11 +723,6 @@ class AIManager {
             AppLogService.instance.add('TTS', '本轮语音回复：先完成合成，再仅发送语音消息。');
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
           }
-          final segmented = !shouldVoice &&
-              onDelta == null &&
-              await db.getKV('segmented_reply_enabled') != 'false';
-          final segments =
-              segmented ? _replySegments(replyText) : <String>[replyText];
           if (audioPath != null && audioPath.isNotEmpty) {
             await db.insertChatMessage({
               'id': msgId,
@@ -735,20 +737,18 @@ class AIManager {
               'timestamp': ts + 1,
             });
           } else {
-            for (var index = 0; index < segments.length; index++) {
-              await db.insertChatMessage({
-                'id': index == 0 ? msgId : '${msgId}_segment_$index',
-                'bot_id': botId,
-                'role': 'assistant',
-                'type': 'text',
-                'content': segments[index],
-                'file_path': null,
-                'mood': mood,
-                'sources_json':
-                    searchSources.isEmpty ? null : jsonEncode(searchSources),
-                'timestamp': ts + 1 + index,
-              });
-            }
+            await db.insertChatMessage({
+              'id': msgId,
+              'bot_id': botId,
+              'role': 'assistant',
+              'type': 'text',
+              'content': replyText,
+              'file_path': null,
+              'mood': mood,
+              'sources_json':
+                  searchSources.isEmpty ? null : jsonEncode(searchSources),
+              'timestamp': ts + 1,
+            });
           }
           if (generatedImagePath != null) {
             await db.insertChatMessage({
@@ -806,6 +806,7 @@ class AIManager {
     }
   }
 
+  // ignore: unused_element
   List<String> _replySegments(String content) {
     final parts = RegExp(r'.*?[。？！~…]+|.+$', multiLine: true)
         .allMatches(content)
@@ -2218,19 +2219,17 @@ $transcript''';
     }
     if (name == 'write_diary') {
       final entry = args['entry']?.toString().trim() ?? '';
-      if (entry.isEmpty)
+      if (entry.isEmpty) {
         return {
           'result': {'ok': false, 'error': '缺少日记内容'}
         };
-      await db.upsertMemoryItem(
-          botId: botId,
-          type: 'short',
-          content: entry,
-          title: '日记',
-          category: 'diary',
-          importance: 3);
+      }
+      final now = DateTime.now();
+      final dateKey =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.upsertDiary(botId: botId, dateKey: dateKey, content: entry);
       AppLogService.instance
-          .add('DIARY', '机器人通过 write_diary 工具写入日记：${entry.length} 字');
+          .add('DIARY', '机器人通过 write_diary 工具写入独立日记：${entry.length} 字');
       return {
         'result': {'ok': true, 'message': '日记已安全写入，不要在聊天中复述日记正文。'}
       };

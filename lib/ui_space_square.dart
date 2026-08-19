@@ -12,6 +12,7 @@ import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
 import 'emotion_state_service.dart';
+import 'diary_calendar_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -157,6 +158,16 @@ class _SpacePageState extends State<SpacePage> {
 
   // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 
+  Future<void> _openDiaryCalendar() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DiaryCalendarPage(botId: _botId, botName: _botName),
+      ),
+    );
+  }
+
+  // ignore: unused_element
   Future<void> _openMemoryManager() async {
     await Navigator.push(
         context,
@@ -301,12 +312,12 @@ class _SpacePageState extends State<SpacePage> {
                         if (_botId.isNotEmpty) ...[
                           const SizedBox(height: 16),
                           Row(children: [
-                            Expanded(child: _buildSectionTitle('TA 的日记')),
+                            Expanded(child: _buildSectionTitle('TA 的记忆')),
                             TextButton.icon(
-                              onPressed: _openMemoryManager,
+                              onPressed: _openDiaryCalendar,
                               icon: const Icon(Icons.open_in_full_rounded,
                                   size: 16),
-                              label: const Text('管理',
+                              label: const Text('日记',
                                   style: TextStyle(fontFamily: 'TideFont')),
                             ),
                           ]),

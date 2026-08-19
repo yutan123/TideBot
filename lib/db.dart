@@ -56,7 +56,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 19,
+      version: 20,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -138,6 +138,16 @@ class DBManager {
             FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
           )
         ''');
+        await db.execute('''
+          CREATE TABLE bot_diaries (
+            id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+            content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE,
+            UNIQUE(bot_id, date_key)
+          )
+        ''');
+        await db.execute(
+            'CREATE INDEX idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
         await db.execute('''
           CREATE TABLE ai_usage_events (
             id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
@@ -304,6 +314,21 @@ class DBManager {
                 'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0');
           } catch (_) {}
         }
+        if (oldVersion < 20) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS bot_diaries (
+              id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+              content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+              FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE,
+              UNIQUE(bot_id, date_key)
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
+          await db.execute(
+              "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL");
+        }
+
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -857,6 +882,112 @@ class DBManager {
         whereArgs: whereArgs,
         orderBy: 'timestamp DESC',
         limit: limit);
+  }
+
+  Future<List<Map<String, dynamic>>> queryMemoriesRelevant(
+      String botId, String query,
+      {int limit = 8, bool includeExpired = false}) async {
+    final tokens = _memorySearchTokens(query);
+    if (tokens.isEmpty) return queryMemories(botId, limit: limit);
+    final candidates =
+        await queryMemories(botId, includeExpired: includeExpired);
+    final scored = <Map<String, dynamic>>[];
+    for (final row in candidates) {
+      final haystack =
+          '${row['title'] ?? ''} ${row['content'] ?? ''}'.toLowerCase();
+      var hits = 0;
+      for (final token in tokens) {
+        if (haystack.contains(token)) hits++;
+      }
+      if (hits == 0) continue;
+      final importance = (row['importance'] as num?)?.toInt() ?? 3;
+      final score = hits * 100 +
+          importance * 8 +
+          ((row['type']?.toString() == 'long') ? 12 : 0);
+      final copy = Map<String, dynamic>.from(row)..['_relevance'] = score;
+      scored.add(copy);
+    }
+    scored.sort(
+        (a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
+    return scored.take(limit).map((row) {
+      final copy = Map<String, dynamic>.from(row)..remove('_relevance');
+      return copy;
+    }).toList();
+  }
+
+  List<String> _memorySearchTokens(String query) {
+    final normalized =
+        query.toLowerCase().replaceAll(RegExp(r'[^\u3400-\u9fff\w]+'), ' ');
+    final tokens = <String>{};
+    for (final word in normalized.split(RegExp(r'\s+'))) {
+      if (word.length >= 2) tokens.add(word);
+    }
+    for (var i = 0; i < normalized.length - 1; i++) {
+      final pair = normalized.substring(i, i + 2).trim();
+      if (pair.length == 2 &&
+          pair.runes.every((r) => r >= 0x3400 && r <= 0x9fff)) {
+        tokens.add(pair);
+      }
+    }
+    return tokens.toList();
+  }
+
+  Future<List<Map<String, dynamic>>> queryDiaryDates(String botId,
+      {String? fromDate, String? toDate}) async {
+    final db = await database;
+    final where = <String>['bot_id = ?'];
+    final args = <dynamic>[botId];
+    if (fromDate != null) {
+      where.add('date_key >= ?');
+      args.add(fromDate);
+    }
+    if (toDate != null) {
+      where.add('date_key <= ?');
+      args.add(toDate);
+    }
+    return db.query('bot_diaries',
+        columns: ['date_key'],
+        where: where.join(' AND '),
+        whereArgs: args,
+        orderBy: 'date_key ASC');
+  }
+
+  Future<Map<String, dynamic>?> getDiary(String botId, String dateKey) async {
+    final db = await database;
+    final rows = await db.query('bot_diaries',
+        where: 'bot_id = ? AND date_key = ?',
+        whereArgs: [botId, dateKey],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> upsertDiary(
+      {required String botId,
+      required String dateKey,
+      required String content}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existing = await getDiary(botId, dateKey);
+    final db = await database;
+    await db.insert(
+        'bot_diaries',
+        {
+          'id': existing?['id']?.toString() ?? 'diary_${botId}_$dateKey',
+          'bot_id': botId,
+          'date_key': dateKey,
+          'content': content.trim(),
+          'created_at': existing?['created_at'] ?? now,
+          'updated_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> queryDiaryRange(
+      String botId, String fromDate, String toDate) async {
+    final db = await database;
+    return db.query('bot_diaries',
+        where: 'bot_id = ? AND date_key >= ? AND date_key <= ?',
+        whereArgs: [botId, fromDate, toDate],
+        orderBy: 'date_key ASC');
   }
 
   Future<void> insertMemory(Map<String, dynamic> memory) async {

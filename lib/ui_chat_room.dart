@@ -657,7 +657,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           (await db.getKV('segmented_reply_enabled')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
-      if (streamEnabled && !segmentedReply && mounted) {
+      if (streamEnabled && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
           'bot_id': botId,
@@ -701,7 +701,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             text: modelText,
             imagePaths: images,
             persistResponse: persistThisReply,
-            onDelta: streamEnabled && !segmentedReply ? (_) {} : null,
+            onDelta: null,
           )
           .timeout(requestTimeout);
 

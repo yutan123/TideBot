@@ -90,12 +90,10 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
                         child: SizedBox(
                           width: 112,
                           height: 112,
-                          child: CustomPaint(
-                            painter: _RipplePainter(
-                              progress: progress,
-                              color: theme.primary
-                                  .withValues(alpha: theme.isDark ? .65 : .42),
-                            ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(24),
+                            child: Image.asset('assets/images/logo.png',
+                                fit: BoxFit.cover),
                           ),
                         ),
                       ),
@@ -131,6 +129,7 @@ class _Glow extends StatelessWidget {
       );
 }
 
+// ignore: unused_element
 class _RipplePainter extends CustomPainter {
   final double progress;
   final Color color;

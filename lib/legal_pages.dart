@@ -123,8 +123,11 @@ class TideBotAboutPage extends StatelessWidget {
             child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(children: [
-            Image.asset('assets/images/logo.png',
-                height: 112, fit: BoxFit.contain),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Image.asset('assets/images/logo.png',
+                  height: 112, fit: BoxFit.cover),
+            ),
             const SizedBox(height: 16),
             Text('TideBot',
                 style: TextStyle(
@@ -152,19 +155,35 @@ class TideBotAboutPage extends StatelessWidget {
                 style: TextStyle(fontFamily: 'TideFont', height: 1.8)),
             const Spacer(),
             SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                    onPressed: () {}, child: const Text('检测新版本'))),
+              width: double.infinity,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.primary,
+                  side: BorderSide(color: theme.primary),
+                ),
+                onPressed: () {},
+                child: const Text('检测新版本'),
+              ),
+            ),
             const SizedBox(height: 10),
             SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                    onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const LegalAgreementPage(
-                                requiredAcceptance: false))),
-                    child: const Text('查看用户协议与免责声明'))),
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: theme.primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const LegalAgreementPage(
+                      requiredAcceptance: false,
+                    ),
+                  ),
+                ),
+                child: const Text('查看用户协议与免责声明'),
+              ),
+            ),
           ]),
         )));
   }

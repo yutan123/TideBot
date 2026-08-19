@@ -19,6 +19,7 @@ import 'ui_components.dart';
 import 'app_state.dart';
 import 'app_navigation.dart';
 import 'db.dart';
+import 'diary_service.dart';
 import 'global_notice.dart';
 import 'ops.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -455,6 +456,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(DiaryService.instance.catchUp());
   }
 
   @override
@@ -466,6 +468,9 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppState.updateLifecycle(state);
+    if (state == AppLifecycleState.resumed) {
+      unawaited(DiaryService.instance.catchUp());
+    }
   }
 
   // 跟随系统日夜变化：手动覆盖后系统变化也触发重取色(不影响手动模式)
