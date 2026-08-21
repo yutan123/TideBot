@@ -15,7 +15,7 @@ class FullBackupService {
 
   static Future<({String name, List<int> bytes})> create() async {
     final db = await DBManager().database;
-    await db.execute('PRAGMA wal_checkpoint(FULL)');
+    await db.rawQuery('PRAGMA wal_checkpoint(FULL)');
     final dbPath = '${await getDatabasesPath()}/$_dbName';
     final archive = Archive();
     final dbBytes = await File(dbPath).readAsBytes();
@@ -24,8 +24,13 @@ class FullBackupService {
     final values = <String, dynamic>{};
     for (final key in prefs.getKeys()) values[key] = prefs.get(key);
     final preferencesBytes = utf8.encode(jsonEncode(values));
-    archive.addFile(ArchiveFile(
-        'preferences.json', preferencesBytes.length, preferencesBytes));
+    archive.addFile(
+      ArchiveFile(
+        'preferences.json',
+        preferencesBytes.length,
+        preferencesBytes,
+      ),
+    );
     final docs = await getApplicationDocumentsDirectory();
     if (await docs.exists()) {
       await for (final item in docs.list(recursive: true, followLinks: false)) {
@@ -34,7 +39,8 @@ class FullBackupService {
         final relative = item.path.substring(docs.path.length + 1);
         final fileBytes = await item.readAsBytes();
         archive.addFile(
-            ArchiveFile('documents/$relative', fileBytes.length, fileBytes));
+          ArchiveFile('documents/$relative', fileBytes.length, fileBytes),
+        );
       }
     }
     return (
@@ -43,7 +49,7 @@ class FullBackupService {
     );
   }
 
-  static Future<void> export() async {
+  static Future<bool> export() async {
     final backup = await create();
     final saved = await FilePicker.platform.saveFile(
       dialogTitle: '导出 TideBot 完整备份',
@@ -52,7 +58,8 @@ class FullBackupService {
       allowedExtensions: const ['zip'],
       bytes: Uint8List.fromList(backup.bytes),
     );
-    if (saved == null) throw StateError('已取消导出');
+    if (saved == null) return false;
+    return true;
   }
 
   static Future<void> _deleteIfExists(String path) async {
@@ -67,7 +74,7 @@ class FullBackupService {
     }
   }
 
-  static Future<void> restore() async {
+  static Future<bool> restore() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['zip'],
@@ -75,9 +82,10 @@ class FullBackupService {
     );
     final bytes = picked?.files.single.bytes;
     final path = picked?.files.single.path;
-    if (bytes == null && path == null) throw StateError('未选择备份文件');
-    final archive =
-        ZipDecoder().decodeBytes(bytes ?? await File(path!).readAsBytes());
+    if (bytes == null && path == null) return false;
+    final archive = ZipDecoder().decodeBytes(
+      bytes ?? await File(path!).readAsBytes(),
+    );
     final dbEntry = archive.findFile('tidebot.db');
     final prefsEntry = archive.findFile('preferences.json');
     if (dbEntry == null || prefsEntry == null)
@@ -91,8 +99,9 @@ class FullBackupService {
     final docs = await getApplicationDocumentsDirectory();
     await _clearDirectory(docs);
     await docs.create(recursive: true);
-    for (final entry in archive.files
-        .where((e) => e.name.startsWith('documents/') && e.isFile)) {
+    for (final entry in archive.files.where(
+      (e) => e.name.startsWith('documents/') && e.isFile,
+    )) {
       final relative = entry.name.substring('documents/'.length);
       if (relative.isEmpty || relative.contains('..')) continue;
       final file = File('${docs.path}/$relative');
@@ -114,7 +123,10 @@ class FullBackupService {
         await prefs.setString(entry.key, value);
       else if (value is List)
         await prefs.setStringList(
-            entry.key, value.map((e) => e.toString()).toList());
+          entry.key,
+          value.map((e) => e.toString()).toList(),
+        );
     }
+    return true;
   }
 }

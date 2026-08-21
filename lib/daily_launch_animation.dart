@@ -68,34 +68,20 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
               builder: (context, child) {
                 final progress =
                     Curves.easeInOutCubic.transform(_controller.value);
-                final disappearing =
-                    (1 - ((progress - .66) / .34)).clamp(0.0, 1.0);
                 return Stack(
                   children: [
                     _Glow(
                       alignment: Alignment(-.75 + progress * .6, -.45),
                       radius: 160 + progress * 120,
-                      color: theme.primary
-                          .withValues(alpha: theme.isDark ? .22 : .14),
+                      color: theme.primary.withValues(
+                        alpha: theme.isDark ? .22 : .14,
+                      ),
                     ),
                     _Glow(
                       alignment: Alignment(.85 - progress * .8, .55),
                       radius: 130 + progress * 150,
-                      color: theme.primaryLight
-                          .withValues(alpha: theme.isDark ? .18 : .12),
-                    ),
-                    Center(
-                      child: Opacity(
-                        opacity: disappearing,
-                        child: SizedBox(
-                          width: 112,
-                          height: 112,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(24),
-                            child: Image.asset('assets/images/logo.png',
-                                fit: BoxFit.cover),
-                          ),
-                        ),
+                      color: theme.primaryLight.withValues(
+                        alpha: theme.isDark ? .18 : .12,
                       ),
                     ),
                   ],
@@ -112,8 +98,11 @@ class _Glow extends StatelessWidget {
   final Alignment alignment;
   final double radius;
   final Color color;
-  const _Glow(
-      {required this.alignment, required this.radius, required this.color});
+  const _Glow({
+    required this.alignment,
+    required this.radius,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) => Align(

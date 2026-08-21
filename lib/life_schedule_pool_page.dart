@@ -19,6 +19,7 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
     'moods': '心情池',
     'outfits': '穿搭池',
     'types': '日程池',
+    'weather': '天气池',
   };
 
   @override

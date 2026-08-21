@@ -16,7 +16,6 @@ import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
 import 'chat_content.dart';
-import 'plugin_runtime.dart';
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -33,8 +32,10 @@ class AIManager {
     // 再由合并后的新请求统一落库，保证聊天记录与界面顺序一致。
     bool persistResponse = true,
   }) async {
-    final lastUser = messages.lastWhere((m) => m['role'] == 'user',
-        orElse: () => {'content': ''});
+    final lastUser = messages.lastWhere(
+      (m) => m['role'] == 'user',
+      orElse: () => {'content': ''},
+    );
     final text = lastUser['content'] as String? ?? '';
 
     String? imgPath;
@@ -42,7 +43,8 @@ class AIManager {
       try {
         final directory = await getTemporaryDirectory();
         final tmpFile = File(
-            '${directory.path}/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg');
+          '${directory.path}/tide_img_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        );
         await tmpFile.writeAsBytes(base64Decode(imageBase64));
         imgPath = tmpFile.path;
       } catch (_) {}
@@ -191,8 +193,10 @@ class AIManager {
         start = -1;
       }
     }
-    final usable = objects.lastWhere((item) => item.isNotEmpty,
-        orElse: () => <String, dynamic>{});
+    final usable = objects.lastWhere(
+      (item) => item.isNotEmpty,
+      orElse: () => <String, dynamic>{},
+    );
     if (usable.isNotEmpty) {
       AppLogService.instance.add('TOOLS', '已修复兼容接口返回的拼接工具参数');
       return usable;
@@ -231,9 +235,11 @@ class AIManager {
         if (content.isNotEmpty) return content;
         // DeepSeek-compatible endpoints occasionally place the only human
         // readable answer in reasoning_content while content is empty.
-        final reasoning = fromValue(message['reasoning_content'] ??
-            message['reasoning'] ??
-            message['analysis']);
+        final reasoning = fromValue(
+          message['reasoning_content'] ??
+              message['reasoning'] ??
+              message['analysis'],
+        );
         if (reasoning.isNotEmpty) return reasoning;
       }
       final text = fromValue(choice['text']);
@@ -305,7 +311,8 @@ class AIManager {
     final provider = await db.getChatProviderById(providerId);
     if (provider == null) return {'error': '映射的模型已被删除，请重新配置'};
     print(
-        '[ai] provider resolved id=$providerId name=${provider['name']} base=${provider['base_url']}');
+      '[ai] provider resolved id=$providerId name=${provider['name']} base=${provider['base_url']}',
+    );
     AppLogService.instance.add('AI', '已解析服务商 ${provider['name']}，模型配置将开始请求');
     // 模型名
     // 模型名：优先用 provider['model']（多个逗号分隔取第一个），否则退回 name 最后一段
@@ -346,9 +353,11 @@ class AIManager {
         : <Map<String, dynamic>>[];
     final longMemories = <Map<String, dynamic>>[
       ...stableLongMemories,
-      ...relevantMemories.where((m) =>
-          m['type'] == 'long' &&
-          !stableLongMemories.any((stable) => stable['id'] == m['id'])),
+      ...relevantMemories.where(
+        (m) =>
+            m['type'] == 'long' &&
+            !stableLongMemories.any((stable) => stable['id'] == m['id']),
+      ),
     ].take(8).toList();
     final shortMemories =
         relevantMemories.where((m) => m['type'] == 'short').take(6).toList();
@@ -371,24 +380,27 @@ class AIManager {
     final stickerEmotions =
         allowSticker ? await db.stickerEmotions() : <String>[];
     final toolContext = allowTools
-        ? await _buildToolContext(db,
-            allowSticker: allowSticker, stickerEmotions: stickerEmotions)
+        ? await _buildToolContext(
+            db,
+            allowSticker: allowSticker,
+            stickerEmotions: stickerEmotions,
+          )
         : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
-    final deviceContext =
-        await DeviceCapabilityService.instance.contextFor(botId);
+    final deviceContext = await DeviceCapabilityService.instance.contextFor(
+      botId,
+    );
     final deviceContextPrompt = deviceContext.isEmpty
         ? ''
         : '\n【经用户逐项授权的设备上下文】${DeviceCapabilityService.instance.encodeContext(deviceContext)}。仅在当前问题直接相关时使用；不得主动逐项复述、推断未授权信息或声称持续监控。';
-    final emotionContext =
-        await EmotionStateService.instance.promptContext(botId);
-    final pluginSkillContext = await PluginRuntime.instance.skillPrompt(botId);
+    final emotionContext = await EmotionStateService.instance.promptContext(
+      botId,
+    );
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         _safetyContext(text) +
         lifeContext +
         deviceContextPrompt +
         emotionContext +
-        pluginSkillContext +
         (longMemoryContext.isEmpty
             ? ''
             : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
@@ -411,7 +423,8 @@ class AIManager {
     // are represented by the memory store, avoiding repeated full transcripts.
     final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
     for (final msg in history.reversed) {
-      if (msg['type'] != 'text') continue;
+      final isCallSummary = msg['type'] == 'call_summary';
+      if (msg['type'] != 'text' && !isCallSummary) continue;
       // Failed/unsent messages must never become model context. They may be
       // visible as an error bubble, but are not part of the conversation.
       if (msg['error_log']?.toString().isNotEmpty == true ||
@@ -420,32 +433,41 @@ class AIManager {
       }
       final content = msg['content']?.toString() ?? '';
       if (content.isEmpty) continue;
-      final tokens = estimateTokens(content);
+      final normalizedContent = isCallSummary
+          ? '【语音通话记录】时长：${msg['duration'] ?? 0} 秒。通话摘要：$content'
+          : content;
+      final tokens = estimateTokens(normalizedContent);
       if (usedTokens + tokens > historyBudget) {
         if (historyMessages.isEmpty) {
-          final keepChars =
-              (historyBudget * 2.6).floor().clamp(200, content.length);
+          final keepChars = (historyBudget * 2.6).floor().clamp(
+                200,
+                content.length,
+              );
           historyMessages.add({
             'role':
                 msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-            'content': content.substring(content.length - keepChars.toInt()),
+            'content': normalizedContent.substring(
+              normalizedContent.length - keepChars.toInt(),
+            ),
           });
         }
         break;
       }
       historyMessages.add({
         'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
-        'content': content,
+        'content': normalizedContent,
       });
       usedTokens += tokens;
     }
     messages.addAll(historyMessages.reversed);
     final eligibleHistoryCount = history
-        .where((msg) =>
-            msg['type'] == 'text' &&
-            msg['error_log']?.toString().isNotEmpty != true &&
-            msg['error_code']?.toString().isNotEmpty != true &&
-            (msg['content']?.toString().trim().isNotEmpty ?? false))
+        .where(
+          (msg) =>
+              msg['type'] == 'text' &&
+              msg['error_log']?.toString().isNotEmpty != true &&
+              msg['error_code']?.toString().isNotEmpty != true &&
+              (msg['content']?.toString().trim().isNotEmpty ?? false),
+        )
         .length;
     AppLogService.instance.add(
       'CONTEXT',
@@ -495,10 +517,7 @@ class AIManager {
           'content': contentWithMedia,
         };
       } else {
-        messages.add({
-          'role': 'user',
-          'content': contentWithMedia,
-        });
+        messages.add({'role': 'user', 'content': contentWithMedia});
       }
     } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
@@ -537,22 +556,25 @@ class AIManager {
       });
     }
     try {
-      final baseUrl = provider['base_url']
-              ?.toString()
-              .trim()
-              .replaceFirst(RegExp(r'/+$'), '') ??
+      final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
+                RegExp(r'/+$'),
+                '',
+              ) ??
           '';
       if (baseUrl.isEmpty) return {'error': '模型提供商缺少 Base URL，请在 API 设置中补充'};
       print(
-          '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions');
-      AppLogService.instance.add('AI',
-          '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）');
+        '[ai] request bot=$botId provider=$providerId model=$modelName url=$baseUrl/chat/completions',
+      );
+      AppLogService.instance.add(
+        'AI',
+        '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）',
+      );
       final tools = allowTools
-          ? [
-              ...await _buildNativeTools(db,
-                  botId: botId, allowSticker: allowSticker),
-              ...await PluginRuntime.instance.toolSchemas(),
-            ]
+          ? await _buildNativeTools(
+              db,
+              botId: botId,
+              allowSticker: allowSticker,
+            )
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -621,33 +643,38 @@ class AIManager {
               'tool_calls': toolCalls,
             });
             await _runStreamedTools(
-                db: db,
-                botId: botId,
-                calls: toolCalls,
-                messages: messages,
-                baseUrl: baseUrl,
-                modelName: modelName,
-                apiKey: provider['api_key']?.toString() ?? '',
-                maxTokens: bot['max_tokens'] ?? 10000,
-                onDelta: null,
-                replyTextCallback: (t) => replyText = t,
-                usageCallback: (u) => usage = u,
-                searchSourcesSetter: (l) => searchSources = l,
-                generatedImageSetter: (p) => generatedImagePath = p,
-                pendingDeviceActionSetter: (_) {},
-                silenceSetter: () => toolSilenced = true);
+              db: db,
+              botId: botId,
+              calls: toolCalls,
+              messages: messages,
+              baseUrl: baseUrl,
+              modelName: modelName,
+              apiKey: provider['api_key']?.toString() ?? '',
+              maxTokens: bot['max_tokens'] ?? 10000,
+              onDelta: null,
+              replyTextCallback: (t) => replyText = t,
+              usageCallback: (u) => usage = u,
+              searchSourcesSetter: (l) => searchSources = l,
+              generatedImageSetter: (p) => generatedImagePath = p,
+              pendingDeviceActionSetter: (_) {},
+              silenceSetter: () => toolSilenced = true,
+            );
           }
         }
       }
       if (toolSilenced) replyText = '';
       print('[ai] response status=$statusCode');
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
-      AppLogService.instance.add('RESPONSE',
-          '模型提供商响应（HTTP $statusCode）\n${errorBody.isEmpty ? replyText : errorBody}');
+      AppLogService.instance.add(
+        'RESPONSE',
+        '模型提供商响应（HTTP $statusCode）\n${errorBody.isEmpty ? replyText : errorBody}',
+      );
       if (statusCode == 200) {
         // 优先采用 API 返回的真实 usage；缺失时用标准化算法估算（不再用 字符数/3.2）。
         final promptText = messages.fold<String>(
-            '', (sum, m) => sum + (m['content']?.toString() ?? ''));
+          '',
+          (sum, m) => sum + (m['content']?.toString() ?? ''),
+        );
         final promptTokens = (usage['prompt_tokens'] as num?)?.toInt() ??
             estimateTokens(promptText);
         final completionTokens =
@@ -673,12 +700,30 @@ class AIManager {
         // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
         String mood = _extractMood(replyText);
         // 先抽取模型主动要求记住的信息，再剥离可见文本，避免把它们留在气泡里。
-        await _persistModelMemories(db, bot['name']?.toString() ?? 'TideBot',
-            bot['id']?.toString() ?? botId, replyText);
-        replyText = _cleanVisibleReply(replyText);
-        final stickerEmotion =
-            _extractStickerEmotion(replyText, stickerEmotions);
-        replyText = _cleanVisibleReply(replyText);
+        await _persistModelMemories(
+          db,
+          bot['name']?.toString() ?? 'TideBot',
+          bot['id']?.toString() ?? botId,
+          replyText,
+        );
+        final rawReply = replyText;
+        final stickerRawTag = _stickerTag(rawReply);
+        final stickerEmotion = _extractStickerEmotion(
+          rawReply,
+          stickerEmotions,
+        );
+        if (stickerRawTag == null) {
+          AppLogService.instance.add(
+            'STICKER',
+            '模型未输出表情包标签；本轮不发送表情包',
+          );
+        } else if (stickerEmotion == null) {
+          AppLogService.instance.add(
+            'STICKER',
+            '表情包标签无法匹配本地分类：原始标签=$stickerRawTag',
+          );
+        }
+        replyText = _cleanVisibleReply(rawReply);
         final wantsSources = _userExplicitlyRequestedSources(text);
         if (!wantsSources) replyText = _stripSourceLinks(replyText);
         if (replyText.isEmpty && generatedImagePath != null) {
@@ -707,12 +752,17 @@ class AIManager {
           final candidates = await db.queryStickers(emotion: stickerEmotion);
           if (candidates.isNotEmpty) {
             sticker = Map<String, dynamic>.from(
-                candidates[Random.secure().nextInt(candidates.length)]);
-            AppLogService.instance.add('STICKER',
-                '模型选择分类 $stickerEmotion，系统从 ${candidates.length} 个素材中随机发送');
+              candidates[Random.secure().nextInt(candidates.length)],
+            );
+            AppLogService.instance.add(
+              'STICKER',
+              '模型选择分类 $stickerEmotion，系统从 ${candidates.length} 个素材中随机发送',
+            );
           } else {
-            AppLogService.instance
-                .add('STICKER', '模型选择分类 $stickerEmotion，但素材已不可用');
+            AppLogService.instance.add(
+              'STICKER',
+              '模型选择分类 $stickerEmotion，但素材已不可用',
+            );
           }
         }
         if (persistResponse) {
@@ -818,7 +868,8 @@ class AIManager {
       } else {
         final detail = errorBody.replaceAll(RegExp(r'\s+'), ' ').trim();
         print(
-            '[ai] response error=${detail.length > 300 ? detail.substring(0, 300) : detail}');
+          '[ai] response error=${detail.length > 300 ? detail.substring(0, 300) : detail}',
+        );
         return {
           'error': _friendlyHttpError(statusCode, detail),
           'error_log': 'HTTP $statusCode\n$detail',
@@ -845,11 +896,24 @@ class AIManager {
     return parts.isEmpty ? <String>[content] : parts;
   }
 
+  String? _stickerTag(String raw) => RegExp(
+        r'\[表情包\s*[:：]\s*([^\]]+?)\s*\]',
+        caseSensitive: false,
+      ).firstMatch(raw)?.group(1)?.trim();
+
   String? _extractStickerEmotion(String raw, List<String> allowed) {
-    final match = RegExp(r'\[表情包\s*[:：]\s*([^\]]+)\]', caseSensitive: false)
-        .firstMatch(raw);
-    final emotion = match?.group(1)?.trim();
-    return emotion != null && allowed.contains(emotion) ? emotion : null;
+    final rawTag = _stickerTag(raw);
+    final emotion = rawTag?.replaceAll(RegExp(r'\s+'), '').trim();
+    final normalized = allowed
+        .map((item) => item.replaceAll(RegExp(r'\s+'), '').trim())
+        .toList();
+    AppLogService.instance.add(
+      'STICKER',
+      '候选分类=$normalized，模型标签=${emotion ?? '(无)'}',
+    );
+    if (emotion == null) return null;
+    final index = normalized.indexOf(emotion);
+    return index < 0 ? null : allowed[index];
   }
 
   bool _userExplicitlyRequestedSources(String text) => RegExp(
@@ -869,73 +933,106 @@ class AIManager {
     // "记忆:..." never becomes a chat bubble.
     final withoutProtocolLines = raw
         .replaceAll(
-            RegExp(
-                r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
-                multiLine: true),
-            '')
+          RegExp(
+            r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
+            multiLine: true,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
-                multiLine: true, caseSensitive: false),
-            '')
+          RegExp(
+            r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
+            multiLine: true,
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(r'^\s*\]?\s*(?:记忆|memory)\s*[:：][^\n]*$',
-                multiLine: true, caseSensitive: false),
-            '')
+          RegExp(
+            r'^\s*\]?\s*(?:记忆|memory)\s*[:：][^\n]*$',
+            multiLine: true,
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(r'^\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?\s*$',
-                multiLine: true),
-            '');
+          RegExp(
+            r'^\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?\s*$',
+            multiLine: true,
+          ),
+          '',
+        );
     // 部分模型以 DSML/XML 文本模拟工具调用；这是内部协议，绝不能进入消息气泡。
     final withoutDsml = withoutProtocolLines
         .replaceAll(
-            RegExp(
-                r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
-                caseSensitive: false),
-            '')
+          RegExp(
+            r'<\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*tool_calls\s*>',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(
-                r'<\|?\s*DSML\s*\|?\s*invoke[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*invoke\s*>',
-                caseSensitive: false),
-            '')
+          RegExp(
+            r'<\|?\s*DSML\s*\|?\s*invoke[\s\S]*?<\s*/\|?\s*DSML\s*\|?\s*invoke\s*>',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(
-                r'<\|?\s*DSML\s*\|?[^>]*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?[^>]*>',
-                caseSensitive: false),
-            '');
+          RegExp(
+            r'<\|?\s*DSML\s*\|?[^>]*>[\s\S]*?<\s*/\|?\s*DSML\s*\|?[^>]*>',
+            caseSensitive: false,
+          ),
+          '',
+        );
     final normalized = withoutDsml
         // Inline protocol suffixes can be emitted after otherwise valid text,
         // e.g. "晚安。:平静]记忆:...". Strip them before line-oriented rules.
         .replaceAll(
-            RegExp(r'\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?',
-                caseSensitive: false),
-            '')
+          RegExp(
+            r'\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(
-            RegExp(r'\s*(?:\[?记忆\]?|memory)\s*[:：][\s\S]*$',
-                caseSensitive: false),
-            '')
+          RegExp(
+            r'\s*(?:\[?记忆\]?|memory)\s*[:：][\s\S]*$',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(RegExp(r'\[心情\s*[:：]\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送时间\s*：[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[发送于\s+[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[现实时间(?:附注)?\s*：[^\]]*\]'), '')
         .replaceAll(
-            RegExp(
-                r'\[(?:工具|贴纸|表情包|表情|记忆|类型|sticker_type|sticker-type)\s*[:：][^\]]*\]'),
-            '')
+          RegExp(
+            r'\[(?:工具|贴纸|表情包|表情|记忆|类型|sticker_type|sticker-type)\s*[:：][^\]]*\]',
+          ),
+          '',
+        )
         .replaceAll(RegExp(r'\[(?:心情|发送时间|现实时间附注)\s*[：:]\s*[^\]]*\]'), '')
         .replaceAll(RegExp(r'\[落子\s*[:：]\s*\d+\s*,\s*\d+\]'), '')
         // Never expose sticker / tool / protocol labels that the model may leak
         // as ordinary text lines (regardless of the value after the colon).
         .replaceAll(
-            RegExp(
-                r'^\s*(?:(?:type|类型|表情包类型|表情类型|贴纸类型|sticker(?:[_ -]?type)?|工具|贴纸|表情包|表情|心情|发送时间|现实时间|规则|系统)\s*[=:：]\s*).*$',
-                multiLine: true,
-                caseSensitive: false),
-            '')
+          RegExp(
+            r'^\s*(?:(?:type|类型|表情包类型|表情类型|贴纸类型|sticker(?:[_ -]?type)?|工具|贴纸|表情包|表情|心情|发送时间|现实时间|规则|系统)\s*[=:：]\s*).*$',
+            multiLine: true,
+            caseSensitive: false,
+          ),
+          '',
+        )
         // Also strip bare protocol tokens that appear on their own line.
         .replaceAll(
-            RegExp(r'^\s*(?:sticker|emoji|表情包|静态表情|动图|贴纸)\s*$',
-                multiLine: true, caseSensitive: false),
-            '')
+          RegExp(
+            r'^\s*(?:sticker|emoji|表情包|静态表情|动图|贴纸)\s*$',
+            multiLine: true,
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
     return normalized;
@@ -994,10 +1091,10 @@ class AIManager {
   }) async {
     try {
       final bytes = await File(imagePath).readAsBytes();
-      final baseUrl = provider['base_url']
-              ?.toString()
-              .trim()
-              .replaceFirst(RegExp(r'/+$'), '') ??
+      final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
+                RegExp(r'/+$'),
+                '',
+              ) ??
           '';
       var model = provider['model']?.toString().trim() ?? '';
       if (model.contains(',')) model = model.split(',').first.trim();
@@ -1066,12 +1163,16 @@ class AIManager {
       final boundary =
           int.tryParse(await db.getKV('context_rollover_at_$botId') ?? '') ?? 0;
       final pending = history
-          .where((m) =>
-              ((m['timestamp'] as num?)?.toInt() ?? 0) > boundary &&
-              m['type'] == 'text')
+          .where(
+            (m) =>
+                ((m['timestamp'] as num?)?.toInt() ?? 0) > boundary &&
+                m['type'] == 'text',
+          )
           .toList();
       final tokens = pending.fold<int>(
-          0, (n, m) => n + estimateTokens(m['content']?.toString() ?? ''));
+        0,
+        (n, m) => n + estimateTokens(m['content']?.toString() ?? ''),
+      );
       if (tokens < maxContext) return;
       final keepBudget = (maxContext / 2).floor();
       var used = 0;
@@ -1088,11 +1189,14 @@ class AIManager {
           .toList();
       if (archived.isEmpty) return;
       final transcript = archived
-          .map((m) =>
-              '${m['role'] == 'assistant' ? '机器人' : '用户'}：${m['content']}')
+          .map(
+            (m) => '${m['role'] == 'assistant' ? '机器人' : '用户'}：${m['content']}',
+          )
           .join('\n');
-      final url = (provider['base_url']?.toString() ?? '')
-          .replaceFirst(RegExp(r'/+$'), '');
+      final url = (provider['base_url']?.toString() ?? '').replaceFirst(
+        RegExp(r'/+$'),
+        '',
+      );
       final key = provider['api_key']?.toString() ?? '';
       if (url.isEmpty || key.isEmpty) return;
       final prompt =
@@ -1100,32 +1204,39 @@ class AIManager {
 
 $transcript''';
       final response = await http
-          .post(Uri.parse('$url/chat/completions'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $key'
-              },
-              body: jsonEncode({
-                'model': modelName,
-                'messages': [
-                  {'role': 'system', 'content': '准确、克制地整理记忆，不与用户对话。'},
-                  {'role': 'user', 'content': prompt}
-                ],
-                'temperature': 0.1,
-                'max_tokens': 1200
-              }))
+          .post(
+            Uri.parse('$url/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $key',
+            },
+            body: jsonEncode({
+              'model': modelName,
+              'messages': [
+                {'role': 'system', 'content': '准确、克制地整理记忆，不与用户对话。'},
+                {'role': 'user', 'content': prompt},
+              ],
+              'temperature': 0.1,
+              'max_tokens': 1200,
+            }),
+          )
           .timeout(const Duration(seconds: 45));
       if (response.statusCode < 200 || response.statusCode >= 300) return;
-      final raw =
-          _extractChatContent(jsonDecode(utf8.decode(response.bodyBytes)));
+      final raw = _extractChatContent(
+        jsonDecode(utf8.decode(response.bodyBytes)),
+      );
       if (raw.isNotEmpty && raw != 'NONE')
         await _persistModelMemories(db, botName, botId, raw);
       final newestArchived = archived.last['timestamp'] as num?;
       if (newestArchived != null)
         await db.setKV(
-            'context_rollover_at_$botId', '${newestArchived.toInt()}');
-      AppLogService.instance.add('MEMORY',
-          '上下文达到 $maxContext token，已整理 ${archived.length} 条历史并保留最近约 $keepBudget token');
+          'context_rollover_at_$botId',
+          '${newestArchived.toInt()}',
+        );
+      AppLogService.instance.add(
+        'MEMORY',
+        '上下文达到 $maxContext token，已整理 ${archived.length} 条历史并保留最近约 $keepBudget token',
+      );
     } catch (e) {
       AppLogService.instance.add('MEMORY', '上下文记忆整理跳过：$e');
     }
@@ -1160,7 +1271,9 @@ $transcript''';
   }
 
   Future<String?> transcribeWithProvider(
-      Map<String, dynamic> provider, String audioPath) async {
+    Map<String, dynamic> provider,
+    String audioPath,
+  ) async {
     try {
       final audio = File(audioPath);
       if (!await audio.exists()) {
@@ -1200,11 +1313,14 @@ $transcript''';
         ..fields['response_format'] = 'json'
         ..files.add(await http.MultipartFile.fromPath('file', audioPath));
       final response = await http.Response.fromStream(
-          await request.send().timeout(const Duration(seconds: 45)));
+        await request.send().timeout(const Duration(seconds: 45)),
+      );
       final body = utf8.decode(response.bodyBytes, allowMalformed: true);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        AppLogService.instance.add('STT',
-            '语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}');
+        AppLogService.instance.add(
+          'STT',
+          '语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
+        );
         return null;
       }
       final decoded = jsonDecode(body);
@@ -1275,33 +1391,41 @@ $transcript''';
               'input_audio': {
                 'data': base64Encode(bytes),
                 'format': extension == 'wave' ? 'wav' : extension,
-              }
+              },
             },
-          ]
-        }
-      ]
+          ],
+        },
+      ],
     };
-    AppLogService.instance.add('STT',
-        '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes');
+    AppLogService.instance.add(
+      'STT',
+      '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes',
+    );
     final response = await http
-        .post(Uri.parse(endpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $apiKey',
-            },
-            body: jsonEncode(payload))
+        .post(
+          Uri.parse(endpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: jsonEncode(payload),
+        )
         .timeout(const Duration(seconds: 60));
     final body = utf8.decode(response.bodyBytes, allowMalformed: true);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      AppLogService.instance.add('STT',
-          'MiMo 语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 800))}');
+      AppLogService.instance.add(
+        'STT',
+        'MiMo 语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 800))}',
+      );
       return null;
     }
     final decoded = jsonDecode(body);
     final transcript = _extractChatContent(decoded).trim();
     if (transcript.isEmpty) {
-      AppLogService.instance.add('STT',
-          'MiMo 语音转文字返回为空：${body.substring(0, body.length.clamp(0, 500))}');
+      AppLogService.instance.add(
+        'STT',
+        'MiMo 语音转文字返回为空：${body.substring(0, body.length.clamp(0, 500))}',
+      );
       return null;
     }
     return transcript;
@@ -1329,8 +1453,11 @@ $transcript''';
   }
 
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
-  Future<String?> _generateTTS(String text, String providerId,
-      {String mood = '平静'}) async {
+  Future<String?> _generateTTS(
+    String text,
+    String providerId, {
+    String mood = '平静',
+  }) async {
     final list = await DBManager().queryTtsProviders();
     Map<String, dynamic>? provider;
     try {
@@ -1354,13 +1481,13 @@ $transcript''';
       '开心' || '兴奋' => 1.08,
       '难过' || '低落' => 0.91,
       '生气' || '愤怒' => 1.04,
-      _ => 1.0
+      _ => 1.0,
     };
     final moodPitch = switch (mood) {
       '开心' || '兴奋' => 2,
       '难过' || '低落' => -2,
       '生气' || '愤怒' => 1,
-      _ => 0
+      _ => 0,
     };
     final modelName = (provider['model']?.toString() ?? '').trim();
     final model = modelName.isEmpty
@@ -1408,25 +1535,21 @@ $transcript''';
             'model': model,
             'stream': false,
             'messages': [
-              {
-                'role': 'assistant',
-                'content': text,
-              },
+              {'role': 'assistant', 'content': text},
             ],
-            'audio': {
-              'voice': voice,
-              'format': 'wav',
-            },
+            'audio': {'voice': voice, 'format': 'wav'},
           },
         _ => {
             'model': model,
             'input': text,
             'voice': voice,
-            if (moodSpeed != 1.0) 'speed': moodSpeed
+            if (moodSpeed != 1.0) 'speed': moodSpeed,
           },
       };
-      AppLogService.instance.add('TTS',
-          '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字');
+      AppLogService.instance.add(
+        'TTS',
+        '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字',
+      );
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
@@ -1438,14 +1561,18 @@ $transcript''';
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 30));
-      AppLogService.instance.add('TTS',
-          '语音服务响应 HTTP ${res.statusCode}，content-type=${res.headers['content-type'] ?? 'unknown'}');
+      AppLogService.instance.add(
+        'TTS',
+        '语音服务响应 HTTP ${res.statusCode}，content-type=${res.headers['content-type'] ?? 'unknown'}',
+      );
       if (res.statusCode < 200 ||
           res.statusCode >= 300 ||
           res.bodyBytes.isEmpty) {
         final responseText = utf8.decode(res.bodyBytes, allowMalformed: true);
-        AppLogService.instance.add('TTS',
-            '语音合成失败：HTTP ${res.statusCode}${responseText.isEmpty ? '' : '，响应：${responseText.substring(0, responseText.length.clamp(0, 1000))}'}');
+        AppLogService.instance.add(
+          'TTS',
+          '语音合成失败：HTTP ${res.statusCode}${responseText.isEmpty ? '' : '，响应：${responseText.substring(0, responseText.length.clamp(0, 1000))}'}',
+        );
         return null;
       }
 
@@ -1503,11 +1630,15 @@ $transcript''';
               final compact = inlineAudio.replaceAll(RegExp(r'\s+'), '');
               bytes = RegExp(r'^[0-9a-fA-F]+$').hasMatch(compact) &&
                       compact.length.isEven
-                  ? Uint8List.fromList(List<int>.generate(
-                      compact.length ~/ 2,
-                      (index) => int.parse(
+                  ? Uint8List.fromList(
+                      List<int>.generate(
+                        compact.length ~/ 2,
+                        (index) => int.parse(
                           compact.substring(index * 2, index * 2 + 2),
-                          radix: 16)))
+                          radix: 16,
+                        ),
+                      ),
+                    )
                   : base64Decode(compact);
             } catch (_) {
               AppLogService.instance.add('TTS', '语音服务返回的内嵌音频无法解码');
@@ -1521,8 +1652,10 @@ $transcript''';
             if (audioResponse.statusCode < 200 ||
                 audioResponse.statusCode >= 300 ||
                 audioResponse.bodyBytes.isEmpty) {
-              AppLogService.instance
-                  .add('TTS', '语音文件下载失败：HTTP ${audioResponse.statusCode}');
+              AppLogService.instance.add(
+                'TTS',
+                '语音文件下载失败：HTTP ${audioResponse.statusCode}',
+              );
               return null;
             }
             bytes = audioResponse.bodyBytes;
@@ -1539,7 +1672,9 @@ $transcript''';
           '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.$extension';
       await File(path).writeAsBytes(bytes);
       AppLogService.instance.add(
-          'TTS', '语音合成成功：${text.length} 字，${bytes.length} bytes，已保存 $path');
+        'TTS',
+        '语音合成成功：${text.length} 字，${bytes.length} bytes，已保存 $path',
+      );
       return path;
     } catch (e) {
       AppLogService.instance.add('TTS', '语音合成异常：$e');
@@ -1609,12 +1744,13 @@ $transcript''';
     // persistResponse=false 保证生成的回复不会写入聊天室，也不会被自动摘要捕获；
     // includeChatHistory=false 避免今日一言影响正式对话的上下文。
     final res = await sendMessage(
-        botId: botId,
-        text:
-            '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
-        persistResponse: false,
-        includeChatHistory: false,
-        enableAutoSummary: false);
+      botId: botId,
+      text:
+          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
+      persistResponse: false,
+      includeChatHistory: false,
+      enableAutoSummary: false,
+    );
     if (res['success'] == true) {
       var quote = res['reply']?.toString().trim() ?? '';
       // 即便模型仍然自带“今日一言：”前缀，也只保留最终内容，杜绝界面重复显示标题。
@@ -1635,7 +1771,10 @@ $transcript''';
 
   // API 测速（返回 Map，兼容旧代码）
   Future<Map<String, dynamic>> testConnectionMap(
-      String baseUrl, String apiKey, String modelName) async {
+    String baseUrl,
+    String apiKey,
+    String modelName,
+  ) async {
     final start = DateTime.now();
     try {
       final res = await http
@@ -1643,21 +1782,21 @@ $transcript''';
             Uri.parse("$baseUrl/chat/completions"),
             headers: {
               "Content-Type": "application/json",
-              "Authorization": "Bearer $apiKey"
+              "Authorization": "Bearer $apiKey",
             },
             body: jsonEncode({
               "model": modelName,
               "messages": [
-                {"role": "user", "content": "1"}
+                {"role": "user", "content": "1"},
               ],
-              "max_tokens": 5
+              "max_tokens": 5,
             }),
           )
           .timeout(const Duration(seconds: 15));
       if (res.statusCode == 200) {
         return {
           'success': true,
-          'delay': DateTime.now().difference(start).inMilliseconds
+          'delay': DateTime.now().difference(start).inMilliseconds,
         };
       }
       return {'success': false, 'error': '服务端返回 HTTP ${res.statusCode}'};
@@ -1668,7 +1807,10 @@ $transcript''';
 
   // API 测速（返回 int 毫秒，供新 UI 使用；失败抛异常）
   Future<int> testConnection(
-      String baseUrl, String apiKey, String modelName) async {
+    String baseUrl,
+    String apiKey,
+    String modelName,
+  ) async {
     final result = await testConnectionMap(baseUrl, apiKey, modelName);
     if (result['success'] == true) {
       return result['delay'] as int;
@@ -1690,7 +1832,7 @@ $transcript''';
       '汇率',
       '价格',
       '股价',
-      '比赛结果'
+      '比赛结果',
     ];
     return cues.any(text.contains);
   }
@@ -1711,14 +1853,17 @@ $transcript''';
   }
 
   Future<List<Map<String, String>>> _searchIfAuthorized(
-      DBManager db, String query,
-      {bool force = false}) async {
+    DBManager db,
+    String query, {
+    bool force = false,
+  }) async {
     if ((!force && !_needsWebSearch(query)) ||
         await db.getKV('web_search_enabled') != 'true') return [];
     final apiKey = (await db.getKV('web_search_api_key') ?? '').trim();
     if (apiKey.isEmpty) return [];
-    final provider =
-        _normalizeSearchProvider(await db.getKV('web_search_provider') ?? '');
+    final provider = _normalizeSearchProvider(
+      await db.getKV('web_search_provider') ?? '',
+    );
     List<Map<String, String>> rows;
     try {
       late final http.Response response;
@@ -1727,8 +1872,11 @@ $transcript''';
             .post(
               Uri.parse('https://api.tavily.com/search'),
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(
-                  {'api_key': apiKey, 'query': query, 'max_results': 5}),
+              body: jsonEncode({
+                'api_key': apiKey,
+                'query': query,
+                'max_results': 5,
+              }),
             )
             .timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
@@ -1739,21 +1887,22 @@ $transcript''';
               Uri.parse('https://api.bochaai.com/v1/web-search'),
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer $apiKey'
+                'Authorization': 'Bearer $apiKey',
               },
               body: jsonEncode({'query': query, 'count': 5}),
             )
             .timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
         rows = _searchRows(
-            body['data']?['webPages']?['value'] ?? body['data']?['value']);
+          body['data']?['webPages']?['value'] ?? body['data']?['value'],
+        );
       } else if (provider == 'Serper') {
         response = await http
             .post(
               Uri.parse('https://google.serper.dev/search'),
               headers: {
                 'Content-Type': 'application/json',
-                'X-API-KEY': apiKey
+                'X-API-KEY': apiKey,
               },
               body: jsonEncode({'q': query, 'num': 5}),
             )
@@ -1763,10 +1912,11 @@ $transcript''';
       } else if (provider == 'Brave Search') {
         response = await http.get(
           Uri.parse(
-              'https://api.search.brave.com/res/v1/web/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
+            'https://api.search.brave.com/res/v1/web/search?q=${Uri.encodeQueryComponent(query)}&count=5',
+          ),
           headers: {
             'Accept': 'application/json',
-            'X-Subscription-Token': apiKey
+            'X-Subscription-Token': apiKey,
           },
         ).timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
@@ -1774,7 +1924,8 @@ $transcript''';
       } else {
         response = await http.get(
           Uri.parse(
-              'https://api.bing.microsoft.com/v7.0/search?q=${Uri.encodeQueryComponent(query)}&count=5'),
+            'https://api.bing.microsoft.com/v7.0/search?q=${Uri.encodeQueryComponent(query)}&count=5',
+          ),
           headers: {'Ocp-Apim-Subscription-Key': apiKey},
         ).timeout(const Duration(seconds: 15));
         final body = jsonDecode(utf8.decode(response.bodyBytes));
@@ -1800,34 +1951,36 @@ $transcript''';
   /// Agent-Reach 平台路由：按查询意图命中 GitHub / YouTube / B站 / X / 小红书 /
   /// Reddit 等渠道，命中则走对应渠道，否则退回 its 全网语义搜索渠道。
   Future<List<Map<String, String>>> _searchViaAgentReach(
-      String bridge, String query) async {
+    String bridge,
+    String query,
+  ) async {
     try {
       final base = bridge.replaceFirst(RegExp(r'/+$'), '');
       if (!base.startsWith('http')) return [];
       final routes = <Map<String, dynamic>>[
         {
           'route': 'github',
-          'cues': ['github', '仓库', 'repo', '代码仓库', 'issue']
+          'cues': ['github', '仓库', 'repo', '代码仓库', 'issue'],
         },
         {
           'route': 'youtube',
-          'cues': ['youtube', 'youtube频道', '油管', '视频教程']
+          'cues': ['youtube', 'youtube频道', '油管', '视频教程'],
         },
         {
           'route': 'bilibili',
-          'cues': ['b站', '哔哩', 'bilibili', 'bili', '弹幕']
+          'cues': ['b站', '哔哩', 'bilibili', 'bili', '弹幕'],
         },
         {
           'route': 'twitter',
-          'cues': ['推特', 'twitter', 'x平台', 'x站']
+          'cues': ['推特', 'twitter', 'x平台', 'x站'],
         },
         {
           'route': 'xiaohongshu',
-          'cues': ['小红书', 'xhs', 'xiaohongshu', '种草']
+          'cues': ['小红书', 'xhs', 'xiaohongshu', '种草'],
         },
         {
           'route': 'reddit',
-          'cues': ['reddit', '红迪']
+          'cues': ['reddit', '红迪'],
         },
       ];
       final lower = query.toLowerCase();
@@ -1841,14 +1994,17 @@ $transcript''';
       }
       final path = route != null ? '/$route/search' : '/exa/search';
       final response = await http
-          .post(Uri.parse('$base$path'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'query': query, 'limit': 5}))
+          .post(
+            Uri.parse('$base$path'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'query': query, 'limit': 5}),
+          )
           .timeout(const Duration(seconds: 18));
       if (response.statusCode < 200 || response.statusCode >= 300) return [];
       final body = jsonDecode(utf8.decode(response.bodyBytes));
       return _searchRows(
-          body['results'] ?? body['data'] ?? body['items'] ?? body);
+        body['results'] ?? body['data'] ?? body['items'] ?? body,
+      );
     } catch (_) {
       return [];
     }
@@ -1883,7 +2039,11 @@ $transcript''';
     required String prompt,
   }) =>
       _generateImageIfAuthorized(
-          db: DBManager(), botId: botId, prompt: prompt, force: true);
+        db: DBManager(),
+        botId: botId,
+        prompt: prompt,
+        force: true,
+      );
 
   Future<String?> _generateImageIfAuthorized({
     required DBManager db,
@@ -1899,8 +2059,10 @@ $transcript''';
     if (imageModelId.isEmpty) return null;
     final provider = await db.getChatProviderById(imageModelId);
     if (provider == null) return null;
-    final baseUrl = (provider['base_url']?.toString() ?? '')
-        .replaceFirst(RegExp(r'/+$'), '');
+    final baseUrl = (provider['base_url']?.toString() ?? '').replaceFirst(
+      RegExp(r'/+$'),
+      '',
+    );
     if (baseUrl.isEmpty) return null;
     // “不选择”或空风格时不给生图模型任何风格约束，让模型自行决定；
     // 只有填写了具体风格才拼进 prompt。
@@ -1913,13 +2075,13 @@ $transcript''';
             Uri.parse('$baseUrl/images/generations'),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${provider['api_key']}'
+              'Authorization': 'Bearer ${provider['api_key']}',
             },
             body: jsonEncode({
               'model': provider['model'],
               'prompt': '$prompt$styleSuffix',
               'n': 1,
-              'size': '1024x1024'
+              'size': '1024x1024',
             }),
           )
           .timeout(const Duration(seconds: 60));
@@ -2013,9 +2175,11 @@ $transcript''';
               'messages': messages,
               'max_tokens': maxTokens,
               'tools': [
-                ...await _buildNativeTools(db,
-                    botId: botId, allowSticker: false),
-                ...await PluginRuntime.instance.toolSchemas(),
+                ...await _buildNativeTools(
+                  db,
+                  botId: botId,
+                  allowSticker: false,
+                ),
               ],
               'tool_choice': 'auto',
             }),
@@ -2047,8 +2211,11 @@ $transcript''';
         'tool_calls': nextCalls,
       });
       for (final call in nextCalls) {
-        final result =
-            await _executeNativeToolCall(db: db, botId: botId, call: call);
+        final result = await _executeNativeToolCall(
+          db: db,
+          botId: botId,
+          call: call,
+        );
         messages.add({
           'role': 'tool',
           'tool_call_id': call['id']?.toString() ?? '',
@@ -2063,17 +2230,24 @@ $transcript''';
     if (await db.getKV('bot_stickers_enabled') != 'true') return false;
     if ((await db.stickerEmotions()).isEmpty) return false;
     final chance =
-        (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 30)
-            .clamp(0, 100);
+        (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 30).clamp(
+      0,
+      100,
+    );
     final selected =
         chance >= 100 || (chance > 0 && Random.secure().nextInt(100) < chance);
-    AppLogService.instance.add('STICKER',
-        selected ? '本轮允许模型选择表情包分类（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）');
+    AppLogService.instance.add(
+      'STICKER',
+      selected ? '本轮允许模型选择表情包分类（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）',
+    );
     return selected;
   }
 
-  Future<List<Map<String, dynamic>>> _buildNativeTools(DBManager db,
-      {required String botId, bool allowSticker = true}) async {
+  Future<List<Map<String, dynamic>>> _buildNativeTools(
+    DBManager db, {
+    required String botId,
+    bool allowSticker = true,
+  }) async {
     final tools = <Map<String, dynamic>>[];
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
@@ -2085,7 +2259,7 @@ $transcript''';
           'parameters': {
             'type': 'object',
             'properties': {
-              'query': {'type': 'string', 'description': '简洁明确的搜索关键词'}
+              'query': {'type': 'string', 'description': '简洁明确的搜索关键词'},
             },
             'required': ['query'],
             'additionalProperties': false,
@@ -2110,13 +2284,13 @@ $transcript''';
             'prompt': {'type': 'string', 'description': '到时要执行或提醒的完整内容'},
             'run_at': {
               'type': 'string',
-              'description': '当地未来时间，YYYY-MM-DD HH:mm'
+              'description': '当地未来时间，YYYY-MM-DD HH:mm',
             },
             'frequency': {
               'type': 'string',
               'enum': ['once', 'daily'],
-              'description': '一次或每天'
-            }
+              'description': '一次或每天',
+            },
           },
           'required': ['title', 'run_at'],
           'additionalProperties': false,
@@ -2168,7 +2342,7 @@ $transcript''';
           'parameters': {
             'type': 'object',
             'properties': {},
-            'additionalProperties': false
+            'additionalProperties': false,
           },
         },
       };
@@ -2181,10 +2355,10 @@ $transcript''';
           'parameters': {
             'type': 'object',
             'properties': {
-              'entry': {'type': 'string', 'description': '第一人称、简洁具体的日记记录'}
+              'entry': {'type': 'string', 'description': '第一人称、简洁具体的日记记录'},
             },
             'required': ['entry'],
-            'additionalProperties': false
+            'additionalProperties': false,
           },
         },
       };
@@ -2197,7 +2371,7 @@ $transcript''';
           'parameters': {
             'type': 'object',
             'properties': {
-              'prompt': {'type': 'string', 'description': '完整的绘图提示词'}
+              'prompt': {'type': 'string', 'description': '完整的绘图提示词'},
             },
             'required': ['prompt'],
             'additionalProperties': false,
@@ -2213,7 +2387,7 @@ $transcript''';
     final function = call['function'];
     if (function is! Map)
       return {
-        'result': {'ok': false, 'error': '无效工具调用'}
+        'result': {'ok': false, 'error': '无效工具调用'},
       };
     final name = function['name']?.toString() ?? '';
     Map<String, dynamic> args;
@@ -2221,39 +2395,38 @@ $transcript''';
       args = _decodeToolArguments(function['arguments']);
     } on FormatException {
       return {
-        'result': {'ok': false, 'error': '工具参数不是合法 JSON'}
+        'result': {'ok': false, 'error': '工具参数不是合法 JSON'},
       };
-    }
-    if (name.startsWith('plugin__')) {
-      return PluginRuntime.instance.executeToolCall(call: call);
     }
     if (name == 'choose_silence') {
       return {
-        'result': {'ok': true, 'silent': true}
+        'result': {'ok': true, 'silent': true},
       };
     }
     if (name == 'write_diary') {
       final entry = args['entry']?.toString().trim() ?? '';
       if (entry.isEmpty) {
         return {
-          'result': {'ok': false, 'error': '缺少日记内容'}
+          'result': {'ok': false, 'error': '缺少日记内容'},
         };
       }
       final now = DateTime.now();
       final dateKey =
           '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       await db.upsertDiary(botId: botId, dateKey: dateKey, content: entry);
-      AppLogService.instance
-          .add('DIARY', '机器人通过 write_diary 工具写入独立日记：${entry.length} 字');
+      AppLogService.instance.add(
+        'DIARY',
+        '机器人通过 write_diary 工具写入独立日记：${entry.length} 字',
+      );
       return {
-        'result': {'ok': true, 'message': '日记已安全写入，不要在聊天中复述日记正文。'}
+        'result': {'ok': true, 'message': '日记已安全写入，不要在聊天中复述日记正文。'},
       };
     }
     if (name == 'web_search') {
       final query = args['query']?.toString().trim() ?? '';
       if (query.isEmpty)
         return {
-          'result': {'ok': false, 'error': '缺少 query'}
+          'result': {'ok': false, 'error': '缺少 query'},
         };
       final rows = await _searchIfAuthorized(db, query, force: true);
       return {
@@ -2262,7 +2435,7 @@ $transcript''';
           'ok': rows.isNotEmpty,
           'results': rows,
           'message': rows.isEmpty ? '没有可用搜索结果。' : '搜索完成，请仅依据结果回答并引用来源。',
-        }
+        },
       };
     }
     if (name == 'generate_image') {
@@ -2275,13 +2448,17 @@ $transcript''';
       final path = prompt.isEmpty
           ? null
           : await _generateImageIfAuthorized(
-              db: db, botId: botId, prompt: prompt, force: true);
+              db: db,
+              botId: botId,
+              prompt: prompt,
+              force: true,
+            );
       return {
         'result': {
           'ok': path != null,
           'image_path': path,
           'message': path == null ? '图片生成失败或未配置生图模型。' : '图片已生成并将作为聊天图片发送。',
-        }
+        },
       };
     }
     if (name == 'create_future_task') {
@@ -2293,14 +2470,14 @@ $transcript''';
         return {
           'result': {
             'ok': false,
-            'error': '缺少 title 或 run_at 格式不正确，应为 YYYY-MM-DD HH:mm'
-          }
+            'error': '缺少 title 或 run_at 格式不正确，应为 YYYY-MM-DD HH:mm',
+          },
         };
       }
       final runAt = parsed.millisecondsSinceEpoch;
       if (runAt <= DateTime.now().millisecondsSinceEpoch) {
         return {
-          'result': {'ok': false, 'error': '未来任务必须设置在当前时间之后'}
+          'result': {'ok': false, 'error': '未来任务必须设置在当前时间之后'},
         };
       }
       final frequency =
@@ -2322,8 +2499,8 @@ $transcript''';
           'result': {
             'ok': true,
             'duplicate': true,
-            'message': '相同未来任务已存在，未重复创建。'
-          }
+            'message': '相同未来任务已存在，未重复创建。',
+          },
         };
       final id = 'future_${botId}_${runAt}_${title.hashCode.abs()}';
       await db.insertFutureTask({
@@ -2339,28 +2516,32 @@ $transcript''';
         'status': 'pending',
       });
       return {
-        'result': {'ok': true, 'id': id, 'message': '未来任务已创建：$title'}
+        'result': {'ok': true, 'id': id, 'message': '未来任务已创建：$title'},
       };
     }
     if (name == 'update_life_state') {
-      final updated =
-          await LifeScheduleService.instance.updateFromTool(botId, args);
+      final updated = await LifeScheduleService.instance.updateFromTool(
+        botId,
+        args,
+      );
       return {
         'result': {
           'ok': updated != null,
           'message':
               updated == null ? '未修改：日程不存在、参数无效，或试图改动刚性事项。' : '今日生活状态已更新。',
-        }
+        },
       };
     }
     return {
-      'result': {'ok': false, 'error': '未知工具：$name'}
+      'result': {'ok': false, 'error': '未知工具：$name'},
     };
   }
 
-  Future<String> _buildToolContext(DBManager db,
-      {bool allowSticker = true,
-      List<String> stickerEmotions = const []}) async {
+  Future<String> _buildToolContext(
+    DBManager db, {
+    bool allowSticker = true,
+    List<String> stickerEmotions = const [],
+  }) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       final style = (await db.getKV('bot_image_style') ?? '写实').trim();
@@ -2368,20 +2549,24 @@ $transcript''';
           ? '图片风格由你根据用户需求自行决定。'
           : '所有图片必须采用“$style”风格。';
       parts.add(
-          '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule 不要声称已生成不存在的图片。');
+        '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule 不要声称已生成不存在的图片。',
+      );
     }
     if (await db.getKV('web_search_enabled') == 'true') {
       final provider = _normalizeSearchProvider(
-          await db.getKV('web_search_provider') ?? 'Tavily');
+        await db.getKV('web_search_provider') ?? 'Tavily',
+      );
       final hasKey = (await db.getKV('web_search_api_key') ?? '').isNotEmpty;
       if (hasKey) {
         parts.add(
-            '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索结果会由应用以可展开来源列表附在最终关联气泡底部；除非用户明确要求链接或出处，不要在正文罗列 URL 或来源。不要编造搜索结果。');
+          '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索结果会由应用以可展开来源列表附在最终关联气泡底部；除非用户明确要求链接或出处，不要在正文罗列 URL 或来源。不要编造搜索结果。',
+        );
       }
     }
     if (allowSticker && stickerEmotions.isNotEmpty) {
       parts.add(
-          '【本轮表情包】可在正文末尾仅追加一个内部标记 [表情包:分类]，分类必须为 ${stickerEmotions.join('、')} 之一。该标记不会显示；应用会从该分类随机发送一张本地表情包。若不适合发送则不要输出标记。');
+        '【本轮表情包】可在正文末尾仅追加一个内部标记 [表情包:分类]，分类必须为 ${stickerEmotions.join('、')} 之一。该标记不会显示；应用会从该分类随机发送一张本地表情包。若不适合发送则不要输出标记。',
+      );
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }
@@ -2390,7 +2575,10 @@ $transcript''';
   Future<String?> generateTTS(String text, String providerId) =>
       _generateTTS(text, providerId);
   Future<Map<String, dynamic>> testProviderCapabilities(
-      String baseUrl, String apiKey, String model) async {
+    String baseUrl,
+    String apiKey,
+    String model,
+  ) async {
     final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     final modelName = model.split(',').first.trim();
     if (root.isEmpty || apiKey.trim().isEmpty || modelName.isEmpty) {
@@ -2405,7 +2593,9 @@ $transcript''';
 
     // 每个探测返回 (是否成功, 耗时毫秒)；失败也返回耗时便于诊断。
     Future<Map<String, dynamic>> probe(
-        String name, Future<bool> Function() run) async {
+      String name,
+      Future<bool> Function() run,
+    ) async {
       final t0 = DateTime.now();
       var ok = false;
       var latency = 0;
@@ -2422,11 +2612,16 @@ $transcript''';
     Future<bool> postJson(String path, Map<String, dynamic> body) async {
       try {
         final response = await http
-            .post(Uri.parse('$root$path'),
-                headers: headers, body: jsonEncode(body))
+            .post(
+              Uri.parse('$root$path'),
+              headers: headers,
+              body: jsonEncode(body),
+            )
             .timeout(const Duration(seconds: 30));
-        final responseText =
-            utf8.decode(response.bodyBytes, allowMalformed: true);
+        final responseText = utf8.decode(
+          response.bodyBytes,
+          allowMalformed: true,
+        );
         if (!success(response) || response.bodyBytes.isEmpty) {
           final compact = responseText.replaceAll(RegExp(r'\s+'), ' ').trim();
           final summary =
@@ -2528,13 +2723,22 @@ $transcript''';
           0,
         ];
         final request = http.MultipartRequest(
-            'POST', Uri.parse('$root/audio/transcriptions'))
+          'POST',
+          Uri.parse('$root/audio/transcriptions'),
+        )
           ..headers['Authorization'] = 'Bearer $apiKey'
           ..fields['model'] = modelName
-          ..files.add(http.MultipartFile.fromBytes('file', wav,
-              filename: 'tidebot-test.wav', contentType: null));
-        final response =
-            await request.send().timeout(const Duration(seconds: 20));
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              wav,
+              filename: 'tidebot-test.wav',
+              contentType: null,
+            ),
+          );
+        final response = await request.send().timeout(
+              const Duration(seconds: 20),
+            );
         return response.statusCode >= 200 && response.statusCode < 300;
       } catch (_) {
         return false;
@@ -2548,44 +2752,44 @@ $transcript''';
     // 并返回四项中「最快成功」的延迟（毫秒）。
     final probes = await Future.wait<Map<String, dynamic>>([
       probe(
-          '文本',
-          () => postJson('/chat/completions', {
-                'model': modelName,
-                'messages': [
-                  {'role': 'user', 'content': 'ping'}
-                ],
-                'max_tokens': 32,
-              })),
+        '文本',
+        () => postJson('/chat/completions', {
+          'model': modelName,
+          'messages': [
+            {'role': 'user', 'content': 'ping'},
+          ],
+          'max_tokens': 32,
+        }),
+      ),
       probe('STT', stt),
       probe(
-          '识图',
-          () => postJson('/chat/completions', {
-                'model': modelName,
-                'messages': [
-                  {
-                    'role': 'user',
-                    'content': [
-                      {
-                        'type': 'text',
-                        'text': 'Describe this image in one word.'
-                      },
-                      {
-                        'type': 'image_url',
-                        'image_url': {'url': onePixel}
-                      },
-                    ],
-                  }
-                ],
-                'max_tokens': 8,
-              })),
+        '识图',
+        () => postJson('/chat/completions', {
+          'model': modelName,
+          'messages': [
+            {
+              'role': 'user',
+              'content': [
+                {'type': 'text', 'text': 'Describe this image in one word.'},
+                {
+                  'type': 'image_url',
+                  'image_url': {'url': onePixel},
+                },
+              ],
+            },
+          ],
+          'max_tokens': 8,
+        }),
+      ),
       probe(
-          '生图',
-          () => postJson('/images/generations', {
-                'model': modelName,
-                'prompt': 'A single blue pixel.',
-                'size': '256x256',
-                'n': 1,
-              })),
+        '生图',
+        () => postJson('/images/generations', {
+          'model': modelName,
+          'prompt': 'A single blue pixel.',
+          'size': '256x256',
+          'n': 1,
+        }),
+      ),
     ]);
 
     final capabilities = <String>[];
@@ -2620,9 +2824,9 @@ $transcript''';
 
   String _safetyContext(String userText) {
     final risky = RegExp(
-            r'(色情|裸聊|成人视频|强奸|轮奸|未成年.{0,6}(性|裸|色情)|自杀|自残|割腕|炸弹|爆炸物|制毒|毒品|枪支|杀人|恐怖袭击|极端组织|诈骗|洗钱|盗号|破解|木马|勒索|人肉|仇恨|种族灭绝)',
-            caseSensitive: false)
-        .hasMatch(userText);
+      r'(色情|裸聊|成人视频|强奸|轮奸|未成年.{0,6}(性|裸|色情)|自杀|自残|割腕|炸弹|爆炸物|制毒|毒品|枪支|杀人|恐怖袭击|极端组织|诈骗|洗钱|盗号|破解|木马|勒索|人肉|仇恨|种族灭绝)',
+      caseSensitive: false,
+    ).hasMatch(userText);
     return risky
         ? '\n【安全处理】用户消息可能涉及违法、危险、露骨、仇恨、欺诈、隐私或自伤内容。不要生成、补全、鼓励或提供可执行细节；保持你的人设，以温和、不评判的方式拒绝或转移到安全话题。若涉及即时自伤或他伤风险，优先鼓励联系当地紧急服务、可信赖的人或专业支持。'
         : '\n【安全规则】不得生成违法、危险、露骨色情、剥削未成年人、仇恨骚扰、欺诈、隐私侵害或自伤他伤的可执行内容；遇到此类请求应保持人设并温和转移到安全话题。';
@@ -2661,9 +2865,9 @@ $transcript''';
 
   String _extractMood(String text) {
     // 唯一允许的内部格式是独占首行：[心情:平静]。
-    final match =
-        RegExp(r'^\s*\[心情\s*[:：]\s*(平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)')
-            .firstMatch(text);
+    final match = RegExp(
+      r'^\s*\[心情\s*[:：]\s*(平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
+    ).firstMatch(text);
     return match?.group(1) ?? '平静';
   }
 
@@ -2695,7 +2899,9 @@ $transcript''';
         }
         content = content
             .replaceFirst(
-                RegExp(r'^(?:内容|短期|short)\s*[|｜]\s*', caseSensitive: false), '')
+              RegExp(r'^(?:内容|短期|short)\s*[|｜]\s*', caseSensitive: false),
+              '',
+            )
             .trim();
         if (content.isEmpty) continue;
         // 长期记忆绝对不能出现任何时间相关词汇（用户硬性要求）。“我记得”
@@ -2731,7 +2937,8 @@ $transcript''';
     s = s.replaceAll(RegExp(r'^(我)?\s*记得\s*[，,:：]?\s*'), '');
     s = s.replaceAll(
       RegExp(
-          r'今天上午|今天中午|今天下午|今天早上|今天夜里|今天|昨天下午|昨天早上|昨天夜里|昨天|明天|前天|后天|昨晚|今晚|今早|近日|最近|上周|本周|下周|刚才|刚刚|现在|此刻|之前|以前|几小时前|几天前|几个星期前|一个月前|凌晨|早上|中午|下午|晚上'),
+        r'今天上午|今天中午|今天下午|今天早上|今天夜里|今天|昨天下午|昨天早上|昨天夜里|昨天|明天|前天|后天|昨晚|今晚|今早|近日|最近|上周|本周|下周|刚才|刚刚|现在|此刻|之前|以前|几小时前|几天前|几个星期前|一个月前|凌晨|早上|中午|下午|晚上',
+      ),
       '',
     );
     s = s.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
@@ -2802,7 +3009,7 @@ $transcript''';
       '说不出',
       '很好',
       '很累',
-      '很开心'
+      '很开心',
     ];
     final keep = keepList.map((w) => RegExp.escape(w)).join('|');
     final re = RegExp('^我(?=[\\u4e00-\\u9fa5]{2})(?!$keep)');

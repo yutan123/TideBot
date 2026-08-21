@@ -106,7 +106,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
     _loadMsgs();
     _messageSyncTimer = Timer.periodic(
-        const Duration(seconds: 4), (_) => _syncLatestMessages());
+      const Duration(seconds: 4),
+      (_) => _syncLatestMessages(),
+    );
     _loadBg();
     _loadChatPreferences();
     // Proactive replies are scheduled by the persistent background service.
@@ -114,7 +116,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
     // 底部栏动画控制器
     _bottomBarCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 200)); // 减慢动画速度
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    ); // 减慢动画速度
     // 首帧后启动进场动画，否则 SlideTransition 会一直停在向下偏移 25% 的位置，
     // 这就是输入框一直偏下、"怎么调 padding 都不动"的根因。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -198,11 +202,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           };
           for (final m in _msgs) {
             byId.putIfAbsent(
-                m['id']?.toString() ?? 'local_${m['timestamp']}', () => m);
+              m['id']?.toString() ?? 'local_${m['timestamp']}',
+              () => m,
+            );
           }
           _msgs = byId.values.toList()
-            ..sort((a, b) => ((a['timestamp'] as int?) ?? 0)
-                .compareTo((b['timestamp'] as int?) ?? 0));
+            ..sort(
+              (a, b) => ((a['timestamp'] as int?) ?? 0).compareTo(
+                (b['timestamp'] as int?) ?? 0,
+              ),
+            );
           _msgsLoading = false;
         });
       }
@@ -227,9 +236,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (!mounted || !_scrollC.hasClients) return;
       final target = _scrollC.position.minScrollExtent;
       if (animated) {
-        _scrollC.animateTo(target,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic);
+        _scrollC.animateTo(
+          target,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+        );
       } else {
         _scrollC.jumpTo(target);
       }
@@ -276,8 +287,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         if (additions.isNotEmpty) {
           _msgs.addAll(additions);
-          _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
-              .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+          _msgs.sort(
+            (a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0).compareTo(
+              (b['timestamp'] as num?)?.toInt() ?? 0,
+            ),
+          );
           changed = true;
         }
       });
@@ -297,10 +311,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final enabled = await db.getKV('random_reply_delay_enabled') == 'true';
     if (enabled) {
       var minS = int.tryParse(
-              await db.getKV('random_reply_delay_min_seconds') ?? '') ??
+            await db.getKV('random_reply_delay_min_seconds') ?? '',
+          ) ??
           0;
       var maxS = int.tryParse(
-              await db.getKV('random_reply_delay_max_seconds') ?? '') ??
+            await db.getKV('random_reply_delay_max_seconds') ?? '',
+          ) ??
           2;
       final extraMin = (minS.clamp(0, 60)) * 1000;
       var extraMax = (maxS.clamp(minS, 60)) * 1000;
@@ -335,6 +351,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     bool forceSingleReply = false,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
     bool noUserBubble = false,
+    Map<String, dynamic>? retryTarget,
   }) async {
     final text = _msgC.text.trim();
     images ??= List<String>.from(_pendingImages);
@@ -479,7 +496,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // as a model transcript.
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
-      final streamEnabled = (await db.getKV('streaming_output')) != 'false';
+      final streamEnabled =
+          !forceSingleReply && (await db.getKV('streaming_output')) != 'false';
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && mounted) {
@@ -507,8 +525,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               pendingDisplay.length < batch ? pendingDisplay.length : batch;
           final chunk = pendingDisplay.substring(0, take);
           pendingDisplay = pendingDisplay.substring(take);
-          setState(() =>
-              displayMessage['content'] = '${displayMessage['content']}$chunk');
+          setState(
+            () => displayMessage['content'] =
+                '${displayMessage['content']}$chunk',
+          );
           // Do not animate on every streamed chunk: repeated animateTo calls
           // cause layout churn, dropped frames and heat during long replies.
           if (pendingDisplay.isEmpty ||
@@ -539,17 +559,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
-        if (!noUserBubble) {
-          msg['error_log'] = errorLog;
-          msg['error_code'] = result['error_code']?.toString();
-          msg['error_text'] = errorText;
+        if (!noUserBubble || retryTarget != null) {
+          final failedMessage = retryTarget ?? msg;
+          failedMessage['error_log'] = errorLog;
+          failedMessage['error_code'] = result['error_code']?.toString();
+          failedMessage['error_text'] = errorText;
+          failedMessage.remove('is_retrying');
         }
         if (mounted) setState(() {});
-        if (!noUserBubble) {
+        if (!noUserBubble || retryTarget != null) {
           try {
             await DBManager()
                 .updateMessageError(
-                  msg['id'].toString(),
+                  (retryTarget ?? msg)['id'].toString(),
                   errorLog: errorLog,
                   errorCode: result['error_code']?.toString(),
                   errorMessage: errorText,
@@ -599,8 +621,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final complete = row['content']?.toString() ?? '';
         var offset = 0;
         final speed =
-            (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
-                .clamp(1, 100);
+            (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50).clamp(
+          1,
+          100,
+        );
         final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
         final batch = speed >= 85 ? 2 : 1;
         final done = Completer<void>();
@@ -646,17 +670,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       debugPrint(st.toString());
       final errorText = '请求处理失败：${e.toString()}';
       final errorLog = '${e.toString()}\n${st.toString()}';
-      if (!noUserBubble) {
-        msg['error_log'] = errorLog;
-        msg['error_code'] = 'local';
-        msg['error_text'] = errorText;
+      if (!noUserBubble || retryTarget != null) {
+        final failedMessage = retryTarget ?? msg;
+        failedMessage['error_log'] = errorLog;
+        failedMessage['error_code'] = 'local';
+        failedMessage['error_text'] = errorText;
+        failedMessage.remove('is_retrying');
       }
       if (mounted) setState(() {});
-      if (!noUserBubble) {
+      if (!noUserBubble || retryTarget != null) {
         try {
           await DBManager()
               .updateMessageError(
-                msg['id'].toString(),
+                (retryTarget ?? msg)['id'].toString(),
                 errorLog: errorLog,
                 errorCode: 'local',
                 errorMessage: errorText,
@@ -687,20 +713,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Future<void> _retryMessage(Map<String, dynamic> message) async {
-    if (_loading) return;
+    if (_loading || message['is_retrying'] == true) return;
     final text = message['content']?.toString().trim() ?? '';
     if (text.isEmpty) return;
-    message.remove('error_log');
-    message.remove('error_code');
-    message.remove('error_message');
-    message.remove('error_text');
-    await DBManager().clearMessageError(message['id'].toString());
     if (!mounted) return;
     setState(() {
+      message.remove('error_log');
+      message.remove('error_code');
+      message.remove('error_message');
+      message.remove('error_text');
+      message['is_retrying'] = true;
       _msgC.text = text;
       _hasText = true;
     });
-    await _send(noUserBubble: true);
+    await DBManager().clearMessageError(message['id'].toString());
+    await _send(noUserBubble: true, retryTarget: message);
+    if (mounted && message['is_retrying'] == true) {
+      setState(() => message.remove('is_retrying'));
+    }
   }
 
   List<Map<String, dynamic>> _buildAttachmentMessages({
@@ -724,13 +754,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           'content': text,
           'file_path': null,
           'timestamp': timestamp,
-        }
+        },
       ];
     }
     return [
       for (var index = 0; index < attachments.length; index++)
         {
-          'id': 'm_$timestamp' '_$index',
+          'id': 'm_$timestamp'
+              '_$index',
           'bot_id': botId,
           'role': 'user',
           'type': attachments[index]['type'],
@@ -741,7 +772,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ? attachments[index]['path']!.split(Platform.pathSeparator).last
               : null,
           'timestamp': timestamp + index,
-        }
+        },
     ];
   }
 
@@ -770,7 +801,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (transcript != null && transcript.trim().isNotEmpty) {
         try {
           await DBManager().updateMessageContent(
-              message['id'].toString(), transcript.trim());
+            message['id'].toString(),
+            transcript.trim(),
+          );
           if (mounted) setState(() => message['content'] = transcript.trim());
         } catch (e) {
           debugPrint('[stt] persist transcript failed: $e');
@@ -847,10 +880,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final path =
           '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
       await _rec.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          bitRate: 128000,
-        ),
+        const RecordConfig(encoder: AudioEncoder.wav, bitRate: 128000),
         path: path,
       );
       if (!mounted) return;
@@ -920,21 +950,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // ========== 选择图片/文件 ==========
   void _pickMedia() async {
     final r = await showTideSheet<String>(
-        context: context,
-        height: 180,
-        child: Column(children: [
+      context: context,
+      height: 180,
+      child: Column(
+        children: [
           const SizedBox(height: 10),
           ListTile(
-              leading: Icon(Icons.photo_library_rounded,
-                  color: TideTheme.of(context).primary),
-              title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () => Navigator.pop(context, 'img')),
+            leading: Icon(
+              Icons.photo_library_rounded,
+              color: TideTheme.of(context).primary,
+            ),
+            title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')),
+            onTap: () => Navigator.pop(context, 'img'),
+          ),
           ListTile(
-              leading: Icon(Icons.insert_drive_file_rounded,
-                  color: TideTheme.of(context).primary),
-              title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')),
-              onTap: () => Navigator.pop(context, 'file')),
-        ]));
+            leading: Icon(
+              Icons.insert_drive_file_rounded,
+              color: TideTheme.of(context).primary,
+            ),
+            title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')),
+            onTap: () => Navigator.pop(context, 'file'),
+          ),
+        ],
+      ),
+    );
     if (r == 'img') {
       if (!await AppPermissions.photos(context, feature: '选择图片')) return;
       final selected = await ImagePicker().pickMultiImage();
@@ -1003,7 +1042,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       await dir.create(recursive: true);
       final ext = path.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
       final target = File(
-          '${dir.path}/tidebot_${DateTime.now().millisecondsSinceEpoch}.$ext');
+        '${dir.path}/tidebot_${DateTime.now().millisecondsSinceEpoch}.$ext',
+      );
       await File(path).copy(target.path);
       GlobalNotice.show('图片已保存到手机相册');
     } catch (e) {
@@ -1013,28 +1053,35 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   void _previewImg(String path) {
     Navigator.push(
-        context,
-        PageRouteBuilder(
-            pageBuilder: (c, a, s) => Scaffold(
-                backgroundColor: Colors.black,
-                appBar: AppBar(
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    actions: [
-                      IconButton(
-                          onPressed: () => _saveImageToGallery(path),
-                          icon: const Icon(Icons.download_rounded,
-                              color: Colors.white),
-                          tooltip: '保存到相册')
-                    ],
-                    leading: GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: const Icon(Icons.close, color: Colors.white))),
-                body: Center(
-                    child: InteractiveViewer(
-                        child: Image.file(File(path), fit: BoxFit.contain)))),
-            transitionsBuilder: (c, a, s, child) =>
-                FadeTransition(opacity: a, child: child)));
+      context,
+      PageRouteBuilder(
+        pageBuilder: (c, a, s) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            actions: [
+              IconButton(
+                onPressed: () => _saveImageToGallery(path),
+                icon: const Icon(Icons.download_rounded, color: Colors.white),
+                tooltip: '保存到相册',
+              ),
+            ],
+            leading: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: const Icon(Icons.close, color: Colors.white),
+            ),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.file(File(path), fit: BoxFit.contain),
+            ),
+          ),
+        ),
+        transitionsBuilder: (c, a, s, child) =>
+            FadeTransition(opacity: a, child: child),
+      ),
+    );
   }
 
   // ========== 机器人信息弹窗 ==========
@@ -1044,109 +1091,147 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final p = TextEditingController(text: _bot['prompt']);
     String avatar = _bot['avatar']?.toString() ?? '';
     TideDialogs.show(
-        context: context,
-        builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
-              // 更换头像：从相册选择并复制到应用目录
-              Future<void> pickNewAvatar() async {
-                try {
-                  final picker = ImagePicker();
-                  final img = await picker.pickImage(
-                      source: ImageSource.gallery, maxWidth: 512);
-                  if (img != null) {
-                    String path = img.path;
-                    if (path.toLowerCase().endsWith('.heic') ||
-                        path.toLowerCase().endsWith('.heif')) {
-                      try {
-                        final converted = await HeifConverter.convert(path);
-                        if (converted != null) path = converted;
-                      } catch (_) {}
-                    }
-                    final dir = await getApplicationDocumentsDirectory();
-                    final dest =
-                        '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';
-                    await File(path).copy(dest);
-                    if (mounted) setSt(() => avatar = dest);
-                  }
-                } catch (_) {}
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          // 更换头像：从相册选择并复制到应用目录
+          Future<void> pickNewAvatar() async {
+            try {
+              final picker = ImagePicker();
+              final img = await picker.pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 512,
+              );
+              if (img != null) {
+                String path = img.path;
+                if (path.toLowerCase().endsWith('.heic') ||
+                    path.toLowerCase().endsWith('.heif')) {
+                  try {
+                    final converted = await HeifConverter.convert(path);
+                    if (converted != null) path = converted;
+                  } catch (_) {}
+                }
+                final dir = await getApplicationDocumentsDirectory();
+                final dest =
+                    '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';
+                await File(path).copy(dest);
+                if (mounted) setSt(() => avatar = dest);
               }
+            } catch (_) {}
+          }
 
-              return TideDialogSurface(
-                  backgroundColor: Colors.transparent,
-                  contentPadding: EdgeInsets.zero,
-                  content: TideDialogs.glassContent(context: ctx, children: [
-                    const Center(
-                        child: Text('机器人信息',
-                            style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'TideFont'))),
-                    const SizedBox(height: 14),
-                    // 头像更换
-                    Center(
-                        child: GestureDetector(
-                            onTap: pickNewAvatar,
-                            child: Stack(children: [
-                              Container(
-                                  width: 72,
-                                  height: 72,
-                                  decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(36),
-                                      color: const Color(0xFFE8E8F0)),
-                                  child: avatar.isNotEmpty
-                                      ? ClipRRect(
-                                          borderRadius:
-                                              BorderRadius.circular(36),
-                                          child: Image.file(File(avatar),
-                                              fit: BoxFit.cover))
-                                      : const Center(
-                                          child: Icon(Icons.person_rounded,
-                                              color: Color(0xFF8E8E93),
-                                              size: 30))),
-                              Positioned(
-                                  right: 0,
-                                  bottom: 0,
-                                  child: Container(
-                                      width: 24,
-                                      height: 24,
-                                      decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: TideTheme.of(ctx).primary),
-                                      child: const Icon(Icons.edit_rounded,
-                                          size: 14, color: Colors.white))),
-                            ]))),
-                    const SizedBox(height: 8),
-                    const Center(
-                        child: Text('点按头像可更换',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFF8E8E93),
-                                fontFamily: 'TideFont'))),
-                    const SizedBox(height: 8),
-                    _mLabel('名字'), _mField(n),
-                    const SizedBox(height: 10), _mLabel('人格设定'),
-                    _mField(d, h: 80),
-                    const SizedBox(height: 10), _mLabel('说话方式'),
-                    _mField(p, h: 100),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                        width: double.infinity,
-                        child: TideDialogs.glassButton('保存', onTap: () async {
-                          final botId = _bot['id'] as String;
-                          _bot['name'] = n.text;
-                          _bot['desc'] = d.text;
-                          _bot['prompt'] = p.text;
-                          _bot['avatar'] = avatar;
-                          await DBManager().updateBot(botId, {
-                            'name': n.text,
-                            'desc': d.text,
-                            'prompt': p.text,
-                            'avatar': avatar,
-                          });
-                          Navigator.pop(ctx);
-                          setState(() {});
-                        })),
-                  ]));
-            }));
+          return TideDialogSurface(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(
+              context: ctx,
+              children: [
+                const Center(
+                  child: Text(
+                    '机器人信息',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                // 头像更换
+                Center(
+                  child: GestureDetector(
+                    onTap: pickNewAvatar,
+                    child: Stack(
+                      children: [
+                        Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(36),
+                            color: const Color(0xFFE8E8F0),
+                          ),
+                          child: avatar.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(36),
+                                  child: Image.file(
+                                    File(avatar),
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : const Center(
+                                  child: Icon(
+                                    Icons.person_rounded,
+                                    color: Color(0xFF8E8E93),
+                                    size: 30,
+                                  ),
+                                ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: TideTheme.of(ctx).primary,
+                            ),
+                            child: const Icon(
+                              Icons.edit_rounded,
+                              size: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Center(
+                  child: Text(
+                    '点按头像可更换',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF8E8E93),
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _mLabel('名字'), _mField(n),
+                const SizedBox(height: 10), _mLabel('人格设定'),
+                _mField(d, h: 80),
+                const SizedBox(height: 10), _mLabel('说话方式'),
+                _mField(p, h: 100),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: TideDialogs.glassButton(
+                    '保存',
+                    onTap: () async {
+                      final botId = _bot['id'] as String;
+                      _bot['name'] = n.text;
+                      _bot['desc'] = d.text;
+                      _bot['prompt'] = p.text;
+                      _bot['avatar'] = avatar;
+                      await DBManager().updateBot(botId, {
+                        'name': n.text,
+                        'desc': d.text,
+                        'prompt': p.text,
+                        'avatar': avatar,
+                      });
+                      Navigator.pop(ctx);
+                      setState(() {});
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   // ========== 模型设置弹窗 ==========
@@ -1175,206 +1260,262 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         (_bot['max_tokens'] as int? ?? 10000);
 
     TideDialogs.show(
-        context: context,
-        builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
-              // 选中项实时更新到内存 & 持久化，让界面即时刷新
-              Future<void> pickModel(String key, String val,
-                  {bool isTts = false}) async {
-                setSt(() {});
-                await prefs.setString(key, val);
-                if (!isTts && key == 'chat_model_$botId') {
-                  _bot['chat_model'] = val;
-                  await DBManager().updateBot(botId, {'chat_model': val});
-                }
-                if (isTts && key == 'tts_model_$botId') {
-                  _bot['tts_model'] = val;
-                  await DBManager().updateBot(botId, {'tts_model': val});
-                }
-                if (key == 'stt_model_$botId') {
-                  _bot['stt_model'] = val;
-                  await DBManager().updateBot(botId, {'stt_model': val});
-                }
-                setSt(() {});
-              }
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          // 选中项实时更新到内存 & 持久化，让界面即时刷新
+          Future<void> pickModel(
+            String key,
+            String val, {
+            bool isTts = false,
+          }) async {
+            setSt(() {});
+            await prefs.setString(key, val);
+            if (!isTts && key == 'chat_model_$botId') {
+              _bot['chat_model'] = val;
+              await DBManager().updateBot(botId, {'chat_model': val});
+            }
+            if (isTts && key == 'tts_model_$botId') {
+              _bot['tts_model'] = val;
+              await DBManager().updateBot(botId, {'tts_model': val});
+            }
+            if (key == 'stt_model_$botId') {
+              _bot['stt_model'] = val;
+              await DBManager().updateBot(botId, {'stt_model': val});
+            }
+            setSt(() {});
+          }
 
-              return TideDialogSurface(
-                  backgroundColor: Colors.transparent,
-                  contentPadding: EdgeInsets.zero,
-                  content: TideDialogs.glassContent(
-                      context: ctx,
-                      maxWidth: 0.9,
+          return TideDialogSurface(
+            backgroundColor: Colors.transparent,
+            contentPadding: EdgeInsets.zero,
+            content: TideDialogs.glassContent(
+              context: ctx,
+              maxWidth: 0.9,
+              children: [
+                const Center(
+                  child: Text(
+                    '模型设置',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
                       children: [
-                        const Center(
-                            child: Text('模型设置',
-                                style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                    fontFamily: 'TideFont'))),
-                        const SizedBox(height: 12),
-                        Flexible(
-                            child: SingleChildScrollView(
-                                child: Column(children: [
-                          _mLabel('聊天模型'),
-                          _modelPicker(ctx, providers, curChat, (v) async {
-                            curChat = v;
-                            await pickModel('chat_model_$botId', v);
-                          }),
-                          _mLabel('备用模型'),
-                          _modelPicker(ctx, providers, curBak, (v) async {
-                            curBak = v;
-                            await pickModel('backup_model_$botId', v);
-                          }),
-                          _mLabel('识图模型'),
-                          _modelPicker(ctx, providers, curVision, (v) async {
-                            curVision = v;
-                            await pickModel('vision_model_$botId', v);
-                          }),
-                          _mLabel('生图模型'),
-                          _modelPicker(ctx, providers, curImageGen, (v) async {
-                            curImageGen = v;
-                            await pickModel('image_gen_model_$botId', v);
-                          }),
-                          // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
-                          _mLabel('STT模型'),
-                          _modelPicker(ctx, sttProviders, curStt, (v) async {
-                            curStt = v;
-                            await pickModel('stt_model_$botId', v);
-                          }),
-                          _mLabel('TTS模型'),
-                          _modelPicker(ctx, ttsProviders, curTts, (v) async {
-                            curTts = v;
-                            await pickModel('tts_model_$botId', v, isTts: true);
-                          }),
-                          _mLabel('最大上下文Token'),
-                          _tokenField(ctx, curTok, (v) async {
-                            curTok = v;
-                            await prefs.setInt('max_token_$botId', v);
-                            await DBManager()
-                                .updateBot(botId, {'max_tokens': v});
-                            setSt(() {});
-                          }),
-                        ]))),
-                        const SizedBox(height: 12),
-                        TideDialogs.glassButton('确定',
-                            onTap: () => Navigator.pop(ctx)),
-                      ]));
-            }));
+                        _mLabel('聊天模型'),
+                        _modelPicker(ctx, providers, curChat, (v) async {
+                          curChat = v;
+                          await pickModel('chat_model_$botId', v);
+                        }),
+                        _mLabel('备用模型'),
+                        _modelPicker(ctx, providers, curBak, (v) async {
+                          curBak = v;
+                          await pickModel('backup_model_$botId', v);
+                        }),
+                        _mLabel('识图模型'),
+                        _modelPicker(ctx, providers, curVision, (v) async {
+                          curVision = v;
+                          await pickModel('vision_model_$botId', v);
+                        }),
+                        _mLabel('生图模型'),
+                        _modelPicker(ctx, providers, curImageGen, (v) async {
+                          curImageGen = v;
+                          await pickModel('image_gen_model_$botId', v);
+                        }),
+                        // TTS 模型独立：从 tts_provider_list 读取，额外展示音色字段（可选，不配置则纯文字回复）
+                        _mLabel('STT模型'),
+                        _modelPicker(ctx, sttProviders, curStt, (v) async {
+                          curStt = v;
+                          await pickModel('stt_model_$botId', v);
+                        }),
+                        _mLabel('TTS模型'),
+                        _modelPicker(ctx, ttsProviders, curTts, (v) async {
+                          curTts = v;
+                          await pickModel('tts_model_$botId', v, isTts: true);
+                        }),
+                        _mLabel('最大上下文Token'),
+                        _tokenField(ctx, curTok, (v) async {
+                          curTok = v;
+                          await prefs.setInt('max_token_$botId', v);
+                          await DBManager().updateBot(botId, {'max_tokens': v});
+                          setSt(() {});
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TideDialogs.glassButton('确定', onTap: () => Navigator.pop(ctx)),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   // token 选择字段，点击弹底部选择，选中后立即回调更新
   Widget _tokenField(
-      BuildContext parentCtx, int cur, Future<void> Function(int) onPick) {
+    BuildContext parentCtx,
+    int cur,
+    Future<void> Function(int) onPick,
+  ) {
     Future<void> choose(int v) async {
       await onPick(v);
       if (mounted) setState(() {});
     }
 
     return GestureDetector(
-        onTap: () {
-          final c = TextEditingController(text: cur.toString());
-          showTideSheet(
-              context: parentCtx,
-              height: 260,
-              child: Column(children: [
-                const SizedBox(height: 10),
-                const Text('最大上下文',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'TideFont')),
-                const SizedBox(height: 8),
-                ListTile(
-                    title: const Text('10,000 token',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    trailing: cur == 10000
-                        ? Icon(Icons.check,
-                            color: TideTheme.of(parentCtx).primary)
-                        : null,
-                    onTap: () {
-                      Navigator.pop(parentCtx);
-                      choose(10000);
-                    }),
-                ListTile(
-                    title: const Text('20,000 token',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    trailing: cur == 20000
-                        ? Icon(Icons.check,
-                            color: TideTheme.of(parentCtx).primary)
-                        : null,
-                    onTap: () {
-                      Navigator.pop(parentCtx);
-                      choose(20000);
-                    }),
-                ListTile(
-                    title: const Text('自定义...',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    onTap: () {
-                      Navigator.pop(parentCtx);
-                      TideDialogs.show(
-                          context: parentCtx,
-                          builder: (c2) => TideDialogSurface(
-                              backgroundColor: Colors.transparent,
-                              contentPadding: EdgeInsets.zero,
-                              content: TideDialogs.glassContent(
-                                  context: c2,
-                                  children: [
-                                    const Text('自定义Token',
-                                        style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w700,
-                                            fontFamily: 'TideFont')),
-                                    const SizedBox(height: 10),
-                                    TextField(
-                                        controller: c,
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(
-                                            hintText: '输入token数量',
-                                            hintStyle: TextStyle(
-                                                fontFamily: 'TideFont'),
-                                            border: OutlineInputBorder(
-                                                borderRadius: BorderRadius.all(
-                                                    Radius.circular(10)),
-                                                borderSide: BorderSide.none),
-                                            enabledBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.all(
-                                                    Radius.circular(10)),
-                                                borderSide: BorderSide.none),
-                                            focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.all(
-                                                    Radius.circular(10)),
-                                                borderSide: BorderSide.none))),
-                                    const SizedBox(height: 12),
-                                    TideDialogs.glassButton('确定', onTap: () {
-                                      final v = int.tryParse(c.text);
-                                      if (v != null && v > 0) choose(v);
-                                      Navigator.pop(c2);
-                                    }),
-                                  ])));
-                    }),
-              ]));
-        },
-        child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(
-                color: TideTheme.of(parentCtx).surfaceVariant,
-                borderRadius: BorderRadius.circular(10)),
-            child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                    cur >= 1000
-                        ? '${cur.toString().replaceAllMapped(RegExp(r'(?=(\d{3})+(?!\d))'), (m) => ',')} token'
-                        : '$cur token',
-                    style: TextStyle(
-                        fontSize: 14,
-                        color: TideTheme.of(parentCtx).textStrong,
-                        fontFamily: 'TideFont')))));
+      onTap: () {
+        final c = TextEditingController(text: cur.toString());
+        showTideSheet(
+          context: parentCtx,
+          height: 260,
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              const Text(
+                '最大上下文',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                title: const Text(
+                  '10,000 token',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
+                trailing: cur == 10000
+                    ? Icon(Icons.check, color: TideTheme.of(parentCtx).primary)
+                    : null,
+                onTap: () {
+                  Navigator.pop(parentCtx);
+                  choose(10000);
+                },
+              ),
+              ListTile(
+                title: const Text(
+                  '20,000 token',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
+                trailing: cur == 20000
+                    ? Icon(Icons.check, color: TideTheme.of(parentCtx).primary)
+                    : null,
+                onTap: () {
+                  Navigator.pop(parentCtx);
+                  choose(20000);
+                },
+              ),
+              ListTile(
+                title: const Text(
+                  '自定义...',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
+                onTap: () {
+                  Navigator.pop(parentCtx);
+                  TideDialogs.show(
+                    context: parentCtx,
+                    builder: (c2) => TideDialogSurface(
+                      backgroundColor: Colors.transparent,
+                      contentPadding: EdgeInsets.zero,
+                      content: TideDialogs.glassContent(
+                        context: c2,
+                        children: [
+                          const Text(
+                            '自定义Token',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: c,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              hintText: '输入token数量',
+                              hintStyle: TextStyle(fontFamily: 'TideFont'),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(10),
+                                ),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(10),
+                                ),
+                                borderSide: BorderSide.none,
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(10),
+                                ),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TideDialogs.glassButton(
+                            '确定',
+                            onTap: () {
+                              final v = int.tryParse(c.text);
+                              if (v != null && v > 0) choose(v);
+                              Navigator.pop(c2);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: TideTheme.of(parentCtx).surfaceVariant,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            cur >= 1000
+                ? '${cur.toString().replaceAllMapped(RegExp(r'(?=(\d{3})+(?!\d))'), (m) => ',')} token'
+                : '$cur token',
+            style: TextStyle(
+              fontSize: 14,
+              color: TideTheme.of(parentCtx).textStrong,
+              fontFamily: 'TideFont',
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // 模型选择器：普通模型显示「名字 · 模型名」，TTS 额外显示「音色」
-  Widget _modelPicker(BuildContext ctx, List<Map<String, dynamic>> providers,
-      String cur, Function(String) onPick) {
+  Widget _modelPicker(
+    BuildContext ctx,
+    List<Map<String, dynamic>> providers,
+    String cur,
+    Function(String) onPick,
+  ) {
     final sel = providers.firstWhereOrNull((p) => p['id'] == cur);
     final String disp;
     if (sel != null) {
@@ -1390,63 +1531,85 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       disp = providers.isEmpty ? '无可用模型' : '未选择';
     }
     return GestureDetector(
-        onTap: () {
-          showTideSheet(
-              context: ctx,
-              height: 380,
-              child: ListView(children: [
+      onTap: () {
+        showTideSheet(
+          context: ctx,
+          height: 380,
+          child: ListView(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.block_rounded),
+                title: const Text(
+                  '不选择',
+                  style: TextStyle(fontFamily: 'TideFont', fontSize: 14),
+                ),
+                subtitle: const Text(
+                  '清除当前模型配置',
+                  style: TextStyle(fontSize: 12, fontFamily: 'TideFont'),
+                ),
+                trailing: cur.isEmpty
+                    ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                    : null,
+                onTap: () {
+                  onPick('');
+                  Navigator.pop(ctx);
+                },
+              ),
+              for (var pv in providers)
                 ListTile(
-                  leading: const Icon(Icons.block_rounded),
-                  title: const Text('不选择',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
-                  subtitle: const Text('清除当前模型配置',
-                      style: TextStyle(fontSize: 12, fontFamily: 'TideFont')),
-                  trailing: cur.isEmpty
+                  title: Text(
+                    _providerTitle(pv),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'TideFont',
+                      fontSize: 14,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _providerSub(pv),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                  trailing: cur == pv['id']
                       ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
                       : null,
                   onTap: () {
-                    onPick('');
+                    onPick(pv['id'] as String);
                     Navigator.pop(ctx);
                   },
                 ),
-                for (var pv in providers)
-                  ListTile(
-                    title: Text(_providerTitle(pv),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontFamily: 'TideFont', fontSize: 14)),
-                    subtitle: Text(_providerSub(pv),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, fontFamily: 'TideFont')),
-                    trailing: cur == pv['id']
-                        ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
-                        : null,
-                    onTap: () {
-                      onPick(pv['id'] as String);
-                      Navigator.pop(ctx);
-                    },
-                  ),
-              ]));
-        },
-        child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(
-                color: TideTheme.of(ctx).surfaceVariant,
-                borderRadius: BorderRadius.circular(10)),
-            child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(disp,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: TideTheme.of(ctx).textStrong,
-                        fontFamily: 'TideFont')))));
+            ],
+          ),
+        );
+      },
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: TideTheme.of(ctx).surfaceVariant,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            disp,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              color: TideTheme.of(ctx).textStrong,
+              fontFamily: 'TideFont',
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   String _providerTitle(Map<String, dynamic> p) {
@@ -1466,58 +1629,87 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     bool delMsgs = false;
     bool delMem = false;
     TideDialogs.show(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setSt) => TideDialogSurface(
-                backgroundColor: Colors.transparent,
-                contentPadding: EdgeInsets.zero,
-                content: TideDialogs.glassContent(context: ctx, children: [
-                  const Text('清理数据',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'TideFont')),
-                  const SizedBox(height: 14),
-                  CheckboxListTile(
-                      value: delMsgs,
-                      onChanged: (v) => setSt(() => delMsgs = v ?? false),
-                      title: const Text('删除聊天记录',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      controlAffinity: ListTileControlAffinity.leading),
-                  CheckboxListTile(
-                      value: delMem,
-                      onChanged: (v) => setSt(() => delMem = v ?? false),
-                      title: const Text('删除底层记忆',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      controlAffinity: ListTileControlAffinity.leading),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Expanded(
-                        child: TideDialogs.glassButton('取消',
-                            onTap: () => Navigator.pop(ctx),
-                            color: const Color(0xFFE8E8F0),
-                            textColor: const Color(0xFF1C1C1E))),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: TideDialogs.glassButton('确认清除', onTap: () async {
-                      if (delMsgs) {
-                        _messagesRevision++;
-                        await DBManager().deleteMessages(_bot['id'] as String);
-                        if (mounted) {
-                          setState(() {
-                            _msgs.clear();
-                            _deferredPersistedMessageIds.clear();
-                          });
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => TideDialogSurface(
+          backgroundColor: Colors.transparent,
+          contentPadding: EdgeInsets.zero,
+          content: TideDialogs.glassContent(
+            context: ctx,
+            children: [
+              const Text(
+                '清理数据',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+              const SizedBox(height: 14),
+              CheckboxListTile(
+                value: delMsgs,
+                onChanged: (v) => setSt(() => delMsgs = v ?? false),
+                title: const Text(
+                  '删除聊天记录',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              CheckboxListTile(
+                value: delMem,
+                onChanged: (v) => setSt(() => delMem = v ?? false),
+                title: const Text(
+                  '删除底层记忆',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '取消',
+                      onTap: () => Navigator.pop(ctx),
+                      color: const Color(0xFFE8E8F0),
+                      textColor: const Color(0xFF1C1C1E),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '确认清除',
+                      onTap: () async {
+                        if (delMsgs) {
+                          _messagesRevision++;
+                          await DBManager().deleteMessages(
+                            _bot['id'] as String,
+                          );
+                          if (mounted) {
+                            setState(() {
+                              _msgs.clear();
+                              _deferredPersistedMessageIds.clear();
+                            });
+                          }
                         }
-                      }
-                      if (delMem) {
-                        await DBManager().deleteMemories(_bot['id'] as String);
-                      }
-                      Navigator.pop(ctx);
-                      _loadMsgs();
-                    }, color: const Color(0xFFE74C3C))),
-                  ]),
-                ]))));
+                        if (delMem) {
+                          await DBManager().deleteMemories(
+                            _bot['id'] as String,
+                          );
+                        }
+                        Navigator.pop(ctx);
+                        _loadMsgs();
+                      },
+                      color: const Color(0xFFE74C3C),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleAudio(String path) async {
@@ -1629,16 +1821,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(_formatAudioTime(position),
-                            style: TextStyle(
-                                color: muted,
-                                fontSize: 11,
-                                fontFamily: 'TideFont')),
-                        Text(knownDuration ? _formatAudioTime(duration) : '语音',
-                            style: TextStyle(
-                                color: muted,
-                                fontSize: 11,
-                                fontFamily: 'TideFont')),
+                        Text(
+                          _formatAudioTime(position),
+                          style: TextStyle(
+                            color: muted,
+                            fontSize: 11,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                        Text(
+                          knownDuration ? _formatAudioTime(duration) : '语音',
+                          style: TextStyle(
+                            color: muted,
+                            fontSize: 11,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -1646,15 +1844,73 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ),
             ],
           ),
-          if (transcript.trim().isNotEmpty)
+          if (transcript.trim().isNotEmpty) ...[
+            Divider(height: 1, color: muted.withValues(alpha: 0.55)),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 2, 8, 5),
-              child: Text(transcript,
-                  style: TextStyle(
-                      color: foreground, fontSize: 13, fontFamily: 'TideFont')),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 5),
+              child: Text(
+                transcript.trim(),
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 13,
+                  height: 1.4,
+                  fontFamily: 'TideFont',
+                ),
+              ),
             ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _callSummaryCard({
+    required String content,
+    required int duration,
+    required bool failed,
+  }) {
+    final theme = TideTheme.of(context);
+    final hours = duration ~/ 3600;
+    final minutes = (duration % 3600) ~/ 60;
+    final seconds = duration % 60;
+    final durationText = [
+      if (hours > 0) '$hours 小时',
+      if (minutes > 0 || hours > 0) '$minutes 分钟',
+      if (hours == 0 && minutes == 0) '$seconds 秒',
+    ].join(' ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.surfaceVariant,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: failed ? Colors.red.shade400 : theme.border),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('通话已挂断，通话时间 $durationText',
+            style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont')),
+        const SizedBox(height: 6),
+        Text(
+          failed ? content : '点击查看摘要',
+          style: TextStyle(
+            color: failed ? Colors.red.shade400 : theme.primary,
+            fontFamily: 'TideFont',
+          ),
+        ),
+        if (!failed)
+          TextButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('通话摘要')),
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(content, style: const TextStyle(height: 1.6)),
+                ),
+              ),
+            )),
+            child: const Text('点击查看摘要'),
+          ),
+      ]),
     );
   }
 
@@ -1669,15 +1925,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           children: [
             const Center(
-              child: Text('消息操作',
-                  style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'TideFont')),
+              child: Text(
+                '消息操作',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
             ),
             ListTile(
-              leading: Icon(Icons.copy_rounded,
-                  color: TideTheme.of(sheetContext).primary),
+              leading: Icon(
+                Icons.copy_rounded,
+                color: TideTheme.of(sheetContext).primary,
+              ),
               title: const Text('复制', style: TextStyle(fontFamily: 'TideFont')),
               onTap: () {
                 Clipboard.setData(ClipboardData(text: text));
@@ -1687,10 +1948,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             if (msg['role'] == 'user' &&
                 msg['error_log']?.toString().isNotEmpty == true)
               ListTile(
-                leading: Icon(Icons.refresh_rounded,
-                    color: TideTheme.of(sheetContext).primary),
-                title: const Text('重新发送',
-                    style: TextStyle(fontFamily: 'TideFont')),
+                leading: Icon(
+                  Icons.refresh_rounded,
+                  color: TideTheme.of(sheetContext).primary,
+                ),
+                title: const Text(
+                  '重新发送',
+                  style: TextStyle(fontFamily: 'TideFont'),
+                ),
                 onTap: () async {
                   Navigator.pop(sheetContext);
                   await _retryMessage(msg);
@@ -1698,16 +1963,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ),
             // 引用功能已移除，避免生成和维护 reply_to_id 关联。
             ListTile(
-              leading: const Icon(Icons.delete_outline_rounded,
-                  color: Color(0xFFE74C3C)),
-              title: const Text('删除',
-                  style: TextStyle(
-                      fontFamily: 'TideFont', color: Color(0xFFE74C3C))),
+              leading: const Icon(
+                Icons.delete_outline_rounded,
+                color: Color(0xFFE74C3C),
+              ),
+              title: const Text(
+                '删除',
+                style: TextStyle(
+                  fontFamily: 'TideFont',
+                  color: Color(0xFFE74C3C),
+                ),
+              ),
               onTap: () async {
                 await DBManager().deleteMessage(msg['id'].toString());
                 if (mounted) {
-                  setState(() => _msgs.removeWhere(
-                      (item) => item['id'].toString() == msg['id'].toString()));
+                  setState(
+                    () => _msgs.removeWhere(
+                      (item) => item['id'].toString() == msg['id'].toString(),
+                    ),
+                  );
                 }
                 if (sheetContext.mounted) Navigator.pop(sheetContext);
               },
@@ -1731,8 +2005,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _replyCard(String replyId, bool isUser) {
     final original = _msgs.cast<Map<String, dynamic>?>().firstWhere(
-        (item) => item?['id']?.toString() == replyId,
-        orElse: () => null);
+          (item) => item?['id']?.toString() == replyId,
+          orElse: () => null,
+        );
     final missing = original == null;
     final author = missing
         ? '原消息'
@@ -1748,17 +2023,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : TideTheme.of(context).surfaceVariant,
         borderRadius: BorderRadius.circular(10),
         border: Border(
-            left: BorderSide(
-                color: isUser ? Colors.white70 : TideTheme.of(context).primary,
-                width: 3)),
+          left: BorderSide(
+            color: isUser ? Colors.white70 : TideTheme.of(context).primary,
+            width: 3,
+          ),
+        ),
       ),
-      child: Text('$author：$preview',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              fontSize: 12,
-              color: isUser ? Colors.white : TideTheme.of(context).textWeak,
-              fontFamily: 'TideFont')),
+      child: Text(
+        '$author：$preview',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 12,
+          color: isUser ? Colors.white : TideTheme.of(context).textWeak,
+          fontFamily: 'TideFont',
+        ),
+      ),
     );
   }
 
@@ -1772,114 +2052,162 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
-      body: Stack(children: [
-        // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
-        Positioned.fill(
-          child: effBg != null
-              ? Image.file(File(effBg), fit: BoxFit.cover)
-              : DecoratedBox(
-                  decoration: BoxDecoration(color: theme.bgColor),
-                  child: Stack(children: [
-                    Positioned(
-                        left: -80,
-                        top: -60,
-                        child: IgnorePointer(
+      body: Stack(
+        children: [
+          // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
+          Positioned.fill(
+            child: effBg != null
+                ? Image.file(File(effBg), fit: BoxFit.cover)
+                : DecoratedBox(
+                    decoration: BoxDecoration(color: theme.bgColor),
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          left: -80,
+                          top: -60,
+                          child: IgnorePointer(
                             child: Container(
-                                width: 240,
-                                height: 240,
-                                decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(colors: [
-                                      theme.primaryLight
-                                          .withValues(alpha: 0.25),
-                                      Colors.transparent
-                                    ]))))),
-                    Positioned(
-                        right: -60,
-                        bottom: 120,
-                        child: IgnorePointer(
+                              width: 240,
+                              height: 240,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    theme.primaryLight.withValues(alpha: 0.25),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: -60,
+                          bottom: 120,
+                          child: IgnorePointer(
                             child: Container(
-                                width: 260,
-                                height: 260,
-                                decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(colors: [
-                                      theme.primary.withValues(alpha: 0.15),
-                                      Colors.transparent
-                                    ]))))),
-                  ]),
-                ),
-        ),
-        Column(children: [
-          _chatHeader(),
-          Expanded(child: _chatBody()),
-        ]),
-        Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
-      ]),
+                              width: 260,
+                              height: 260,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    theme.primary.withValues(alpha: 0.15),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+          Column(
+            children: [
+              _chatHeader(),
+              Expanded(child: _chatBody()),
+            ],
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
+        ],
+      ),
     );
   }
 
   Widget _chatHeader() {
     return ClipRRect(
       child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            color: _hasBg
-                ? TideTheme.of(context).glass.withValues(alpha: 0.15)
-                : TideTheme.of(context).glass.withValues(alpha: 0.55),
-            child: SafeArea(
-              bottom: false,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(children: [
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          color: _hasBg
+              ? TideTheme.of(context).glass.withValues(alpha: 0.15)
+              : TideTheme.of(context).glass.withValues(alpha: 0.55),
+          child: SafeArea(
+            bottom: false,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: [
                   GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(Icons.arrow_back_ios_rounded,
-                              size: 20,
-                              color: TideTheme.of(context).textStrong))),
+                    onTap: () => Navigator.pop(context),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.arrow_back_ios_rounded,
+                        size: 20,
+                        color: TideTheme.of(context).textStrong,
+                      ),
+                    ),
+                  ),
                   Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        Text(_bot['name'] as String? ?? '',
-                            style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'TideFont',
-                                color: TideTheme.of(context).textStrong)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _bot['name'] as String? ?? '',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont',
+                            color: TideTheme.of(context).textStrong,
+                          ),
+                        ),
                         if (_typing)
-                          Text('正在输入中...',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: TideTheme.of(context).primary,
-                                  fontFamily: 'TideFont')),
-                      ])),
+                          Text(
+                            '正在输入中...',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: TideTheme.of(context).primary,
+                              fontFamily: 'TideFont',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                   // 电话按钮
                   IconButton(
-                      icon: Icon(Icons.call_rounded,
-                          size: 20, color: TideTheme.of(context).primary),
-                      onPressed: _openCallPreparation),
+                    icon: Icon(
+                      Icons.call_rounded,
+                      size: 20,
+                      color: TideTheme.of(context).primary,
+                    ),
+                    onPressed: _openCallPreparation,
+                  ),
                   // 删除按钮
                   IconButton(
-                      icon: Icon(Icons.delete_outline_rounded,
-                          size: 20, color: TideTheme.of(context).iconMuted),
-                      onPressed: _showDeleteOptions),
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      size: 20,
+                      color: TideTheme.of(context).iconMuted,
+                    ),
+                    onPressed: _showDeleteOptions,
+                  ),
                   // 设置按钮
                   IconButton(
-                      icon: Icon(Icons.settings_rounded,
-                          size: 20, color: TideTheme.of(context).iconMuted),
-                      onPressed: _showModelSettings),
+                    icon: Icon(
+                      Icons.settings_rounded,
+                      size: 20,
+                      color: TideTheme.of(context).iconMuted,
+                    ),
+                    onPressed: _showModelSettings,
+                  ),
                   // 信息按钮
                   IconButton(
-                      icon: Icon(Icons.menu_rounded,
-                          size: 20, color: TideTheme.of(context).iconMuted),
-                      onPressed: _showBotInfo),
-                ]),
+                    icon: Icon(
+                      Icons.menu_rounded,
+                      size: 20,
+                      color: TideTheme.of(context).iconMuted,
+                    ),
+                    onPressed: _showBotInfo,
+                  ),
+                ],
               ),
             ),
-          )),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1901,17 +2229,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       return;
     }
 
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CallPage(
-        bot: _bot,
-        hasStt: hasStt,
-        hasTts: hasTts,
-        onOpenSettings: () {
-          Navigator.of(context).pop();
-          _showModelSettings();
-        },
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CallPage(
+          bot: _bot,
+          hasStt: hasStt,
+          hasTts: hasTts,
+          onOpenSettings: () {
+            Navigator.of(context).pop();
+            _showModelSettings();
+          },
+        ),
       ),
-    ));
+    );
   }
 
   String _errorSolution(dynamic code) {
@@ -1967,17 +2297,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             children: [
               Text(content, style: const TextStyle(fontFamily: 'TideFont')),
               const SizedBox(height: 14),
-              const Text('完整报错日志',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                '完整报错日志',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 6),
-              SelectableText(log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
-                  style:
-                      const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+              SelectableText(
+                log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+              ),
               const SizedBox(height: 14),
               const Text('解决方法', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
-              Text(_errorSolution(message['error_code']),
-                  style: const TextStyle(fontFamily: 'TideFont')),
+              Text(
+                _errorSolution(message['error_code']),
+                style: const TextStyle(fontFamily: 'TideFont'),
+              ),
             ],
           ),
         ),
@@ -1994,7 +2329,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             },
           ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
         ],
       ),
     );
@@ -2031,63 +2368,90 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : theme.buttonSecondary,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.dynamic_feed_rounded, size: 17, color: foreground),
-          const SizedBox(width: 6),
-          Expanded(
-              child: Text('分享的动态',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.dynamic_feed_rounded, size: 17, color: foreground),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '分享的动态',
                   style: TextStyle(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'TideFont'))),
-        ]),
-        const SizedBox(height: 8),
-        Text(author,
-            style: TextStyle(
-                color: foreground,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'TideFont')),
-        if (timestamp != null) ...[
-          const SizedBox(height: 2),
-          Text(fmtTime(timestamp),
-              style: TextStyle(
-                  color: muted, fontSize: 11, fontFamily: 'TideFont')),
-        ],
-        if (content.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(content,
-              style: TextStyle(
-                  color: foreground, height: 1.35, fontFamily: 'TideFont')),
-        ],
-        if (imageExists) ...[
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: () => _previewImg(imagePath),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                width: 144,
-                height: 144,
-                child: Image.file(File(imagePath), fit: BoxFit.cover),
+                    color: foreground,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont',
+                  ),
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            author,
+            style: TextStyle(
+              color: foreground,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'TideFont',
             ),
           ),
-        ] else if (imagePath.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text('图片已失效或不可访问',
+          if (timestamp != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              fmtTime(timestamp),
               style: TextStyle(
-                  color: muted, fontSize: 12, fontFamily: 'TideFont')),
+                color: muted,
+                fontSize: 11,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
+          if (content.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              content,
+              style: TextStyle(
+                color: foreground,
+                height: 1.35,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
+          if (imageExists) ...[
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () => _previewImg(imagePath),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 144,
+                  height: 144,
+                  child: Image.file(File(imagePath), fit: BoxFit.cover),
+                ),
+              ),
+            ),
+          ] else if (imagePath.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '图片已失效或不可访问',
+              style: TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 
   Widget _chatBody() {
     if (_msgsLoading) {
       return Center(
-          child:
-              CircularProgressIndicator(color: TideTheme.of(context).primary));
+        child: CircularProgressIndicator(color: TideTheme.of(context).primary),
+      );
     }
     return ListView.builder(
       key: const PageStorageKey<String>('chat_messages'),
@@ -2096,7 +2460,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       // The composer is overlaid on the stack; reserve its full height so the last bubble is never covered.
       padding: EdgeInsets.fromLTRB(
-          12, 8, 12, MediaQuery.of(context).padding.bottom + 84),
+        12,
+        8,
+        12,
+        MediaQuery.of(context).padding.bottom + 84,
+      ),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
         final m = _msgs[_msgs.length - 1 - i];
@@ -2124,6 +2492,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : '文件';
         final isSticker = m['type'] == 'sticker';
         // 表情包的 content 是内部情绪分类，绝不能作为正文显示。
+        final hasSummary = m['type'] == 'call_summary';
         final txt = isSticker ? '' : ((m['content'] as String?) ?? '');
         final sharedPost = _sharedPostPayload(m);
         final replyId = m['reply_to_id']?.toString();
@@ -2131,8 +2500,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final ts = m['timestamp'] as int? ?? 0;
         // 流式占位气泡（id 以 stream_ 开头）会先用空内容上屏，之后才填充真实文字。
         // 它的时间不应展示，否则会出现“先出时间、后出内容”“一条消息两个时间”的观感。
-        final isStreamingPlaceholder =
-            (m['id']?.toString() ?? '').startsWith('stream_');
+        final isStreamingPlaceholder = (m['id']?.toString() ?? '').startsWith(
+          'stream_',
+        );
         // 只有气泡真正渲染出可见内容时才显示时间：图片/贴纸必须文件真实存在，
         // 文本必须非空，避免生成图片或分段等待时时间先出、内容后到。
         final hasVisibleContent = isUser ||
@@ -2144,32 +2514,50 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             sharedPost != null;
         final showTimeHere =
             _showMessageTime && !isStreamingPlaceholder && hasVisibleContent;
-
+        final sourceAreaWidth = (MediaQuery.sizeOf(context).width - 24)
+            .clamp(0.0, 320.0)
+            .toDouble();
         return GestureDetector(
           onLongPress: () => _msgLongPress(m),
           child: Align(
-              alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (isUser && m['error_log']?.toString().isNotEmpty == true)
-                    GestureDetector(
-                      onTap: () => _showErrorDetails(m),
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 8, right: 6),
-                        child: Icon(
-                          Icons.error_outline_rounded,
-                          color: Colors.red.shade400,
-                          size: 22,
+            alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment:
+                  isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (isUser && m['is_retrying'] == true)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8, right: 6),
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else if (isUser &&
+                        m['error_log']?.toString().isNotEmpty == true)
+                      GestureDetector(
+                        onTap: () => _showErrorDetails(m),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 8, right: 6),
+                          child: Icon(
+                            Icons.error_outline_rounded,
+                            color: Colors.red.shade400,
+                            size: 22,
+                          ),
                         ),
                       ),
-                    ),
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.75),
-                    child: Column(
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width * 0.75,
+                      ),
+                      child: Column(
                         crossAxisAlignment: isUser
                             ? CrossAxisAlignment.end
                             : CrossAxisAlignment.start,
@@ -2180,12 +2568,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                               child: isUser
                                   ? CircleAvatar(
                                       radius: 14,
-                                      backgroundColor: TideTheme.of(context)
-                                          .primary
-                                          .withValues(alpha: 0.15),
-                                      child: Icon(Icons.person_rounded,
-                                          size: 16,
-                                          color: TideTheme.of(context).primary),
+                                      backgroundColor: TideTheme.of(
+                                        context,
+                                      ).primary.withValues(alpha: 0.15),
+                                      child: Icon(
+                                        Icons.person_rounded,
+                                        size: 16,
+                                        color: TideTheme.of(context).primary,
+                                      ),
                                     )
                                   : TideBotAvatar(
                                       name:
@@ -2198,10 +2588,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             if (hasPreviousDocument)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    vertical: 6, horizontal: 4),
+                                  vertical: 6,
+                                  horizontal: 4,
+                                ),
                                 child: Divider(
-                                    height: 1,
-                                    color: TideTheme.of(context).border),
+                                  height: 1,
+                                  color: TideTheme.of(context).border,
+                                ),
                               ),
                             GestureDetector(
                               onTap: () async {
@@ -2241,30 +2634,34 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         color: isUser
                                             ? Colors.white
                                                 .withValues(alpha: .18)
-                                            : TideTheme.of(context)
-                                                .primary
-                                                .withValues(alpha: .12),
+                                            : TideTheme.of(
+                                                context,
+                                              ).primary.withValues(alpha: .12),
                                         borderRadius: BorderRadius.circular(9),
                                       ),
                                       child: Column(
                                         mainAxisAlignment:
                                             MainAxisAlignment.center,
                                         children: [
-                                          Icon(Icons.insert_drive_file_rounded,
-                                              size: 20,
+                                          Icon(
+                                            Icons.insert_drive_file_rounded,
+                                            size: 20,
+                                            color: isUser
+                                                ? Colors.white
+                                                : TideTheme.of(context).primary,
+                                          ),
+                                          Text(
+                                            documentExt,
+                                            style: TextStyle(
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.w700,
                                               color: isUser
                                                   ? Colors.white
                                                   : TideTheme.of(context)
-                                                      .primary),
-                                          Text(documentExt,
-                                              style: TextStyle(
-                                                  fontSize: 8,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: isUser
-                                                      ? Colors.white
-                                                      : TideTheme.of(context)
-                                                          .primary,
-                                                  fontFamily: 'TideFont')),
+                                                      .primary,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -2275,25 +2672,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                             CrossAxisAlignment.start,
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text(documentName,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                  fontWeight: FontWeight.w600,
-                                                  color: isUser
-                                                      ? Colors.white
-                                                      : TideTheme.of(context)
-                                                          .textStrong,
-                                                  fontFamily: 'TideFont')),
+                                          Text(
+                                            documentName,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              color: isUser
+                                                  ? Colors.white
+                                                  : TideTheme.of(
+                                                      context,
+                                                    ).textStrong,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
                                           const SizedBox(height: 3),
-                                          Text('文件附件 · 点击选择应用打开',
-                                              style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: isUser
-                                                      ? Colors.white70
-                                                      : TideTheme.of(context)
-                                                          .textWeak,
-                                                  fontFamily: 'TideFont')),
+                                          Text(
+                                            '文件附件 · 点击选择应用打开',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: isUser
+                                                  ? Colors.white70
+                                                  : TideTheme.of(context)
+                                                      .textWeak,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -2332,22 +2736,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           if (sharedPost != null)
                             _sharedPostCard(sharedPost, isUser),
                           // 普通文字气泡
-                          if (sharedPost == null && !hasAudio && txt.isNotEmpty)
+                          if (hasSummary)
+                            _callSummaryCard(
+                              content: txt,
+                              duration: m['duration'] as int? ?? 0,
+                              failed: m['mood'] == 'failed',
+                            ),
+                          if (sharedPost == null &&
+                              !hasAudio &&
+                              !hasSummary &&
+                              txt.isNotEmpty)
                             _parseText(txt, isUser),
-                          if (_showSearchSources && sources.isNotEmpty)
-                            _sourceCards(sources),
                           if (showTimeHere)
                             Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(fmtTime(ts),
-                                    style: TextStyle(
-                                        fontSize: 10,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont'))),
-                        ]),
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                fmtTime(ts),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: TideTheme.of(context).textFaint,
+                                  fontFamily: 'TideFont',
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (_showSearchSources && sources.isNotEmpty)
+                  SizedBox(
+                    width: sourceAreaWidth,
+                    child: _sourceCards(sources),
                   ),
-                ],
-              )),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -2358,14 +2782,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     try {
       final values = jsonDecode(raw.toString());
       if (values is! List) return [];
-      return values
-          .whereType<Map>()
-          .map((item) => <String, String>{
-                'title': item['title']?.toString() ?? '网页来源',
-                'url': item['url']?.toString() ?? '',
-              })
-          .where((item) => item['url']!.startsWith('http'))
-          .toList();
+      final seenUrls = <String>{};
+      return values.whereType<Map>().map((item) {
+        final title = item['title']?.toString().trim() ?? '';
+        final url = item['url']?.toString().trim() ?? '';
+        return <String, String>{
+          'title': title.isEmpty ? '网页来源' : title,
+          'url': url,
+        };
+      }).where((item) {
+        final uri = Uri.tryParse(item['url']!);
+        return uri != null &&
+            (uri.scheme == 'http' || uri.scheme == 'https') &&
+            seenUrls.add(uri.toString());
+      }).toList();
     } catch (_) {
       return [];
     }
@@ -2377,46 +2807,45 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       padding: const EdgeInsets.only(top: 8),
       child: ExpansionTile(
         tilePadding: EdgeInsets.zero,
-        childrenPadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(left: 4),
         dense: true,
         shape: const Border(),
         collapsedShape: const Border(),
-        leading: Icon(Icons.link_rounded, size: 16, color: theme.primary),
-        title: Text('参考 ${sources.length} 个来源',
-            style: TextStyle(
-                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
+        title: Text(
+          '数据来源 ${sources.length} 条',
+          style: TextStyle(
+            fontSize: 12,
+            color: theme.textWeak,
+            fontFamily: 'TideFont',
+          ),
+        ),
         children: sources.map((source) {
           final uri = Uri.tryParse(source['url'] ?? '');
-          final domain = uri?.host.replaceFirst('www.', '') ?? '';
-          return ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.only(left: 4, right: 2),
-            title: Text(source['title'] ?? '网页来源',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: theme.textStrong,
-                    fontFamily: 'TideFont')),
-            subtitle: Text(domain,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: theme.textFaint,
-                    fontFamily: 'TideFont')),
-            trailing:
-                Icon(Icons.open_in_new_rounded, size: 14, color: theme.primary),
+          return InkWell(
+            borderRadius: BorderRadius.circular(8),
             onTap: uri == null
                 ? null
                 : () => launchUrl(uri, mode: LaunchMode.externalApplication),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+              child: Text(
+                source['title'] ?? '网页来源',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.textStrong,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ),
           );
         }).toList(),
       ),
     );
   }
 
-// 音频时长由播放器进度组件统一显示。
+  // 音频时长由播放器进度组件统一显示。
 
   // 富文本解析：旁白括号灰化
   Widget _parseText(String text, bool isUser) {
@@ -2432,34 +2861,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     for (var m in reg.allMatches(text)) {
       if (m.start > last) {
         spans.add(
-            TextSpan(text: text.substring(last, m.start), style: baseStyle));
+          TextSpan(text: text.substring(last, m.start), style: baseStyle),
+        );
       }
-      spans.add(TextSpan(
+      spans.add(
+        TextSpan(
           text: text.substring(m.start, m.end),
           style: baseStyle.copyWith(
-              color: isUser
-                  ? Colors.white.withValues(alpha: 0.6)
-                  : TideTheme.of(context).textWeak,
-              fontSize: 12,
-              fontStyle: FontStyle.italic)));
+            color: isUser
+                ? Colors.white.withValues(alpha: 0.6)
+                : TideTheme.of(context).textWeak,
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
       last = m.end;
     }
     if (last < text.length) {
       spans.add(TextSpan(text: text.substring(last), style: baseStyle));
     }
     return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-            color: isUser
-                ? TideTheme.of(context).primary
-                : TideTheme.of(context).bubbleAi,
-            borderRadius: BorderRadius.circular(16)),
-        child: RichText(
-            textHeightBehavior: const TextHeightBehavior(
-              applyHeightToFirstAscent: false,
-              applyHeightToLastDescent: false,
-            ),
-            text: TextSpan(children: spans)));
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isUser
+            ? TideTheme.of(context).primary
+            : TideTheme.of(context).bubbleAi,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: RichText(
+        textHeightBehavior: const TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        ),
+        text: TextSpan(children: spans),
+      ),
+    );
   }
 
   IconData _attachmentIcon(String path) {
@@ -2482,7 +2919,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'yaml',
       'yml',
       'xml',
-      'md'
+      'md',
     }.contains(extension)) {
       return Icons.code_rounded;
     }
@@ -2515,59 +2952,72 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           final isImage = _pendingImages.contains(path);
           return SizedBox(
             width: isImage ? 62 : 140,
-            child: Stack(children: [
-              Positioned.fill(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: isImage
-                      ? Image.file(File(path), fit: BoxFit.cover)
-                      : Tooltip(
-                          message: path.split(Platform.pathSeparator).last,
-                          child: Container(
-                            color: theme.surfaceVariant,
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Row(children: [
-                              Icon(_attachmentIcon(path),
-                                  size: 22, color: theme.primary),
-                              const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(
-                                  path.split(Platform.pathSeparator).last,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      fontSize: 10,
-                                      color: theme.textWeak,
-                                      fontFamily: 'TideFont'),
-                                ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: isImage
+                        ? Image.file(File(path), fit: BoxFit.cover)
+                        : Tooltip(
+                            message: path.split(Platform.pathSeparator).last,
+                            child: Container(
+                              color: theme.surfaceVariant,
+                              alignment: Alignment.center,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
                               ),
-                            ]),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _attachmentIcon(path),
+                                    size: 22,
+                                    color: theme.primary,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Expanded(
+                                    child: Text(
+                                      path.split(Platform.pathSeparator).last,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: theme.textWeak,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
+                  ),
                 ),
-              ),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Material(
-                  color: Colors.black54,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: () => setState(() {
-                      _pendingImages.remove(path);
-                      _pendingDocuments.remove(path);
-                    }),
-                    child: const Padding(
-                      padding: EdgeInsets.all(3),
-                      child: Icon(Icons.close_rounded,
-                          size: 14, color: Colors.white),
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => setState(() {
+                        _pendingImages.remove(path);
+                        _pendingDocuments.remove(path);
+                      }),
+                      child: const Padding(
+                        padding: EdgeInsets.all(3),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ]),
+              ],
+            ),
           );
         },
       ),
@@ -2582,8 +3032,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
-            .animate(CurvedAnimation(
-                parent: _bottomBarCtrl, curve: Curves.easeOutCubic)),
+            .animate(
+          CurvedAnimation(
+            parent: _bottomBarCtrl,
+            curve: Curves.easeOutCubic,
+          ),
+        ),
         child: Container(
           constraints: const BoxConstraints(minHeight: 54),
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
@@ -2599,40 +3053,54 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
                   child: _attachmentPreview(theme),
                 ),
-              Row(children: [
-                IconButton(
+              Row(
+                children: [
+                  IconButton(
                     tooltip: '添加图片或文件',
                     onPressed: _pickMedia,
-                    icon: Icon(Icons.add_rounded,
-                        size: 23, color: theme.iconMuted)),
-                Expanded(
+                    icon: Icon(
+                      Icons.add_rounded,
+                      size: 23,
+                      color: theme.iconMuted,
+                    ),
+                  ),
+                  Expanded(
                     child: TextField(
-                  focusNode: _inputFocus,
-                  controller: _msgC,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.newline,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontFamily: 'TideFont',
-                      color: theme.textStrong),
-                  decoration: InputDecoration(
-                      hintText: '发消息...',
-                      hintStyle: TextStyle(
+                      focusNode: _inputFocus,
+                      controller: _msgC,
+                      minLines: 1,
+                      maxLines: 4,
+                      textInputAction: TextInputAction.newline,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontFamily: 'TideFont',
+                        color: theme.textStrong,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: '发消息...',
+                        hintStyle: TextStyle(
                           color: theme.textFaint,
                           fontSize: 14,
-                          fontFamily: 'TideFont'),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 10)),
-                )),
-                IconButton(
+                          fontFamily: 'TideFont',
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
                     tooltip: _isRecording ? '结束录音' : '录音',
                     onPressed: _toggleRec,
-                    icon: Icon(Icons.mic_rounded,
-                        size: 22,
-                        color: _isRecording ? Colors.red : theme.iconMuted)),
-                SizedBox(
+                    icon: Icon(
+                      Icons.mic_rounded,
+                      size: 22,
+                      color: _isRecording ? Colors.red : theme.iconMuted,
+                    ),
+                  ),
+                  SizedBox(
                     width: 44,
                     height: 44,
                     child: IconButton(
@@ -2640,21 +3108,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       splashRadius: 22,
                       onPressed: _send,
                       icon: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: theme.primary.withValues(
-                                  alpha: (_hasText ||
-                                          _pendingImages.isNotEmpty ||
-                                          _pendingDocuments.isNotEmpty)
-                                      ? 1
-                                      : .42)),
-                          child: const Icon(Icons.arrow_upward_rounded,
-                              size: 18, color: Colors.white)),
-                    )),
-              ]),
+                        duration: const Duration(milliseconds: 160),
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: theme.primary.withValues(
+                            alpha: (_hasText ||
+                                    _pendingImages.isNotEmpty ||
+                                    _pendingDocuments.isNotEmpty)
+                                ? 1
+                                : .42,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.arrow_upward_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -2665,27 +3141,41 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Widget _mLabel(String t) {
     final theme = TideTheme.of(context);
     return Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 4),
-        child: Text(t,
-            style: TextStyle(
-                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')));
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      child: Text(
+        t,
+        style: TextStyle(
+          fontSize: 12,
+          color: theme.textWeak,
+          fontFamily: 'TideFont',
+        ),
+      ),
+    );
   }
 
   Widget _mField(TextEditingController c, {double h = 40}) {
     final theme = TideTheme.of(context);
     return Container(
-        height: h,
-        decoration: BoxDecoration(
-            color: theme.surfaceVariant,
-            borderRadius: BorderRadius.circular(10)),
-        child: TextField(
-            controller: c,
-            maxLines: null,
-            expands: h > 50,
-            style: TextStyle(
-                fontSize: 14, color: theme.textStrong, fontFamily: 'TideFont'),
-            decoration: const InputDecoration(
-                contentPadding: EdgeInsets.all(10), border: InputBorder.none)));
+      height: h,
+      decoration: BoxDecoration(
+        color: theme.surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: TextField(
+        controller: c,
+        maxLines: null,
+        expands: h > 50,
+        style: TextStyle(
+          fontSize: 14,
+          color: theme.textStrong,
+          fontFamily: 'TideFont',
+        ),
+        decoration: const InputDecoration(
+          contentPadding: EdgeInsets.all(10),
+          border: InputBorder.none,
+        ),
+      ),
+    );
   }
 }
 

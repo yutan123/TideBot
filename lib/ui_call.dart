@@ -10,6 +10,7 @@ import 'theme.dart';
 import 'ui_components.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
+import 'db.dart';
 
 /// 全屏语音通话界面；通过 AIManager 串联 STT、聊天和 TTS。
 class CallPage extends StatefulWidget {
@@ -46,6 +47,9 @@ class _CallPageState extends State<CallPage>
   /// 机器人语音播放完成（或被分贝打断）的状态门闩；每次播放前重置。
   Completer<void>? _playDone;
   StreamSubscription<void>? _playSub;
+  final DateTime _startedAt = DateTime.now();
+  final List<String> _transcript = [];
+  bool _ending = false;
 
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
@@ -192,6 +196,7 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance
           .add('VOICE_CALL', 'STT 成功，文本长度 ${text.trim().length}');
+      _transcript.add('用户：${text.trim()}');
       if (mounted) setState(() => _caption = text);
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
       final reply = await AIManager()
@@ -208,6 +213,7 @@ class _CallPageState extends State<CallPage>
         return;
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
+      _transcript.add('机器人：$answer');
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
       if (ttsId.isEmpty || !widget.hasTts) {
@@ -274,6 +280,82 @@ class _CallPageState extends State<CallPage>
     AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
   }
 
+  Future<void> _endCall() async {
+    if (_ending) return;
+    _ending = true;
+    _autoStopTimer?.cancel();
+    _vadActive = false;
+    _stopAmpMonitor();
+    try {
+      if (_recording) await _recorder.stop();
+      await _player.stop();
+    } catch (_) {}
+
+    final duration = DateTime.now().difference(_startedAt);
+    if (duration.inMilliseconds < 1000) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    final botId = widget.bot['id']?.toString() ?? '';
+    if (botId.isEmpty) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    final durationText = _formatDuration(duration);
+    var summary = '本次通话未获取到有用信息。';
+    var failed = false;
+    if (_transcript.isNotEmpty) {
+      try {
+        final result = await AIManager().sendMessage(
+          botId: botId,
+          text:
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${_transcript.join('\n')}',
+          persistResponse: false,
+          includeChatHistory: false,
+          enableAutoSummary: false,
+          skipLifeState: true,
+          allowTools: false,
+          forceSingleReply: true,
+        );
+        final generated = result['reply']?.toString().trim() ?? '';
+        if (result['success'] == true && generated.isNotEmpty) {
+          summary = generated;
+        } else {
+          failed = true;
+          summary = '通话摘要生成失败：${result['error']?.toString() ?? '未知错误'}';
+        }
+      } catch (error) {
+        failed = true;
+        summary = '通话摘要生成失败：$error';
+      }
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await DBManager().insertMessage({
+      'id': 'call_$now',
+      'bot_id': botId,
+      'role': 'assistant',
+      'type': 'call_summary',
+      'content': summary,
+      'duration': duration.inSeconds,
+      'mood': failed ? 'failed' : 'complete',
+      'timestamp': now,
+    });
+    AppLogService.instance
+        .add('VOICE_CALL', '通话结束：$durationText，摘要${failed ? '失败' : '已保存'}');
+    if (mounted) Navigator.pop(context);
+  }
+
+  String _formatDuration(Duration value) {
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60);
+    final seconds = value.inSeconds.remainder(60);
+    final parts = <String>[];
+    if (hours > 0) parts.add('$hours 小时');
+    if (minutes > 0 || hours > 0) parts.add('$minutes 分钟');
+    parts.add('$seconds 秒');
+    return parts.join(' ');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -316,7 +398,7 @@ class _CallPageState extends State<CallPage>
               top: 12,
               right: 12,
               child: IconButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: _endCall,
                 icon: Icon(Icons.close_rounded, color: theme.iconMuted),
                 tooltip: '结束通话',
               ),
@@ -419,63 +501,68 @@ class _CallPageState extends State<CallPage>
                       ),
                     ],
                     const Spacer(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _roundButton(
-                          icon: _muted
-                              ? Icons.mic_off_rounded
-                              : Icons.mic_rounded,
-                          label: _muted ? '已静音' : '静音',
-                          color: theme.surfaceVariant,
-                          iconColor: theme.textStrong,
-                          onTap: () async {
-                            TideHaptics.tap();
-                            if (_muted) {
-                              // 取消静音：重新开启自动监听
-                              setState(() => _muted = false);
-                              await _startListening();
-                            } else {
-                              // 静音：停止录音，不再监听
-                              _vadActive = false;
-                              _autoStopTimer?.cancel();
-                              _stopAmpMonitor();
-                              _silentTicks = 0;
-                              if (_recording) await _recorder.stop();
-                              setState(() {
-                                _muted = true;
-                                _recording = false;
-                              });
-                            }
-                          },
+                    SafeArea(
+                      top: false,
+                      child: SizedBox(
+                        height: 78,
+                        child: Stack(
+                          alignment: Alignment.topCenter,
+                          children: [
+                            Align(
+                              alignment: Alignment.topLeft,
+                              child: _roundButton(
+                                icon: _muted
+                                    ? Icons.mic_off_rounded
+                                    : Icons.mic_rounded,
+                                label: _muted ? '已静音' : '静音',
+                                color: theme.surfaceVariant,
+                                iconColor: theme.textStrong,
+                                onTap: () async {
+                                  TideHaptics.tap();
+                                  if (_muted) {
+                                    setState(() => _muted = false);
+                                    await _startListening();
+                                  } else {
+                                    _vadActive = false;
+                                    _autoStopTimer?.cancel();
+                                    _stopAmpMonitor();
+                                    _silentTicks = 0;
+                                    if (_recording) await _recorder.stop();
+                                    setState(() {
+                                      _muted = true;
+                                      _recording = false;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                            _roundButton(
+                              icon: Icons.call_end_rounded,
+                              label: '挂断',
+                              color: const Color(0xFFE74C3C),
+                              iconColor: Colors.white,
+                              onTap: _endCall,
+                            ),
+                            Align(
+                              alignment: Alignment.topRight,
+                              child: _roundButton(
+                                icon: _speakerMuted
+                                    ? Icons.volume_off_rounded
+                                    : Icons.volume_up_rounded,
+                                label: _speakerMuted ? '声音关闭' : '声音开启',
+                                color: theme.surfaceVariant,
+                                iconColor: theme.textStrong,
+                                onTap: () async {
+                                  TideHaptics.tap();
+                                  final next = !_speakerMuted;
+                                  setState(() => _speakerMuted = next);
+                                  await _player.setVolume(next ? 0 : 1);
+                                },
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 24),
-                        _roundButton(
-                          icon: _speakerMuted
-                              ? Icons.volume_off_rounded
-                              : Icons.volume_up_rounded,
-                          label: _speakerMuted ? '声音关闭' : '声音开启',
-                          color: theme.surfaceVariant,
-                          iconColor: theme.textStrong,
-                          onTap: () async {
-                            TideHaptics.tap();
-                            final next = !_speakerMuted;
-                            setState(() => _speakerMuted = next);
-                            await _player.setVolume(next ? 0 : 1);
-                          },
-                        ),
-                        const SizedBox(width: 24),
-                        _roundButton(
-                          icon: Icons.call_end_rounded,
-                          label: '挂断',
-                          color: const Color(0xFFE74C3C),
-                          iconColor: Colors.white,
-                          onTap: () {
-                            TideHaptics.tap();
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ],
+                      ),
                     ),
                   ],
                 ),

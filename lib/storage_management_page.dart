@@ -114,8 +114,8 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
 
   Future<void> _backupAll() async {
     try {
-      await FullBackupService.export();
-      if (mounted) {
+      final exported = await FullBackupService.export();
+      if (mounted && exported) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('完整备份已导出')));
       }
@@ -128,25 +128,28 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   }
 
   Future<void> _restoreAll() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await TideDialogs.show<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
+          builder: (dialogContext) => TideDialogSurface(
             title: const Text('恢复完整备份'),
             content: const Text('恢复会覆盖当前的设置、聊天记录、机器人、记忆和媒体文件。'),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('取消')),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
               FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('选择备份文件')),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('选择备份文件'),
+              ),
             ],
           ),
         ) ??
         false;
     if (!confirmed) return;
     try {
-      await FullBackupService.restore();
+      final restored = await FullBackupService.restore();
+      if (!restored) return;
       await _loadAsync();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -71,6 +71,17 @@ class LifeScheduleService {
       '文化艺术型',
       '购物采买型'
     ],
+    'weather': [
+      '晴',
+      '少云',
+      '多云',
+      '阴',
+      '小雨',
+      '中雨',
+      '大雨',
+      '雷阵雨',
+      '雾',
+    ],
   };
 
   String dateKey([DateTime? value]) {
@@ -171,14 +182,16 @@ class LifeScheduleService {
     final mood = choose('moods');
     final outfitStyle = choose('outfits');
     final scheduleType = choose('types');
+    final weatherPool = (all['weather'] ?? const <String>[]).join('、');
     final result = await AIManager().sendMessage(
       botId: botId,
       text: '''这是内部日程任务，不要和用户聊天。请只输出 JSON。
 今天是 $key。为自己生成真实连续的拟人化生活状态。
 主题：$theme；心情：$mood；穿搭风格：$outfitStyle；日程类型：$scheduleType。
+可用天气池：$weatherPool。你必须根据全天时间合理选择天气，并让相邻时段天气平缓变化；无需使用全部天气，禁止无理由的大幅跳变。
 输出格式：
-{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","rigid":false}]}
-时间线 3 到 5 条；每条必须提供晚于开始时间的 end_time；刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
+{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","rigid":false}]}
+只安排 09:00 至 23:00。按任务实际耗时自由安排足够多的连续时段，短任务不要虚构为一小时，不能重叠，不能留出不合理的大空档；每条都必须提供晚于开始时间的 end_time。固定追加一条 23:00 至次日09:00 的“睡觉”，weather 沿用夜间合理天气。刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
@@ -199,13 +212,14 @@ class LifeScheduleService {
                 'time': e['time']?.toString() ?? '',
                 'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
+                'weather': e['weather']?.toString().trim() ?? '',
                 'rigid': e['rigid'] == true,
               })
           .where((e) =>
               (e['time']?.toString().isNotEmpty ?? false) &&
               (e['activity']?.toString().isNotEmpty ?? false))
-          .take(5)
           .toList();
+      _normalizeTimeline(timeline, all['weather'] ?? const <String>[]);
       final outfit = payload['outfit']?.toString().trim() ?? '';
       if (timeline.length < 2 || outfit.isEmpty) return old;
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -234,6 +248,64 @@ class LifeScheduleService {
     }
   }
 
+  void _normalizeTimeline(
+    List<Map<String, dynamic>> timeline,
+    List<String> weatherPool,
+  ) {
+    final allowedWeather = weatherPool.toSet();
+    timeline.removeWhere((item) {
+      final start = item['time']?.toString() ?? '';
+      return !_isTime(start) ||
+          start.compareTo('09:00') < 0 ||
+          start.compareTo('23:00') >= 0;
+    });
+    timeline.sort((a, b) =>
+        (a['time']?.toString() ?? '').compareTo(b['time']?.toString() ?? ''));
+    var previousEnd = '09:00';
+    var previousWeather = weatherPool.isEmpty ? '' : weatherPool.first;
+    for (final item in timeline) {
+      var start = item['time']?.toString() ?? previousEnd;
+      if (start.compareTo(previousEnd) < 0) start = previousEnd;
+      var end = item['end_time']?.toString() ?? '';
+      if (!_isTime(end) || end.compareTo(start) <= 0) {
+        end = _plusMinutes(start, 30);
+      }
+      if (end.compareTo('23:00') > 0) end = '23:00';
+      item['time'] = start;
+      item['end_time'] = end;
+      final weather = item['weather']?.toString().trim() ?? '';
+      item['weather'] =
+          allowedWeather.contains(weather) ? weather : previousWeather;
+      previousWeather = item['weather'].toString();
+      previousEnd = end;
+    }
+    if (previousEnd.compareTo('23:00') < 0) {
+      timeline.add({
+        'time': previousEnd,
+        'end_time': '23:00',
+        'activity': '放松、整理并准备休息',
+        'weather': previousWeather,
+        'rigid': false,
+      });
+    }
+    timeline.add({
+      'time': '23:00',
+      'end_time': '次日09:00',
+      'activity': '睡觉',
+      'weather': previousWeather,
+      'rigid': false,
+    });
+  }
+
+  bool _isTime(String value) =>
+      RegExp(r'^([01]\\d|2[0-3]):[0-5]\\d$').hasMatch(value);
+
+  String _plusMinutes(String value, int minutes) {
+    final parts = value.split(':').map(int.parse).toList();
+    final total = (parts[0] * 60 + parts[1] + minutes).clamp(0, 23 * 60);
+    return '${(total ~/ 60).toString().padLeft(2, '0')}:${(total % 60).toString().padLeft(2, '0')}';
+  }
+
   Future<void> runDueEndEvents({DateTime? now}) async {
     if (!await enabled()) return;
     final db = DBManager();
@@ -255,7 +327,11 @@ class LifeScheduleService {
             ? timeline[index + 1]['time']?.toString() ?? ''
             : '';
         final endTime = explicitEnd.isNotEmpty ? explicitEnd : inferredEnd;
-        if (endTime.isEmpty || endTime.compareTo(nowText) > 0) continue;
+        if (endTime.startsWith('次日') ||
+            endTime.isEmpty ||
+            endTime.compareTo(nowText) > 0) {
+          continue;
+        }
         final eventKey = 'life_end_${botId}_${key}_$index';
         if (await db.getKV(eventKey) == 'done') continue;
         await db.setKV(eventKey, 'running');
@@ -345,13 +421,15 @@ class LifeScheduleService {
                 'time': e['time']?.toString() ?? '',
                 'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
+                'weather': e['weather']?.toString().trim() ?? '',
                 'rigid': e['rigid'] == true,
               })
           .where((e) =>
               (e['time']?.toString().isNotEmpty ?? false) &&
               (e['activity']?.toString().isNotEmpty ?? false))
-          .take(6)
           .toList();
+      _normalizeTimeline(
+          timeline, (await pools())['weather'] ?? const <String>[]);
       if (timeline.length < 2) return null;
       final existingRigid = _timeline(row).where((e) => e['rigid'] == true);
       for (final fixed in existingRigid) {

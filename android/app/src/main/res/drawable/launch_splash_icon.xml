@@ -1,6 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 crops splash assets to a system mask. The inset keeps the
+     full square bitmap inside that mask; its width and height stay identical. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:left="40dp" android:top="40dp" android:right="40dp" android:bottom="40dp">
-        <bitmap android:src="@drawable/launch_logo" android:gravity="center" />
+    <item android:drawable="@android:color/white" />
+    <item
+        android:left="72dp"
+        android:top="72dp"
+        android:right="72dp"
+        android:bottom="72dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="28dp" />
+            <solid android:color="@android:color/white" />
+        </shape>
+    </item>
+    <item
+        android:left="76dp"
+        android:top="76dp"
+        android:right="76dp"
+        android:bottom="76dp">
+        <bitmap android:src="@drawable/launch_logo_round" android:gravity="fill" />
     </item>
 </layer-list>
