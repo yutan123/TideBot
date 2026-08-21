@@ -928,6 +928,7 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _w;
   late Animation<double> _scale;
   int _prev = 0;
+  bool _lifting = false;
 
   static const _icons = [
     Icons.chat_bubble_rounded,
@@ -1041,20 +1042,26 @@ class _JellyDockState extends State<JellyDock>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
+    final isDark = theme.isDark;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(28),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          filter: ImageFilter.blur(
+              sigmaX: isDark ? 28 : 20, sigmaY: isDark ? 28 : 20),
           child: Container(
             height: 56,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
+              color: isDark
+                  ? const Color(0xB9172A31)
+                  : Colors.white.withValues(alpha: 0.35),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(
-                color: Colors.white.withValues(alpha: 0.25),
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.white.withValues(alpha: 0.25),
                 width: 0.5,
               ),
               boxShadow: [
@@ -1078,16 +1085,31 @@ class _JellyDockState extends State<JellyDock>
                             _pos.value * totalW + (slotW - _w.value) / 2;
                         return Positioned(
                           left: pillX,
-                          top: 0,
+                          top: isDark && _lifting ? 0 : 2,
                           child: Transform.scale(
-                            scale: _scale.value,
+                            scale: _scale.value *
+                                (isDark && _lifting ? 1.08 : 1.0),
                             alignment: Alignment.center,
                             child: Container(
                               width: _w.value,
                               height: 44,
                               decoration: BoxDecoration(
-                                color: theme.primary.withValues(alpha: 0.18),
+                                color: theme.primary.withValues(
+                                  alpha:
+                                      isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
+                                ),
                                 borderRadius: BorderRadius.circular(22),
+                                boxShadow: isDark
+                                    ? [
+                                        BoxShadow(
+                                          color: theme.primary.withValues(
+                                              alpha: _lifting ? 0.42 : 0.20),
+                                          blurRadius: _lifting ? 18 : 10,
+                                          spreadRadius: _lifting ? 1 : 0,
+                                          offset: const Offset(0, -2),
+                                        ),
+                                      ]
+                                    : null,
                               ),
                             ),
                           ),
@@ -1101,6 +1123,15 @@ class _JellyDockState extends State<JellyDock>
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onTapDown: (_) => TideHaptics.tap(),
+                            onLongPressStart: isDark
+                                ? (_) => setState(() => _lifting = true)
+                                : null,
+                            onLongPressEnd: isDark
+                                ? (_) => setState(() => _lifting = false)
+                                : null,
+                            onLongPressCancel: isDark
+                                ? () => setState(() => _lifting = false)
+                                : null,
                             onTap: () => widget.onTap(i),
                             child: Center(
                               child: Stack(

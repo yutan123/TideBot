@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -53,9 +54,20 @@ class OtaUpdate {
     } catch (error) {
       debugPrint('[ota] check failed: $error');
       if (showWhenCurrent && context != null && context.mounted) {
-        GlobalNotice.show('检查更新失败：$error', color: const Color(0xFFE74C3C));
+        GlobalNotice.show(_errorMessage(error), color: const Color(0xFFE74C3C));
       }
     }
+  }
+
+  static String _errorMessage(Object error) {
+    if (error is SocketException) return '网络连接失败，请检查网络后重试';
+    if (error is TimeoutException) return '检查更新超时，请稍后重试';
+    if (error is HttpException) {
+      if (error.message.contains('404')) return '更新源尚未发布可用版本';
+      if (error.message.contains('403')) return '更新源访问受限，请稍后重试';
+    }
+    if (error is FormatException) return '更新信息格式无效';
+    return '检查更新失败，请稍后重试';
   }
 
   static Future<Map<String, dynamic>> _latestRelease() async {

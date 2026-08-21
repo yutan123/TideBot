@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'app_log_service.dart';
+import 'bot_state.dart';
 import 'db.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
@@ -165,31 +166,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     final selected = await _chooseWhitelist(feature, defaultWhitelist);
     if (selected == null || selected.isEmpty) return;
     await capability.setWhitelist(feature, selected);
-    if (feature == DeviceCapabilityService.contextFeature) {
-      if (selected.contains('location')) await Permission.location.request();
-      if (selected.contains('app_usage')) {
-        await capability.openUsageAccessSettings();
-      }
-      if (selected.contains('notifications')) {
-        await capability.openNotificationListenerSettings();
-      }
-      if ((selected.contains('screen_text') ||
-              selected.contains('foreground_app')) &&
-          !await capability.accessibilityEnabled()) {
-        await capability.openAccessibilitySettings();
-      }
-    }
-    if (feature == DeviceCapabilityService.proactiveFeature &&
-        (selected.contains('app_opened') ||
-            selected.contains('screen_event')) &&
-        !await capability.accessibilityEnabled()) {
-      await capability.openAccessibilitySettings();
-    }
-    if (feature == DeviceCapabilityService.proactiveFeature &&
-        selected.contains('new_notification')) {
-      await capability.openNotificationListenerSettings();
-    }
-    // 手机操控能力已移除；无障碍仅保留给用户明确授权的信息感知与操作触发。
+    await _requestMissingSystemPermissions(feature, selected);
     await (await SharedPreferences.getInstance()).setBool(key, true);
     if (mounted) setState(() => update(true));
   }
@@ -367,15 +344,23 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       );
   Future<void> _toggleExternalApi(bool value) async {
     final db = DBManager();
-    final usableBots = _bots
-        .where((bot) => bot['is_disabled'] != 1 && bot['is_disabled'] != true)
-        .toList();
+    final usableBots =
+        _bots.where((bot) => !isBotDisabled(bot['is_disabled'])).toList();
     if (value && usableBots.isEmpty) {
       GlobalNotice.show('请先创建并启用一个机器人');
       return;
     }
     String? botId = _externalApiBotId;
-    if (value && botId.isEmpty) {
+    final boundBot = botId.isEmpty
+        ? null
+        : _bots.cast<Map<String, dynamic>>().firstWhere(
+              (bot) => bot['id']?.toString() == botId,
+              orElse: () => const {},
+            );
+    if (value &&
+        (boundBot == null ||
+            boundBot.isEmpty ||
+            isBotDisabled(boundBot['is_disabled']))) {
       botId = await _chooseBot('选择对外提供服务的机器人');
       if (botId == null || botId.isEmpty) return;
       await db.setKV('external_api_bot_id', botId);
@@ -405,8 +390,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                   title: Text(title,
                       style: const TextStyle(fontFamily: 'TideFont'))),
               for (final bot in _bots.where(
-                (item) =>
-                    item['is_disabled'] != 1 && item['is_disabled'] != true,
+                (item) => !isBotDisabled(item['is_disabled']),
               ))
                 ListTile(
                   selected: bot['id']?.toString() == selectedId,

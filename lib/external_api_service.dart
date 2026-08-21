@@ -54,11 +54,25 @@ class ExternalApiService {
     await DBManager().setKV('external_api_base_url', url);
   }
 
+  Future<Map<String, dynamic>?> _boundBot(DBManager db) async {
+    final botId = await db.getKV('external_api_bot_id') ?? '';
+    if (botId.isEmpty) return null;
+    final bot = await db.getBotById(botId);
+    if (bot == null) return null;
+    if (isBotDisabled(bot['is_disabled'])) return null;
+    return bot;
+  }
+
   Future<bool> start() async {
     if (_server != null) return true;
     final db = DBManager();
     final enabled = await db.getKV('external_api_enabled') == 'true';
     if (!enabled) return false;
+    final bot = await _boundBot(db);
+    if (bot == null) {
+      AppLogService.instance.add('EXTERNAL_API', '外部访问服务未启动：未绑定可用机器人');
+      return false;
+    }
     var requested =
         int.tryParse(await db.getKV('external_api_port') ?? '') ?? 6666;
     requested = requested.clamp(1024, 65535);

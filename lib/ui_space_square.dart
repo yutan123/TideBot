@@ -114,10 +114,16 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final shortMemories =
-          await db.queryMemories(_botId, type: 'short', limit: 50);
-      final longMemories =
-          await db.queryMemories(_botId, type: 'long', limit: 50);
+      final shortMemories = await db.queryMemories(
+        _botId,
+        type: 'short',
+        limit: 50,
+      );
+      final longMemories = await db.queryMemories(
+        _botId,
+        type: 'long',
+        limit: 50,
+      );
       final mem = [...shortMemories, ...longMemories];
       // The space card reflects the same state injected into chat prompts,
       // including safe time-based fluctuations between messages.
@@ -126,10 +132,10 @@ class _SpacePageState extends State<SpacePage> {
       _moodIcon = mood == '开心'
           ? 'smile'
           : mood == '伤心'
-              ? 'sad'
-              : mood == '生气'
-                  ? 'angry'
-                  : 'think';
+          ? 'sad'
+          : mood == '生气'
+          ? 'angry'
+          : 'think';
       _memories = mem;
       if (_diaryVisibleStart >= _memories.length) _diaryVisibleStart = 0;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
@@ -158,46 +164,48 @@ class _SpacePageState extends State<SpacePage> {
 
   // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 
-  Future<void> _openDiaryCalendar() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DiaryCalendarPage(botId: _botId, botName: _botName),
-      ),
-    );
-  }
-
   // ignore: unused_element
   Future<void> _openMemoryManager() async {
     await Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) =>
-                MemoryManagerPage(botId: _botId, botName: _botName)));
+      context,
+      MaterialPageRoute(
+        builder: (_) => MemoryManagerPage(botId: _botId, botName: _botName),
+      ),
+    );
     if (mounted) _loadData();
   }
 
   void _showMemoryDetail(Map<String, dynamic> m) {
     final theme = TideTheme.of(context);
     showTideSheet(
-        context: context,
-        child: Padding(
-            padding: const EdgeInsets.all(20),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(m['content'] ?? '',
-                  style: TextStyle(
-                      fontSize: 15,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      height: 1.5)),
-              const SizedBox(height: 12),
-              Text(formatTime(m['timestamp']),
-                  style: TextStyle(
-                      fontSize: 13,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont'))
-            ])));
+      context: context,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              m['content'] ?? '',
+              style: TextStyle(
+                fontSize: 15,
+                color: theme.textStrong,
+                fontFamily: 'TideFont',
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              formatTime(m['timestamp']),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.textFaint,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // 记忆窗口：从短期→长期合并列表中，取 _diaryVisibleStart 开始的 3 条（循环取模），
@@ -217,9 +225,10 @@ class _SpacePageState extends State<SpacePage> {
       transitionBuilder: (child, anim) => FadeTransition(
         opacity: anim,
         child: SlideTransition(
-          position:
-              Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
-                  .animate(anim),
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.06),
+            end: Offset.zero,
+          ).animate(anim),
           child: child,
         ),
       ),
@@ -245,18 +254,22 @@ class _SpacePageState extends State<SpacePage> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 14,
-                            height: 1.4,
-                            color: theme.textStrong,
-                            fontFamily: 'TideFont'),
+                          fontSize: 14,
+                          height: 1.4,
+                          color: theme.textStrong,
+                          fontFamily: 'TideFont',
+                        ),
                       ),
                       if (window[i]['timestamp'] != null) ...[
                         const SizedBox(height: 3),
-                        Text(formatTime(window[i]['timestamp']),
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: theme.textFaint,
-                                fontFamily: 'TideFont')),
+                        Text(
+                          formatTime(window[i]['timestamp']),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.textFaint,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -277,234 +290,316 @@ class _SpacePageState extends State<SpacePage> {
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final dateStr = '${now.year}.${now.month}.${now.day}';
     return Scaffold(
-        backgroundColor: theme.bgColor,
-        body: SafeArea(
-          child: _loading
-              ? Center(child: CircularProgressIndicator(color: theme.primary))
-              : SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildHeader(timeStr, dateStr, theme),
-                        const SizedBox(height: 20),
-                        if (_botId.isNotEmpty) ...[
-                          _buildQuoteCard(theme),
-                          const SizedBox(height: 16),
-                          Row(children: [
-                            Expanded(child: _buildDaysCard(theme)),
-                            const SizedBox(width: 12),
-                            Expanded(child: _buildMoodCard(theme))
-                          ]),
-                        ] else
-                          const FrostCard(
-                              padding: EdgeInsets.all(24),
-                              child: Center(
-                                  child: Text('还没有创建机器人\n点击底部聊天 Tab 开始',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontSize: 15,
-                                          color: Color(0xFF8E8E93),
-                                          fontFamily: 'TideFont',
-                                          height: 1.6)))),
-                        const SizedBox(height: 16),
-                        if (_botId.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          Row(children: [
-                            Expanded(child: _buildSectionTitle('TA 的记忆')),
-                            TextButton.icon(
-                              onPressed: _openMemoryManager,
-                              icon: const Icon(Icons.tune_rounded, size: 16),
-                              label: const Text('管理',
-                                  style: TextStyle(fontFamily: 'TideFont')),
+      backgroundColor: theme.bgColor,
+      body: SafeArea(
+        child: _loading
+            ? Center(child: CircularProgressIndicator(color: theme.primary))
+            : SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(timeStr, dateStr, theme),
+                    const SizedBox(height: 20),
+                    if (_botId.isNotEmpty) ...[
+                      _buildQuoteCard(theme),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(child: _buildDaysCard(theme)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildMoodCard(theme)),
+                        ],
+                      ),
+                    ] else
+                      const FrostCard(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: Text(
+                            '还没有创建机器人\n点击底部聊天 Tab 开始',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: Color(0xFF8E8E93),
+                              fontFamily: 'TideFont',
+                              height: 1.6,
                             ),
-                          ]),
-                          const SizedBox(height: 8),
-                          if (_memories.isEmpty)
-                            Text('TA 还没有留下记忆',
-                                style: TextStyle(
-                                    color: theme.textFaint,
-                                    fontFamily: 'TideFont'))
-                          else
-                            GestureDetector(
-                              onTap: _toggleDiaryAutoScroll,
-                              onPanDown: (_) {
-                                if (_diaryTimer != null)
-                                  _toggleDiaryAutoScroll();
-                              },
-                              child: SizedBox(
-                                height: 196,
-                                child: _buildDiaryWindow(theme),
-                              ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    if (_botId.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(child: _buildSectionTitle('TA 的记忆')),
+                          TextButton.icon(
+                            onPressed: _openMemoryManager,
+                            icon: const Icon(Icons.tune_rounded, size: 16),
+                            label: const Text(
+                              '管理',
+                              style: TextStyle(fontFamily: 'TideFont'),
                             ),
-                          const SizedBox(height: 24),
-                          Row(children: [
-                            Expanded(child: _buildSectionTitle('TA 的日记')),
-                            TextButton.icon(
-                              onPressed: _openDiaryCalendar,
-                              icon: const Icon(Icons.open_in_new_rounded,
-                                  size: 16),
-                              label: const Text('展开',
-                                  style: TextStyle(fontFamily: 'TideFont')),
-                            ),
-                          ]),
-                          const SizedBox(height: 6),
-                          SizedBox(
-                            height: 300,
-                            child: DiaryCalendarWidget(
-                                botId: _botId, botName: _botName),
                           ),
                         ],
-                      ])),
-        ));
+                      ),
+                      const SizedBox(height: 8),
+                      if (_memories.isEmpty)
+                        Text(
+                          'TA 还没有留下记忆',
+                          style: TextStyle(
+                            color: theme.textFaint,
+                            fontFamily: 'TideFont',
+                          ),
+                        )
+                      else
+                        GestureDetector(
+                          onTap: _toggleDiaryAutoScroll,
+                          onPanDown: (_) {
+                            if (_diaryTimer != null) _toggleDiaryAutoScroll();
+                          },
+                          child: SizedBox(
+                            height: 196,
+                            child: _buildDiaryWindow(theme),
+                          ),
+                        ),
+                      const SizedBox(height: 24),
+                      _buildSectionTitle('TA 的日记'),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        height: 300,
+                        child: DiaryCalendarWidget(
+                          botId: _botId,
+                          botName: _botName,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+      ),
+    );
   }
 
-  Widget _buildHeader(String time, String date, TideTheme theme) =>
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(time,
-              style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w300,
-                  fontFamily: 'TideFont',
-                  color: theme.textStrong)),
-          Text(date,
-              style: TextStyle(
-                  fontSize: 14, color: theme.textWeak, fontFamily: 'TideFont')),
-        ]),
-        if (_botId.isNotEmpty)
-          BouncyTap(
-              onTap: () async {
-                final db = DBManager();
-                final bots = await db.queryBots();
-                if (!mounted) return;
-                showTideSheet(
-                    context: context,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const SizedBox(height: 12),
-                      const Text('切换机器人',
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: 'TideFont')),
-                      const SizedBox(height: 12),
-                      ...bots.map((b) => Column(children: [
-                            ListTile(
-                              title: Text(b['name'] ?? '',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style:
-                                      const TextStyle(fontFamily: 'TideFont')),
-                              trailing: _botId == b['id']
-                                  ? Icon(Icons.check_rounded,
-                                      color: TideTheme.of(context).primary)
-                                  : null,
-                              onTap: () async {
-                                final selectedId = b['id'] as String? ?? '';
-                                await db.setKV(
-                                    'space_selected_bot_id', selectedId);
-                                if (!mounted) return;
-                                setState(() {
-                                  _botId = selectedId;
-                                  _botName = b['name'] as String? ?? '';
-                                });
-                                Navigator.pop(context);
-                                _loadData();
-                              },
-                            ),
-                            const Divider(height: 1),
-                          ])),
-                    ]));
-              },
-              child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      color: theme.surface
-                          .withValues(alpha: theme.isDark ? 0.82 : 0.80),
-                      border: Border.all(color: theme.border)),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(_botName,
-                        style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            fontFamily: 'TideFont',
-                            color: theme.primary)),
-                    const SizedBox(width: 4),
-                    Icon(Icons.keyboard_arrow_down_rounded,
-                        size: 18, color: theme.primary)
-                  ]))),
-      ]);
+  Widget _buildHeader(String time, String date, TideTheme theme) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            time,
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.w300,
+              fontFamily: 'TideFont',
+              color: theme.textStrong,
+            ),
+          ),
+          Text(
+            date,
+            style: TextStyle(
+              fontSize: 14,
+              color: theme.textWeak,
+              fontFamily: 'TideFont',
+            ),
+          ),
+        ],
+      ),
+      if (_botId.isNotEmpty)
+        BouncyTap(
+          onTap: () async {
+            final db = DBManager();
+            final bots = await db.queryBots();
+            if (!mounted) return;
+            showTideSheet(
+              context: context,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 12),
+                  const Text(
+                    '切换机器人',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...bots.map(
+                    (b) => Column(
+                      children: [
+                        ListTile(
+                          title: Text(
+                            b['name'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontFamily: 'TideFont'),
+                          ),
+                          trailing: _botId == b['id']
+                              ? Icon(
+                                  Icons.check_rounded,
+                                  color: TideTheme.of(context).primary,
+                                )
+                              : null,
+                          onTap: () async {
+                            final selectedId = b['id'] as String? ?? '';
+                            await db.setKV('space_selected_bot_id', selectedId);
+                            if (!mounted) return;
+                            setState(() {
+                              _botId = selectedId;
+                              _botName = b['name'] as String? ?? '';
+                            });
+                            Navigator.pop(context);
+                            _loadData();
+                          },
+                        ),
+                        const Divider(height: 1),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: theme.surface.withValues(
+                alpha: theme.isDark ? 0.82 : 0.80,
+              ),
+              border: Border.all(color: theme.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _botName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'TideFont',
+                    color: theme.primary,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: theme.primary,
+                ),
+              ],
+            ),
+          ),
+        ),
+    ],
+  );
 
   Widget _buildQuoteCard(TideTheme theme) => FrostCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.format_quote_rounded, color: theme.primary, size: 20),
-          const SizedBox(width: 8),
-          Text('今日一言',
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.format_quote_rounded, color: theme.primary, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              '今日一言',
               style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: 'TideFont',
-                  color: theme.primary))
-        ]),
-        const SizedBox(height: 10),
-        Text(_dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言',
-            style: TextStyle(
-                fontSize: 16,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
                 fontFamily: 'TideFont',
-                color:
-                    _dailyQuote.isNotEmpty ? theme.textStrong : theme.textFaint,
-                height: 1.5))
-      ]));
+                color: theme.primary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言',
+          style: TextStyle(
+            fontSize: 16,
+            fontFamily: 'TideFont',
+            color: _dailyQuote.isNotEmpty ? theme.textStrong : theme.textFaint,
+            height: 1.5,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildDaysCard(TideTheme theme) => FrostCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(children: [
-        Text('$_daysSince',
-            style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.w300,
-                fontFamily: 'TideFont',
-                color: theme.primary)),
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      children: [
+        Text(
+          '$_daysSince',
+          style: TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w300,
+            fontFamily: 'TideFont',
+            color: theme.primary,
+          ),
+        ),
         const SizedBox(height: 4),
-        const Text('相遇天数',
-            style: TextStyle(
-                fontSize: 13, color: Color(0xFF8E8E93), fontFamily: 'TideFont'))
-      ]));
+        const Text(
+          '相遇天数',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF8E8E93),
+            fontFamily: 'TideFont',
+          ),
+        ),
+      ],
+    ),
+  );
   Widget _buildMoodCard(TideTheme theme) {
     final icon = _moodIcons[_moodIcon] ?? Icons.sentiment_satisfied_rounded;
     return FrostCard(
-        padding: const EdgeInsets.all(16),
-        child: Column(children: [
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
           Icon(icon, size: 36, color: theme.primary),
           const SizedBox(height: 4),
-          Text(_moodLabel,
-              style: TextStyle(
-                  fontSize: 13,
-                  color: theme.textStrong,
-                  fontFamily: 'TideFont')),
+          Text(
+            _moodLabel,
+            style: TextStyle(
+              fontSize: 13,
+              color: theme.textStrong,
+              fontFamily: 'TideFont',
+            ),
+          ),
           const SizedBox(height: 8),
-          Text('由 TA 的最近回复决定',
-              textAlign: TextAlign.start,
-              style: TextStyle(
-                  fontSize: 11,
-                  color: theme.textFaint,
-                  fontFamily: 'TideFont')),
-        ]));
+          Text(
+            '由 TA 的最近回复决定',
+            textAlign: TextAlign.start,
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.textFaint,
+              fontFamily: 'TideFont',
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSectionTitle(String title) => Padding(
-      padding: const EdgeInsets.only(left: 4),
-      child: Text(title,
-          style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'TideFont',
-              color: TideTheme.of(context).textStrong)));
+    padding: const EdgeInsets.only(left: 4),
+    child: Text(
+      title,
+      style: TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+        fontFamily: 'TideFont',
+        color: TideTheme.of(context).textStrong,
+      ),
+    ),
+  );
 
   // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 }
@@ -550,10 +645,13 @@ class SquarePageState extends State<SquarePage>
   void initState() {
     super.initState();
     _switchCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 500));
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
-        .animate(
-            CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _switchCtrl, curve: Curves.easeOutCubic));
     _switchCtrl.forward();
     _scrollCtrl.addListener(_onScroll);
     _prepareBotPosts().whenComplete(_loadFeeds);
@@ -589,8 +687,10 @@ class SquarePageState extends State<SquarePage>
     final day = DateTime.now();
     final dayKey = '${day.year}-${day.month}-${day.day}';
     final perDay =
-        (int.tryParse(await db.getKV('bot_posts_per_day') ?? '') ?? 1)
-            .clamp(1, 10);
+        (int.tryParse(await db.getKV('bot_posts_per_day') ?? '') ?? 1).clamp(
+          1,
+          10,
+        );
     final bots = await db.queryBots();
     for (final bot in bots) {
       final botId = bot['id']?.toString() ?? '';
@@ -602,8 +702,11 @@ class SquarePageState extends State<SquarePage>
         if (await db.getKV(marker) == dayKey) continue;
         // Never generate or publish a future slot early. This method runs when
         // the feed opens, so scheduled time must be checked before model work.
-        final dayStart =
-            DateTime(day.year, day.month, day.day).millisecondsSinceEpoch;
+        final dayStart = DateTime(
+          day.year,
+          day.month,
+          day.day,
+        ).millisecondsSinceEpoch;
         // Store each day's random slot. Hash-based slots made every bot post at
         // the exact same clock time on every day.
         final scheduleKey = 'bot_post_time_${botId}_${dayKey}_$index';
@@ -634,7 +737,8 @@ class SquarePageState extends State<SquarePage>
         if (withImages &&
             Random('$dayKey:$botId:$index:image'.hashCode).nextInt(100) <
                 imageChance) {
-          imagePath = await AIManager().generateImageForBot(
+          imagePath =
+              await AIManager().generateImageForBot(
                 botId: botId,
                 prompt: '为这条机器人生活动态生成自然、真实的配图，不含文字：$content',
               ) ??
@@ -659,16 +763,19 @@ class SquarePageState extends State<SquarePage>
         // 每个互动机器人都调用它自己的模型产出一条第一人称评论（非模板/非随机），
         // 并把"点赞"与"评论"作为持久化事件写入 feed_events / post_comments。
         final otherBots = bots
-            .where((cb) =>
-                (cb['id']?.toString() ?? '') != botId &&
-                (cb['chat_model']?.toString().isNotEmpty ?? false))
+            .where(
+              (cb) =>
+                  (cb['id']?.toString() ?? '') != botId &&
+                  (cb['chat_model']?.toString().isNotEmpty ?? false),
+            )
             .toList();
         final shuffled = List<Map<String, dynamic>>.from(otherBots)
           ..shuffle(Random('$postId:reactions'.hashCode));
         for (var i = 0; i < shuffled.length && i < 2; i++) {
           final reactor = shuffled[i];
-          final chance =
-              Random('$postId:${reactor['id']}'.hashCode).nextDouble();
+          final chance = Random(
+            '$postId:${reactor['id']}'.hashCode,
+          ).nextDouble();
           // Reactions are optional: some posts receive nothing, some only a like,
           // and only a subset receive an actual generated comment.
           if (chance > .58) continue;
@@ -677,15 +784,22 @@ class SquarePageState extends State<SquarePage>
           // 每个互动事件幂等：同一天同一机器人对同一条动态只真实互动一次。
           final reactKey = 'bot_react_${reactorId}_$postId';
           if (await db.getKV(reactKey) == '1') continue;
-          final interaction =
-              Random('$postId:$reactorId:kind'.hashCode).nextDouble();
+          final interaction = Random(
+            '$postId:$reactorId:kind'.hashCode,
+          ).nextDouble();
           if (interaction < .72) {
             await db.recordFeedEvent(
-                postId: postId, actorId: reactorId, eventType: 'like');
+              postId: postId,
+              actorId: reactorId,
+              eventType: 'like',
+            );
           }
           if (interaction < .38) {
             await db.recordFeedEvent(
-                postId: postId, actorId: reactorId, eventType: 'collect');
+              postId: postId,
+              actorId: reactorId,
+              eventType: 'collect',
+            );
           }
           if (interaction > .44) {
             await db.setKV(reactKey, '1');
@@ -724,8 +838,10 @@ class SquarePageState extends State<SquarePage>
     if (_loadingMore || !_hasMore) return;
     setState(() => _loadingMore = true);
     final db = DBManager();
-    final rows =
-        await db.queryPosts(offset: _feedPage * _pageSize, limit: _pageSize);
+    final rows = await db.queryPosts(
+      offset: _feedPage * _pageSize,
+      limit: _pageSize,
+    );
     if (rows.isEmpty || rows.length < _pageSize) _hasMore = false;
     // 动态本体把 robot 发布的 author_id 存成机器人名字，这里按名字关联回
     // 机器人的头像，让广场动态展示真实的机器人头像而非默认人形图标。
@@ -758,11 +874,17 @@ class SquarePageState extends State<SquarePage>
         'comments': comments,
         'favorited': postId.isNotEmpty
             ? await db.hasFeedEvent(
-                postId: postId, actorId: 'me', eventType: 'like')
+                postId: postId,
+                actorId: 'me',
+                eventType: 'like',
+              )
             : false,
         'collected': postId.isNotEmpty
             ? await db.hasFeedEvent(
-                postId: postId, actorId: 'me', eventType: 'collect')
+                postId: postId,
+                actorId: 'me',
+                eventType: 'collect',
+              )
             : false,
         'time': r['timestamp'] != null ? formatTime(r['timestamp']) : '',
         'id': r['id'],
@@ -784,25 +906,35 @@ class SquarePageState extends State<SquarePage>
     final botId = await showTideSheet<String>(
       context: context,
       height: 420,
-      child: ListView(children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 14, 20, 8),
-          child: Text('分享给机器人',
+      child: ListView(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Text(
+              '分享给机器人',
               style: TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'TideFont')),
-        ),
-        ...bots.map((bot) => ListTile(
+                fontSize: 19,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ),
+          ...bots.map(
+            (bot) => ListTile(
               leading: TideBotAvatar(
-                  name: bot['name']?.toString() ?? 'TA',
-                  path: bot['avatar']?.toString(),
-                  size: 42),
-              title: Text(bot['name']?.toString() ?? '未命名机器人',
-                  style: const TextStyle(fontFamily: 'TideFont')),
+                name: bot['name']?.toString() ?? 'TA',
+                path: bot['avatar']?.toString(),
+                size: 42,
+              ),
+              title: Text(
+                bot['name']?.toString() ?? '未命名机器人',
+                style: const TextStyle(fontFamily: 'TideFont'),
+              ),
               onTap: () => Navigator.pop(context, bot['id']?.toString()),
-            )),
-      ]),
+            ),
+          ),
+        ],
+      ),
     );
     if (botId == null) return;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -828,16 +960,17 @@ class SquarePageState extends State<SquarePage>
     final reply = await AIManager().sendMessage(botId: botId, text: readable);
     if (!mounted) return;
     GlobalNotice.show(
-        reply['success'] == true ? '动态已发送，机器人已回复' : '动态已发送；机器人回复失败，可在聊天页重试',
-        color: reply['success'] == true ? null : const Color(0xFFE74C3C));
+      reply['success'] == true ? '动态已发送，机器人已回复' : '动态已发送；机器人回复失败，可在聊天页重试',
+      color: reply['success'] == true ? null : const Color(0xFFE74C3C),
+    );
   }
 
   void publishFeed() {
     Navigator.push(
-        context,
-        PageRouteBuilder(
-          pageBuilder: (c, a, s) =>
-              _PublishFeedPage(onPublished: (text, imagePath) async {
+      context,
+      PageRouteBuilder(
+        pageBuilder: (c, a, s) => _PublishFeedPage(
+          onPublished: (text, imagePath) async {
             final db = DBManager();
             final now = DateTime.now().millisecondsSinceEpoch;
             final postId = 'post_$now';
@@ -852,43 +985,51 @@ class SquarePageState extends State<SquarePage>
               'user_collected': 0,
               'timestamp': now,
             });
-            setState(() => _feeds.insert(0, {
-                  'user': '我',
-                  'content': text,
-                  'image': imagePath ?? '',
-                  'likes': 0,
-                  'comments': 0,
-                  'favorited': false,
-                  'collected': false,
-                  'time': '刚刚',
-                  'id': postId
-                }));
-          }),
-          transitionsBuilder: (c, a, s, child) => SlideTransition(
-              position: Tween<Offset>(
-                      begin: const Offset(0, 0.3), end: Offset.zero)
-                  .animate(
-                      CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-              child: FadeTransition(opacity: a, child: child)),
-        ));
+            setState(
+              () => _feeds.insert(0, {
+                'user': '我',
+                'content': text,
+                'image': imagePath ?? '',
+                'likes': 0,
+                'comments': 0,
+                'favorited': false,
+                'collected': false,
+                'time': '刚刚',
+                'id': postId,
+              }),
+            );
+          },
+        ),
+        transitionsBuilder: (c, a, s, child) => SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.3),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+          child: FadeTransition(opacity: a, child: child),
+        ),
+      ),
+    );
   }
 
   void _openFeedDetail(Map<String, dynamic> f) {
     Navigator.push(
-        context,
-        PageRouteBuilder(
-          pageBuilder: (c, a, s) => _FeedDetailPage(
-              feed: f,
-              onUpdate: () {
-                if (mounted) setState(() {});
-              }),
-          transitionsBuilder: (c, a, s, child) => SlideTransition(
-              position: Tween<Offset>(
-                      begin: const Offset(0, 0.15), end: Offset.zero)
-                  .animate(
-                      CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-              child: FadeTransition(opacity: a, child: child)),
-        ));
+      context,
+      PageRouteBuilder(
+        pageBuilder: (c, a, s) => _FeedDetailPage(
+          feed: f,
+          onUpdate: () {
+            if (mounted) setState(() {});
+          },
+        ),
+        transitionsBuilder: (c, a, s, child) => SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.15),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+          child: FadeTransition(opacity: a, child: child),
+        ),
+      ),
+    );
   }
 
   void _deleteFeed(Map<String, dynamic> f, GlobalKey cardKey) async {
@@ -897,36 +1038,55 @@ class SquarePageState extends State<SquarePage>
       builder: (ctx) => TideDialogSurface(
         backgroundColor: Colors.transparent,
         contentPadding: EdgeInsets.zero,
-        content: TideDialogs.glassContent(context: ctx, children: [
-          const Center(
-              child: Text('删除动态',
-                  style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'TideFont'))),
-          const SizedBox(height: 10),
-          const Align(
+        content: TideDialogs.glassContent(
+          context: ctx,
+          children: [
+            const Center(
+              child: Text(
+                '删除动态',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Align(
               alignment: Alignment.centerLeft,
-              child: Text('确定删除这条动态吗？\n此操作不可恢复。',
-                  textAlign: TextAlign.start,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF636366),
-                      fontFamily: 'TideFont'))),
-          const SizedBox(height: 18),
-          Row(children: [
-            Expanded(
-                child: TideDialogs.glassButton('取消',
+              child: Text(
+                '确定删除这条动态吗？\n此操作不可恢复。',
+                textAlign: TextAlign.start,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF636366),
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: TideDialogs.glassButton(
+                    '取消',
                     onTap: () => Navigator.pop(ctx, false),
                     color: const Color(0xFFE8E8F0),
-                    textColor: const Color(0xFF1C1C1E))),
-            const SizedBox(width: 12),
-            Expanded(
-                child: TideDialogs.glassButton('删除',
+                    textColor: const Color(0xFF1C1C1E),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TideDialogs.glassButton(
+                    '删除',
                     onTap: () => Navigator.pop(ctx, true),
-                    color: const Color(0xFFE74C3C))),
-          ]),
-        ]),
+                    color: const Color(0xFFE74C3C),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
     if (confirm == true) {
@@ -935,10 +1095,12 @@ class SquarePageState extends State<SquarePage>
         final position = box.localToGlobal(Offset.zero);
         _particleOrigins.clear();
         for (var i = 0; i < 12; i++) {
-          _particleOrigins.add(Offset(
-            position.dx + box.size.width * (0.1 + 0.8 * i / 11),
-            position.dy + box.size.height * (0.2 + 0.6 * ((i * 7) % 11) / 10),
-          ));
+          _particleOrigins.add(
+            Offset(
+              position.dx + box.size.width * (0.1 + 0.8 * i / 11),
+              position.dy + box.size.height * (0.2 + 0.6 * ((i * 7) % 11) / 10),
+            ),
+          );
         }
         setState(() {
           _particleRun++;
@@ -958,44 +1120,56 @@ class SquarePageState extends State<SquarePage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final content = Stack(children: [
-      Container(
-        color: theme.bgColor,
-        child: SafeArea(
-            child: Column(children: [
-          Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-              child: Row(children: [
-                const Spacer(),
-                BouncyTap(
-                    onTap: _toggle,
-                    child: AnimatedRotation(
-                      turns: _showGames ? 0.5 : 0.0,
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.easeOutCubic,
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          color: theme.primary.withValues(alpha: 0.12),
+    final content = Stack(
+      children: [
+        Container(
+          color: theme.bgColor,
+          child: SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                  child: Row(
+                    children: [
+                      const Spacer(),
+                      BouncyTap(
+                        onTap: _toggle,
+                        child: AnimatedRotation(
+                          turns: _showGames ? 0.5 : 0.0,
+                          duration: const Duration(milliseconds: 500),
+                          curve: Curves.easeOutCubic,
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: theme.primary.withValues(alpha: 0.12),
+                            ),
+                            child: Icon(
+                              _showGames
+                                  ? Icons.videogame_asset_rounded
+                                  : Icons.article_rounded,
+                              size: 22,
+                              color: theme.primary,
+                            ),
+                          ),
                         ),
-                        child: Icon(
-                            _showGames
-                                ? Icons.videogame_asset_rounded
-                                : Icons.article_rounded,
-                            size: 22,
-                            color: theme.primary),
                       ),
-                    )),
-                const SizedBox(width: 8),
-              ])),
-          Expanded(
-              child: SlideTransition(
-                  position: _slideAnim,
-                  child: _showGames ? _buildGames(theme) : _buildFeeds(theme))),
-        ])),
-      ),
-    ]);
+                      const SizedBox(width: 8),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SlideTransition(
+                    position: _slideAnim,
+                    child: _showGames ? _buildGames(theme) : _buildFeeds(theme),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
     return _showParticles
         ? ParticleOverlay(
             key: ValueKey(_particleRun),
@@ -1013,17 +1187,23 @@ class SquarePageState extends State<SquarePage>
           key: const ValueKey('feeds_empty'),
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
           children: const [
-              FrostCard(
-                  padding: EdgeInsets.all(24),
-                  child: Center(
-                      child: Text('还没有动态\n点击右下角 + 发布第一条',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 15,
-                              color: Color(0xFF8E8E93),
-                              fontFamily: 'TideFont',
-                              height: 1.6))))
-            ])
+            FrostCard(
+              padding: EdgeInsets.all(24),
+              child: Center(
+                child: Text(
+                  '还没有动态\n点击右下角 + 发布第一条',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Color(0xFF8E8E93),
+                    fontFamily: 'TideFont',
+                    height: 1.6,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        )
       : ListView.builder(
           key: const ValueKey('feeds'),
           controller: _scrollCtrl,
@@ -1034,152 +1214,203 @@ class SquarePageState extends State<SquarePage>
             final f = _feeds[i];
             final cardKey = GlobalKey();
             return FrostCard(
-                key: cardKey,
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(16),
-                onTap: () => _openFeedDetail(f),
-                onLongPress: () => _deleteFeed(f, cardKey),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        onTap: () => _openFeedDetail(f),
-                        child: Row(children: [
-                          f['is_bot'] == true
-                              ? TideBotAvatar(
-                                  name: f['user']?.toString() ?? 'TA',
-                                  path: f['bot_avatar']?.toString(),
-                                  size: 36)
-                              : CircleAvatar(
-                                  radius: 18,
-                                  backgroundColor:
-                                      theme.primary.withValues(alpha: 0.15),
-                                  child: Icon(Icons.person_rounded,
-                                      size: 20, color: theme.primary)),
-                          const SizedBox(width: 10),
-                          Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(f['user'] ?? '',
-                                    style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: 'TideFont')),
-                                Text(f['time'] ?? '',
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Color(0xFFC7C7CC),
-                                        fontFamily: 'TideFont'))
-                              ]),
-                          const Spacer(),
-                          BouncyTap(
-                              onTap: () => _shareFeed(f),
-                              child: const Icon(Icons.share_rounded,
-                                  size: 18, color: Color(0xFFC7C7CC))),
-                        ]),
-                      ),
-                      const SizedBox(height: 12),
-                      GestureDetector(
-                        onTap: () => _openFeedDetail(f),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (f['image'] != null &&
-                                  (f['image'] as String).isNotEmpty)
-                                Padding(
-                                    padding: const EdgeInsets.only(bottom: 10),
-                                    child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: Image.file(
-                                            File(f['image'] as String),
-                                            width: double.infinity,
-                                            fit: BoxFit.cover))),
-                              Text(f['content'] ?? '',
-                                  style: TextStyle(
-                                      fontSize: 14,
-                                      fontFamily: 'TideFont',
-                                      color: theme.isDark
-                                          ? Colors.white
-                                          : const Color(0xFF3C3C43),
-                                      height: 1.5)),
-                            ]),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        BouncyTap(
-                            onTap: () async {
-                              final wasLiked = f['favorited'] as bool;
-                              setState(() {
-                                f['favorited'] = !wasLiked;
-                                f['likes'] = (f['likes'] as int) +
-                                    (f['favorited'] == true ? 1 : -1);
-                              });
-                              // 用户的点赞是真实互动事件，落库 feed_events。
-                              final nowLiked = await DBManager()
-                                  .toggleFeedEvent(
-                                      postId: f['id'] as String? ?? '',
-                                      actorId: 'me',
-                                      eventType: 'like');
-                              if (nowLiked != (f['favorited'] as bool) &&
-                                  mounted) {
-                                setState(() {
-                                  f['favorited'] = nowLiked;
-                                  f['likes'] =
-                                      (f['likes'] as int) + (nowLiked ? 1 : -1);
-                                });
-                              }
-                            },
-                            child: Row(children: [
-                              Icon(
-                                  f['favorited'] == true
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                  size: 18,
-                                  color: f['favorited'] == true
-                                      ? const Color(0xFFE74C3C)
-                                      : const Color(0xFFC7C7CC)),
-                              const SizedBox(width: 4),
-                              Text('${f['likes']}',
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      color: Color(0xFFC7C7CC),
-                                      fontFamily: 'TideFont')),
-                            ])),
-                        const SizedBox(width: 20),
-                        BouncyTap(
-                            onTap: () => _commentFeed(f, theme),
-                            child: Row(children: [
-                              Icon(Icons.chat_bubble_outline_rounded,
-                                  size: 18, color: theme.primary),
-                              const SizedBox(width: 4),
-                              Text('${f['comments']}',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      color: theme.primary,
-                                      fontFamily: 'TideFont')),
-                            ])),
+              key: cardKey,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              onTap: () => _openFeedDetail(f),
+              onLongPress: () => _deleteFeed(f, cardKey),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GestureDetector(
+                    onTap: () => _openFeedDetail(f),
+                    child: Row(
+                      children: [
+                        f['is_bot'] == true
+                            ? TideBotAvatar(
+                                name: f['user']?.toString() ?? 'TA',
+                                path: f['bot_avatar']?.toString(),
+                                size: 36,
+                              )
+                            : CircleAvatar(
+                                radius: 18,
+                                backgroundColor: theme.primary.withValues(
+                                  alpha: 0.15,
+                                ),
+                                child: Icon(
+                                  Icons.person_rounded,
+                                  size: 20,
+                                  color: theme.primary,
+                                ),
+                              ),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              f['user'] ?? '',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                            Text(
+                              f['time'] ?? '',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFC7C7CC),
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ],
+                        ),
                         const Spacer(),
                         BouncyTap(
-                            onTap: () async {
-                              setState(() =>
-                                  f['collected'] = !(f['collected'] as bool));
-                              // 收藏是真实互动事件（feed_events collect，幂等切换）。
-                              await DBManager().toggleFeedEvent(
-                                  postId: f['id'] as String? ?? '',
-                                  actorId: 'me',
-                                  eventType: 'collect');
-                            },
-                            child: Icon(
-                                f['collected'] == true
-                                    ? Icons.bookmark_rounded
-                                    : Icons.bookmark_border_rounded,
-                                size: 18,
-                                color: f['collected'] == true
-                                    ? theme.primary
-                                    : const Color(0xFFC7C7CC))),
-                      ]),
-                    ]));
-          });
+                          onTap: () => _shareFeed(f),
+                          child: const Icon(
+                            Icons.share_rounded,
+                            size: 18,
+                            color: Color(0xFFC7C7CC),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () => _openFeedDetail(f),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (f['image'] != null &&
+                            (f['image'] as String).isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.file(
+                                File(f['image'] as String),
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        Text(
+                          f['content'] ?? '',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'TideFont',
+                            color: theme.isDark
+                                ? Colors.white
+                                : const Color(0xFF3C3C43),
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      BouncyTap(
+                        onTap: () async {
+                          final wasLiked = f['favorited'] as bool;
+                          setState(() {
+                            f['favorited'] = !wasLiked;
+                            f['likes'] =
+                                (f['likes'] as int) +
+                                (f['favorited'] == true ? 1 : -1);
+                          });
+                          // 用户的点赞是真实互动事件，落库 feed_events。
+                          final nowLiked = await DBManager().toggleFeedEvent(
+                            postId: f['id'] as String? ?? '',
+                            actorId: 'me',
+                            eventType: 'like',
+                          );
+                          if (nowLiked != (f['favorited'] as bool) && mounted) {
+                            setState(() {
+                              f['favorited'] = nowLiked;
+                              f['likes'] =
+                                  (f['likes'] as int) + (nowLiked ? 1 : -1);
+                            });
+                          }
+                        },
+                        child: Row(
+                          children: [
+                            Icon(
+                              f['favorited'] == true
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              size: 18,
+                              color: f['favorited'] == true
+                                  ? const Color(0xFFE74C3C)
+                                  : const Color(0xFFC7C7CC),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${f['likes']}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFFC7C7CC),
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      BouncyTap(
+                        onTap: () => _commentFeed(f, theme),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              size: 18,
+                              color: theme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${f['comments']}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: theme.primary,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      BouncyTap(
+                        onTap: () async {
+                          setState(
+                            () => f['collected'] = !(f['collected'] as bool),
+                          );
+                          // 收藏是真实互动事件（feed_events collect，幂等切换）。
+                          await DBManager().toggleFeedEvent(
+                            postId: f['id'] as String? ?? '',
+                            actorId: 'me',
+                            eventType: 'collect',
+                          );
+                        },
+                        child: Icon(
+                          f['collected'] == true
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                          size: 18,
+                          color: f['collected'] == true
+                              ? theme.primary
+                              : const Color(0xFFC7C7CC),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
 
   void _commentFeed(Map<String, dynamic> f, TideTheme theme) {
     _openFeedDetail(f);
@@ -1198,90 +1429,116 @@ class SquarePageState extends State<SquarePage>
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
         child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('选择对战机器人',
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '选择对战机器人',
+              style: TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.w700,
+                color: theme.textStrong,
+                fontFamily: 'TideFont',
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '本局 $game 会和选中的 TA 进行，游戏内也能直接聊天。',
+              style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont'),
+            ),
+            const SizedBox(height: 10),
+            ...bots.map(
+              (bot) => ListTile(
+                leading: TideBotAvatar(
+                  name: bot['name']?.toString() ?? '未命名机器人',
+                  path: bot['avatar']?.toString(),
+                  size: 44,
+                ),
+                title: Text(
+                  bot['name']?.toString() ?? '未命名机器人',
                   style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 6),
-              Text('本局 $game 会和选中的 TA 进行，游戏内也能直接聊天。',
-                  style:
-                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
-              const SizedBox(height: 10),
-              ...bots.map((bot) => ListTile(
-                    leading: TideBotAvatar(
-                        name: bot['name']?.toString() ?? '未命名机器人',
-                        path: bot['avatar']?.toString(),
-                        size: 44),
-                    title: Text(bot['name']?.toString() ?? '未命名机器人',
-                        style: TextStyle(
-                            color: theme.textStrong, fontFamily: 'TideFont')),
-                    subtitle: Text(
-                        bot['chat_model']?.toString().isNotEmpty == true
-                            ? '已配置模型'
-                            : '未配置模型，仍可进行本地回合',
-                        style: TextStyle(
-                            color: theme.textWeak,
-                            fontSize: 12,
-                            fontFamily: 'TideFont')),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  GameArenaPage(game: game, bot: bot)));
-                    },
-                  )),
-            ]),
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont',
+                  ),
+                ),
+                subtitle: Text(
+                  bot['chat_model']?.toString().isNotEmpty == true
+                      ? '已配置模型'
+                      : '未配置模型，仍可进行本地回合',
+                  style: TextStyle(
+                    color: theme.textWeak,
+                    fontSize: 12,
+                    fontFamily: 'TideFont',
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GameArenaPage(game: game, bot: bot),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildGames(TideTheme theme) => GridView.builder(
-      key: const ValueKey('games'),
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-      physics: const BouncingScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 14,
-          mainAxisSpacing: 14,
-          // 仅四款游戏，使用更高的入口卡片以提升可点性与可读性。
-          childAspectRatio: 0.78),
-      itemCount: _games.length,
-      itemBuilder: (ctx, i) {
-        final g = _games[i];
-        final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
-        return BouncyTap(
-            onTap: () => _startGame(g['name']?.toString() ?? ''),
-            child: FrostCard(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: 52, color: theme.primary),
-                      const SizedBox(height: 14),
-                      Text(g['name'] ?? '',
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'TideFont',
-                              color: theme.textStrong)),
-                      const SizedBox(height: 4),
-                      Text(g['desc'] ?? '',
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11,
-                              color: Color(0xFFC7C7CC),
-                              fontFamily: 'TideFont'))
-                    ])));
-      });
+    key: const ValueKey('games'),
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+    physics: const BouncingScrollPhysics(),
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 2,
+      crossAxisSpacing: 14,
+      mainAxisSpacing: 14,
+      // 仅四款游戏，使用更高的入口卡片以提升可点性与可读性。
+      childAspectRatio: 0.78,
+    ),
+    itemCount: _games.length,
+    itemBuilder: (ctx, i) {
+      final g = _games[i];
+      final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
+      return BouncyTap(
+        onTap: () => _startGame(g['name']?.toString() ?? ''),
+        child: FrostCard(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 52, color: theme.primary),
+              const SizedBox(height: 14),
+              Text(
+                g['name'] ?? '',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                  color: theme.textStrong,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                g['desc'] ?? '',
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFFC7C7CC),
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 // ==================== 全屏发布页 ====================
@@ -1303,8 +1560,10 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
   }
 
   void _pickImage() async {
-    final p = await ImagePicker()
-        .pickImage(source: ImageSource.gallery, maxWidth: 1024);
+    final p = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+    );
     if (p != null) setState(() => _imagePath = p.path);
   }
 
@@ -1314,95 +1573,138 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
     return Scaffold(
       backgroundColor: theme.bgColor,
       appBar: AppBar(
-        title: Text('发布动态',
-            style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontFamily: 'TideFont',
-                color: theme.textStrong)),
+        title: Text(
+          '发布动态',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontFamily: 'TideFont',
+            color: theme.textStrong,
+          ),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
-            onPressed: () => Navigator.pop(context)),
+          icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
         actions: [
           TextButton(
-              onPressed: () {
-                final text = ctrl.text.trim();
-                if (text.isNotEmpty) {
-                  widget.onPublished(text, _imagePath);
-                  Navigator.pop(context);
-                }
-              },
-              child: Text('发布',
-                  style: TextStyle(
-                      color: theme.primary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      fontFamily: 'TideFont'))),
+            onPressed: () {
+              final text = ctrl.text.trim();
+              if (text.isNotEmpty) {
+                widget.onPublished(text, _imagePath);
+                Navigator.pop(context);
+              }
+            },
+            child: Text(
+              '发布',
+              style: TextStyle(
+                color: theme.primary,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ),
         ],
       ),
-      body: Column(children: [
-        Expanded(
+      body: Column(
+        children: [
+          Expanded(
             child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: TextField(
-                  controller: ctrl,
-                  autofocus: true,
-                  maxLines: null,
-                  expands: true,
-                  style: const TextStyle(
-                      fontSize: 16, fontFamily: 'TideFont', height: 1.8),
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: const InputDecoration(
-                    hintText: '分享你的想法...',
-                    hintStyle: TextStyle(
-                        fontSize: 16,
-                        color: Color(0xFFC7C7CC),
-                        fontFamily: 'TideFont'),
-                    border: InputBorder.none,
+              padding: const EdgeInsets.all(20),
+              child: TextField(
+                controller: ctrl,
+                autofocus: true,
+                maxLines: null,
+                expands: true,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontFamily: 'TideFont',
+                  height: 1.8,
+                ),
+                textAlignVertical: TextAlignVertical.top,
+                decoration: const InputDecoration(
+                  hintText: '分享你的想法...',
+                  hintStyle: TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFFC7C7CC),
+                    fontFamily: 'TideFont',
                   ),
-                ))),
-        if (_imagePath != null)
-          Padding(
+                  border: InputBorder.none,
+                ),
+              ),
+            ),
+          ),
+          if (_imagePath != null)
+            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Stack(children: [
-                    Image.file(File(_imagePath!),
-                        height: 120, width: double.infinity, fit: BoxFit.cover),
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  children: [
+                    Image.file(
+                      File(_imagePath!),
+                      height: 120,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
                     Positioned(
-                        top: 4,
-                        right: 4,
-                        child: GestureDetector(
-                            onTap: () => setState(() => _imagePath = null),
-                            child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.black54),
-                                child: const Icon(Icons.close,
-                                    size: 16, color: Colors.white)))),
-                  ]))),
-        Padding(
+                      top: 4,
+                      right: 4,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _imagePath = null),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black54,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: BouncyTap(
-                onTap: _pickImage,
-                child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: theme.primary.withValues(alpha: 0.1)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.image_rounded, size: 20, color: theme.primary),
-                      const SizedBox(width: 8),
-                      Text('添加图片',
-                          style: TextStyle(
-                              color: theme.primary,
-                              fontFamily: 'TideFont',
-                              fontSize: 14))
-                    ])))),
-      ]),
+              onTap: _pickImage,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: theme.primary.withValues(alpha: 0.1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.image_rounded, size: 20, color: theme.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      '添加图片',
+                      style: TextStyle(
+                        color: theme.primary,
+                        fontFamily: 'TideFont',
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1454,7 +1756,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
           final avatar = avatarMap[author];
           return {
             ...c,
-            if (avatar != null && avatar.isNotEmpty) 'author_avatar': avatar
+            if (avatar != null && avatar.isNotEmpty) 'author_avatar': avatar,
           };
         }).toList();
         _loading = false;
@@ -1468,7 +1770,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     // 先乐观更新 UI，再写入真实互动事件。
     setState(() {
       widget.feed['favorited'] = !wasLiked;
-      widget.feed['likes'] = (widget.feed['likes'] as int) +
+      widget.feed['likes'] =
+          (widget.feed['likes'] as int) +
           (widget.feed['favorited'] == true ? 1 : -1);
     });
     // 用户的点赞是真实发生的互动事件：写 feed_events（actor 固定为 'me'）。
@@ -1539,8 +1842,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       if (mounted) {
         setState(() {
           _comments.remove(comment);
-          widget.feed['comments'] =
-              ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
+          widget.feed['comments'] = ((widget.feed['comments'] as int) - 1)
+              .clamp(0, 1 << 30);
           _sendingComment = false;
         });
         GlobalNotice.show('评论发送失败，请重试', color: const Color(0xFFE74C3C));
@@ -1625,33 +1928,51 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       builder: (ctx) => TideDialogSurface(
         backgroundColor: Colors.transparent,
         contentPadding: EdgeInsets.zero,
-        content: TideDialogs.glassContent(context: ctx, children: [
-          Text('删除评论',
+        content: TideDialogs.glassContent(
+          context: ctx,
+          children: [
+            Text(
+              '删除评论',
               textAlign: TextAlign.start,
               style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: TideTheme.of(ctx).textStrong,
-                  fontFamily: 'TideFont')),
-          const SizedBox(height: 8),
-          Text('确定删除这条评论吗？',
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: TideTheme.of(ctx).textStrong,
+                fontFamily: 'TideFont',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '确定删除这条评论吗？',
               textAlign: TextAlign.start,
               style: TextStyle(
-                  color: TideTheme.of(ctx).textWeak, fontFamily: 'TideFont')),
-          const SizedBox(height: 18),
-          Row(children: [
-            Expanded(
-                child: TideDialogs.glassButton('取消',
+                color: TideTheme.of(ctx).textWeak,
+                fontFamily: 'TideFont',
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: TideDialogs.glassButton(
+                    '取消',
                     onTap: () => Navigator.pop(ctx, false),
                     color: TideTheme.of(ctx).surfaceVariant,
-                    textColor: TideTheme.of(ctx).textStrong)),
-            const SizedBox(width: 10),
-            Expanded(
-                child: TideDialogs.glassButton('删除',
+                    textColor: TideTheme.of(ctx).textStrong,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TideDialogs.glassButton(
+                    '删除',
                     onTap: () => Navigator.pop(ctx, true),
-                    color: TideTheme.of(ctx).primary)),
-          ]),
-        ]),
+                    color: TideTheme.of(ctx).primary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed != true) return;
@@ -1660,8 +1981,10 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       if (!mounted) return;
       setState(() {
         _comments.removeWhere((item) => item['id']?.toString() == id);
-        widget.feed['comments'] =
-            ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
+        widget.feed['comments'] = ((widget.feed['comments'] as int) - 1).clamp(
+          0,
+          1 << 30,
+        );
       });
       widget.onUpdate();
     } catch (_) {
@@ -1676,12 +1999,12 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       (byParent[key] ??= []).add(comment);
     }
     List<Widget> buildNodes(String parentId, int depth) => [
-          for (final comment
-              in byParent[parentId] ?? const <Map<String, dynamic>>[]) ...[
-            _commentNode(comment, depth),
-            ...buildNodes(comment['id']?.toString() ?? '', depth + 1),
-          ],
-        ];
+      for (final comment
+          in byParent[parentId] ?? const <Map<String, dynamic>>[]) ...[
+        _commentNode(comment, depth),
+        ...buildNodes(comment['id']?.toString() ?? '', depth + 1),
+      ],
+    ];
     return buildNodes('', 0);
   }
 
@@ -1690,51 +2013,72 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     final inset = (depth * 18.0).clamp(0, 72).toDouble();
     return Padding(
       padding: EdgeInsets.only(left: inset, bottom: 14),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        (comment['author_avatar'] as String?)?.isNotEmpty == true
-            ? TideBotAvatar(
-                name: comment['author_id']?.toString() ?? 'TA',
-                path: comment['author_avatar']?.toString(),
-                size: 30)
-            : CircleAvatar(
-                radius: 15,
-                backgroundColor: theme.primary.withValues(alpha: .12),
-                child:
-                    Icon(Icons.person_rounded, size: 16, color: theme.primary)),
-        const SizedBox(width: 10),
-        Expanded(
-            child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onLongPress:
-              _canDeleteComment(comment) ? () => _deleteComment(comment) : null,
-          onTap: () => setState(() {
-            _replyTarget = comment;
-            _commentCtrl.clear();
-          }),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(comment['author_id'] ?? '匿名',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: theme.textStrong,
-                    fontFamily: 'TideFont')),
-            const SizedBox(height: 3),
-            Text(comment['content'] ?? '',
-                style: TextStyle(
-                    fontSize: 14,
-                    color: theme.textWeak,
-                    fontFamily: 'TideFont',
-                    height: 1.4)),
-            const SizedBox(height: 4),
-            Text('回复',
-                style: TextStyle(
-                    fontSize: 12,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          (comment['author_avatar'] as String?)?.isNotEmpty == true
+              ? TideBotAvatar(
+                  name: comment['author_id']?.toString() ?? 'TA',
+                  path: comment['author_avatar']?.toString(),
+                  size: 30,
+                )
+              : CircleAvatar(
+                  radius: 15,
+                  backgroundColor: theme.primary.withValues(alpha: .12),
+                  child: Icon(
+                    Icons.person_rounded,
+                    size: 16,
                     color: theme.primary,
-                    fontFamily: 'TideFont')),
-          ]),
-        )),
-      ]),
+                  ),
+                ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPress: _canDeleteComment(comment)
+                  ? () => _deleteComment(comment)
+                  : null,
+              onTap: () => setState(() {
+                _replyTarget = comment;
+                _commentCtrl.clear();
+              }),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    comment['author_id'] ?? '匿名',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    comment['content'] ?? '',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: theme.textWeak,
+                      fontFamily: 'TideFont',
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '回复',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.primary,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1769,11 +2113,13 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                         ? TideBotAvatar(
                             name: feed['user']?.toString() ?? 'TA',
                             path: feed['bot_avatar']?.toString(),
-                            size: 44)
+                            size: 44,
+                          )
                         : CircleAvatar(
                             radius: 22,
-                            backgroundColor:
-                                theme.primary.withValues(alpha: 0.15),
+                            backgroundColor: theme.primary.withValues(
+                              alpha: 0.15,
+                            ),
                             child: Icon(
                               Icons.person_rounded,
                               size: 24,
@@ -1930,61 +2276,77 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                 color: theme.surface,
                 border: Border(top: BorderSide(color: theme.border)),
               ),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                if (_replyTarget != null)
-                  Row(children: [
-                    Expanded(
-                        child: Text('回复 ${_replyTarget!['author_id'] ?? '评论'}',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyTarget != null)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '回复 ${_replyTarget!['author_id'] ?? '评论'}',
                             textAlign: TextAlign.start,
                             style: TextStyle(
-                                color: theme.textWeak,
-                                fontFamily: 'TideFont'))),
-                    IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        onPressed: () => setState(() => _replyTarget = null)),
-                  ]),
-                Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _commentCtrl,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted:
-                          _sendingComment ? null : (_) => _sendComment(),
-                      style: TextStyle(
-                        color: theme.textStrong,
-                        fontFamily: 'TideFont',
-                      ),
-                      decoration: InputDecoration(
-                        hintText: '写评论...',
-                        hintStyle: TextStyle(
-                          color: theme.textFaint,
-                          fontFamily: 'TideFont',
+                              color: theme.textWeak,
+                              fontFamily: 'TideFont',
+                            ),
+                          ),
                         ),
-                        filled: true,
-                        fillColor: theme.surfaceVariant,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: BorderSide.none,
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () => setState(() => _replyTarget = null),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 9,
-                        ),
-                      ),
+                      ],
                     ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _commentCtrl,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: _sendingComment
+                              ? null
+                              : (_) => _sendComment(),
+                          style: TextStyle(
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont',
+                          ),
+                          decoration: InputDecoration(
+                            hintText: '写评论...',
+                            hintStyle: TextStyle(
+                              color: theme.textFaint,
+                              fontFamily: 'TideFont',
+                            ),
+                            filled: true,
+                            fillColor: theme.surfaceVariant,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 9,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: _sendingComment ? null : _sendComment,
+                        icon: _sendingComment
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(Icons.send_rounded, color: theme.primary),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _sendingComment ? null : _sendComment,
-                    icon: _sendingComment
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Icon(Icons.send_rounded, color: theme.primary),
-                  ),
-                ]),
-              ]),
+                ],
+              ),
             ),
           ),
         ],

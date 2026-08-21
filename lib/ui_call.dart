@@ -4,6 +4,7 @@ import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'app_permissions.dart';
+import 'call_wave_painter.dart';
 
 import 'package:flutter/material.dart';
 import 'theme.dart';
@@ -42,6 +43,10 @@ class _CallPageState extends State<CallPage>
   final AudioPlayer _player = AudioPlayer();
   String? _recordingPath;
   bool _recording = false;
+  bool _botSpeaking = false;
+  bool _speechDetected = false;
+  double _soundLevel = 0;
+  double? _noiseFloor;
   StreamSubscription<Amplitude>? _ampSub;
 
   /// 机器人语音播放完成（或被分贝打断）的状态门闩；每次播放前重置。
@@ -54,12 +59,14 @@ class _CallPageState extends State<CallPage>
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
 
-  /// 分贝阈值（dBFS），人声通常高于此值。
-  static const double _vadThreshold = -32;
-
-  /// 连续静默多少次后认为用户已说完，自动结束录音（约 1~1.8 秒）。
-  static const int _silentStopTicks = 6;
+  // A fixed dBFS threshold breaks across microphones and misses whispering.
+  // Speech must rise above the measured room floor for several samples.
+  static const int _speechStartTicks = 3;
+  static const int _silentStopTicks = 9;
+  static const double _minimumVoiceLevel = -52;
+  static const double _speechOverNoise = 9;
   int _silentTicks = 0;
+  int _voiceTicks = 0;
   Timer? _autoStopTimer;
 
   /// 开始监听录音振幅（前提是录音已在运行）。
@@ -80,26 +87,43 @@ class _CallPageState extends State<CallPage>
   /// - 监听用户期间：累积静默计数，连续静默一段时间后自动结束录音并进入识别。
   void _onAmplitudeChanged(Amplitude amp) {
     if (_muted) return;
-    // 打断阶段
+    final level = amp.current.clamp(-80.0, 0.0).toDouble();
+    if (mounted) setState(() => _soundLevel = level);
+    final floor = _noiseFloor ?? level;
+    if (!_speechDetected && !_vadActive) {
+      _noiseFloor = floor * .86 + level * .14;
+    }
+    final gate = (_noiseFloor ?? floor) + _speechOverNoise;
+    final isVoice = level >= _minimumVoiceLevel && level >= gate;
     if (_vadActive) {
-      if (amp.current > _vadThreshold) {
+      if (isVoice) {
         _vadActive = false;
-        // 先取消播放完成订阅，避免 stop 触发 onPlayerComplete 造成双重 complete。
         _playSub?.cancel();
         _playSub = null;
         if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
-        _player.stop();
+        unawaited(_player.stop());
+        if (mounted) setState(() => _botSpeaking = false);
       }
       return;
     }
-    // 监听用户说话阶段
     if (_recording && !_processing) {
-      if (amp.current > _vadThreshold) {
+      if (isVoice) {
+        _voiceTicks++;
         _silentTicks = 0;
+        if (!_speechDetected && _voiceTicks >= _speechStartTicks) {
+          if (mounted) {
+            setState(() {
+              _speechDetected = true;
+              _caption = '已识别到你的声音';
+            });
+          }
+          AppLogService.instance.add('VOICE_CALL', '已检测到用户语音');
+        }
       } else {
-        _silentTicks++;
-        if (_silentTicks >= _silentStopTicks) {
-          _finishListening();
+        _voiceTicks = 0;
+        if (_speechDetected) _silentTicks++;
+        if (_speechDetected && _silentTicks >= _silentStopTicks) {
+          unawaited(_finishListening());
         }
       }
     }
@@ -136,12 +160,15 @@ class _CallPageState extends State<CallPage>
       );
       _startAmpMonitor();
       _silentTicks = 0;
+      _voiceTicks = 0;
+      _speechDetected = false;
+      _noiseFloor = null;
       _ensureAutoStopTimer();
       AppLogService.instance.add('VOICE_CALL', '录音已启动：$path');
       if (mounted) {
         setState(() {
           _recording = true;
-          _caption = '正在聆听，请说话…';
+          _caption = '正在聆听，请说话';
         });
       }
     } catch (error) {
@@ -154,17 +181,18 @@ class _CallPageState extends State<CallPage>
     _autoStopTimer?.cancel();
     _stopAmpMonitor();
     if (!_recording) return;
+    if (mounted) setState(() => _recording = false);
     try {
       final path = await _recorder.stop();
       AppLogService.instance
           .add('VOICE_CALL', path == null ? '录音未生成文件' : '录音已停止：$path');
       if (mounted) {
         setState(() {
-          _recording = false;
           _recordingPath = path;
         });
       }
       _vadActive = false;
+      _speechDetected = false;
       if (path != null && path.isNotEmpty) await _runVoiceTurn();
     } catch (error) {
       AppLogService.instance.add('VOICE_CALL', '录音停止失败：$error');
@@ -254,6 +282,7 @@ class _CallPageState extends State<CallPage>
     _playDone = Completer<void>();
     _startAmpMonitor();
     _vadActive = true;
+    if (mounted) setState(() => _botSpeaking = true);
     _playSub?.cancel();
     _playSub = _player.onPlayerComplete.listen((event) {
       if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
@@ -272,6 +301,7 @@ class _CallPageState extends State<CallPage>
       onTimeout: () {},
     );
     _vadActive = false;
+    if (mounted) setState(() => _botSpeaking = false);
     await _playSub?.cancel();
     _playSub = null;
     await stateSub.cancel();
@@ -280,14 +310,26 @@ class _CallPageState extends State<CallPage>
     AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
   }
 
+  Future<void> _pauseBotReply() async {
+    if (!_botSpeaking) return;
+    _vadActive = false;
+    if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
+    await _player.stop();
+    if (mounted) setState(() => _botSpeaking = false);
+    AppLogService.instance.add('VOICE_CALL', '用户手动暂停机器人语音');
+  }
+
   Future<void> _endCall() async {
     if (_ending) return;
     _ending = true;
     _autoStopTimer?.cancel();
     _vadActive = false;
     _stopAmpMonitor();
+    final wasRecording = _recording;
+    _recording = false;
+    _botSpeaking = false;
     try {
-      if (_recording) await _recorder.stop();
+      if (wasRecording) await _recorder.stop();
       await _player.stop();
     } catch (_) {}
 
@@ -411,47 +453,42 @@ class _CallPageState extends State<CallPage>
                   children: [
                     AnimatedBuilder(
                       animation: _wave,
-                      builder: (context, child) {
-                        final amount = 0.82 + _wave.value * 0.18;
-                        return SizedBox(
-                          width: 230,
-                          height: 230,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              for (var i = 0; i < 3; i++)
-                                Transform.scale(
-                                  scale: amount - i * 0.11,
-                                  child: Container(
-                                    width: 220 - i * 38,
-                                    height: 220 - i * 38,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: theme.primary.withValues(
-                                        alpha: ready ? 0.08 + i * 0.025 : 0.035,
-                                      ),
-                                    ),
+                      builder: (context, _) => SizedBox(
+                        width: 230,
+                        height: 230,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            if (_recording)
+                              CustomPaint(
+                                size: const Size.square(230),
+                                painter: CallWavePainter(
+                                  phase: _wave.value,
+                                  strength: ((_soundLevel + 58) / 45).clamp(
+                                    0.08,
+                                    1.0,
                                   ),
+                                  color: theme.primary,
                                 ),
-                              CircleAvatar(
-                                radius: 57,
-                                backgroundColor:
-                                    theme.primary.withValues(alpha: 0.16),
-                                backgroundImage: avatar.isNotEmpty
-                                    ? FileImage(File(avatar))
-                                    : null,
-                                child: avatar.isEmpty
-                                    ? Icon(
-                                        Icons.smart_toy_rounded,
-                                        size: 56,
-                                        color: theme.primary,
-                                      )
-                                    : null,
                               ),
-                            ],
-                          ),
-                        );
-                      },
+                            CircleAvatar(
+                              radius: 57,
+                              backgroundColor:
+                                  theme.primary.withValues(alpha: 0.16),
+                              backgroundImage: avatar.isNotEmpty
+                                  ? FileImage(File(avatar))
+                                  : null,
+                              child: avatar.isEmpty
+                                  ? Icon(
+                                      Icons.smart_toy_rounded,
+                                      size: 56,
+                                      color: theme.primary,
+                                    )
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 22),
                     Text(
@@ -501,6 +538,8 @@ class _CallPageState extends State<CallPage>
                       ),
                     ],
                     const Spacer(),
+                    if (ready) _callActionButton(theme),
+                    const SizedBox(height: 18),
                     SafeArea(
                       top: false,
                       child: SizedBox(
@@ -570,6 +609,30 @@ class _CallPageState extends State<CallPage>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _callActionButton(TideTheme theme) {
+    final speaking = _botSpeaking;
+    final listening = _recording;
+    return FilledButton.icon(
+      onPressed: !(speaking || listening)
+          ? null
+          : () async {
+              TideHaptics.tap();
+              if (speaking) {
+                await _pauseBotReply();
+              } else {
+                await _finishListening();
+              }
+            },
+      icon: Icon(speaking ? Icons.pause_rounded : Icons.check_rounded),
+      label: Text(speaking ? '暂停' : '说完了'),
+      style: FilledButton.styleFrom(
+        backgroundColor: speaking ? theme.primary : theme.surfaceVariant,
+        foregroundColor: speaking ? Colors.white : theme.textStrong,
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
       ),
     );
   }

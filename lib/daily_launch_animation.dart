@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'theme.dart';
 
-/// Quiet daily visual transition with no logo, product copy or call to action.
+/// A short once-per-day transition. Android already showed the brand mark.
 class DailyLaunchAnimation extends StatefulWidget {
   final Widget child;
   const DailyLaunchAnimation({super.key, required this.child});
@@ -25,7 +25,7 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 1500),
     );
     _prepare();
   }
@@ -39,7 +39,7 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
     if (!mounted) return;
     setState(() => _visible = true);
     _controller.forward();
-    _timer = Timer(const Duration(milliseconds: 1900), _dismiss);
+    _timer = Timer(const Duration(milliseconds: 1600), _dismiss);
   }
 
   void _dismiss() {
@@ -62,31 +62,17 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
         widget.child,
         if (_visible)
           Material(
-            color: theme.isDark ? Colors.black : Colors.white,
+            color: theme.bgColor,
             child: AnimatedBuilder(
               animation: _controller,
-              builder: (context, child) {
-                final progress =
-                    Curves.easeInOutCubic.transform(_controller.value);
-                return Stack(
-                  children: [
-                    _Glow(
-                      alignment: Alignment(-.75 + progress * .6, -.45),
-                      radius: 160 + progress * 120,
-                      color: theme.primary.withValues(
-                        alpha: theme.isDark ? .22 : .14,
-                      ),
-                    ),
-                    _Glow(
-                      alignment: Alignment(.85 - progress * .8, .55),
-                      radius: 130 + progress * 150,
-                      color: theme.primaryLight.withValues(
-                        alpha: theme.isDark ? .18 : .12,
-                      ),
-                    ),
-                  ],
-                );
-              },
+              builder: (context, _) => CustomPaint(
+                painter: _TideTransitionPainter(
+                  progress: Curves.easeInOutCubic.transform(_controller.value),
+                  color: theme.primary,
+                  dark: theme.isDark,
+                ),
+                child: const SizedBox.expand(),
+              ),
             ),
           ),
       ],
@@ -94,50 +80,48 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
   }
 }
 
-class _Glow extends StatelessWidget {
-  final Alignment alignment;
-  final double radius;
-  final Color color;
-  const _Glow({
-    required this.alignment,
-    required this.radius,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) => Align(
-        alignment: alignment,
-        child: Container(
-          width: radius,
-          height: radius,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(colors: [color, Colors.transparent]),
-          ),
-        ),
-      );
-}
-
-// ignore: unused_element
-class _RipplePainter extends CustomPainter {
+class _TideTransitionPainter extends CustomPainter {
   final double progress;
   final Color color;
-  const _RipplePainter({required this.progress, required this.color});
+  final bool dark;
+  const _TideTransitionPainter({
+    required this.progress,
+    required this.color,
+    required this.dark,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
-    for (var i = 0; i < 3; i++) {
-      final phase = (progress + i / 3) % 1.0;
+    final approach = Curves.easeOut.transform((progress / .45).clamp(0, 1));
+    final release =
+        Curves.easeIn.transform(((progress - .38) / .62).clamp(0, 1));
+    final base = color.withValues(alpha: dark ? .42 : .34);
+    for (final side in [-1.0, 1.0]) {
+      final start = Offset(center.dx + side * size.width * .52, center.dy);
+      final end = Offset(
+          center.dx + side * (18 + release * size.width * .44), center.dy);
+      final point = Offset.lerp(start, end, approach)!;
       final paint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3
-        ..color = color.withValues(alpha: (1 - phase) * .55);
-      canvas.drawCircle(center, 16 + phase * size.width * .42, paint);
+        ..strokeWidth = 1.2
+        ..color = base.withValues(alpha: base.a * (1 - release));
+      canvas.drawArc(
+        Rect.fromCircle(center: point, radius: 34 + release * 44),
+        side < 0 ? -.95 : 2.2,
+        1.15,
+        false,
+        paint,
+      );
     }
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = base.withValues(alpha: base.a * (1 - release));
+    canvas.drawCircle(center, 10 + release * size.shortestSide * .58, ring);
   }
 
   @override
-  bool shouldRepaint(covariant _RipplePainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.color != color;
+  bool shouldRepaint(covariant _TideTransitionPainter old) =>
+      old.progress != progress || old.color != color || old.dark != dark;
 }

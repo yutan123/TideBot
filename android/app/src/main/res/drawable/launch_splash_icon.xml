@@ -4,20 +4,20 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/white" />
     <item
-        android:left="72dp"
-        android:top="72dp"
-        android:right="72dp"
-        android:bottom="72dp">
+        android:left="36dp"
+        android:top="36dp"
+        android:right="36dp"
+        android:bottom="36dp">
         <shape android:shape="rectangle">
             <corners android:radius="28dp" />
             <solid android:color="@android:color/white" />
         </shape>
     </item>
     <item
-        android:left="76dp"
-        android:top="76dp"
-        android:right="76dp"
-        android:bottom="76dp">
+        android:left="42dp"
+        android:top="42dp"
+        android:right="42dp"
+        android:bottom="42dp">
         <bitmap android:src="@drawable/launch_logo_round" android:gravity="fill" />
     </item>
 </layer-list>

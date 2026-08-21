@@ -6,8 +6,11 @@ import 'theme.dart';
 class DiaryCalendarWidget extends StatefulWidget {
   final String botId;
   final String botName;
-  const DiaryCalendarWidget(
-      {super.key, required this.botId, required this.botName});
+  const DiaryCalendarWidget({
+    super.key,
+    required this.botId,
+    required this.botName,
+  });
 
   @override
   State<DiaryCalendarWidget> createState() => _DiaryCalendarWidgetState();
@@ -16,17 +19,21 @@ class DiaryCalendarWidget extends StatefulWidget {
 class DiaryCalendarPage extends StatelessWidget {
   final String botId;
   final String botName;
-  const DiaryCalendarPage(
-      {super.key, required this.botId, required this.botName});
+  const DiaryCalendarPage({
+    super.key,
+    required this.botId,
+    required this.botName,
+  });
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: TideTheme.of(context).bgColor,
-        appBar: AppBar(
-            title: Text('$botName的日记'),
-            backgroundColor: TideTheme.of(context).bgColor),
-        body: DiaryCalendarWidget(botId: botId, botName: botName),
-      );
+    backgroundColor: TideTheme.of(context).bgColor,
+    appBar: AppBar(
+      title: Text('$botName的日记'),
+      backgroundColor: TideTheme.of(context).bgColor,
+    ),
+    body: DiaryCalendarWidget(botId: botId, botName: botName),
+  );
 }
 
 class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
@@ -75,104 +82,115 @@ class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
     final first = DateTime(_month.year, _month.month, 1);
     final days = DateTime(_month.year, _month.month + 1, 0).day;
     final leading = (first.weekday - 1) % 7;
-    return Scaffold(
-      backgroundColor: theme.bgColor,
-      appBar: AppBar(
-        title: Text('${widget.botName}的日记'),
-        backgroundColor: theme.bgColor,
-        actions: [
-          IconButton(
-            tooltip: '回到本月',
-            icon: const Icon(Icons.today_rounded),
-            onPressed: () => setState(() =>
-                _month = DateTime(DateTime.now().year, DateTime.now().month)),
-          ),
-        ],
-      ),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: theme.primary))
-          : Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                          onPressed: () => setState(() =>
-                              _month = DateTime(_month.year, _month.month - 1)),
-                          icon: const Icon(Icons.chevron_left_rounded)),
-                      Text('${_month.year}年${_month.month}月',
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: theme.textStrong)),
-                      IconButton(
-                          onPressed: () => setState(() =>
-                              _month = DateTime(_month.year, _month.month + 1)),
-                          icon: const Icon(Icons.chevron_right_rounded)),
-                    ],
+    return _loading
+        ? Center(child: CircularProgressIndicator(color: theme.primary))
+        : Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      onPressed: () => setState(
+                        () => _month = DateTime(_month.year, _month.month - 1),
+                      ),
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    Text(
+                      '${_month.year}年${_month.month}月',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: theme.textStrong,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(
+                        () => _month = DateTime(_month.year, _month.month + 1),
+                      ),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: ['一', '二', '三', '四', '五', '六', '日']
+                      .map(
+                        (label) => Expanded(
+                          child: Center(
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                color: theme.textFaint,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 8),
+                GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: leading + days,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 4,
                   ),
-                  Row(
-                      children: ['一', '二', '三', '四', '五', '六', '日']
-                          .map((label) => Expanded(
-                              child: Center(
-                                  child: Text(label,
-                                      style: TextStyle(
-                                          color: theme.textFaint,
-                                          fontFamily: 'TideFont')))))
-                          .toList()),
-                  const SizedBox(height: 8),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    itemCount: leading + days,
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 7,
-                            mainAxisSpacing: 8,
-                            crossAxisSpacing: 4),
-                    itemBuilder: (_, index) {
-                      if (index < leading) return const SizedBox.shrink();
-                      final day = index - leading + 1;
-                      final date = DateTime(_month.year, _month.month, day);
-                      final hasDiary = _dates.contains(_key(date));
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: hasDiary ? () => _open(date) : null,
-                        child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('$day',
-                                  style: TextStyle(
-                                      color: hasDiary
-                                          ? theme.textStrong
-                                          : theme.textFaint,
-                                      fontWeight: hasDiary
-                                          ? FontWeight.w700
-                                          : FontWeight.w400)),
-                              const SizedBox(height: 4),
-                              Container(
-                                  width: 5,
-                                  height: 5,
-                                  decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: hasDiary
-                                          ? theme.primary
-                                          : Colors.transparent)),
-                            ]),
-                      );
-                    },
+                  itemBuilder: (_, index) {
+                    if (index < leading) return const SizedBox.shrink();
+                    final day = index - leading + 1;
+                    final date = DateTime(_month.year, _month.month, day);
+                    final hasDiary = _dates.contains(_key(date));
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: hasDiary ? () => _open(date) : null,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '$day',
+                            style: TextStyle(
+                              color: hasDiary
+                                  ? theme.textStrong
+                                  : theme.textFaint,
+                              fontWeight: hasDiary
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: hasDiary
+                                  ? theme.primary
+                                  : Colors.transparent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 20),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '点击有标记的日期查看全文',
+                    style: TextStyle(
+                      color: theme.textFaint,
+                      fontFamily: 'TideFont',
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('点击有标记的日期查看全文',
-                          style: TextStyle(
-                              color: theme.textFaint, fontFamily: 'TideFont'))),
-                ],
-              ),
+                ),
+              ],
             ),
-    );
+          );
   }
 }
 
@@ -181,12 +199,13 @@ class DiaryDetailPage extends StatelessWidget {
   final String botName;
   final String dateKey;
   final String content;
-  const DiaryDetailPage(
-      {super.key,
-      required this.botId,
-      required this.botName,
-      required this.dateKey,
-      required this.content});
+  const DiaryDetailPage({
+    super.key,
+    required this.botId,
+    required this.botName,
+    required this.dateKey,
+    required this.content,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -207,11 +226,13 @@ class DiaryDetailPage extends StatelessWidget {
                   title: const Text('删除这篇日记？'),
                   actions: [
                     TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('取消')),
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('取消'),
+                    ),
                     TextButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('删除')),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('删除'),
+                    ),
                   ],
                 ),
               );
@@ -224,24 +245,33 @@ class DiaryDetailPage extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-          child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(dateKey,
-                        style: TextStyle(
-                            color: theme.primary,
-                            fontWeight: FontWeight.w700,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 20),
-                    Text(content,
-                        style: TextStyle(
-                            color: theme.textStrong,
-                            fontSize: 17,
-                            height: 1.7,
-                            fontFamily: 'TideFont')),
-                  ]))),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                dateKey,
+                style: TextStyle(
+                  color: theme.primary,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                content,
+                style: TextStyle(
+                  color: theme.textStrong,
+                  fontSize: 17,
+                  height: 1.7,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -374,7 +374,6 @@ class AIManager {
     }
 
     final longMemoryContext = memoryLines(longMemories, 1200);
-    const mediumMemoryContext = '';
     final shortMemoryContext = memoryLines(shortMemories, 600);
     final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
     final stickerEmotions =
@@ -405,9 +404,6 @@ class AIManager {
             ? ''
             : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
         toolContext +
-        (mediumMemoryContext.isEmpty
-            ? ''
-            : '\n【中期记忆：重要事件，仅在相关时参考】\n$mediumMemoryContext') +
         (shortMemoryContext.isEmpty
             ? ''
             : '\n【短期记忆：近期详细事件，仅在相关时参考】\n$shortMemoryContext');
@@ -699,13 +695,8 @@ class AIManager {
         }
         // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
         String mood = _extractMood(replyText);
-        // 先抽取模型主动要求记住的信息，再剥离可见文本，避免把它们留在气泡里。
-        await _persistModelMemories(
-          db,
-          bot['name']?.toString() ?? 'TideBot',
-          bot['id']?.toString() ?? botId,
-          replyText,
-        );
+        // Normal replies must not use the legacy [记忆:...] text protocol.
+        // Context rollover below retains its dedicated extraction path.
         final rawReply = replyText;
         final stickerRawTag = _stickerTag(rawReply);
         final stickerEmotion = _extractStickerEmotion(
@@ -713,10 +704,7 @@ class AIManager {
           stickerEmotions,
         );
         if (stickerRawTag == null) {
-          AppLogService.instance.add(
-            'STICKER',
-            '模型未输出表情包标签；本轮不发送表情包',
-          );
+          AppLogService.instance.add('STICKER', '模型未输出表情包标签；本轮不发送表情包');
         } else if (stickerEmotion == null) {
           AppLogService.instance.add(
             'STICKER',
@@ -2328,6 +2316,7 @@ $transcript''';
     if ((await db.getKV('adaptive_silence_enabled')) != 'false') {
       tools.add(_adaptiveSilenceToolSchema());
     }
+    tools.add(_memoryToolSchema());
     tools.add(_diaryToolSchema());
     // Sticker selection uses an internal text marker, not a callable model tool.
     return tools;
@@ -2346,6 +2335,28 @@ $transcript''';
           },
         },
       };
+  Map<String, dynamic> _memoryToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'save_memory',
+          'description':
+              '当用户明确要求记住某事，或本轮出现未来对话确实有价值的稳定事实或重要事件时调用。仅在信息已经明确发生或由用户明确确认时保存；不得猜测、编造或保存敏感隐私。只有工具返回 ok:true 后，才能对用户说已记住。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'content': {'type': 'string', 'description': '简洁、具体、可复用的记忆内容'},
+              'type': {
+                'type': 'string',
+                'enum': ['long', 'short'],
+                'description': 'long 用于稳定画像或偏好；short 用于重要近期事件',
+              },
+            },
+            'required': ['content', 'type'],
+            'additionalProperties': false,
+          },
+        },
+      };
+
   Map<String, dynamic> _diaryToolSchema() => {
         'type': 'function',
         'function': {
@@ -2367,7 +2378,7 @@ $transcript''';
         'function': {
           'name': 'generate_image',
           'description':
-              '当用户明确需要照片、图片、插画、绘制或创作视觉内容时必须调用；在你判断图片能明显帮助当前回答时也可以调用。',
+              '当用户明确需要照片、图片、插画、绘制或创作视觉内容时必须调用；在你判断图片能明显帮助当前回答时也可以调用。生成提示词必须先结合画面地点、时间、天气、活动、姿势与镜头范围选择合理穿搭，只保留当前画面可见且需要的服装细节；不得机械照搬完整日常穿搭。床上、居家、睡前、洗漱等场景优先自然的睡衣、居家服、袜子或赤足状态，不得无故写鞋或白天正装；被被子遮挡、坐姿或半身镜头时不要补写不可见的下半身穿搭。',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -2402,6 +2413,37 @@ $transcript''';
       return {
         'result': {'ok': true, 'silent': true},
       };
+    }
+    if (name == 'save_memory') {
+      var content = args['content']?.toString().trim() ?? '';
+      final type = args['type']?.toString() == 'long' ? 'long' : 'short';
+      if (content.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '缺少记忆内容'},
+        };
+      }
+      if (type == 'long') content = _cleanLongMemoryText(content);
+      content = _stripLooseWo(content).trim();
+      if (content.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '记忆内容无效'},
+        };
+      }
+      try {
+        await db.upsertMemoryItem(botId: botId, type: type, content: content);
+        AppLogService.instance.add(
+          'MEMORY',
+          '机器人通过 save_memory 工具写入$type 记忆：${content.length} 字',
+        );
+        return {
+          'result': {'ok': true, 'message': '记忆已写入本地数据库。'},
+        };
+      } catch (error) {
+        AppLogService.instance.add('MEMORY', 'save_memory 写入失败：$error');
+        return {
+          'result': {'ok': false, 'error': '本地记忆写入失败：$error'},
+        };
+      }
     }
     if (name == 'write_diary') {
       final entry = args['entry']?.toString().trim() ?? '';
@@ -2443,7 +2485,8 @@ $transcript''';
       final life = await LifeScheduleService.instance.ensureToday(botId);
       final outfit = life?['outfit']?.toString().trim() ?? '';
       if (outfit.isNotEmpty) {
-        prompt = '$prompt。人物穿搭必须严格遵循：$outfit';
+        prompt =
+            '$prompt。角色当前的日常穿搭参考为：$outfit。请严格按画面场景、活动、姿势和镜头范围选择其中合理且可见的部分；室内休息、床上、睡前或被遮挡时不要强行写完整穿搭、鞋或白天正装。';
       }
       final path = prompt.isEmpty
           ? null
