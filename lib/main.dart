@@ -516,25 +516,21 @@ final FlowProvider flowProvider = FlowProvider();
 class FlowGlassBg extends StatelessWidget {
   final Widget child;
   const FlowGlassBg({super.key, required this.child});
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
+    if (!theme.hasGlobalBackground) return child;
     return Stack(
+      fit: StackFit.expand,
       children: [
-        ColoredBox(color: theme.bgColor),
-        if (theme.hasGlobalBackground)
-          Positioned.fill(
-            child: Image.file(File(theme.chatBg), fit: BoxFit.cover),
+        Image.file(File(theme.globalBackground), fit: BoxFit.cover),
+        IgnorePointer(
+          child: ColoredBox(
+            color:
+                Colors.black.withValues(alpha: theme.globalBackgroundOpacity),
           ),
-        if (theme.hasGlobalBackground)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: ColoredBox(
-                color: (theme.isDark ? const Color(0xFF081012) : Colors.white)
-                    .withValues(alpha: theme.backgroundOpacity),
-              ),
-            ),
-          ),
+        ),
         child,
       ],
     );
@@ -1017,122 +1013,145 @@ class _JellyDockState extends State<JellyDock>
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: TideLiquidGlass(
-        radius: 28,
-        kind: TideLiquidGlassKind.dock,
-        child: SizedBox(
-          height: TideDockMetrics.height,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: LayoutBuilder(
-              builder: (ctx, cs) {
-                final totalW = cs.maxWidth;
-                final slotW = totalW / 4;
-                return Stack(
-                  children: [
-                    AnimatedBuilder(
-                      animation: Listenable.merge([_pos, _w, _scale]),
-                      builder: (c, child) {
-                        final pillX =
-                            _pos.value * totalW + (slotW - _w.value) / 2;
-                        return Positioned(
-                          left: pillX,
-                          top: isDark && _lifting ? 0 : 2,
-                          child: IgnorePointer(
-                            child: Transform.scale(
-                              scale: _scale.value *
-                                  (isDark && _lifting ? 1.08 : 1.0),
-                              alignment: Alignment.center,
-                              child: Container(
-                                width: _w.value,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: theme.primary.withValues(
-                                    alpha: isDark
-                                        ? (_lifting ? 0.42 : 0.28)
-                                        : 0.18,
+    final dock = Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.hasGlobalBackground
+            ? Colors.transparent
+            : (isDark
+                ? const Color(0xB9172A31)
+                : Colors.white.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(28),
+        border: theme.hasGlobalBackground
+            ? null
+            : Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.white.withValues(alpha: 0.25),
+                width: 0.5,
+              ),
+        boxShadow: theme.hasGlobalBackground
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+      ),
+      child: LayoutBuilder(
+        builder: (ctx, cs) {
+          final totalW = cs.maxWidth;
+          final slotW = totalW / 4;
+          return Stack(
+            children: [
+              AnimatedBuilder(
+                animation: Listenable.merge([_pos, _w, _scale]),
+                builder: (c, child) {
+                  final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
+                  final pill = Container(
+                    width: _w.value,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: theme.hasGlobalBackground
+                          ? Colors.white.withValues(alpha: 0.16)
+                          : theme.primary.withValues(
+                              alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
+                            ),
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: theme.hasGlobalBackground
+                          ? null
+                          : (isDark
+                              ? [
+                                  BoxShadow(
+                                    color: theme.primary.withValues(
+                                      alpha: _lifting ? 0.42 : 0.20,
+                                    ),
+                                    blurRadius: _lifting ? 18 : 10,
+                                    spreadRadius: _lifting ? 1 : 0,
+                                    offset: const Offset(0, -2),
                                   ),
-                                  borderRadius: BorderRadius.circular(22),
-                                  boxShadow: isDark
-                                      ? [
-                                          BoxShadow(
-                                            color: theme.primary.withValues(
-                                              alpha: _lifting ? 0.42 : 0.20,
-                                            ),
-                                            blurRadius: _lifting ? 18 : 10,
-                                            spreadRadius: _lifting ? 1 : 0,
-                                            offset: const Offset(0, -2),
-                                          ),
-                                        ]
-                                      : null,
+                                ]
+                              : null),
+                    ),
+                  );
+                  final selectedPill = theme.hasGlobalBackground
+                      ? TideLiquidGlass(radius: 22, child: pill)
+                      : pill;
+                  return Positioned(
+                    left: pillX,
+                    top: isDark && _lifting ? 0 : 2,
+                    child: Transform.scale(
+                      scale: _scale.value * (isDark && _lifting ? 1.08 : 1.0),
+                      alignment: Alignment.center,
+                      child: selectedPill,
+                    ),
+                  );
+                },
+              ),
+              Row(
+                children: List.generate(4, (i) {
+                  final act = widget.currentIndex == i;
+                  return Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) => TideHaptics.tap(),
+                      onLongPressStart: isDark
+                          ? (_) => setState(() => _lifting = true)
+                          : null,
+                      onLongPressEnd: isDark
+                          ? (_) => setState(() => _lifting = false)
+                          : null,
+                      onLongPressCancel: isDark
+                          ? () => setState(() => _lifting = false)
+                          : null,
+                      onTap: () => widget.onTap(i),
+                      child: Center(
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Icon(
+                              _icons[i],
+                              color:
+                                  act ? theme.primary : const Color(0xFFAEAEB2),
+                              size: 22,
+                            ),
+                            if (i == 0 && widget.unreadCount > 0)
+                              Positioned(
+                                right: -5,
+                                top: -5,
+                                child: Container(
+                                  width: 9,
+                                  height: 9,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFF3B30),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: theme.surface,
+                                      width: 1.5,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
+                          ],
+                        ),
+                      ),
                     ),
-                    Row(
-                      children: List.generate(4, (i) {
-                        final act = widget.currentIndex == i;
-                        return Expanded(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTapDown: (_) => TideHaptics.tap(),
-                            onLongPressStart: isDark
-                                ? (_) => setState(() => _lifting = true)
-                                : null,
-                            onLongPressEnd: isDark
-                                ? (_) => setState(() => _lifting = false)
-                                : null,
-                            onLongPressCancel: isDark
-                                ? () => setState(() => _lifting = false)
-                                : null,
-                            onTap: () => widget.onTap(i),
-                            child: Center(
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  Icon(
-                                    _icons[i],
-                                    color: act
-                                        ? theme.primary
-                                        : const Color(0xFFAEAEB2),
-                                    size: 22,
-                                  ),
-                                  if (i == 0 && widget.unreadCount > 0)
-                                    Positioned(
-                                      right: -5,
-                                      top: -5,
-                                      child: Container(
-                                        width: 9,
-                                        height: 9,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFF3B30),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: theme.surface,
-                                            width: 1.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
+                  );
+                }),
+              ),
+            ],
+          );
+        },
       ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: theme.hasGlobalBackground
+          ? TideLiquidGlass(radius: 28, child: dock)
+          : dock,
     );
   }
 }
@@ -1289,105 +1308,107 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      extendBody: true,
-      body: Stack(
-        children: [
-          IndexedStack(index: _idx, children: _pages),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: bottomPadding + TideDockMetrics.bottomGap,
-            child: JellyDock(
-              currentIndex: _idx,
-              unreadCount: _unreadCount,
-              onTap: _onDockTap,
-            ),
-          ),
-          // 聊天列表创建机器人悬浮球
-          if (_idx == 0)
+    return FlowGlassBg(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        extendBody: true,
+        body: Stack(
+          children: [
+            IndexedStack(index: _idx, children: _pages),
             Positioned(
-              right: 20,
-              bottom: TideDockMetrics.fabBottom(context),
-              child: BouncyTap(
-                onTap: () async {
-                  final r = await Navigator.push(
-                    context,
-                    PageRouteBuilder(
-                      pageBuilder: (c, a, s) => const CreateBotPage(),
-                      transitionsBuilder: (c, a, s, child) => SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, 0.3),
-                          end: Offset.zero,
-                        ).animate(
-                          CurvedAnimation(
-                            parent: a,
-                            curve: Curves.easeOutCubic,
+              left: 0,
+              right: 0,
+              bottom: bottomPadding + 24,
+              child: JellyDock(
+                currentIndex: _idx,
+                unreadCount: _unreadCount,
+                onTap: _onDockTap,
+              ),
+            ),
+            // 聊天列表创建机器人悬浮球
+            if (_idx == 0)
+              Positioned(
+                right: 20,
+                bottom: bottomPadding + 76,
+                child: BouncyTap(
+                  onTap: () async {
+                    final r = await Navigator.push(
+                      context,
+                      PageRouteBuilder(
+                        pageBuilder: (c, a, s) => const CreateBotPage(),
+                        transitionsBuilder: (c, a, s, child) => SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.3),
+                            end: Offset.zero,
+                          ).animate(
+                            CurvedAnimation(
+                              parent: a,
+                              curve: Curves.easeOutCubic,
+                            ),
                           ),
+                          child: FadeTransition(opacity: a, child: child),
                         ),
-                        child: FadeTransition(opacity: a, child: child),
                       ),
-                    ),
-                  );
-                  if (r == true) _chatListKey.currentState?.load();
-                },
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [theme.primary, theme.primaryLight],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: theme.primary.withValues(alpha: 0.35),
-                        blurRadius: 14,
-                        offset: const Offset(0, 4),
+                    );
+                    if (r == true) _chatListKey.currentState?.load();
+                  },
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [theme.primary, theme.primaryLight],
                       ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.add_rounded,
-                    color: Colors.white,
-                    size: 26,
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.primary.withValues(alpha: 0.35),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                 ),
               ),
-            ),
-          // 广场发布悬浮球
-          if (_idx == 2)
-            Positioned(
-              right: 20,
-              bottom: TideDockMetrics.fabBottom(context),
-              child: BouncyTap(
-                onTap: () => _squareKey.currentState?.publishFeed(),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [theme.primary, theme.primaryLight],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: theme.primary.withValues(alpha: 0.35),
-                        blurRadius: 14,
-                        offset: const Offset(0, 4),
+            // 广场发布悬浮球
+            if (_idx == 2)
+              Positioned(
+                right: 20,
+                bottom: bottomPadding + 76,
+                child: BouncyTap(
+                  onTap: () => _squareKey.currentState?.publishFeed(),
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [theme.primary, theme.primaryLight],
                       ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.add_rounded,
-                    color: Colors.white,
-                    size: 26,
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.primary.withValues(alpha: 0.35),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

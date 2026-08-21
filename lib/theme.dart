@@ -11,17 +11,16 @@ class TideTheme extends ChangeNotifier {
   bool _manualMode = false;
   Color _primary = const Color(0xFF5FAF8A);
   Color _primaryLight = const Color(0xFF9CD4BC);
-  String _chatBg = ''; // 全局聊天背景图路径（自定义，可为空）
-  double _backgroundOpacity = 0.48;
-
+  String _globalBackground = '';
+  double _globalBackgroundOpacity = 0.38;
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
   String get name => _name;
   ThemeMode get mode => _mode;
   bool get hasManualMode => _manualMode;
-  String get chatBg => _chatBg;
-  double get backgroundOpacity => _backgroundOpacity;
-  bool get hasGlobalBackground => _chatBg.isNotEmpty;
+  String get globalBackground => _globalBackground;
+  double get globalBackgroundOpacity => _globalBackgroundOpacity;
+  bool get hasGlobalBackground => _globalBackground.isNotEmpty;
 
   bool get isDark {
     final brightness =
@@ -33,8 +32,9 @@ class TideTheme extends ChangeNotifier {
   LinearGradient get primaryGradient =>
       LinearGradient(colors: [_primary, _primaryLight]);
   // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
-  Color get bgColor =>
-      isDark ? const Color(0xFF101619) : const Color(0xFFF3F5FA);
+  Color get bgColor => hasGlobalBackground
+      ? Colors.transparent
+      : (isDark ? const Color(0xFF101619) : const Color(0xFFF3F5FA));
   // Night surfaces use a blue-green charcoal rather than neutral gray.
   Color get surface =>
       isDark ? const Color(0xFF182126) : const Color(0xFFFFFFFF);
@@ -154,18 +154,20 @@ class TideTheme extends ChangeNotifier {
         _manualMode = true;
       }
     }
-    // 读取全局聊天背景
-    final bg = await DBManager().getKV('chat_bg_global');
-    if (bg != null && bg.isNotEmpty && File(bg).existsSync()) {
-      _chatBg = bg;
-    } else if (bg != null && bg.isNotEmpty) {
-      await DBManager().insertKV('chat_bg_global', '');
+    // 读取全局背景图。它与每个机器人各自的聊天背景完全独立。
+    final globalBackground = await DBManager().getKV('global_background_image');
+    if (globalBackground != null &&
+        globalBackground.isNotEmpty &&
+        File(globalBackground).existsSync()) {
+      _globalBackground = globalBackground;
+    } else if (globalBackground != null && globalBackground.isNotEmpty) {
+      await DBManager().insertKV('global_background_image', '');
     }
-    _backgroundOpacity = (double.tryParse(
+    _globalBackgroundOpacity = (double.tryParse(
               await DBManager().getKV('global_background_opacity') ?? '',
             ) ??
-            _backgroundOpacity)
-        .clamp(0.20, 0.82);
+            _globalBackgroundOpacity)
+        .clamp(0.18, 0.70);
     notifyListeners();
   }
 
@@ -215,29 +217,32 @@ class TideTheme extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setChatBg(String path, {double? opacity}) async {
-    _chatBg = path;
-    if (opacity != null) _backgroundOpacity = opacity.clamp(0.20, 0.82);
-    await DBManager().insertKV('chat_bg_global', path);
+  Future<void> setGlobalBackground(
+    String path, {
+    double? opacity,
+  }) async {
+    _globalBackground = path;
+    if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
+    await DBManager().insertKV('global_background_image', path);
     await DBManager().insertKV(
       'global_background_opacity',
-      _backgroundOpacity.toStringAsFixed(2),
+      _globalBackgroundOpacity.toStringAsFixed(2),
     );
     notifyListeners();
   }
 
-  /// Restores the shipped mint palette, system appearance and default background.
+  /// Restores the shipped mint palette and system appearance.
   Future<void> restoreDefaults() async {
     _name = 'mint';
     _mode = ThemeMode.system;
     _manualMode = false;
-    _chatBg = '';
-    _backgroundOpacity = 0.48;
+    _globalBackground = '';
+    _globalBackgroundOpacity = 0.38;
     _applyColors();
     await DBManager().insertKV('theme_color', _name);
     await DBManager().insertKV('theme_mode', 'system');
-    await DBManager().insertKV('chat_bg_global', '');
-    await DBManager().insertKV('global_background_opacity', '0.48');
+    await DBManager().insertKV('global_background_image', '');
+    await DBManager().insertKV('global_background_opacity', '0.38');
     notifyListeners();
   }
 

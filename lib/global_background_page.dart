@@ -16,42 +16,37 @@ class GlobalBackgroundPage extends StatefulWidget {
 }
 
 class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
-  bool _initialized = false;
   late String _path;
   late double _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-  }
+  bool _ready = false;
 
   Future<void> _pick() async {
     if (!await AppPermissions.photos(context, feature: '设置全局背景图')) return;
-    final selected = await ImagePicker().pickImage(
+    final image = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       maxWidth: 1800,
       imageQuality: 90,
     );
-    if (selected == null) return;
-    final directory = await getApplicationDocumentsDirectory();
-    final targetDir = Directory('${directory.path}/global_backgrounds');
-    await targetDir.create(recursive: true);
-    final extension = selected.path.split('.').last;
-    final target = File(
-      '${targetDir.path}/background_${DateTime.now().millisecondsSinceEpoch}.$extension',
+    if (image == null) return;
+    final documents = await getApplicationDocumentsDirectory();
+    final directory = Directory('${documents.path}/global_backgrounds');
+    await directory.create(recursive: true);
+    final extension = image.path.split('.').last;
+    final file = File(
+      '${directory.path}/background_${DateTime.now().millisecondsSinceEpoch}.$extension',
     );
-    await File(selected.path).copy(target.path);
-    if (mounted) setState(() => _path = target.path);
+    await File(image.path).copy(file.path);
+    if (mounted) setState(() => _path = file.path);
   }
 
   Future<void> _save(TideTheme theme) async {
-    final previous = theme.chatBg;
-    await theme.setChatBg(_path, opacity: _opacity);
-    if (previous.isNotEmpty &&
-        previous != _path &&
-        previous.contains('/global_backgrounds/')) {
-      final old = File(previous);
-      if (await old.exists()) await old.delete();
+    final old = theme.globalBackground;
+    await theme.setGlobalBackground(_path, opacity: _opacity);
+    if (old.isNotEmpty &&
+        old != _path &&
+        old.contains('/global_backgrounds/')) {
+      final file = File(old);
+      if (await file.exists()) await file.delete();
     }
     if (mounted) Navigator.pop(context);
   }
@@ -59,147 +54,109 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    if (!_initialized) {
-      _initialized = true;
-      _path = theme.chatBg;
-      _opacity = theme.backgroundOpacity;
+    if (!_ready) {
+      _ready = true;
+      _path = theme.globalBackground;
+      _opacity = theme.globalBackgroundOpacity;
     }
+    final preview = Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_path.isNotEmpty && File(_path).existsSync())
+          Image.file(File(_path), fit: BoxFit.cover)
+        else
+          ColoredBox(color: theme.surfaceVariant),
+        ColoredBox(color: Colors.black.withValues(alpha: _opacity)),
+        const _PreviewSurface(),
+      ],
+    );
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: const Text('全局背景图', style: TextStyle(fontFamily: 'TideFont')),
+        title: const Text('全局背景图'),
         actions: [
-          TextButton(
+          IconButton(
+            tooltip: '保存',
             onPressed: () => _save(theme),
-            child: Text('保存',
-                style: TextStyle(color: theme.primary, fontFamily: 'TideFont')),
+            icon: const Icon(Icons.check_rounded),
           ),
         ],
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-          children: [
-            AspectRatio(
-              aspectRatio: 0.68,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ColoredBox(color: theme.bgColor),
-                    if (_path.isNotEmpty && File(_path).existsSync())
-                      Image.file(File(_path), fit: BoxFit.cover),
-                    ColoredBox(
-                      color: (theme.isDark
-                              ? const Color(0xFF081012)
-                              : Colors.white)
-                          .withValues(alpha: _opacity),
-                    ),
-                    const _ChatPreview(),
-                  ],
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+        children: [
+          AspectRatio(
+            aspectRatio: .68,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: preview,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TideLiquidGlass(
+            radius: 16,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.image_outlined),
+                  title: Text(_path.isEmpty ? '选择图片' : '替换图片'),
+                  onTap: _pick,
                 ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            TideLiquidGlass(
-              child: Column(
-                children: [
+                if (_path.isNotEmpty)
                   ListTile(
-                    leading: const Icon(Icons.image_rounded),
-                    title: Text(_path.isEmpty ? '选择背景图' : '替换背景图'),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _pick,
+                    leading: const Icon(Icons.delete_outline_rounded),
+                    title: const Text('清除全局背景图'),
+                    onTap: () => setState(() => _path = ''),
                   ),
-                  if (_path.isNotEmpty)
-                    ListTile(
-                      leading: const Icon(Icons.delete_outline_rounded),
-                      title: const Text('清除背景图'),
-                      onTap: () => setState(() => _path = ''),
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.opacity_rounded, size: 20),
-                        Expanded(
-                          child: Slider(
-                            value: _opacity,
-                            min: 0.20,
-                            max: 0.82,
-                            onChanged: (value) =>
-                                setState(() => _opacity = value),
-                          ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.contrast_rounded, size: 20),
+                      Expanded(
+                        child: Slider(
+                          value: _opacity,
+                          min: .18,
+                          max: .70,
+                          onChanged: (value) =>
+                              setState(() => _opacity = value),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ChatPreview extends StatelessWidget {
-  const _ChatPreview();
+class _PreviewSurface extends StatelessWidget {
+  const _PreviewSurface();
 
   @override
-  Widget build(BuildContext context) {
-    final theme = TideTheme.of(context);
-    return Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        children: [
-          const TideLiquidGlass(
-            radius: 16,
-            child: ListTile(
-              dense: true,
-              leading: CircleAvatar(child: Icon(Icons.smart_toy_rounded)),
-              title: Text('TideBot', style: TextStyle(fontFamily: 'TideFont')),
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.all(14),
+        child: Column(
+          children: [
+            TideLiquidGlass(
+              radius: 20,
+              child: SizedBox(height: 52, child: Center(child: Text('页面与弹窗'))),
             ),
-          ),
-          const Spacer(),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: TideLiquidGlass(
-              radius: 16,
-              child: Padding(
-                padding: EdgeInsets.all(12),
-                child:
-                    Text('今天过得怎么样？', style: TextStyle(fontFamily: 'TideFont')),
-              ),
+            Spacer(),
+            TideLiquidGlass(
+              radius: 18,
+              child: SizedBox(height: 96, width: double.infinity),
             ),
-          ),
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerRight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                  color: theme.primary,
-                  borderRadius: BorderRadius.circular(16)),
-              child: const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text('还不错。',
-                    style:
-                        TextStyle(color: Colors.white, fontFamily: 'TideFont')),
-              ),
+            Spacer(),
+            TideLiquidGlass(
+              radius: 28,
+              child: SizedBox(height: 56, width: double.infinity),
             ),
-          ),
-          const Spacer(),
-          const TideLiquidGlass(
-            radius: 18,
-            child: SizedBox(
-                height: 44,
-                child: Center(
-                    child:
-                        Text('发消息', style: TextStyle(fontFamily: 'TideFont')))),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
 }

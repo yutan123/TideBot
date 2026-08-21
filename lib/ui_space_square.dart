@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'tide_liquid_glass.dart';
 import 'dart:io';
 import 'dart:math';
 import 'package:image_picker/image_picker.dart';
@@ -297,12 +296,7 @@ class _SpacePageState extends State<SpacePage> {
             ? Center(child: CircularProgressIndicator(color: theme.primary))
             : SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  12,
-                  16,
-                  TideDockMetrics.contentBottomInset(context),
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

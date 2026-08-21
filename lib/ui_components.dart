@@ -299,26 +299,30 @@ class TideDialogs {
       {required BuildContext context,
       required List<Widget> children,
       double maxWidth = 0.92}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          width: MediaQuery.of(context).size.width * maxWidth,
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-              color: TideTheme.of(context).surface.withValues(alpha: 0.94),
-              borderRadius: BorderRadius.circular(22),
-              border:
-                  Border.all(color: TideTheme.of(context).border, width: 0.5)),
-          child: SingleChildScrollView(
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: children)),
+    final theme = TideTheme.of(context);
+    final content = Container(
+      width: MediaQuery.of(context).size.width * maxWidth,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: theme.hasGlobalBackground
+            ? Colors.transparent
+            : theme.surface.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(22),
+        border: theme.hasGlobalBackground
+            ? null
+            : Border.all(color: theme.border, width: 0.5),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
         ),
       ),
     );
+    return TideTheme.of(context).hasGlobalBackground
+        ? TideLiquidGlass(radius: 22, child: content)
+        : content;
   }
 
   static Widget glassButton(String label,
@@ -370,34 +374,44 @@ Future<T?> showTideSheet<T>(
           color: Colors.transparent,
           alignment: Alignment.bottomCenter,
           child: GestureDetector(
-              onTap: () {},
-              child: ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                  child: Container(
-                    height: effectiveHeight,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                        color: TideTheme.of(context)
-                            .surface
-                            .withValues(alpha: 0.96),
-                        borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(24))),
-                    child: Column(children: [
+            onTap: () {},
+            child: Builder(
+              builder: (sheetContext) {
+                final theme = TideTheme.of(sheetContext);
+                final sheet = Container(
+                  height: effectiveHeight,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: theme.hasGlobalBackground
+                        ? Colors.transparent
+                        : theme.surface.withValues(alpha: 0.96),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
                       const SizedBox(height: 8),
                       Container(
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                              color: Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(2))),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: theme.hasGlobalBackground
+                              ? Colors.white.withValues(alpha: 0.55)
+                              : Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                       Expanded(child: child),
-                    ]),
+                    ],
                   ),
-                ),
-              )),
+                );
+                return theme.hasGlobalBackground
+                    ? TideLiquidGlass(radius: 24, child: sheet)
+                    : sheet;
+              },
+            ),
+          ),
         ),
       );
     },
@@ -528,11 +542,25 @@ class GlassCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: TideLiquidGlass(
-        radius: radius,
-        padding: padding,
-        child: child,
-      ),
+      child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+            child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                    color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(radius),
+                    border: Border.all(
+                        color: TideTheme.of(context).border, width: 0.5),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.03),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2))
+                    ]),
+                child: child),
+          )),
     );
   }
 }
@@ -559,10 +587,27 @@ class FrostCard extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         onLongPress: onLongPress,
-        child: TideLiquidGlass(
-          radius: radius,
-          padding: padding,
-          child: child,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(radius),
+                border:
+                    Border.all(color: TideTheme.of(context).border, width: 0.5),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3))
+                ],
+              ),
+              child: child,
+            ),
+          ),
         ),
       ),
     );

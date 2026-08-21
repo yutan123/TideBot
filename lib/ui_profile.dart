@@ -750,33 +750,6 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                BouncyTap(
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const GlobalBackgroundPage(),
-                      ),
-                    );
-                  },
-                  child: FrostCard(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(Icons.image_rounded, color: t.primary),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Text('全局背景图',
-                              style: TextStyle(fontFamily: 'TideFont')),
-                        ),
-                        const Icon(Icons.chevron_right_rounded),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
                 Expanded(
                   child: ListView(
                     children: options.map((item) {
@@ -858,10 +831,15 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // 背景设置入口：上传图片作为聊天背景
+                // 全局背景图入口。机器人聊天背景只在对应聊天页内设置。
                 BouncyTap(
-                  onTap: () {
-                    _pickChatBg();
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const GlobalBackgroundPage(),
+                      ),
+                    );
                   },
                   child: Container(
                     width: double.infinity,
@@ -880,14 +858,14 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          '聊天背景',
+                          '全局背景图',
                           style: TextStyle(
                             fontSize: 15,
                             color: TideTheme.of(ctx).primary,
                             fontFamily: 'TideFont',
                           ),
                         ),
-                        if (t.chatBg.isNotEmpty) ...[
+                        if (t.hasGlobalBackground) ...[
                           const SizedBox(width: 8),
                           const Icon(
                             Icons.check_circle,
@@ -906,38 +884,6 @@ class _ProfilePageState extends State<ProfilePage> {
         },
       ),
     );
-  }
-
-  // 选择聊天背景图片
-  Future<void> _pickChatBg() async {
-    final tide = TideTheme.of(context, listen: false);
-    try {
-      if (!await AppPermissions.photos(context, feature: '设置聊天背景')) return;
-      final picker = ImagePicker();
-      final img = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1600,
-      );
-      if (img != null) {
-        String path = img.path;
-        if (path.toLowerCase().endsWith('.heic') ||
-            path.toLowerCase().endsWith('.heif')) {
-          try {
-            final converted = await HeifConverter.convert(path);
-            if (converted != null) path = converted;
-          } catch (_) {}
-        }
-        final dir = await getApplicationDocumentsDirectory();
-        final dest =
-            '${dir.path}/chat_bg_${DateTime.now().millisecondsSinceEpoch}.png';
-        await File(path).copy(dest);
-        await tide.setChatBg(dest);
-        if (mounted) {
-          GlobalNotice.show('聊天背景已更新', color: const Color(0xFF34C759));
-          TideHaptics.confirm();
-        }
-      }
-    } catch (_) {}
   }
 
   void _showGeneralSettings() {

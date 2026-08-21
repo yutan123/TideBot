@@ -2064,9 +2064,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    // 背景优先级：单机器人自定义 > 全局主题背景 > 主题底色
-    final String? effBg =
-        _hasBg ? _customBg : (theme.chatBg.isNotEmpty ? theme.chatBg : null);
+    // 机器人专属聊天背景优先。未设置时保持透明，让根层全局背景图透出。
+    final String? effBg = _hasBg ? _customBg : null;
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
@@ -2076,51 +2075,54 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           Positioned.fill(
             child: effBg != null
                 ? Image.file(File(effBg), fit: BoxFit.cover)
-                : DecoratedBox(
-                    decoration: BoxDecoration(color: theme.bgColor),
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          left: -80,
-                          top: -60,
-                          child: IgnorePointer(
-                            child: Container(
-                              width: 240,
-                              height: 240,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    theme.primaryLight.withValues(alpha: 0.25),
-                                    Colors.transparent,
-                                  ],
+                : (theme.hasGlobalBackground
+                    ? const SizedBox.expand()
+                    : DecoratedBox(
+                        decoration: BoxDecoration(color: theme.bgColor),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              left: -80,
+                              top: -60,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 240,
+                                  height: 240,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: RadialGradient(
+                                      colors: [
+                                        theme.primaryLight
+                                            .withValues(alpha: 0.25),
+                                        Colors.transparent,
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                        Positioned(
-                          right: -60,
-                          bottom: 120,
-                          child: IgnorePointer(
-                            child: Container(
-                              width: 260,
-                              height: 260,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    theme.primary.withValues(alpha: 0.15),
-                                    Colors.transparent,
-                                  ],
+                            Positioned(
+                              right: -60,
+                              bottom: 120,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 260,
+                                  height: 260,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: RadialGradient(
+                                      colors: [
+                                        theme.primary.withValues(alpha: 0.15),
+                                        Colors.transparent,
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
+                      )),
           ),
           Column(
             children: [
