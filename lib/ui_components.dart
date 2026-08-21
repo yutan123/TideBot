@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
+import 'tide_liquid_glass.dart';
 
 // ========== 全局弹性点击包装器 ==========
 class TideHaptics {
@@ -527,25 +528,11 @@ class GlassCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-            child: Container(
-                padding: padding,
-                decoration: BoxDecoration(
-                    color: TideTheme.of(context).glass.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(radius),
-                    border: Border.all(
-                        color: TideTheme.of(context).border, width: 0.5),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.03),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2))
-                    ]),
-                child: child),
-          )),
+      child: TideLiquidGlass(
+        radius: radius,
+        padding: padding,
+        child: child,
+      ),
     );
   }
 }
@@ -572,27 +559,10 @@ class FrostCard extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         onLongPress: onLongPress,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                color: TideTheme.of(context).glass.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(radius),
-                border:
-                    Border.all(color: TideTheme.of(context).border, width: 0.5),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3))
-                ],
-              ),
-              child: child,
-            ),
-          ),
+        child: TideLiquidGlass(
+          radius: radius,
+          padding: padding,
+          child: child,
         ),
       ),
     );

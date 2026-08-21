@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'tide_liquid_glass.dart';
 import 'dart:io';
 import 'dart:math';
 import 'package:image_picker/image_picker.dart';
@@ -132,10 +133,10 @@ class _SpacePageState extends State<SpacePage> {
       _moodIcon = mood == '开心'
           ? 'smile'
           : mood == '伤心'
-          ? 'sad'
-          : mood == '生气'
-          ? 'angry'
-          : 'think';
+              ? 'sad'
+              : mood == '生气'
+                  ? 'angry'
+                  : 'think';
       _memories = mem;
       if (_diaryVisibleStart >= _memories.length) _diaryVisibleStart = 0;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
@@ -296,7 +297,12 @@ class _SpacePageState extends State<SpacePage> {
             ? Center(child: CircularProgressIndicator(color: theme.primary))
             : SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  TideDockMetrics.contentBottomInset(context),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -383,180 +389,184 @@ class _SpacePageState extends State<SpacePage> {
   }
 
   Widget _buildHeader(String time, String date, TideTheme theme) => Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            time,
-            style: TextStyle(
-              fontSize: 32,
-              fontWeight: FontWeight.w300,
-              fontFamily: 'TideFont',
-              color: theme.textStrong,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w300,
+                  fontFamily: 'TideFont',
+                  color: theme.textStrong,
+                ),
+              ),
+              Text(
+                date,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: theme.textWeak,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ],
           ),
-          Text(
-            date,
-            style: TextStyle(
-              fontSize: 14,
-              color: theme.textWeak,
-              fontFamily: 'TideFont',
-            ),
-          ),
-        ],
-      ),
-      if (_botId.isNotEmpty)
-        BouncyTap(
-          onTap: () async {
-            final db = DBManager();
-            final bots = await db.queryBots();
-            if (!mounted) return;
-            showTideSheet(
-              context: context,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 12),
-                  const Text(
-                    '切换机器人',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      fontFamily: 'TideFont',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ...bots.map(
-                    (b) => Column(
-                      children: [
-                        ListTile(
-                          title: Text(
-                            b['name'] ?? '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontFamily: 'TideFont'),
-                          ),
-                          trailing: _botId == b['id']
-                              ? Icon(
-                                  Icons.check_rounded,
-                                  color: TideTheme.of(context).primary,
-                                )
-                              : null,
-                          onTap: () async {
-                            final selectedId = b['id'] as String? ?? '';
-                            await db.setKV('space_selected_bot_id', selectedId);
-                            if (!mounted) return;
-                            setState(() {
-                              _botId = selectedId;
-                              _botName = b['name'] as String? ?? '';
-                            });
-                            Navigator.pop(context);
-                            _loadData();
-                          },
+          if (_botId.isNotEmpty)
+            BouncyTap(
+              onTap: () async {
+                final db = DBManager();
+                final bots = await db.queryBots();
+                if (!mounted) return;
+                showTideSheet(
+                  context: context,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 12),
+                      const Text(
+                        '切换机器人',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'TideFont',
                         ),
-                        const Divider(height: 1),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...bots.map(
+                        (b) => Column(
+                          children: [
+                            ListTile(
+                              title: Text(
+                                b['name'] ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontFamily: 'TideFont'),
+                              ),
+                              trailing: _botId == b['id']
+                                  ? Icon(
+                                      Icons.check_rounded,
+                                      color: TideTheme.of(context).primary,
+                                    )
+                                  : null,
+                              onTap: () async {
+                                final selectedId = b['id'] as String? ?? '';
+                                await db.setKV(
+                                    'space_selected_bot_id', selectedId);
+                                if (!mounted) return;
+                                setState(() {
+                                  _botId = selectedId;
+                                  _botName = b['name'] as String? ?? '';
+                                });
+                                Navigator.pop(context);
+                                _loadData();
+                              },
+                            ),
+                            const Divider(height: 1),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                );
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  color: theme.surface.withValues(
+                    alpha: theme.isDark ? 0.82 : 0.80,
+                  ),
+                  border: Border.all(color: theme.border),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _botName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'TideFont',
+                        color: theme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 18,
+                      color: theme.primary,
+                    ),
+                  ],
+                ),
               ),
-            );
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              color: theme.surface.withValues(
-                alpha: theme.isDark ? 0.82 : 0.80,
-              ),
-              border: Border.all(color: theme.border),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+        ],
+      );
+
+  Widget _buildQuoteCard(TideTheme theme) => FrostCard(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
+                Icon(Icons.format_quote_rounded,
+                    color: theme.primary, size: 20),
+                const SizedBox(width: 8),
                 Text(
-                  _botName,
+                  '今日一言',
                   style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                     fontFamily: 'TideFont',
                     color: theme.primary,
                   ),
                 ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  size: 18,
-                  color: theme.primary,
-                ),
               ],
             ),
-          ),
-        ),
-    ],
-  );
-
-  Widget _buildQuoteCard(TideTheme theme) => FrostCard(
-    padding: const EdgeInsets.all(20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.format_quote_rounded, color: theme.primary, size: 20),
-            const SizedBox(width: 8),
+            const SizedBox(height: 10),
             Text(
-              '今日一言',
+              _dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言',
               style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+                fontSize: 16,
                 fontFamily: 'TideFont',
-                color: theme.primary,
+                color:
+                    _dailyQuote.isNotEmpty ? theme.textStrong : theme.textFaint,
+                height: 1.5,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        Text(
-          _dailyQuote.isNotEmpty ? _dailyQuote : '点击刷新今日一言',
-          style: TextStyle(
-            fontSize: 16,
-            fontFamily: 'TideFont',
-            color: _dailyQuote.isNotEmpty ? theme.textStrong : theme.textFaint,
-            height: 1.5,
-          ),
-        ),
-      ],
-    ),
-  );
+      );
 
   Widget _buildDaysCard(TideTheme theme) => FrostCard(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      children: [
-        Text(
-          '$_daysSince',
-          style: TextStyle(
-            fontSize: 36,
-            fontWeight: FontWeight.w300,
-            fontFamily: 'TideFont',
-            color: theme.primary,
-          ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text(
+              '$_daysSince',
+              style: TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.w300,
+                fontFamily: 'TideFont',
+                color: theme.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              '相遇天数',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF8E8E93),
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        const Text(
-          '相遇天数',
-          style: TextStyle(
-            fontSize: 13,
-            color: Color(0xFF8E8E93),
-            fontFamily: 'TideFont',
-          ),
-        ),
-      ],
-    ),
-  );
+      );
   Widget _buildMoodCard(TideTheme theme) {
     final icon = _moodIcons[_moodIcon] ?? Icons.sentiment_satisfied_rounded;
     return FrostCard(
@@ -589,17 +599,17 @@ class _SpacePageState extends State<SpacePage> {
   }
 
   Widget _buildSectionTitle(String title) => Padding(
-    padding: const EdgeInsets.only(left: 4),
-    child: Text(
-      title,
-      style: TextStyle(
-        fontSize: 17,
-        fontWeight: FontWeight.w600,
-        fontFamily: 'TideFont',
-        color: TideTheme.of(context).textStrong,
-      ),
-    ),
-  );
+        padding: const EdgeInsets.only(left: 4),
+        child: Text(
+          title,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'TideFont',
+            color: TideTheme.of(context).textStrong,
+          ),
+        ),
+      );
 
   // 日程仅作为机器人内部生活状态，不在空间页直接展示。
 }
@@ -688,9 +698,9 @@ class SquarePageState extends State<SquarePage>
     final dayKey = '${day.year}-${day.month}-${day.day}';
     final perDay =
         (int.tryParse(await db.getKV('bot_posts_per_day') ?? '') ?? 1).clamp(
-          1,
-          10,
-        );
+      1,
+      10,
+    );
     final bots = await db.queryBots();
     for (final bot in bots) {
       final botId = bot['id']?.toString() ?? '';
@@ -737,8 +747,7 @@ class SquarePageState extends State<SquarePage>
         if (withImages &&
             Random('$dayKey:$botId:$index:image'.hashCode).nextInt(100) <
                 imageChance) {
-          imagePath =
-              await AIManager().generateImageForBot(
+          imagePath = await AIManager().generateImageForBot(
                 botId: botId,
                 prompt: '为这条机器人生活动态生成自然、真实的配图，不含文字：$content',
               ) ??
@@ -1318,8 +1327,7 @@ class SquarePageState extends State<SquarePage>
                           final wasLiked = f['favorited'] as bool;
                           setState(() {
                             f['favorited'] = !wasLiked;
-                            f['likes'] =
-                                (f['likes'] as int) +
+                            f['likes'] = (f['likes'] as int) +
                                 (f['favorited'] == true ? 1 : -1);
                           });
                           // 用户的点赞是真实互动事件，落库 feed_events。
@@ -1489,56 +1497,56 @@ class SquarePageState extends State<SquarePage>
   }
 
   Widget _buildGames(TideTheme theme) => GridView.builder(
-    key: const ValueKey('games'),
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-    physics: const BouncingScrollPhysics(),
-    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: 2,
-      crossAxisSpacing: 14,
-      mainAxisSpacing: 14,
-      // 仅四款游戏，使用更高的入口卡片以提升可点性与可读性。
-      childAspectRatio: 0.78,
-    ),
-    itemCount: _games.length,
-    itemBuilder: (ctx, i) {
-      final g = _games[i];
-      final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
-      return BouncyTap(
-        onTap: () => _startGame(g['name']?.toString() ?? ''),
-        child: FrostCard(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 52, color: theme.primary),
-              const SizedBox(height: 14),
-              Text(
-                g['name'] ?? '',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'TideFont',
-                  color: theme.textStrong,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                g['desc'] ?? '',
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFFC7C7CC),
-                  fontFamily: 'TideFont',
-                ),
-              ),
-            ],
-          ),
+        key: const ValueKey('games'),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+        physics: const BouncingScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 14,
+          mainAxisSpacing: 14,
+          // 仅四款游戏，使用更高的入口卡片以提升可点性与可读性。
+          childAspectRatio: 0.78,
         ),
+        itemCount: _games.length,
+        itemBuilder: (ctx, i) {
+          final g = _games[i];
+          final icon = _gameIcons[g['icon']] ?? Icons.extension_rounded;
+          return BouncyTap(
+            onTap: () => _startGame(g['name']?.toString() ?? ''),
+            child: FrostCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 52, color: theme.primary),
+                  const SizedBox(height: 14),
+                  Text(
+                    g['name'] ?? '',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'TideFont',
+                      color: theme.textStrong,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    g['desc'] ?? '',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFC7C7CC),
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       );
-    },
-  );
 }
 
 // ==================== 全屏发布页 ====================
@@ -1770,8 +1778,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     // 先乐观更新 UI，再写入真实互动事件。
     setState(() {
       widget.feed['favorited'] = !wasLiked;
-      widget.feed['likes'] =
-          (widget.feed['likes'] as int) +
+      widget.feed['likes'] = (widget.feed['likes'] as int) +
           (widget.feed['favorited'] == true ? 1 : -1);
     });
     // 用户的点赞是真实发生的互动事件：写 feed_events（actor 固定为 'me'）。
@@ -1842,8 +1849,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       if (mounted) {
         setState(() {
           _comments.remove(comment);
-          widget.feed['comments'] = ((widget.feed['comments'] as int) - 1)
-              .clamp(0, 1 << 30);
+          widget.feed['comments'] =
+              ((widget.feed['comments'] as int) - 1).clamp(0, 1 << 30);
           _sendingComment = false;
         });
         GlobalNotice.show('评论发送失败，请重试', color: const Color(0xFFE74C3C));
@@ -1999,12 +2006,12 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
       (byParent[key] ??= []).add(comment);
     }
     List<Widget> buildNodes(String parentId, int depth) => [
-      for (final comment
-          in byParent[parentId] ?? const <Map<String, dynamic>>[]) ...[
-        _commentNode(comment, depth),
-        ...buildNodes(comment['id']?.toString() ?? '', depth + 1),
-      ],
-    ];
+          for (final comment
+              in byParent[parentId] ?? const <Map<String, dynamic>>[]) ...[
+            _commentNode(comment, depth),
+            ...buildNodes(comment['id']?.toString() ?? '', depth + 1),
+          ],
+        ];
     return buildNodes('', 0);
   }
 
@@ -2304,9 +2311,8 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                         child: TextField(
                           controller: _commentCtrl,
                           textInputAction: TextInputAction.send,
-                          onSubmitted: _sendingComment
-                              ? null
-                              : (_) => _sendComment(),
+                          onSubmitted:
+                              _sendingComment ? null : (_) => _sendComment(),
                           style: TextStyle(
                             color: theme.textStrong,
                             fontFamily: 'TideFont',

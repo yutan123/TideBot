@@ -152,14 +152,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _syncLatestMessages();
-      return;
     }
-    // Typewriter animation belongs to the visible chat only. The complete reply
-    // is already persisted, so leaving the app stops animation and the next
-    // foreground sync adopts the final rows directly.
-    _streamDisplayTimer?.cancel();
-    _streamDisplayTimer = null;
-    _deferredPersistedMessageIds.clear();
   }
 
   void _loadBg() async {
@@ -661,6 +654,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         await reveal(persisted[index]);
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
+      await _syncLatestMessages();
       // Images and stickers are included in `messages` after being persisted by
       // AIManager. Rendering result metadata again would duplicate the same
       // media in the visible conversation.
@@ -698,6 +692,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
         _scrollDown();
       }
+      _deferredPersistedMessageIds.clear();
+      await _syncLatestMessages();
       // ===== 防抖/合并：统一重发 =====
       // 请求期间用户又发了消息被并入 _queuedText。等待队列后，用合并后的完整
       // 文本向模型统一请求一次，不再新增用户气泡（用户消息已各自上屏入库）。

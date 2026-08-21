@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'dart:math';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app_log_service.dart';
@@ -16,6 +17,7 @@ import 'ui_create_bot.dart';
 import 'ui_space_square.dart';
 import 'ui_profile.dart';
 import 'ui_components.dart';
+import 'tide_liquid_glass.dart';
 import 'app_state.dart';
 import 'app_navigation.dart';
 import 'db.dart';
@@ -519,50 +521,20 @@ class FlowGlassBg extends StatelessWidget {
     final theme = TideTheme.of(context);
     return Stack(
       children: [
-        // 日间是柔和蓝白纸感，夜间是深蓝灰空间感；两者使用不同亮度层级。
-        Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: theme.isDark
-                  ? [
-                      const Color(0xFF151416),
-                      const Color(0xFF201D21),
-                      const Color(0xFF181719),
-                    ]
-                  : [
-                      const Color(0xFFF8FAFF),
-                      const Color(0xFFF0F4FB),
-                      const Color(0xFFF7F3FA),
-                    ],
-            ),
+        ColoredBox(color: theme.bgColor),
+        if (theme.hasGlobalBackground)
+          Positioned.fill(
+            child: Image.file(File(theme.chatBg), fit: BoxFit.cover),
           ),
-        ),
-        // Static background layers keep the page GPU-friendly. The previous
-        // 16ms FlowProvider rebuild repainted the whole app continuously.
-        Positioned(
-          left: -80,
-          top: 70,
-          child: IgnorePointer(
-            child: Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    theme.primaryLight.withValues(
-                      alpha: theme.isDark ? 0.08 : 0.16,
-                    ),
-                    Colors.transparent,
-                  ],
-                ),
+        if (theme.hasGlobalBackground)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ColoredBox(
+                color: (theme.isDark ? const Color(0xFF081012) : Colors.white)
+                    .withValues(alpha: theme.backgroundOpacity),
               ),
             ),
           ),
-        ),
-
         child,
       ],
     );
@@ -683,14 +655,16 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
           ),
-          builder: (context, child) => TideEdgeBackGesture(
-            child: Overlay(
-              key: globalNoticeOverlayKey,
-              initialEntries: [
-                OverlayEntry(
-                  builder: (context) => child ?? const SizedBox.shrink(),
-                ),
-              ],
+          builder: (context, child) => FlowGlassBg(
+            child: TideEdgeBackGesture(
+              child: Overlay(
+                key: globalNoticeOverlayKey,
+                initialEntries: [
+                  OverlayEntry(
+                    builder: (context) => child ?? const SizedBox.shrink(),
+                  ),
+                ],
+              ),
             ),
           ),
           home: !widget.hasSeenOnboarding
@@ -1045,33 +1019,13 @@ class _JellyDockState extends State<JellyDock>
     final isDark = theme.isDark;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-              sigmaX: isDark ? 28 : 20, sigmaY: isDark ? 28 : 20),
-          child: Container(
-            height: 56,
+      child: TideLiquidGlass(
+        radius: 28,
+        kind: TideLiquidGlassKind.dock,
+        child: SizedBox(
+          height: TideDockMetrics.height,
+          child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? const Color(0xB9172A31)
-                  : Colors.white.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.16)
-                    : Colors.white.withValues(alpha: 0.25),
-                width: 0.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
             child: LayoutBuilder(
               builder: (ctx, cs) {
                 final totalW = cs.maxWidth;
@@ -1086,30 +1040,34 @@ class _JellyDockState extends State<JellyDock>
                         return Positioned(
                           left: pillX,
                           top: isDark && _lifting ? 0 : 2,
-                          child: Transform.scale(
-                            scale: _scale.value *
-                                (isDark && _lifting ? 1.08 : 1.0),
-                            alignment: Alignment.center,
-                            child: Container(
-                              width: _w.value,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: theme.primary.withValues(
-                                  alpha:
-                                      isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
+                          child: IgnorePointer(
+                            child: Transform.scale(
+                              scale: _scale.value *
+                                  (isDark && _lifting ? 1.08 : 1.0),
+                              alignment: Alignment.center,
+                              child: Container(
+                                width: _w.value,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: theme.primary.withValues(
+                                    alpha: isDark
+                                        ? (_lifting ? 0.42 : 0.28)
+                                        : 0.18,
+                                  ),
+                                  borderRadius: BorderRadius.circular(22),
+                                  boxShadow: isDark
+                                      ? [
+                                          BoxShadow(
+                                            color: theme.primary.withValues(
+                                              alpha: _lifting ? 0.42 : 0.20,
+                                            ),
+                                            blurRadius: _lifting ? 18 : 10,
+                                            spreadRadius: _lifting ? 1 : 0,
+                                            offset: const Offset(0, -2),
+                                          ),
+                                        ]
+                                      : null,
                                 ),
-                                borderRadius: BorderRadius.circular(22),
-                                boxShadow: isDark
-                                    ? [
-                                        BoxShadow(
-                                          color: theme.primary.withValues(
-                                              alpha: _lifting ? 0.42 : 0.20),
-                                          blurRadius: _lifting ? 18 : 10,
-                                          spreadRadius: _lifting ? 1 : 0,
-                                          offset: const Offset(0, -2),
-                                        ),
-                                      ]
-                                    : null,
                               ),
                             ),
                           ),
@@ -1331,107 +1289,105 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final theme = TideTheme.of(context);
-    return FlowGlassBg(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        extendBody: true,
-        body: Stack(
-          children: [
-            IndexedStack(index: _idx, children: _pages),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBody: true,
+      body: Stack(
+        children: [
+          IndexedStack(index: _idx, children: _pages),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: bottomPadding + TideDockMetrics.bottomGap,
+            child: JellyDock(
+              currentIndex: _idx,
+              unreadCount: _unreadCount,
+              onTap: _onDockTap,
+            ),
+          ),
+          // 聊天列表创建机器人悬浮球
+          if (_idx == 0)
             Positioned(
-              left: 0,
-              right: 0,
-              bottom: bottomPadding + 24,
-              child: JellyDock(
-                currentIndex: _idx,
-                unreadCount: _unreadCount,
-                onTap: _onDockTap,
+              right: 20,
+              bottom: TideDockMetrics.fabBottom(context),
+              child: BouncyTap(
+                onTap: () async {
+                  final r = await Navigator.push(
+                    context,
+                    PageRouteBuilder(
+                      pageBuilder: (c, a, s) => const CreateBotPage(),
+                      transitionsBuilder: (c, a, s, child) => SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.3),
+                          end: Offset.zero,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: a,
+                            curve: Curves.easeOutCubic,
+                          ),
+                        ),
+                        child: FadeTransition(opacity: a, child: child),
+                      ),
+                    ),
+                  );
+                  if (r == true) _chatListKey.currentState?.load();
+                },
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [theme.primary, theme.primaryLight],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: theme.primary.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
               ),
             ),
-            // 聊天列表创建机器人悬浮球
-            if (_idx == 0)
-              Positioned(
-                right: 20,
-                bottom: bottomPadding + 76,
-                child: BouncyTap(
-                  onTap: () async {
-                    final r = await Navigator.push(
-                      context,
-                      PageRouteBuilder(
-                        pageBuilder: (c, a, s) => const CreateBotPage(),
-                        transitionsBuilder: (c, a, s, child) => SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, 0.3),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: a,
-                              curve: Curves.easeOutCubic,
-                            ),
-                          ),
-                          child: FadeTransition(opacity: a, child: child),
-                        ),
-                      ),
-                    );
-                    if (r == true) _chatListKey.currentState?.load();
-                  },
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [theme.primary, theme.primaryLight],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.primary.withValues(alpha: 0.35),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+          // 广场发布悬浮球
+          if (_idx == 2)
+            Positioned(
+              right: 20,
+              bottom: TideDockMetrics.fabBottom(context),
+              child: BouncyTap(
+                onTap: () => _squareKey.currentState?.publishFeed(),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [theme.primary, theme.primaryLight],
                     ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 26,
-                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: theme.primary.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 26,
                   ),
                 ),
               ),
-            // 广场发布悬浮球
-            if (_idx == 2)
-              Positioned(
-                right: 20,
-                bottom: bottomPadding + 76,
-                child: BouncyTap(
-                  onTap: () => _squareKey.currentState?.publishFeed(),
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [theme.primary, theme.primaryLight],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.primary.withValues(alpha: 0.35),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

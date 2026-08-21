@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'db.dart';
 
@@ -11,6 +12,7 @@ class TideTheme extends ChangeNotifier {
   Color _primary = const Color(0xFF5FAF8A);
   Color _primaryLight = const Color(0xFF9CD4BC);
   String _chatBg = ''; // 全局聊天背景图路径（自定义，可为空）
+  double _backgroundOpacity = 0.48;
 
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
@@ -18,6 +20,8 @@ class TideTheme extends ChangeNotifier {
   ThemeMode get mode => _mode;
   bool get hasManualMode => _manualMode;
   String get chatBg => _chatBg;
+  double get backgroundOpacity => _backgroundOpacity;
+  bool get hasGlobalBackground => _chatBg.isNotEmpty;
 
   bool get isDark {
     final brightness =
@@ -152,7 +156,16 @@ class TideTheme extends ChangeNotifier {
     }
     // 读取全局聊天背景
     final bg = await DBManager().getKV('chat_bg_global');
-    if (bg != null && bg.isNotEmpty) _chatBg = bg;
+    if (bg != null && bg.isNotEmpty && File(bg).existsSync()) {
+      _chatBg = bg;
+    } else if (bg != null && bg.isNotEmpty) {
+      await DBManager().insertKV('chat_bg_global', '');
+    }
+    _backgroundOpacity = (double.tryParse(
+              await DBManager().getKV('global_background_opacity') ?? '',
+            ) ??
+            _backgroundOpacity)
+        .clamp(0.20, 0.82);
     notifyListeners();
   }
 
@@ -202,9 +215,14 @@ class TideTheme extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setChatBg(String path) async {
+  Future<void> setChatBg(String path, {double? opacity}) async {
     _chatBg = path;
+    if (opacity != null) _backgroundOpacity = opacity.clamp(0.20, 0.82);
     await DBManager().insertKV('chat_bg_global', path);
+    await DBManager().insertKV(
+      'global_background_opacity',
+      _backgroundOpacity.toStringAsFixed(2),
+    );
     notifyListeners();
   }
 
@@ -214,10 +232,12 @@ class TideTheme extends ChangeNotifier {
     _mode = ThemeMode.system;
     _manualMode = false;
     _chatBg = '';
+    _backgroundOpacity = 0.48;
     _applyColors();
     await DBManager().insertKV('theme_color', _name);
     await DBManager().insertKV('theme_mode', 'system');
     await DBManager().insertKV('chat_bg_global', '');
+    await DBManager().insertKV('global_background_opacity', '0.48');
     notifyListeners();
   }
 

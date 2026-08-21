@@ -20,6 +20,7 @@ import 'life_schedule_service.dart';
 import 'life_schedule_pool_page.dart';
 import 'advanced_settings_page.dart';
 import 'storage_management_page.dart';
+import 'global_background_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -131,117 +132,117 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) => Container(
-    color: TideTheme.of(context).bgColor,
-    child: SafeArea(
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-        child: Column(
-          children: [
-            _buildProfileCard(),
-            const SizedBox(height: 24),
-            ..._settings.map(
-              (s) => BouncyTap(
-                onTap: () => _onSetting(s),
-                child: _buildSettingItem(s),
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    ),
-  );
-  Widget _buildProfileCard() => FrostCard(
-    padding: const EdgeInsets.all(20),
-    child: Row(
-      children: [
-        BouncyTap(
-          onTap: _pickAvatar,
-          child: CircleAvatar(
-            radius: 32,
-            backgroundColor: TideTheme.of(
-              context,
-            ).primary.withValues(alpha: 0.15),
-            backgroundImage:
-                _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
-                ? FileImage(File(_avatarPath))
-                : null,
-            child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
-                ? Icon(
-                    Icons.person_rounded,
-                    size: 36,
-                    color: TideTheme.of(context).primary,
-                  )
-                : null,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: BouncyTap(
-            onTap: _editName,
+        color: TideTheme.of(context).bgColor,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _userName,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'TideFont',
-                    color: TideTheme.of(context).textStrong,
+                _buildProfileCard(),
+                const SizedBox(height: 24),
+                ..._settings.map(
+                  (s) => BouncyTap(
+                    onTap: () => _onSetting(s),
+                    child: _buildSettingItem(s),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '点击昵称修改名字',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: TideTheme.of(context).textFaint,
-                    fontFamily: 'TideFont',
-                  ),
-                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
         ),
-        Icon(
-          Icons.edit_rounded,
-          size: 18,
-          color: TideTheme.of(context).textFaint,
-        ),
-      ],
-    ),
-  );
-  Widget _buildSettingItem(Map<String, dynamic> s) => FrostCard(
-    margin: const EdgeInsets.only(bottom: 10),
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-    child: Row(
-      children: [
-        Icon(
-          s['icon'] as IconData,
-          size: 22,
-          color: TideTheme.of(context).primary,
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Text(
-            s['title'] ?? '',
-            style: TextStyle(
-              fontSize: 16,
-              fontFamily: 'TideFont',
-              color: TideTheme.of(context).textStrong,
+      );
+  Widget _buildProfileCard() => FrostCard(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            BouncyTap(
+              onTap: _pickAvatar,
+              child: CircleAvatar(
+                radius: 32,
+                backgroundColor: TideTheme.of(
+                  context,
+                ).primary.withValues(alpha: 0.15),
+                backgroundImage:
+                    _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
+                        ? FileImage(File(_avatarPath))
+                        : null,
+                child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
+                    ? Icon(
+                        Icons.person_rounded,
+                        size: 36,
+                        color: TideTheme.of(context).primary,
+                      )
+                    : null,
+              ),
             ),
-          ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: BouncyTap(
+                onTap: _editName,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _userName,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'TideFont',
+                        color: TideTheme.of(context).textStrong,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '点击昵称修改名字',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: TideTheme.of(context).textFaint,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Icon(
+              Icons.edit_rounded,
+              size: 18,
+              color: TideTheme.of(context).textFaint,
+            ),
+          ],
         ),
-        Icon(
-          Icons.arrow_forward_ios_rounded,
-          size: 14,
-          color: TideTheme.of(context).textFaint,
+      );
+  Widget _buildSettingItem(Map<String, dynamic> s) => FrostCard(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(
+              s['icon'] as IconData,
+              size: 22,
+              color: TideTheme.of(context).primary,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                s['title'] ?? '',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontFamily: 'TideFont',
+                  color: TideTheme.of(context).textStrong,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 14,
+              color: TideTheme.of(context).textFaint,
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      );
   Future<String?> _pickDataBot(String title) async {
     final bots = await DBManager().exportableBots();
     if (!mounted || bots.isEmpty) return null;
@@ -717,8 +718,8 @@ class _ProfilePageState extends State<ProfilePage> {
                               mi == 'dark'
                                   ? Icons.dark_mode_rounded
                                   : (mi == 'auto'
-                                        ? Icons.brightness_auto_rounded
-                                        : Icons.wb_sunny_rounded),
+                                      ? Icons.brightness_auto_rounded
+                                      : Icons.wb_sunny_rounded),
                               size: 16,
                               color: t.primary,
                             ),
@@ -746,6 +747,33 @@ class _ProfilePageState extends State<ProfilePage> {
                     fontSize: 13,
                     color: TideTheme.of(context).textWeak,
                     fontFamily: 'TideFont',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                BouncyTap(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const GlobalBackgroundPage(),
+                      ),
+                    );
+                  },
+                  child: FrostCard(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.image_rounded, color: t.primary),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text('全局背景图',
+                              style: TextStyle(fontFamily: 'TideFont')),
+                        ),
+                        const Icon(Icons.chevron_right_rounded),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -1064,19 +1092,16 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _streaming = stream != 'false';
       _segmentedReply = segmentedReply != 'false';
       _randomReplyDelay = randomReplyDelay == 'true';
-      _replyDelayMinController.text = (int.tryParse(replyDelayMin ?? '') ?? 0)
-          .clamp(0, 60)
-          .toString();
-      _replyDelayMaxController.text = (int.tryParse(replyDelayMax ?? '') ?? 2)
-          .clamp(0, 60)
-          .toString();
+      _replyDelayMinController.text =
+          (int.tryParse(replyDelayMin ?? '') ?? 0).clamp(0, 60).toString();
+      _replyDelayMaxController.text =
+          (int.tryParse(replyDelayMax ?? '') ?? 2).clamp(0, 60).toString();
       _timeAwareness = timeAwareness != 'false';
       _proactiveReply = proactiveReply != 'false';
       _botPosts = botPosts == 'true';
       _botPostsWithImages = botPostsWithImages == 'true';
-      _botPostsImageChanceController.text = (botPostsImageChance ?? 50)
-          .clamp(1, 100)
-          .toString();
+      _botPostsImageChanceController.text =
+          (botPostsImageChance ?? 50).clamp(1, 100).toString();
       _lifeSchedule = lifeSchedule != 'false';
       _imageGeneration = imageGeneration != 'false';
       // 自定义风格是任意文本（如“水彩插画”），不能只按预设白名单判定；
@@ -1094,9 +1119,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _voiceReplyChanceController.text = _voiceReplyChance.toString();
       _stickerChance = (stickerChance ?? 50).clamp(1, 100);
       _stickerChanceController.text = _stickerChance.toString();
-      _botPostsPerDayController.text = (botPostsPerDay ?? 1)
-          .clamp(1, 10)
-          .toString();
+      _botPostsPerDayController.text =
+          (botPostsPerDay ?? 1).clamp(1, 10).toString();
       _proactiveMin = (proactiveMin ?? 60).clamp(1, 1440);
       _proactiveMax = (proactiveMax ?? 90).clamp(_proactiveMin, 1440);
       _proactiveMinController.text = _proactiveMin.toString();
@@ -1236,65 +1260,66 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     required bool value,
     required ValueChanged<bool> onChanged,
     Widget? child,
-  }) => Column(
-    children: [
-      SwitchListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-        title: Row(
-          children: [
-            Text(title, style: const TextStyle(fontFamily: 'TideFont')),
-            if (help != null)
-              IconButton(
-                icon: Icon(
-                  Icons.help_outline_rounded,
-                  size: 18,
-                  color: theme.textWeak,
-                ),
-                tooltip: '说明',
-                onPressed: () => TideDialogs.show(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    backgroundColor: theme.surface,
-                    title: Text(
-                      title,
-                      style: TextStyle(
-                        color: theme.textStrong,
-                        fontFamily: 'TideFont',
-                      ),
+  }) =>
+      Column(
+        children: [
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+            title: Row(
+              children: [
+                Text(title, style: const TextStyle(fontFamily: 'TideFont')),
+                if (help != null)
+                  IconButton(
+                    icon: Icon(
+                      Icons.help_outline_rounded,
+                      size: 18,
+                      color: theme.textWeak,
                     ),
-                    content: Text(
-                      help,
-                      style: TextStyle(
-                        color: theme.textWeak,
-                        fontFamily: 'TideFont',
-                        height: 1.5,
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text(
-                          '知道了',
-                          style: TextStyle(fontFamily: 'TideFont'),
+                    tooltip: '说明',
+                    onPressed: () => TideDialogs.show(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: theme.surface,
+                        title: Text(
+                          title,
+                          style: TextStyle(
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont',
+                          ),
                         ),
+                        content: Text(
+                          help,
+                          style: TextStyle(
+                            color: theme.textWeak,
+                            fontFamily: 'TideFont',
+                            height: 1.5,
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text(
+                              '知道了',
+                              style: TextStyle(fontFamily: 'TideFont'),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-          ],
-        ),
-        value: value,
-        activeThumbColor: theme.primary,
-        onChanged: onChanged,
-      ),
-      if (child != null)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: child,
-        ),
-    ],
-  );
+              ],
+            ),
+            value: value,
+            activeThumbColor: theme.primary,
+            onChanged: onChanged,
+          ),
+          if (child != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: child,
+            ),
+        ],
+      );
 
   InputDecoration _roundInput(
     TideTheme theme, {
@@ -1320,88 +1345,88 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   }
 
   Widget _replyDelayRange(TideTheme theme) => Row(
-    children: [
-      Expanded(
-        child: TextField(
-          controller: _replyDelayMinController,
-          keyboardType: TextInputType.number,
-          style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-          decoration: _roundInput(theme, label: '最短（秒）'),
-          onChanged: (value) {
-            final n = int.tryParse(value);
-            final max = int.tryParse(_replyDelayMaxController.text) ?? 2;
-            if (n != null && n >= 0 && n <= max && n <= 60) {
-              _save('random_reply_delay_min_seconds', '$n');
-            }
-          },
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Text(
-          '至',
-          style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont'),
-        ),
-      ),
-      Expanded(
-        child: TextField(
-          controller: _replyDelayMaxController,
-          keyboardType: TextInputType.number,
-          style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-          decoration: _roundInput(theme, label: '最长（秒）'),
-          onChanged: (value) {
-            final n = int.tryParse(value);
-            final min = int.tryParse(_replyDelayMinController.text) ?? 0;
-            if (n != null && n >= min && n <= 60) {
-              _save('random_reply_delay_max_seconds', '$n');
-            }
-          },
-        ),
-      ),
-    ],
-  );
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _replyDelayMinController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+              decoration: _roundInput(theme, label: '最短（秒）'),
+              onChanged: (value) {
+                final n = int.tryParse(value);
+                final max = int.tryParse(_replyDelayMaxController.text) ?? 2;
+                if (n != null && n >= 0 && n <= max && n <= 60) {
+                  _save('random_reply_delay_min_seconds', '$n');
+                }
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              '至',
+              style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont'),
+            ),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _replyDelayMaxController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+              decoration: _roundInput(theme, label: '最长（秒）'),
+              onChanged: (value) {
+                final n = int.tryParse(value);
+                final min = int.tryParse(_replyDelayMinController.text) ?? 0;
+                if (n != null && n >= min && n <= 60) {
+                  _save('random_reply_delay_max_seconds', '$n');
+                }
+              },
+            ),
+          ),
+        ],
+      );
 
   Widget _compactRange(TideTheme theme) => Row(
-    children: [
-      Expanded(
-        child: TextField(
-          controller: _proactiveMinController,
-          keyboardType: TextInputType.number,
-          style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-          decoration: _roundInput(theme, label: '最短（分钟）'),
-          onChanged: (v) {
-            final n = int.tryParse(v);
-            if (n != null && n >= 1 && n <= _proactiveMax) {
-              _proactiveMin = n;
-              _save('proactive_min_minutes', '$n');
-            }
-          },
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Text(
-          '至',
-          style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont'),
-        ),
-      ),
-      Expanded(
-        child: TextField(
-          controller: _proactiveMaxController,
-          keyboardType: TextInputType.number,
-          style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-          decoration: _roundInput(theme, label: '最长（分钟）'),
-          onChanged: (v) {
-            final n = int.tryParse(v);
-            if (n != null && n >= _proactiveMin && n <= 1440) {
-              _proactiveMax = n;
-              _save('proactive_max_minutes', '$n');
-            }
-          },
-        ),
-      ),
-    ],
-  );
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _proactiveMinController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+              decoration: _roundInput(theme, label: '最短（分钟）'),
+              onChanged: (v) {
+                final n = int.tryParse(v);
+                if (n != null && n >= 1 && n <= _proactiveMax) {
+                  _proactiveMin = n;
+                  _save('proactive_min_minutes', '$n');
+                }
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              '至',
+              style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont'),
+            ),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _proactiveMaxController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+              decoration: _roundInput(theme, label: '最长（分钟）'),
+              onChanged: (v) {
+                final n = int.tryParse(v);
+                if (n != null && n >= _proactiveMin && n <= 1440) {
+                  _proactiveMax = n;
+                  _save('proactive_max_minutes', '$n');
+                }
+              },
+            ),
+          ),
+        ],
+      );
 
   Future<void> _manageLifePools() async {
     final current = await LifeScheduleService.instance.pools();
@@ -1415,37 +1440,38 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   }
 
   Widget _compactPostsPerDay(TideTheme theme) => TextField(
-    controller: _botPostsPerDayController,
-    keyboardType: TextInputType.number,
-    style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-    decoration: _roundInput(
-      theme,
-      label: '每个机器人每天发布数量（1–10）',
-      icon: Icon(Icons.dynamic_feed_rounded, color: theme.primary, size: 19),
-    ),
-    onChanged: (v) {
-      final n = int.tryParse(v);
-      if (n != null && n >= 1 && n <= 10) _save('bot_posts_per_day', '$n');
-    },
-  );
+        controller: _botPostsPerDayController,
+        keyboardType: TextInputType.number,
+        style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+        decoration: _roundInput(
+          theme,
+          label: '每个机器人每天发布数量（1–10）',
+          icon:
+              Icon(Icons.dynamic_feed_rounded, color: theme.primary, size: 19),
+        ),
+        onChanged: (v) {
+          final n = int.tryParse(v);
+          if (n != null && n >= 1 && n <= 10) _save('bot_posts_per_day', '$n');
+        },
+      );
 
   Widget _compactSpeed(TideTheme theme) => TextField(
-    controller: _streamSpeedController,
-    keyboardType: TextInputType.number,
-    style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
-    decoration: _roundInput(
-      theme,
-      label: '显示速度（1–100）',
-      icon: Icon(Icons.speed_rounded, color: theme.primary, size: 19),
-    ),
-    onChanged: (v) {
-      final n = int.tryParse(v);
-      if (n != null && n >= 1 && n <= 100) {
-        _speed = n;
-        _save('streaming_speed', '$n');
-      }
-    },
-  );
+        controller: _streamSpeedController,
+        keyboardType: TextInputType.number,
+        style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
+        decoration: _roundInput(
+          theme,
+          label: '显示速度（1–100）',
+          icon: Icon(Icons.speed_rounded, color: theme.primary, size: 19),
+        ),
+        onChanged: (v) {
+          final n = int.tryParse(v);
+          if (n != null && n >= 1 && n <= 100) {
+            _speed = n;
+            _save('streaming_speed', '$n');
+          }
+        },
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -1609,30 +1635,29 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                 color: theme.textStrong,
                                 fontFamily: 'TideFont',
                               ),
-                              decoration:
-                                  _roundInput(
-                                    theme,
-                                    label: _searchKeyLabel(theme),
-                                    icon: Icon(
-                                      Icons.key_rounded,
-                                      color: theme.primary,
-                                    ),
-                                  ).copyWith(
-                                    suffixIcon: IconButton(
-                                      tooltip: _showSearchKey
-                                          ? '隐藏 API Key'
-                                          : '显示 API Key',
-                                      onPressed: () => setState(
-                                        () => _showSearchKey = !_showSearchKey,
-                                      ),
-                                      icon: Icon(
-                                        _showSearchKey
-                                            ? Icons.visibility_off_rounded
-                                            : Icons.visibility_rounded,
-                                        color: theme.textWeak,
-                                      ),
-                                    ),
+                              decoration: _roundInput(
+                                theme,
+                                label: _searchKeyLabel(theme),
+                                icon: Icon(
+                                  Icons.key_rounded,
+                                  color: theme.primary,
+                                ),
+                              ).copyWith(
+                                suffixIcon: IconButton(
+                                  tooltip: _showSearchKey
+                                      ? '隐藏 API Key'
+                                      : '显示 API Key',
+                                  onPressed: () => setState(
+                                    () => _showSearchKey = !_showSearchKey,
                                   ),
+                                  icon: Icon(
+                                    _showSearchKey
+                                        ? Icons.visibility_off_rounded
+                                        : Icons.visibility_rounded,
+                                    color: theme.textWeak,
+                                  ),
+                                ),
+                              ),
                               onChanged: (value) =>
                                   _save('web_search_api_key', value.trim()),
                             ),
@@ -2213,9 +2238,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     if (sttRaw != null && sttRaw.isNotEmpty) {
       try {
         final decoded = jsonDecode(sttRaw) as List;
-        sttList = decoded
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
+        sttList =
+            decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       } catch (_) {}
     }
     if (ttsRaw != null && ttsRaw.isNotEmpty) {
@@ -2773,20 +2797,18 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     Object? lastError;
     for (final candidate in candidates.toSet()) {
       try {
-        final response = await http
-            .get(
-              Uri.parse('$candidate/models'),
-              headers: {
-                'Authorization': 'Bearer ${apiKey.trim()}',
-                'Accept': 'application/json',
-              },
-            )
-            .timeout(const Duration(seconds: 75));
+        final response = await http.get(
+          Uri.parse('$candidate/models'),
+          headers: {
+            'Authorization': 'Bearer ${apiKey.trim()}',
+            'Accept': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 75));
         if (response.statusCode < 200 || response.statusCode >= 300) {
           if (response.statusCode == 429 || response.statusCode >= 500) {
             final retryAfter =
                 int.tryParse(response.headers['retry-after']?.trim() ?? '') ??
-                0;
+                    0;
             await Future<void>.delayed(
               Duration(seconds: retryAfter.clamp(1, 15)),
             );
@@ -2802,20 +2824,19 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             ? rows
             : (rows is Map ? (rows['data'] ?? rows['models']) : null);
         if (list is List) {
-          final models =
-              list
-                  .map((item) {
-                    if (item is String) return item.trim();
-                    if (item is Map)
-                      return (item['id'] ?? item['name'] ?? item['model'] ?? '')
-                          .toString()
-                          .trim();
-                    return '';
-                  })
-                  .where((id) => id.isNotEmpty)
-                  .toSet()
-                  .toList()
-                ..sort();
+          final models = list
+              .map((item) {
+                if (item is String) return item.trim();
+                if (item is Map)
+                  return (item['id'] ?? item['name'] ?? item['model'] ?? '')
+                      .toString()
+                      .trim();
+                return '';
+              })
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
           if (models.isNotEmpty) return models;
         }
       } catch (e) {
@@ -2993,101 +3014,103 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                             ),
                           )
                         : error != null
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.cloud_off_rounded,
-                                    size: 30,
-                                    color: theme.textWeak,
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.cloud_off_rounded,
+                                        size: 30,
+                                        color: theme.textWeak,
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        '获取模型失败',
+                                        style: TextStyle(
+                                          color: theme.textStrong,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        error!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: theme.textWeak,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      OutlinedButton.icon(
+                                        onPressed: () {
+                                          loadStarted = false;
+                                          load();
+                                        },
+                                        icon: const Icon(
+                                          Icons.refresh_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text('重试'),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    '获取模型失败',
-                                    style: TextStyle(
-                                      color: theme.textStrong,
-                                      fontFamily: 'TideFont',
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    error!,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: theme.textWeak,
-                                      fontFamily: 'TideFont',
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  OutlinedButton.icon(
-                                    onPressed: () {
-                                      loadStarted = false;
-                                      load();
-                                    },
-                                    icon: const Icon(
-                                      Icons.refresh_rounded,
-                                      size: 18,
-                                    ),
-                                    label: const Text('重试'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : visible.isEmpty
-                        ? Center(
-                            child: Text(
-                              '没有匹配的模型',
-                              style: TextStyle(
-                                color: theme.textWeak,
-                                fontFamily: 'TideFont',
-                              ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            itemCount: visible.length,
-                            separatorBuilder: (_, __) => Divider(
-                              height: 1,
-                              indent: 14,
-                              endIndent: 14,
-                              color: theme.textFaint.withValues(alpha: .16),
-                            ),
-                            itemBuilder: (_, index) => ListTile(
-                              dense: true,
-                              visualDensity: VisualDensity.compact,
-                              leading: Icon(
-                                Icons.auto_awesome_rounded,
-                                size: 18,
-                                color: theme.primary,
-                              ),
-                              title: Text(
-                                visible[index],
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: theme.textStrong,
-                                  fontFamily: 'TideFont',
                                 ),
-                              ),
-                              trailing: modelCtrl.text == visible[index]
-                                  ? Icon(
-                                      Icons.check_circle_rounded,
-                                      size: 18,
-                                      color: theme.primary,
-                                    )
-                                  : null,
-                              onTap: () {
-                                modelCtrl.text = visible[index];
-                                Navigator.pop(pickerContext);
-                              },
-                            ),
-                          ),
+                              )
+                            : visible.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      '没有匹配的模型',
+                                      style: TextStyle(
+                                        color: theme.textWeak,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 4),
+                                    itemCount: visible.length,
+                                    separatorBuilder: (_, __) => Divider(
+                                      height: 1,
+                                      indent: 14,
+                                      endIndent: 14,
+                                      color: theme.textFaint
+                                          .withValues(alpha: .16),
+                                    ),
+                                    itemBuilder: (_, index) => ListTile(
+                                      dense: true,
+                                      visualDensity: VisualDensity.compact,
+                                      leading: Icon(
+                                        Icons.auto_awesome_rounded,
+                                        size: 18,
+                                        color: theme.primary,
+                                      ),
+                                      title: Text(
+                                        visible[index],
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: theme.textStrong,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                      trailing: modelCtrl.text == visible[index]
+                                          ? Icon(
+                                              Icons.check_circle_rounded,
+                                              size: 18,
+                                              color: theme.primary,
+                                            )
+                                          : null,
+                                      onTap: () {
+                                        modelCtrl.text = visible[index];
+                                        Navigator.pop(pickerContext);
+                                      },
+                                    ),
+                                  ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -3241,8 +3264,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final mCtrl = TextEditingController(text: p['model']);
     final hasVoice = p.containsKey('voice');
     final vCtrl = TextEditingController(text: p['voice']?.toString() ?? '');
-    final isDashScope =
-        hasVoice &&
+    final isDashScope = hasVoice &&
         (p['name']?.toString().contains('百炼') == true ||
             p['url']?.toString().contains('dashscope.aliyuncs.com') == true);
     TideDialogs.show(
@@ -3309,9 +3331,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   void _deleteProvider(int idx, {bool isTts = false, bool isStt = false}) {
-    final collection = isStt
-        ? _sttProviders
-        : (isTts ? _ttsProviders : _providers);
+    final collection =
+        isStt ? _sttProviders : (isTts ? _ttsProviders : _providers);
     final name = collection[idx]['name'];
     TideDialogs.show(
       context: context,
@@ -3453,408 +3474,417 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: TideTheme.of(context).bgColor,
-    appBar: AppBar(
-      title: const Text(
-        'API 设置',
-        style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'TideFont'),
-      ),
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
-        onPressed: () => Navigator.pop(context),
-      ),
-      actions: [
-        IconButton(
-          icon: Icon(
-            Icons.add_circle_outline_rounded,
-            color: TideTheme.of(context).primary,
-            size: 26,
+        backgroundColor: TideTheme.of(context).bgColor,
+        appBar: AppBar(
+          title: const Text(
+            'API 设置',
+            style:
+                TextStyle(fontWeight: FontWeight.w600, fontFamily: 'TideFont'),
           ),
-          onPressed: _addProvider,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+            onPressed: () => Navigator.pop(context),
+          ),
+          actions: [
+            IconButton(
+              icon: Icon(
+                Icons.add_circle_outline_rounded,
+                color: TideTheme.of(context).primary,
+                size: 26,
+              ),
+              onPressed: _addProvider,
+            ),
+          ],
         ),
-      ],
-    ),
-    body: _loading
-        ? Center(
-            child: CircularProgressIndicator(
-              color: TideTheme.of(context).primary,
-            ),
-          )
-        : SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_providers.isEmpty &&
-                    _sttProviders.isEmpty &&
-                    _ttsProviders.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 80),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.api_rounded,
-                            size: 60,
-                            color: Color(0xFFC7C7CC),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            '还没有添加任何模型提供商',
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: TideTheme.of(context).textWeak,
-                              fontFamily: 'TideFont',
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '点击右上角 + 添加',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: TideTheme.of(context).textFaint,
-                              fontFamily: 'TideFont',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                if (_providers.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 8),
-                    child: Text(
-                      'AI 模型',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong,
-                      ),
-                    ),
-                  ),
-                  ...List.generate(_providers.length, (i) {
-                    final p = _providers[i];
-                    return BouncyTap(
-                      onTap: () => _editProvider(p),
-                      child: FrostCard(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    p['name'] ?? '',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      fontFamily: 'TideFont',
-                                    ),
-                                  ),
+        body: _loading
+            ? Center(
+                child: CircularProgressIndicator(
+                  color: TideTheme.of(context).primary,
+                ),
+              )
+            : SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_providers.isEmpty &&
+                        _sttProviders.isEmpty &&
+                        _ttsProviders.isEmpty)
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 80),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.api_rounded,
+                                size: 60,
+                                color: Color(0xFFC7C7CC),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '还没有添加任何模型提供商',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: TideTheme.of(context).textWeak,
+                                  fontFamily: 'TideFont',
                                 ),
-                                BouncyTap(
-                                  onTap: () => _testProvider(p),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '点击右上角 + 添加',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: TideTheme.of(context).textFaint,
+                                  fontFamily: 'TideFont',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (_providers.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 8),
+                        child: Text(
+                          'AI 模型',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont',
+                            color: TideTheme.of(context).textStrong,
+                          ),
+                        ),
+                      ),
+                      ...List.generate(_providers.length, (i) {
+                        final p = _providers[i];
+                        return BouncyTap(
+                          onTap: () => _editProvider(p),
+                          child: FrostCard(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        p['name'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
                                     ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      color: TideTheme.of(
-                                        context,
-                                      ).primary.withValues(alpha: 0.15),
+                                    BouncyTap(
+                                      onTap: () => _testProvider(p),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          color: TideTheme.of(
+                                            context,
+                                          ).primary.withValues(alpha: 0.15),
+                                        ),
+                                        child: Text(
+                                          '测试',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color:
+                                                TideTheme.of(context).primary,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
                                     ),
+                                    const SizedBox(width: 8),
+                                    BouncyTap(
+                                      onTap: () => _deleteProvider(i),
+                                      child: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 20,
+                                        color: Color(0xFFE74C3C),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  p['url'] ?? '',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: TideTheme.of(context).textWeak,
+                                    fontFamily: 'TideFont',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if ((p['model'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
                                     child: Text(
-                                      '测试',
+                                      '模型: ${p['model']}',
                                       style: TextStyle(
                                         fontSize: 12,
-                                        color: TideTheme.of(context).primary,
+                                        color: TideTheme.of(context).textFaint,
                                         fontFamily: 'TideFont',
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                BouncyTap(
-                                  onTap: () => _deleteProvider(i),
-                                  child: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    size: 20,
-                                    color: Color(0xFFE74C3C),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              p['url'] ?? '',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: TideTheme.of(context).textWeak,
-                                fontFamily: 'TideFont',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if ((p['model'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  '模型: ${p['model']}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                            if ((p['key'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }),
-                ],
-                if (_sttProviders.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16, bottom: 8),
-                    child: Text(
-                      '语音识别 (STT)',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong,
-                      ),
-                    ),
-                  ),
-                  ...List.generate(_sttProviders.length, (i) {
-                    final p = _sttProviders[i];
-                    return BouncyTap(
-                      onTap: () => _editProvider(p, isStt: true),
-                      child: FrostCard(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    p['name']?.toString() ?? '',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      fontFamily: 'TideFont',
-                                    ),
-                                  ),
-                                ),
-                                BouncyTap(
-                                  onTap: () => _testSttProvider(p),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      color: TideTheme.of(
-                                        context,
-                                      ).primary.withValues(alpha: 0.15),
-                                    ),
+                                if ((p['key'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
                                     child: Text(
-                                      '测试',
+                                      'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
                                       style: TextStyle(
-                                        fontSize: 12,
-                                        color: TideTheme.of(context).primary,
+                                        fontSize: 11,
+                                        color: TideTheme.of(context).textFaint,
                                         fontFamily: 'TideFont',
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                BouncyTap(
-                                  onTap: () => _deleteProvider(i, isStt: true),
-                                  child: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    size: 20,
-                                    color: Color(0xFFE74C3C),
-                                  ),
-                                ),
                               ],
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              p['url']?.toString() ?? '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: TideTheme.of(context).textWeak,
-                                fontFamily: 'TideFont',
-                              ),
-                            ),
-                            if ((p['model'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  '模型: ${p['model']}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                            if ((p['key'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                          ],
+                          ),
+                        );
+                      }),
+                    ],
+                    if (_sttProviders.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16, bottom: 8),
+                        child: Text(
+                          '语音识别 (STT)',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont',
+                            color: TideTheme.of(context).textStrong,
+                          ),
                         ),
                       ),
-                    );
-                  }),
-                ],
-                if (_ttsProviders.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16, bottom: 8),
-                    child: Text(
-                      'TTS 语音',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong,
-                      ),
-                    ),
-                  ),
-                  ...List.generate(_ttsProviders.length, (i) {
-                    final p = _ttsProviders[i];
-                    return BouncyTap(
-                      onTap: () => _editProvider(p),
-                      child: FrostCard(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                      ...List.generate(_sttProviders.length, (i) {
+                        final p = _sttProviders[i];
+                        return BouncyTap(
+                          onTap: () => _editProvider(p, isStt: true),
+                          child: FrostCard(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    p['name'] ?? '',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      fontFamily: 'TideFont',
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        p['name']?.toString() ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
                                     ),
+                                    BouncyTap(
+                                      onTap: () => _testSttProvider(p),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          color: TideTheme.of(
+                                            context,
+                                          ).primary.withValues(alpha: 0.15),
+                                        ),
+                                        child: Text(
+                                          '测试',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color:
+                                                TideTheme.of(context).primary,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    BouncyTap(
+                                      onTap: () =>
+                                          _deleteProvider(i, isStt: true),
+                                      child: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 20,
+                                        color: Color(0xFFE74C3C),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  p['url']?.toString() ?? '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: TideTheme.of(context).textWeak,
+                                    fontFamily: 'TideFont',
                                   ),
                                 ),
-                                BouncyTap(
-                                  onTap: () => _testTtsProvider(p),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      color: TideTheme.of(
-                                        context,
-                                      ).primary.withValues(alpha: 0.15),
-                                    ),
+                                if ((p['model'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
                                     child: Text(
-                                      '测试',
+                                      '模型: ${p['model']}',
                                       style: TextStyle(
                                         fontSize: 12,
-                                        color: TideTheme.of(context).primary,
+                                        color: TideTheme.of(context).textFaint,
                                         fontFamily: 'TideFont',
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                BouncyTap(
-                                  onTap: () => _deleteProvider(i, isTts: true),
-                                  child: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    size: 20,
-                                    color: Color(0xFFE74C3C),
+                                if ((p['key'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: TideTheme.of(context).textFaint,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              p['url'] ?? '',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: TideTheme.of(context).textWeak,
-                                fontFamily: 'TideFont',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if ((p['model'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  '模型: ${p['model']}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                            if ((p['voice'] ?? '').toString().isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  '音色: ${p['voice']}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: TideTheme.of(context).textFaint,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                              ),
-                          ],
+                          ),
+                        );
+                      }),
+                    ],
+                    if (_ttsProviders.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16, bottom: 8),
+                        child: Text(
+                          'TTS 语音',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont',
+                            color: TideTheme.of(context).textStrong,
+                          ),
                         ),
                       ),
-                    );
-                  }),
-                ],
-              ],
-            ),
-          ),
-  );
+                      ...List.generate(_ttsProviders.length, (i) {
+                        final p = _ttsProviders[i];
+                        return BouncyTap(
+                          onTap: () => _editProvider(p),
+                          child: FrostCard(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        p['name'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                    BouncyTap(
+                                      onTap: () => _testTtsProvider(p),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          color: TideTheme.of(
+                                            context,
+                                          ).primary.withValues(alpha: 0.15),
+                                        ),
+                                        child: Text(
+                                          '测试',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color:
+                                                TideTheme.of(context).primary,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    BouncyTap(
+                                      onTap: () =>
+                                          _deleteProvider(i, isTts: true),
+                                      child: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 20,
+                                        color: Color(0xFFE74C3C),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  p['url'] ?? '',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: TideTheme.of(context).textWeak,
+                                    fontFamily: 'TideFont',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if ((p['model'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      '模型: ${p['model']}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: TideTheme.of(context).textFaint,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
+                                  ),
+                                if ((p['voice'] ?? '').toString().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      '音色: ${p['voice']}',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: TideTheme.of(context).textFaint,
+                                        fontFamily: 'TideFont',
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ],
+                ),
+              ),
+      );
 }
