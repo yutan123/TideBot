@@ -296,7 +296,7 @@ class _SpacePageState extends State<SpacePage> {
             ? Center(child: CircularProgressIndicator(color: theme.primary))
             : SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 148),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

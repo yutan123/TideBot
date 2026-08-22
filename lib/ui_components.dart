@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
-import 'tide_liquid_glass.dart';
 
 // ========== 全局弹性点击包装器 ==========
 class TideHaptics {
@@ -320,9 +319,7 @@ class TideDialogs {
         ),
       ),
     );
-    return TideTheme.of(context).hasGlobalBackground
-        ? TideLiquidGlass(radius: 22, child: content)
-        : content;
+    return content;
   }
 
   static Widget glassButton(String label,
@@ -406,9 +403,7 @@ Future<T?> showTideSheet<T>(
                     ],
                   ),
                 );
-                return theme.hasGlobalBackground
-                    ? TideLiquidGlass(radius: 24, child: sheet)
-                    : sheet;
+                return sheet;
               },
             ),
           ),

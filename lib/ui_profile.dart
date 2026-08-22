@@ -20,6 +20,7 @@ import 'life_schedule_service.dart';
 import 'life_schedule_pool_page.dart';
 import 'advanced_settings_page.dart';
 import 'storage_management_page.dart';
+import 'chat_background_page.dart';
 import 'global_background_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -831,7 +832,39 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // 全局背景图入口。机器人聊天背景只在对应聊天页内设置。
+                BouncyTap(
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ChatBackgroundPage(),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: TideTheme.of(ctx).primary),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.chat_bubble_outline_rounded,
+                            size: 20, color: TideTheme.of(ctx).primary),
+                        const SizedBox(width: 8),
+                        Text('聊天背景图',
+                            style: TextStyle(
+                                fontSize: 15,
+                                color: TideTheme.of(ctx).primary,
+                                fontFamily: 'TideFont')),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // 全局背景图入口。它与机器人聊天背景独立保存。
                 BouncyTap(
                   onTap: () async {
                     Navigator.pop(ctx);

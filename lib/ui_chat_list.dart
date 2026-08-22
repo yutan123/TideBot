@@ -21,6 +21,7 @@ class ChatListPageState extends State<ChatListPage> {
   // makes the key detached after a previous deletion, so later particles lose
   // their source RenderBox.
   final Map<String, GlobalKey> _botCardKeys = <String, GlobalKey>{};
+  final Set<String> _openingBots = <String>{};
 
   @override
   void initState() {
@@ -146,33 +147,41 @@ class ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _openChat(Map<String, dynamic> bot) async {
-    await Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
-        transitionDuration: const Duration(milliseconds: 380),
-        reverseTransitionDuration: const Duration(milliseconds: 240),
-        transitionsBuilder: (c, a, s, child) {
-          final anim = CurvedAnimation(
-            parent: a,
-            curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
-          );
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.06),
-              end: Offset.zero,
-            ).animate(anim),
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.98, end: 1).animate(anim),
-              child: FadeTransition(opacity: anim, child: child),
-            ),
-          );
-        },
-      ),
-    );
-    await DBManager().markBotRead(bot['id']?.toString() ?? '');
-    if (mounted) load();
+    final id = bot['id']?.toString() ?? '';
+    if (id.isEmpty || !_openingBots.add(id)) return;
+    if (mounted) setState(() {});
+    try {
+      await Navigator.push(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
+          transitionDuration: const Duration(milliseconds: 380),
+          reverseTransitionDuration: const Duration(milliseconds: 240),
+          transitionsBuilder: (c, a, s, child) {
+            final anim = CurvedAnimation(
+              parent: a,
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
+            );
+            return SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.06),
+                end: Offset.zero,
+              ).animate(anim),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.98, end: 1).animate(anim),
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+            );
+          },
+        ),
+      );
+      await DBManager().markBotRead(id);
+      if (mounted) load();
+    } finally {
+      _openingBots.remove(id);
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -292,29 +301,7 @@ class ChatListPageState extends State<ChatListPage> {
     return GlassCard(
       padding: const EdgeInsets.all(14),
       radius: 20,
-      onTap: () async {
-        await Navigator.push(
-            context,
-            PageRouteBuilder(
-                pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
-                transitionDuration: const Duration(milliseconds: 380),
-                reverseTransitionDuration: const Duration(milliseconds: 240),
-                transitionsBuilder: (c, a, s, child) {
-                  final anim = CurvedAnimation(
-                      parent: a,
-                      curve: Curves.easeOutCubic,
-                      reverseCurve: Curves.easeInCubic);
-                  return SlideTransition(
-                      position: Tween<Offset>(
-                              begin: const Offset(0, 0.06), end: Offset.zero)
-                          .animate(anim),
-                      child: ScaleTransition(
-                          scale:
-                              Tween<double>(begin: 0.98, end: 1).animate(anim),
-                          child: FadeTransition(opacity: anim, child: child)));
-                }));
-        load();
-      },
+      onTap: () => _openChat(bot),
       child: Row(children: [
         Stack(clipBehavior: Clip.none, children: [
           TideBotAvatar(name: bot['name'] as String? ?? '', path: av, size: 56),

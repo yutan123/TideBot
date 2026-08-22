@@ -2064,18 +2064,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    // 机器人专属聊天背景优先。未设置时保持透明，让根层全局背景图透出。
-    final String? effBg = _hasBg ? _customBg : null;
+    // 未设置任何图片时仍使用明确的聊天背景，不能依赖透明根层兜底。
+    final hasCustomBackground = _hasBg && _customBg != null;
     return Scaffold(
       extendBodyBehindAppBar: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: hasCustomBackground || theme.hasGlobalBackground
+          ? Colors.transparent
+          : theme.bgColor,
       body: Stack(
         children: [
           // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
           Positioned.fill(
-            child: effBg != null
-                ? Image.file(File(effBg), fit: BoxFit.cover)
-                : (theme.hasGlobalBackground
+            child: hasCustomBackground
+                ? Image.file(File(_customBg!), fit: BoxFit.cover)
+                : theme.hasGlobalBackground
                     ? const SizedBox.expand()
                     : DecoratedBox(
                         decoration: BoxDecoration(color: theme.bgColor),
@@ -2122,7 +2124,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             ),
                           ],
                         ),
-                      )),
+                      ),
           ),
           Column(
             children: [
@@ -2799,8 +2801,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           ),
                         ],
                       ),
-                      if (_showSearchSources && sources.isNotEmpty)
-                        _sourceCards(sources),
+                      if (_showSearchSources &&
+                          sources.isNotEmpty &&
+                          _isFinalReplyMessage(m, i))
+                        _sourceButton(sources.last),
                     ],
                   ),
                 ),
@@ -2833,54 +2837,43 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  Widget _sourceCards(List<Map<String, String>> sources) {
+  bool _isFinalReplyMessage(Map<String, dynamic> message, int reverseIndex) {
+    if (message['role'] != 'assistant') return false;
+    final group = message['reply_group_id']?.toString();
+    if (group == null || group.isEmpty) return true;
+    for (var offset = reverseIndex - 1; offset >= 0; offset--) {
+      final next = _msgs[_msgs.length - 1 - offset];
+      if (next['reply_group_id']?.toString() == group &&
+          next['role'] == 'assistant') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Widget _sourceButton(Map<String, String> source) {
     final theme = TideTheme.of(context);
+    final uri = Uri.tryParse(source['url'] ?? '');
     return Padding(
-      padding: const EdgeInsets.only(top: 4, left: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '数据来源',
-            style: TextStyle(
-              fontSize: 12,
-              color: theme.textWeak,
-              fontFamily: 'TideFont',
-            ),
-          ),
-          const SizedBox(height: 2),
-          for (final source in sources)
-            Builder(builder: (context) {
-              final uri = Uri.tryParse(source['url'] ?? '');
-              return InkWell(
-                borderRadius: BorderRadius.circular(6),
-                onTap: uri == null
-                    ? null
-                    : () =>
-                        launchUrl(uri, mode: LaunchMode.externalApplication),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
-                  child: Text(
-                    source['title'] ?? '网页来源',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.primary,
-                      fontFamily: 'TideFont',
-                    ),
-                  ),
-                ),
-              );
-            }),
-        ],
+      padding: const EdgeInsets.only(top: 2, left: 2),
+      child: OutlinedButton.icon(
+        onPressed: uri == null
+            ? null
+            : () => launchUrl(uri, mode: LaunchMode.externalApplication),
+        icon: const Icon(Icons.public_rounded, size: 16),
+        label: const Text('数据来源', style: TextStyle(fontFamily: 'TideFont')),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: theme.primary,
+          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          side: BorderSide(color: theme.primary.withValues(alpha: .45)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       ),
     );
   }
-
-  // 音频时长由播放器进度组件统一显示。
+  // 音频时长由播放器进度组件统一显示.
 
   // 富文本解析：旁白括号灰化
   Widget _parseText(String text, bool isUser) {

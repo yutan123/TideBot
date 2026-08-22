@@ -842,6 +842,17 @@ class AIManager {
             }
           }
         }
+        if (persistResponse &&
+            searchSources.isNotEmpty &&
+            persistedMessages.isNotEmpty) {
+          final finalMessage = persistedMessages.last;
+          final encodedSources = jsonEncode(searchSources);
+          finalMessage['sources_json'] = encodedSources;
+          await db.updateMessageSources(
+            finalMessage['id']?.toString() ?? '',
+            searchSources,
+          );
+        }
         return {
           'success': true,
           'reply': replyText,

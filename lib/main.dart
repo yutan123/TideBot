@@ -515,22 +515,38 @@ final FlowProvider flowProvider = FlowProvider();
 
 class FlowGlassBg extends StatelessWidget {
   final Widget child;
-  const FlowGlassBg({super.key, required this.child});
+  final String? backgroundPath;
+  final double opacity;
+  const FlowGlassBg({
+    super.key,
+    required this.child,
+    this.backgroundPath,
+    this.opacity = 0.38,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    if (!theme.hasGlobalBackground) return child;
+    final path = backgroundPath ?? theme.globalBackground;
+    final effectiveOpacity =
+        backgroundPath == null ? theme.globalBackgroundOpacity : opacity;
     return Stack(
       fit: StackFit.expand,
       children: [
-        Image.file(File(theme.globalBackground), fit: BoxFit.cover),
-        IgnorePointer(
-          child: ColoredBox(
-            color:
-                Colors.black.withValues(alpha: theme.globalBackgroundOpacity),
+        ColoredBox(
+            color: theme.isDark
+                ? const Color(0xFF101619)
+                : const Color(0xFFF3F5FA)),
+        if (path.isNotEmpty && File(path).existsSync())
+          Image(
+              image: FileImage(File(path)),
+              fit: BoxFit.cover,
+              gaplessPlayback: true),
+        if (path.isNotEmpty)
+          IgnorePointer(
+            child: ColoredBox(
+                color: Colors.black.withValues(alpha: effectiveOpacity)),
           ),
-        ),
         child,
       ],
     );
@@ -1014,8 +1030,9 @@ class _JellyDockState extends State<JellyDock>
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
     final dock = Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      height: 68,
+      clipBehavior: Clip.none,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
             ? Colors.transparent
