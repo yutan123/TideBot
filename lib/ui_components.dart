@@ -589,6 +589,7 @@ class FrostCard extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final bool liquid;
+  final bool transparent;
   const FrostCard(
       {super.key,
       required this.child,
@@ -597,7 +598,8 @@ class FrostCard extends StatelessWidget {
       this.radius = 20,
       this.onTap,
       this.onLongPress,
-      this.liquid = false});
+      this.liquid = false,
+      this.transparent = false});
   @override
   Widget build(BuildContext context) {
     final card = Padding(
@@ -608,7 +610,9 @@ class FrostCard extends StatelessWidget {
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+            color: transparent
+                ? Colors.transparent
+                : TideTheme.of(context).glass.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(color: TideTheme.of(context).border, width: 0.5),
             boxShadow: [

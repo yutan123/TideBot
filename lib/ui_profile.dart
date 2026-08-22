@@ -154,96 +154,104 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
       );
-  Widget _buildProfileCard() => FrostCard(
-        liquid: true,
-        child: Row(
-          children: [
-            BouncyTap(
-              onTap: _pickAvatar,
-              child: CircleAvatar(
-                radius: 32,
-                backgroundColor: TideTheme.of(
-                  context,
-                ).primary.withValues(alpha: 0.15),
-                backgroundImage:
-                    _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
-                        ? FileImage(File(_avatarPath))
-                        : null,
-                child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
-                    ? Icon(
-                        Icons.person_rounded,
-                        size: 36,
-                        color: TideTheme.of(context).primary,
-                      )
-                    : null,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: BouncyTap(
-                onTap: _editName,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _userName,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '点击昵称修改名字',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: TideTheme.of(context).textFaint,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                  ],
+  Widget _buildProfileCard() => _ProfileBackgroundMaterial(
+        child: FrostCard(
+          liquid: true,
+          transparent: true,
+          child: Row(
+            children: [
+              BouncyTap(
+                onTap: _pickAvatar,
+                child: CircleAvatar(
+                  radius: 32,
+                  backgroundColor: TideTheme.of(
+                    context,
+                  ).primary.withValues(alpha: 0.15),
+                  backgroundImage:
+                      _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
+                          ? FileImage(File(_avatarPath))
+                          : null,
+                  child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
+                      ? Icon(
+                          Icons.person_rounded,
+                          size: 36,
+                          color: TideTheme.of(context).primary,
+                        )
+                      : null,
                 ),
               ),
-            ),
-            Icon(
-              Icons.edit_rounded,
-              size: 18,
-              color: TideTheme.of(context).textFaint,
-            ),
-          ],
-        ),
-      );
-  Widget _buildSettingItem(Map<String, dynamic> s) => FrostCard(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(
-              s['icon'] as IconData,
-              size: 22,
-              color: TideTheme.of(context).primary,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                s['title'] ?? '',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontFamily: 'TideFont',
-                  color: TideTheme.of(context).textStrong,
+              const SizedBox(width: 16),
+              Expanded(
+                child: BouncyTap(
+                  onTap: _editName,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _userName,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'TideFont',
+                          color: TideTheme.of(context).textStrong,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '点击昵称修改名字',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: TideTheme.of(context).textFaint,
+                          fontFamily: 'TideFont',
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 14,
-              color: TideTheme.of(context).textFaint,
-            ),
-          ],
+              Icon(
+                Icons.edit_rounded,
+                size: 18,
+                color: TideTheme.of(context).textFaint,
+              ),
+            ],
+          ),
         ),
       );
+  Widget _buildSettingItem(Map<String, dynamic> s) =>
+      _ProfileBackgroundMaterial(
+        child: FrostCard(
+          transparent: true,
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(
+                s['icon'] as IconData,
+                size: 22,
+                color: TideTheme.of(context).primary,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  s['title'] ?? '',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontFamily: 'TideFont',
+                    color: TideTheme.of(context).textStrong,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 14,
+                color: TideTheme.of(context).textFaint,
+              ),
+            ],
+          ),
+        ),
+      );
+
   Future<String?> _pickDataBot(String title) async {
     final bots = await DBManager().exportableBots();
     if (!mounted || bots.isEmpty) return null;
@@ -3867,4 +3875,39 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 ),
               ),
       );
+}
+
+class _ProfileBackgroundMaterial extends StatelessWidget {
+  const _ProfileBackgroundMaterial({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    final image = theme.globalBackgroundImage;
+    if (!theme.hasGlobalBackground || image == null) return child;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Stack(
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: Image(
+              image: image,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+          ),
+          Positioned.fill(
+            child: ColoredBox(
+              color: theme.backgroundOverlayColor.withValues(alpha: 0.22),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
 }

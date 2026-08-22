@@ -45,19 +45,19 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
     if (!theme.hasGlobalBackground) return _content();
     final settings = LiquidGlassSettings(
       glassColor:
-          theme.isDark ? const Color(0x321B272D) : const Color(0x26F8FBFF),
-      thickness: widget.premium ? 24 : 12,
-      blur: widget.premium ? 7 : 5,
-      refractiveIndex: widget.premium ? 1.16 : 1.08,
-      chromaticAberration: widget.premium ? .012 : .004,
+          theme.isDark ? const Color(0x381B2028) : const Color(0x2AF8FBFF),
+      thickness: widget.premium ? 18 : 9,
+      blur: widget.premium ? 3.2 : 2.2,
+      refractiveIndex: widget.premium ? 1.12 : 1.06,
+      chromaticAberration: widget.premium ? .006 : .002,
       lightAngle: 5.35,
-      lightIntensity: widget.premium ? .62 : .38,
-      fresnelStrength: widget.premium ? .82 : .45,
-      saturation: 1.18,
-      ambientStrength: .08,
-      glowIntensity: widget.interactive ? .18 : 0,
+      lightIntensity: widget.premium ? .48 : .28,
+      fresnelStrength: widget.premium ? .68 : .34,
+      saturation: 1.08,
+      ambientStrength: .05,
+      glowIntensity: widget.interactive ? .12 : 0,
       backerColor:
-          theme.isDark ? const Color(0x2610181C) : const Color(0x12FFFFFF),
+          theme.isDark ? const Color(0x32151A22) : const Color(0x18FFFFFF),
     );
     final glass = AdaptiveGlass(
       shape: LiquidRoundedRectangle(borderRadius: widget.radius),

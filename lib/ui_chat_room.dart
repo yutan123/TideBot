@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'global_notice.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +17,7 @@ import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
 import 'theme.dart';
+import 'tide_liquid_glass.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
@@ -2139,94 +2139,88 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Widget _chatHeader() {
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          color: _hasBg
-              ? TideTheme.of(context).glass.withValues(alpha: 0.15)
-              : TideTheme.of(context).glass.withValues(alpha: 0.55),
-          child: SafeArea(
-            bottom: false,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Icon(
-                        Icons.arrow_back_ios_rounded,
-                        size: 20,
+    return TideLiquidGlass(
+      radius: 0,
+      padding: EdgeInsets.zero,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.arrow_back_ios_rounded,
+                    size: 20,
+                    color: TideTheme.of(context).textStrong,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _bot['name'] as String? ?? '',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont',
                         color: TideTheme.of(context).textStrong,
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _bot['name'] as String? ?? '',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                            fontFamily: 'TideFont',
-                            color: TideTheme.of(context).textStrong,
-                          ),
+                    if (_typing)
+                      Text(
+                        '正在输入中...',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: TideTheme.of(context).primary,
+                          fontFamily: 'TideFont',
                         ),
-                        if (_typing)
-                          Text(
-                            '正在输入中...',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: TideTheme.of(context).primary,
-                              fontFamily: 'TideFont',
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  // 电话按钮
-                  IconButton(
-                    icon: Icon(
-                      Icons.call_rounded,
-                      size: 20,
-                      color: TideTheme.of(context).primary,
-                    ),
-                    onPressed: _openCallPreparation,
-                  ),
-                  // 删除按钮
-                  IconButton(
-                    icon: Icon(
-                      Icons.delete_outline_rounded,
-                      size: 20,
-                      color: TideTheme.of(context).iconMuted,
-                    ),
-                    onPressed: _showDeleteOptions,
-                  ),
-                  // 设置按钮
-                  IconButton(
-                    icon: Icon(
-                      Icons.settings_rounded,
-                      size: 20,
-                      color: TideTheme.of(context).iconMuted,
-                    ),
-                    onPressed: _showModelSettings,
-                  ),
-                  // 信息按钮
-                  IconButton(
-                    icon: Icon(
-                      Icons.menu_rounded,
-                      size: 20,
-                      color: TideTheme.of(context).iconMuted,
-                    ),
-                    onPressed: _showBotInfo,
-                  ),
-                ],
+                      ),
+                  ],
+                ),
               ),
-            ),
+              IconButton(
+                tooltip: '通话',
+                icon: Icon(
+                  Icons.call_rounded,
+                  size: 20,
+                  color: TideTheme.of(context).primary,
+                ),
+                onPressed: _openCallPreparation,
+              ),
+              IconButton(
+                tooltip: '删除聊天',
+                icon: Icon(
+                  Icons.delete_outline_rounded,
+                  size: 20,
+                  color: TideTheme.of(context).iconMuted,
+                ),
+                onPressed: _showDeleteOptions,
+              ),
+              IconButton(
+                tooltip: '模型设置',
+                icon: Icon(
+                  Icons.settings_rounded,
+                  size: 20,
+                  color: TideTheme.of(context).iconMuted,
+                ),
+                onPressed: _showModelSettings,
+              ),
+              IconButton(
+                tooltip: '机器人信息',
+                icon: Icon(
+                  Icons.menu_rounded,
+                  size: 20,
+                  color: TideTheme.of(context).iconMuted,
+                ),
+                onPressed: _showBotInfo,
+              ),
+            ],
           ),
         ),
       ),
@@ -3066,13 +3060,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             curve: Curves.easeOutCubic,
           ),
         ),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 54),
+        child: TideLiquidGlass(
+          radius: 27,
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-          decoration: BoxDecoration(
-            color: theme.surfaceVariant.withValues(alpha: _hasBg ? .92 : 1),
-            borderRadius: BorderRadius.circular(27),
-          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

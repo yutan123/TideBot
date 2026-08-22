@@ -367,7 +367,7 @@ class AIManager {
       for (final item in items) {
         final content = item['content']?.toString().trim() ?? '';
         if (content.isEmpty || used + content.length > budget) continue;
-        lines.add('- $content');
+        lines.add('- 【已归属记忆，不能替代对话角色】$content');
         used += content.length;
       }
       return lines.join('\n');
@@ -402,11 +402,11 @@ class AIManager {
         emotionContext +
         (longMemoryContext.isEmpty
             ? ''
-            : '\n【长期记忆：用户画像与自我身份，仅在相关时参考】\n$longMemoryContext') +
+            : '\n【长期记忆：已归属的用户事实或机器人自我身份；不得把机器人事实写成用户事实】\n$longMemoryContext') +
         toolContext +
         (shortMemoryContext.isEmpty
             ? ''
-            : '\n【短期记忆：近期详细事件，仅在相关时参考】\n$shortMemoryContext');
+            : '\n【短期记忆：已归属的近期事件；仅作参考，不得覆盖 user/assistant 发言角色】\n$shortMemoryContext');
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
@@ -427,6 +427,9 @@ class AIManager {
           msg['error_code']?.toString().isNotEmpty == true) {
         continue;
       }
+      final rawRole = msg['role']?.toString();
+      if (rawRole != 'user' && rawRole != 'assistant') continue;
+      final normalizedRole = rawRole;
       final content = msg['content']?.toString() ?? '';
       if (content.isEmpty) continue;
       final normalizedContent = isCallSummary
@@ -440,8 +443,7 @@ class AIManager {
                 content.length,
               );
           historyMessages.add({
-            'role':
-                msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
+            'role': normalizedRole,
             'content': normalizedContent.substring(
               normalizedContent.length - keepChars.toInt(),
             ),
@@ -450,7 +452,7 @@ class AIManager {
         break;
       }
       historyMessages.add({
-        'role': msg['role']?.toString() == 'assistant' ? 'assistant' : 'user',
+        'role': normalizedRole,
         'content': normalizedContent,
       });
       usedTokens += tokens;
@@ -465,9 +467,11 @@ class AIManager {
               (msg['content']?.toString().trim().isNotEmpty ?? false),
         )
         .length;
+    final roleSequence =
+        historyMessages.reversed.map((message) => message['role']).join(',');
     AppLogService.instance.add(
       'CONTEXT',
-      '远程模型上下文：历史 ${historyMessages.length}/$eligibleHistoryCount 条，估算 $usedTokens/$historyBudget token${historyMessages.length < eligibleHistoryCount ? '，已截断较早历史' : ''}',
+      '远程模型上下文：历史 ${historyMessages.length}/$eligibleHistoryCount 条，估算 $usedTokens/$historyBudget token，角色[$roleSequence]${historyMessages.length < eligibleHistoryCount ? '，已截断较早历史' : ''}',
     );
     var lastIsCurrentUser = false;
     // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
@@ -2889,6 +2893,7 @@ $transcript''';
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
+        "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、机器人身份、状态、情绪、日记素材和机器人记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以机器人第一人称记录，只写本机器人实际参与且已明确发生的内容。\n"
         "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。"
         "【记忆】如有稳定且重要的用户信息，使用原生记忆工具；不要在正文中写记忆标签。\n";
 

@@ -368,7 +368,7 @@ class _SpacePageState extends State<SpacePage> {
                       _buildSectionTitle('TA 的日记'),
                       const SizedBox(height: 6),
                       SizedBox(
-                        height: 300,
+                        height: 380,
                         child: DiaryCalendarWidget(
                           botId: _botId,
                           botName: _botName,

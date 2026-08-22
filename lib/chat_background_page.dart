@@ -171,8 +171,23 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
                                   child: Image.file(File(path),
                                       width: 48, height: 48, fit: BoxFit.cover),
                                 ),
-                          title: Text(bot['name']?.toString() ?? '未命名机器人',
-                              style: const TextStyle(fontFamily: 'TideFont')),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  bot['name']?.toString() ?? '未命名机器人',
+                                  style:
+                                      const TextStyle(fontFamily: 'TideFont'),
+                                ),
+                              ),
+                              if (path != null)
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  color: theme.primary,
+                                  size: 19,
+                                ),
+                            ],
+                          ),
                           subtitle: Text(path == null ? '未设置聊天背景' : '已设置聊天背景',
                               style: const TextStyle(fontFamily: 'TideFont')),
                         ),

@@ -13,6 +13,9 @@ class TideTheme extends ChangeNotifier {
   Color _primaryLight = const Color(0xFF9CD4BC);
   String _globalBackground = '';
   FileImage? _globalBackgroundImage;
+  FileImage? _pendingBackgroundImage;
+  String _pendingBackgroundPath = '';
+  bool _globalBackgroundReady = false;
   double _globalBackgroundOpacity = 0.38;
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
@@ -21,21 +24,34 @@ class TideTheme extends ChangeNotifier {
   bool get hasManualMode => _manualMode;
   String get globalBackground => _globalBackground;
   ImageProvider<Object>? get globalBackgroundImage => _globalBackgroundImage;
+  bool get isGlobalBackgroundReady => _globalBackgroundReady;
   double get globalBackgroundOpacity => _globalBackgroundOpacity;
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
 
   void _setGlobalBackgroundImage(String path) {
+    _globalBackgroundReady = path.isEmpty;
     _globalBackgroundImage = path.isEmpty ? null : FileImage(File(path));
   }
 
   void _precacheGlobalBackground() {
     final image = _globalBackgroundImage;
-    if (image == null) return;
+    if (image == null) {
+      notifyListeners();
+      return;
+    }
     final stream = image.resolve(ImageConfiguration.empty);
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
-      (_, __) => stream.removeListener(listener),
-      onError: (_, __) => stream.removeListener(listener),
+      (_, __) {
+        _globalBackgroundReady = true;
+        stream.removeListener(listener);
+        notifyListeners();
+      },
+      onError: (_, __) {
+        _globalBackgroundReady = false;
+        stream.removeListener(listener);
+        notifyListeners();
+      },
     );
     stream.addListener(listener);
   }
@@ -49,16 +65,26 @@ class TideTheme extends ChangeNotifier {
 
   LinearGradient get primaryGradient =>
       LinearGradient(colors: [_primary, _primaryLight]);
-  // 界面背景（日/夜通用底色），供 FlowGlassBg 与聊天室兜底使用
   Color get bgColor => hasGlobalBackground
       ? Colors.transparent
-      : (isDark ? const Color(0xFF101619) : const Color(0xFFF3F5FA));
-  // Night surfaces use a blue-green charcoal rather than neutral gray.
+      : (isDark ? const Color(0xFF171A20) : const Color(0xFFF3F5FA));
+  Color get backgroundOverlayColor =>
+      isDark ? const Color(0xFF06080C) : const Color(0xFF101216);
+  double get effectiveBackgroundOpacity {
+    if (!hasGlobalBackground) return 0;
+    final readabilityFloor = isDark ? 0.24 : 0.18;
+    return _globalBackgroundOpacity < readabilityFloor
+        ? readabilityFloor
+        : _globalBackgroundOpacity;
+  }
+
   Color get surface =>
-      isDark ? const Color(0xFF182126) : const Color(0xFFFFFFFF);
+      isDark ? const Color(0xFF20242C) : const Color(0xFFFFFFFF);
   Color get surfaceVariant =>
-      isDark ? const Color(0xFF243238) : const Color(0xFFE9EDF5);
-  Color get glass => isDark ? const Color(0xD918282E) : const Color(0xC9FFFFFF);
+      isDark ? const Color(0xFF2B303A) : const Color(0xFFE9EDF5);
+  Color get glass => isDark ? const Color(0xE01D222B) : const Color(0xC9FFFFFF);
+
+  // Night surfaces stay neutral graphite so theme accents and image content remain distinct.
 
   // 文字主色
   Color get textStrong =>
@@ -79,7 +105,8 @@ class TideTheme extends ChangeNotifier {
       isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93);
   // AI/次要气泡底色（日间浅白、夜间深灰）
   Color get bubbleAi =>
-      isDark ? const Color(0xFF262A31) : const Color(0xFFFFFFFF);
+      isDark ? const Color(0xFF292E38) : const Color(0xFFFFFFFF);
+
   // 次要按钮底色（取消、次级操作）
   Color get buttonSecondary =>
       isDark ? const Color(0xFF33363E) : const Color(0xFFE8E8F0);
@@ -241,16 +268,50 @@ class TideTheme extends ChangeNotifier {
     String path, {
     double? opacity,
   }) async {
-    _globalBackground = path;
-    _setGlobalBackgroundImage(path);
-    _precacheGlobalBackground();
     if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
     await DBManager().insertKV('global_background_image', path);
     await DBManager().insertKV(
       'global_background_opacity',
       _globalBackgroundOpacity.toStringAsFixed(2),
     );
-    notifyListeners();
+
+    if (path.isEmpty) {
+      _pendingBackgroundImage = null;
+      _pendingBackgroundPath = '';
+      _globalBackground = '';
+      _setGlobalBackgroundImage('');
+      notifyListeners();
+      return;
+    }
+
+    final candidate = FileImage(File(path));
+    _pendingBackgroundImage = candidate;
+    _pendingBackgroundPath = path;
+    final stream = candidate.resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (_, __) {
+        stream.removeListener(listener);
+        if (_pendingBackgroundImage != candidate ||
+            _pendingBackgroundPath != path) {
+          return;
+        }
+        _globalBackground = path;
+        _globalBackgroundImage = candidate;
+        _globalBackgroundReady = true;
+        _pendingBackgroundImage = null;
+        _pendingBackgroundPath = '';
+        notifyListeners();
+      },
+      onError: (_, __) {
+        stream.removeListener(listener);
+        if (_pendingBackgroundImage != candidate) return;
+        _pendingBackgroundImage = null;
+        _pendingBackgroundPath = '';
+        notifyListeners();
+      },
+    );
+    stream.addListener(listener);
   }
 
   /// Restores the shipped mint palette and system appearance.

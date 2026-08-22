@@ -532,23 +532,20 @@ class FlowGlassBg extends StatelessWidget {
     final image = backgroundPath == null ? theme.globalBackgroundImage : null;
     final path = backgroundPath ?? theme.globalBackground;
     final effectiveOpacity =
-        backgroundPath == null ? theme.globalBackgroundOpacity : opacity;
+        backgroundPath == null ? theme.effectiveBackgroundOpacity : opacity;
     return Stack(
       fit: StackFit.expand,
       children: [
         ColoredBox(
             color: theme.isDark
-                ? const Color(0xFF101619)
+                ? const Color(0xFF151820)
                 : const Color(0xFFF3F5FA)),
         if (image != null || (path.isNotEmpty && File(path).existsSync()))
           Image(
             image: image ?? FileImage(File(path)),
             fit: BoxFit.cover,
             gaplessPlayback: true,
-            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-              if (wasSynchronouslyLoaded || frame != null) return child;
-              return const SizedBox.expand();
-            },
+            errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
         if (path.isNotEmpty)
           IgnorePointer(
