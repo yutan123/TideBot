@@ -12,6 +12,7 @@ class TideTheme extends ChangeNotifier {
   Color _primary = const Color(0xFF5FAF8A);
   Color _primaryLight = const Color(0xFF9CD4BC);
   String _globalBackground = '';
+  FileImage? _globalBackgroundImage;
   double _globalBackgroundOpacity = 0.38;
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
@@ -19,8 +20,25 @@ class TideTheme extends ChangeNotifier {
   ThemeMode get mode => _mode;
   bool get hasManualMode => _manualMode;
   String get globalBackground => _globalBackground;
+  ImageProvider<Object>? get globalBackgroundImage => _globalBackgroundImage;
   double get globalBackgroundOpacity => _globalBackgroundOpacity;
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
+
+  void _setGlobalBackgroundImage(String path) {
+    _globalBackgroundImage = path.isEmpty ? null : FileImage(File(path));
+  }
+
+  void _precacheGlobalBackground() {
+    final image = _globalBackgroundImage;
+    if (image == null) return;
+    final stream = image.resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (_, __) => stream.removeListener(listener),
+      onError: (_, __) => stream.removeListener(listener),
+    );
+    stream.addListener(listener);
+  }
 
   bool get isDark {
     final brightness =
@@ -160,6 +178,8 @@ class TideTheme extends ChangeNotifier {
         globalBackground.isNotEmpty &&
         File(globalBackground).existsSync()) {
       _globalBackground = globalBackground;
+      _setGlobalBackgroundImage(globalBackground);
+      _precacheGlobalBackground();
     } else if (globalBackground != null && globalBackground.isNotEmpty) {
       await DBManager().insertKV('global_background_image', '');
     }
@@ -222,6 +242,8 @@ class TideTheme extends ChangeNotifier {
     double? opacity,
   }) async {
     _globalBackground = path;
+    _setGlobalBackgroundImage(path);
+    _precacheGlobalBackground();
     if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
     await DBManager().insertKV('global_background_image', path);
     await DBManager().insertKV(
@@ -237,6 +259,7 @@ class TideTheme extends ChangeNotifier {
     _mode = ThemeMode.system;
     _manualMode = false;
     _globalBackground = '';
+    _setGlobalBackgroundImage('');
     _globalBackgroundOpacity = 0.38;
     _applyColors();
     await DBManager().insertKV('theme_color', _name);

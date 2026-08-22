@@ -155,7 +155,7 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       );
   Widget _buildProfileCard() => FrostCard(
-        padding: const EdgeInsets.all(20),
+        liquid: true,
         child: Row(
           children: [
             BouncyTap(
@@ -763,6 +763,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           setSt(() {});
                         },
                         child: FrostCard(
+                          liquid: true,
                           margin: const EdgeInsets.only(bottom: 10),
                           padding: const EdgeInsets.all(14),
                           child: Row(

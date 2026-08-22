@@ -155,6 +155,8 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
                       return Card(
                         color: theme.surface,
                         child: CheckboxListTile(
+                          activeColor: theme.primary,
+                          checkColor: Colors.white,
                           value: selected,
                           onChanged: (_) => setState(() => selected
                               ? _selected.remove(id)
@@ -185,16 +187,28 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
         child: Row(
           children: [
             Expanded(
-                child: OutlinedButton.icon(
-                    onPressed: _clearSelected,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    label: const Text('清除'))),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.primary,
+                  side: BorderSide(color: theme.primary),
+                ),
+                onPressed: _clearSelected,
+                icon: const Icon(Icons.delete_outline_rounded),
+                label: const Text('清除'),
+              ),
+            ),
             const SizedBox(width: 10),
             Expanded(
-                child: FilledButton.icon(
-                    onPressed: _pickForSelected,
-                    icon: const Icon(Icons.wallpaper_rounded),
-                    label: const Text('选择图片'))),
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: theme.primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _pickForSelected,
+                icon: const Icon(Icons.wallpaper_rounded),
+                label: const Text('选择图片'),
+              ),
+            ),
           ],
         ),
       ),

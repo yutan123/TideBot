@@ -296,7 +296,7 @@ class _SpacePageState extends State<SpacePage> {
             ? Center(child: CircularProgressIndicator(color: theme.primary))
             : SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 148),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -501,7 +501,7 @@ class _SpacePageState extends State<SpacePage> {
       );
 
   Widget _buildQuoteCard(TideTheme theme) => FrostCard(
-        padding: const EdgeInsets.all(20),
+        liquid: true,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -537,7 +537,7 @@ class _SpacePageState extends State<SpacePage> {
       );
 
   Widget _buildDaysCard(TideTheme theme) => FrostCard(
-        padding: const EdgeInsets.all(16),
+        liquid: true,
         child: Column(
           children: [
             Text(
@@ -564,7 +564,7 @@ class _SpacePageState extends State<SpacePage> {
   Widget _buildMoodCard(TideTheme theme) {
     final icon = _moodIcons[_moodIcon] ?? Icons.sentiment_satisfied_rounded;
     return FrostCard(
-      padding: const EdgeInsets.all(16),
+      liquid: true,
       child: Column(
         children: [
           Icon(icon, size: 36, color: theme.primary),

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter/services.dart';
 import 'app_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -42,6 +43,7 @@ void main() async {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   final prefs = await SharedPreferences.getInstance();
   await tideTheme.loadFromDB();
+  await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
   await TideHaptics.load();
   await AppLogService.instance.restoreForLaunch();
   final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
@@ -527,6 +529,7 @@ class FlowGlassBg extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
+    final image = backgroundPath == null ? theme.globalBackgroundImage : null;
     final path = backgroundPath ?? theme.globalBackground;
     final effectiveOpacity =
         backgroundPath == null ? theme.globalBackgroundOpacity : opacity;
@@ -537,11 +540,16 @@ class FlowGlassBg extends StatelessWidget {
             color: theme.isDark
                 ? const Color(0xFF101619)
                 : const Color(0xFFF3F5FA)),
-        if (path.isNotEmpty && File(path).existsSync())
+        if (image != null || (path.isNotEmpty && File(path).existsSync()))
           Image(
-              image: FileImage(File(path)),
-              fit: BoxFit.cover,
-              gaplessPlayback: true),
+            image: image ?? FileImage(File(path)),
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              if (wasSynchronouslyLoaded || frame != null) return child;
+              return const SizedBox.expand();
+            },
+          ),
         if (path.isNotEmpty)
           IgnorePointer(
             child: ColoredBox(
@@ -1030,9 +1038,9 @@ class _JellyDockState extends State<JellyDock>
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
     final dock = Container(
-      height: 68,
+      height: 56,
       clipBehavior: Clip.none,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
             ? Colors.transparent
@@ -1063,6 +1071,7 @@ class _JellyDockState extends State<JellyDock>
           final totalW = cs.maxWidth;
           final slotW = totalW / 4;
           return Stack(
+            clipBehavior: Clip.none,
             children: [
               AnimatedBuilder(
                 animation: Listenable.merge([_pos, _w, _scale]),
@@ -1070,16 +1079,28 @@ class _JellyDockState extends State<JellyDock>
                   final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
                   final pill = Container(
                     width: _w.value,
-                    height: 44,
+                    height: 40,
                     decoration: BoxDecoration(
                       color: theme.hasGlobalBackground
-                          ? Colors.white.withValues(alpha: 0.16)
+                          ? (theme.isDark
+                              ? const Color(0x261D2C33)
+                              : const Color(0x24FFFFFF))
                           : theme.primary.withValues(
                               alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
                             ),
-                      borderRadius: BorderRadius.circular(22),
+                      borderRadius: BorderRadius.circular(20),
+                      border: theme.hasGlobalBackground
+                          ? Border.all(
+                              color: Colors.white.withValues(alpha: .34))
+                          : null,
                       boxShadow: theme.hasGlobalBackground
-                          ? null
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: .12),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
                           : (isDark
                               ? [
                                   BoxShadow(
@@ -1094,9 +1115,7 @@ class _JellyDockState extends State<JellyDock>
                               : null),
                     ),
                   );
-                  final selectedPill = theme.hasGlobalBackground
-                      ? TideLiquidGlass(radius: 22, child: pill)
-                      : pill;
+                  final selectedPill = pill;
                   return Positioned(
                     left: pillX,
                     top: isDark && _lifting ? 0 : 2,
@@ -1165,9 +1184,14 @@ class _JellyDockState extends State<JellyDock>
       ),
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
+      padding: const EdgeInsets.fromLTRB(40, 12, 40, 0),
       child: theme.hasGlobalBackground
-          ? TideLiquidGlass(radius: 28, child: dock)
+          ? TideLiquidGlass(
+              radius: 28,
+              premium: true,
+              clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
+              child: dock,
+            )
           : dock,
     );
   }

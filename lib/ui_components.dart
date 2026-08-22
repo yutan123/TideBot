@@ -1,10 +1,10 @@
 import 'dart:io';
 import 'dart:math';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
+import 'tide_liquid_glass.dart';
 
 // ========== 全局弹性点击包装器 ==========
 class TideHaptics {
@@ -303,13 +303,18 @@ class TideDialogs {
       width: MediaQuery.of(context).size.width * maxWidth,
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
-            ? Colors.transparent
-            : theme.surface.withValues(alpha: 0.94),
+        color: theme.surface
+            .withValues(alpha: theme.hasGlobalBackground ? 0.96 : 0.94),
         borderRadius: BorderRadius.circular(22),
-        border: theme.hasGlobalBackground
-            ? null
-            : Border.all(color: theme.border, width: 0.5),
+        border: Border.all(color: theme.border, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black
+                .withValues(alpha: theme.hasGlobalBackground ? 0.30 : 0.16),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
       ),
       child: SingleChildScrollView(
         child: Column(
@@ -379,12 +384,20 @@ Future<T?> showTideSheet<T>(
                   height: effectiveHeight,
                   width: double.infinity,
                   decoration: BoxDecoration(
-                    color: theme.hasGlobalBackground
-                        ? Colors.transparent
-                        : theme.surface.withValues(alpha: 0.96),
+                    color: theme.surface.withValues(
+                      alpha: theme.hasGlobalBackground ? 0.97 : 0.96,
+                    ),
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(24),
                     ),
+                    border: Border.all(color: theme.border, width: 0.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 28,
+                        offset: const Offset(0, -6),
+                      ),
+                    ],
                   ),
                   child: Column(
                     children: [
@@ -525,37 +538,45 @@ class GlassCard extends StatelessWidget {
   final double radius;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final bool liquid;
   const GlassCard(
       {super.key,
       required this.child,
       this.padding = const EdgeInsets.all(16),
       this.radius = 20,
       this.onTap,
-      this.onLongPress});
+      this.onLongPress,
+      this.liquid = false});
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final content = GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: ClipRRect(
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: TideTheme.of(context).glass.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-            child: Container(
-                padding: padding,
-                decoration: BoxDecoration(
-                    color: TideTheme.of(context).glass.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(radius),
-                    border: Border.all(
-                        color: TideTheme.of(context).border, width: 0.5),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.03),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2))
-                    ]),
-                child: child),
-          )),
+          border: Border.all(color: TideTheme.of(context).border, width: 0.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: child,
+      ),
+    );
+    if (!liquid || !TideTheme.of(context).hasGlobalBackground) return content;
+    return TideLiquidGlass(
+      radius: radius,
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Padding(padding: padding, child: child),
+      ),
     );
   }
 }
@@ -567,6 +588,7 @@ class FrostCard extends StatelessWidget {
   final double radius;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final bool liquid;
   const FrostCard(
       {super.key,
       required this.child,
@@ -574,35 +596,42 @@ class FrostCard extends StatelessWidget {
       this.margin = EdgeInsets.zero,
       this.radius = 20,
       this.onTap,
-      this.onLongPress});
+      this.onLongPress,
+      this.liquid = false});
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final card = Padding(
       padding: margin,
       child: GestureDetector(
         onTap: onTap,
         onLongPress: onLongPress,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                color: TideTheme.of(context).glass.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(radius),
-                border:
-                    Border.all(color: TideTheme.of(context).border, width: 0.5),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3))
-                ],
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: TideTheme.of(context).glass.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(color: TideTheme.of(context).border, width: 0.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
               ),
-              child: child,
-            ),
+            ],
           ),
+          child: child,
+        ),
+      ),
+    );
+    if (!liquid || !TideTheme.of(context).hasGlobalBackground) return card;
+    return Padding(
+      padding: margin,
+      child: TideLiquidGlass(
+        radius: radius,
+        child: GestureDetector(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          child: Padding(padding: padding, child: child),
         ),
       ),
     );

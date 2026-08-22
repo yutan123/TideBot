@@ -27,13 +27,13 @@ class DiaryCalendarPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: TideTheme.of(context).bgColor,
-    appBar: AppBar(
-      title: Text('$botName的日记'),
-      backgroundColor: TideTheme.of(context).bgColor,
-    ),
-    body: DiaryCalendarWidget(botId: botId, botName: botName),
-  );
+        backgroundColor: TideTheme.of(context).bgColor,
+        appBar: AppBar(
+          title: Text('$botName的日记'),
+          backgroundColor: TideTheme.of(context).bgColor,
+        ),
+        body: DiaryCalendarWidget(botId: botId, botName: botName),
+      );
 }
 
 class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
@@ -153,12 +153,10 @@ class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
                           Text(
                             '$day',
                             style: TextStyle(
-                              color: hasDiary
-                                  ? theme.textStrong
-                                  : theme.textFaint,
-                              fontWeight: hasDiary
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
+                              color:
+                                  hasDiary ? theme.textStrong : theme.textFaint,
+                              fontWeight:
+                                  hasDiary ? FontWeight.w700 : FontWeight.w400,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -167,26 +165,14 @@ class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
                             height: 5,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: hasDiary
-                                  ? theme.primary
-                                  : Colors.transparent,
+                              color:
+                                  hasDiary ? theme.primary : Colors.transparent,
                             ),
                           ),
                         ],
                       ),
                     );
                   },
-                ),
-                const SizedBox(height: 20),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '点击有标记的日期查看全文',
-                    style: TextStyle(
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont',
-                    ),
-                  ),
                 ),
               ],
             ),

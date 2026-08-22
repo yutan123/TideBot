@@ -299,8 +299,8 @@ class ChatListPageState extends State<ChatListPage> {
   Widget _card(Map<String, dynamic> bot) {
     final av = (bot['avatar'] as String?) ?? '';
     return GlassCard(
+      liquid: true,
       padding: const EdgeInsets.all(14),
-      radius: 20,
       onTap: () => _openChat(bot),
       child: Row(children: [
         Stack(clipBehavior: Clip.none, children: [

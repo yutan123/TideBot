@@ -25,6 +25,7 @@ dependencies:
 
   # UI 特效与多模态交互
   flutter_svg: ^2.0.10
+  liquid_glass_widgets: ^0.30.2
   rive: ^0.13.0
   # 6.x 的 Android 插件已声明 namespace，兼容 AGP 8+。
   record: ^6.1.1
