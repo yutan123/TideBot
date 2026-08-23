@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'db.dart';
 
@@ -17,6 +20,7 @@ class TideTheme extends ChangeNotifier {
   String _pendingBackgroundPath = '';
   bool _globalBackgroundReady = false;
   double _globalBackgroundOpacity = 0.38;
+  final Map<_BackgroundRegion, bool> _backgroundLightness = {};
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
   String get name => _name;
@@ -30,8 +34,62 @@ class TideTheme extends ChangeNotifier {
 
   void _setGlobalBackgroundImage(String path) {
     _globalBackgroundReady = path.isEmpty;
+    _backgroundLightness.clear();
     _globalBackgroundImage = path.isEmpty ? null : FileImage(File(path));
   }
+
+  Future<void> _sampleBackgroundLightness(ui.Image image) async {
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (bytes == null || image.width == 0 || image.height == 0) return;
+    final samples = <_BackgroundRegion, Rect>{
+      _BackgroundRegion.header: const Rect.fromLTWH(.15, 0, .7, .18),
+      _BackgroundRegion.content: const Rect.fromLTWH(.1, .25, .8, .5),
+      _BackgroundRegion.footer: const Rect.fromLTWH(.15, .78, .7, .2),
+    };
+    for (final entry in samples.entries) {
+      var total = 0.0;
+      var count = 0;
+      for (var y = 0; y < 3; y++) {
+        for (var x = 0; x < 3; x++) {
+          final px = ((entry.value.left + entry.value.width * (x / 2)) *
+                  (image.width - 1))
+              .round()
+              .clamp(0, image.width - 1)
+              .toInt();
+          final py = ((entry.value.top + entry.value.height * (y / 2)) *
+                  (image.height - 1))
+              .round()
+              .clamp(0, image.height - 1)
+              .toInt();
+          final offset = (py * image.width + px) * 4;
+          final r = bytes.getUint8(offset) / 255;
+          final g = bytes.getUint8(offset + 1) / 255;
+          final b = bytes.getUint8(offset + 2) / 255;
+          total += .2126 * r + .7152 * g + .0722 * b;
+          count++;
+        }
+      }
+      _backgroundLightness[entry.key] = total / count > .55;
+    }
+  }
+
+  bool _isBackgroundLight(_BackgroundRegion region) =>
+      _backgroundLightness[region] ?? !isDark;
+
+  Color _onBackgroundFor(_BackgroundRegion region, {bool weak = false}) {
+    if (!hasGlobalBackground) return weak ? textWeak : textStrong;
+    final light = _isBackgroundLight(region);
+    if (weak) return light ? const Color(0xFF30343A) : const Color(0xFFE2E6EA);
+    return light ? const Color(0xFF101216) : const Color(0xFFF8F9FA);
+  }
+
+  Color get onBackgroundStrong => _onBackgroundFor(_BackgroundRegion.content);
+  Color get onBackgroundWeak =>
+      _onBackgroundFor(_BackgroundRegion.content, weak: true);
+  Color get onBackgroundIcon => onBackgroundStrong;
+  Color get backgroundScrim => backgroundOverlayColor.withValues(
+        alpha: effectiveBackgroundOpacity,
+      );
 
   void _precacheGlobalBackground() {
     final image = _globalBackgroundImage;
@@ -42,10 +100,12 @@ class TideTheme extends ChangeNotifier {
     final stream = image.resolve(ImageConfiguration.empty);
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
-      (_, __) {
-        _globalBackgroundReady = true;
-        stream.removeListener(listener);
-        notifyListeners();
+      (info, __) {
+        _sampleBackgroundLightness(info.image).whenComplete(() {
+          _globalBackgroundReady = true;
+          stream.removeListener(listener);
+          notifyListeners();
+        });
       },
       onError: (_, __) {
         _globalBackgroundReady = false;
@@ -269,13 +329,13 @@ class TideTheme extends ChangeNotifier {
     double? opacity,
   }) async {
     if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
-    await DBManager().insertKV('global_background_image', path);
-    await DBManager().insertKV(
-      'global_background_opacity',
-      _globalBackgroundOpacity.toStringAsFixed(2),
-    );
 
     if (path.isEmpty) {
+      await DBManager().insertKV('global_background_image', '');
+      await DBManager().insertKV(
+        'global_background_opacity',
+        _globalBackgroundOpacity.toStringAsFixed(2),
+      );
       _pendingBackgroundImage = null;
       _pendingBackgroundPath = '';
       _globalBackground = '';
@@ -283,35 +343,48 @@ class TideTheme extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (!File(path).existsSync()) {
+      throw StateError('背景图片不存在或无法读取');
+    }
 
     final candidate = FileImage(File(path));
     _pendingBackgroundImage = candidate;
     _pendingBackgroundPath = path;
     final stream = candidate.resolve(ImageConfiguration.empty);
+    final ready = Completer<void>();
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
-      (_, __) {
+      (info, __) async {
         stream.removeListener(listener);
-        if (_pendingBackgroundImage != candidate ||
-            _pendingBackgroundPath != path) {
-          return;
-        }
-        _globalBackground = path;
-        _globalBackgroundImage = candidate;
-        _globalBackgroundReady = true;
-        _pendingBackgroundImage = null;
-        _pendingBackgroundPath = '';
-        notifyListeners();
+        await _sampleBackgroundLightness(info.image);
+        if (!ready.isCompleted) ready.complete();
       },
       onError: (_, __) {
         stream.removeListener(listener);
-        if (_pendingBackgroundImage != candidate) return;
-        _pendingBackgroundImage = null;
-        _pendingBackgroundPath = '';
-        notifyListeners();
+        if (!ready.isCompleted)
+          ready.completeError(
+            StateError('背景图片解码失败'),
+          );
       },
     );
     stream.addListener(listener);
+    await ready.future;
+    if (_pendingBackgroundImage != candidate ||
+        _pendingBackgroundPath != path) {
+      return;
+    }
+
+    _globalBackground = path;
+    _globalBackgroundImage = candidate;
+    _globalBackgroundReady = true;
+    _pendingBackgroundImage = null;
+    _pendingBackgroundPath = '';
+    await DBManager().insertKV('global_background_image', path);
+    await DBManager().insertKV(
+      'global_background_opacity',
+      _globalBackgroundOpacity.toStringAsFixed(2),
+    );
+    notifyListeners();
   }
 
   /// Restores the shipped mint palette and system appearance.
@@ -339,6 +412,8 @@ class TideTheme extends ChangeNotifier {
             TideTheme());
   }
 }
+
+enum _BackgroundRegion { header, content, footer }
 
 class _TideThemeWidget extends InheritedNotifier<TideTheme> {
   const _TideThemeWidget({required this.theme, required super.child})

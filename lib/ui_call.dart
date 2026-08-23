@@ -43,6 +43,7 @@ class _CallPageState extends State<CallPage>
   final AudioPlayer _player = AudioPlayer();
   String? _recordingPath;
   bool _recording = false;
+  bool _finishingRecording = false;
   bool _botSpeaking = false;
   bool _speechDetected = false;
   double _soundLevel = 0;
@@ -178,25 +179,39 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _finishListening() async {
+    if (_finishingRecording) return;
+    _finishingRecording = true;
     _autoStopTimer?.cancel();
     _stopAmpMonitor();
-    if (!_recording) return;
-    if (mounted) setState(() => _recording = false);
+    if (!_recording) {
+      _finishingRecording = false;
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _caption = '正在提交语音识别…';
+      });
+    }
     try {
       final path = await _recorder.stop();
-      AppLogService.instance
-          .add('VOICE_CALL', path == null ? '录音未生成文件' : '录音已停止：$path');
-      if (mounted) {
-        setState(() {
-          _recordingPath = path;
-        });
-      }
+      AppLogService.instance.add(
+        'VOICE_CALL',
+        path == null ? '录音未生成文件' : '录音已停止：$path，准备请求 STT',
+      );
       _vadActive = false;
       _speechDetected = false;
-      if (path != null && path.isNotEmpty) await _runVoiceTurn();
+      if (path == null || path.isEmpty) {
+        if (mounted) setState(() => _caption = '录音文件为空，无法请求语音识别');
+        return;
+      }
+      _recordingPath = path;
+      await _runVoiceTurn();
     } catch (error) {
-      AppLogService.instance.add('VOICE_CALL', '录音停止失败：$error');
+      AppLogService.instance.add('VOICE_CALL', '录音停止或提交失败：$error');
       if (mounted) setState(() => _caption = '录音处理失败：$error');
+    } finally {
+      _finishingRecording = false;
     }
   }
 
@@ -207,10 +222,12 @@ class _CallPageState extends State<CallPage>
       if (mounted) setState(() => _caption = '未配置语音识别服务，可在设置中启用 STT');
       return;
     }
-    setState(() {
-      _processing = true;
-      _caption = '正在识别语音…';
-    });
+    if (mounted) {
+      setState(() {
+        _processing = true;
+        _caption = '正在识别语音…';
+      });
+    }
     AppLogService.instance.add('VOICE_CALL', 'STT 开始：${_recordingPath!}');
     try {
       final text = await AIManager()
@@ -617,7 +634,7 @@ class _CallPageState extends State<CallPage>
     final speaking = _botSpeaking;
     final listening = _recording;
     return FilledButton.icon(
-      onPressed: !(speaking || listening)
+      onPressed: !(speaking || listening) || _finishingRecording
           ? null
           : () async {
               TideHaptics.tap();

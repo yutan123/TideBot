@@ -56,7 +56,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 21,
+      version: 22,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -157,6 +157,7 @@ class DBManager {
             reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
           )
         ''');
+        await _createSkillTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -336,6 +337,7 @@ class DBManager {
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
         }
+        if (oldVersion < 22) await _createSkillTables(db);
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -369,6 +371,165 @@ class DBManager {
       },
     );
   }
+
+  Future<void> _createSkillTables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
+      description TEXT DEFAULT '', manifest_json TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ready',
+      error TEXT, updated_at INTEGER NOT NULL)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS skill_tools (
+      id TEXT PRIMARY KEY, skill_id TEXT NOT NULL, name TEXT NOT NULL,
+      description TEXT DEFAULT '', executor TEXT NOT NULL,
+      schema_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+      UNIQUE(skill_id, name))''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS mcp_servers (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
+      headers_key TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'disconnected', error TEXT,
+      updated_at INTEGER NOT NULL)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS mcp_tools (
+      id TEXT PRIMARY KEY, server_id TEXT NOT NULL, name TEXT NOT NULL,
+      description TEXT DEFAULT '', schema_json TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1, discovered_at INTEGER NOT NULL,
+      FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE,
+      UNIQUE(server_id, name))''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS tool_audit (
+      id TEXT PRIMARY KEY, source TEXT NOT NULL, tool_name TEXT NOT NULL,
+      input_summary TEXT NOT NULL, status TEXT NOT NULL, duration_ms INTEGER NOT NULL,
+      error TEXT, created_at INTEGER NOT NULL)''');
+  }
+
+  Future<List<Map<String, dynamic>>> queryEnabledSkillTools() async {
+    final db = await database;
+    return db.rawQuery(
+        'SELECT * FROM skill_tools WHERE enabled = 1 AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)');
+  }
+
+  Future<List<Map<String, dynamic>>> queryEnabledMcpTools() async {
+    final db = await database;
+    return db.rawQuery(
+        'SELECT t.*, s.url, s.headers_key FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1');
+  }
+
+  Future<List<Map<String, dynamic>>> querySkills() async =>
+      (await database).query('skills', orderBy: 'updated_at DESC');
+  Future<List<Map<String, dynamic>>> queryMcpServers() async =>
+      (await database).query('mcp_servers', orderBy: 'updated_at DESC');
+
+  Future<void> saveSkill(
+      Map<String, dynamic> skill, List<Map<String, dynamic>> tools) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('skills', skill,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete('skill_tools',
+          where: 'skill_id = ?', whereArgs: [skill['id']]);
+      for (final tool in tools)
+        await txn.insert('skill_tools', tool,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Future<void> saveMcpServer(Map<String, dynamic> server) async =>
+      (await database).insert('mcp_servers', server,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<void> saveMcpTools(
+      String serverId, List<Map<String, dynamic>> tools) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn
+          .delete('mcp_tools', where: 'server_id = ?', whereArgs: [serverId]);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final tool in tools) {
+        final name = tool['name']?.toString() ?? '';
+        if (name.isEmpty) continue;
+        await txn.insert(
+            'mcp_tools',
+            {
+              'id': 'mcp_tool_${serverId}_$name',
+              'server_id': serverId,
+              'name': name,
+              'description': tool['description']?.toString() ?? '',
+              'schema_json':
+                  jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
+              'enabled': 1,
+              'discovered_at': now,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await txn.update(
+          'mcp_servers',
+          {
+            'status': 'connected',
+            'error': null,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [serverId]);
+    });
+  }
+
+  Future<void> updateMcpStatus(String id, String status,
+          [String? error]) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            'status': status,
+            'error': error,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
+
+  Future<void> insertToolAudit({
+    required String source,
+    required String toolName,
+    required String inputSummary,
+    required String status,
+    required int durationMs,
+    String? error,
+  }) async =>
+      (await database).insert('tool_audit', {
+        'id': 'audit_${DateTime.now().microsecondsSinceEpoch}',
+        'source': source,
+        'tool_name': toolName,
+        'input_summary': inputSummary,
+        'status': status,
+        'duration_ms': durationMs,
+        'error': error,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+
+  Future<void> deleteSkill(String id) async =>
+      (await database).delete('skills', where: 'id = ?', whereArgs: [id]);
+  Future<void> deleteMcpServer(String id) async =>
+      (await database).delete('mcp_servers', where: 'id = ?', whereArgs: [id]);
+
+  Future<void> setSkillEnabled(String id, bool enabled) async =>
+      (await database).update(
+        'skills',
+        {
+          'enabled': enabled ? 1 : 0,
+          'updated_at': DateTime.now().millisecondsSinceEpoch
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+  Future<void> setMcpServerEnabled(String id, bool enabled) async =>
+      (await database).update(
+        'mcp_servers',
+        {
+          'enabled': enabled ? 1 : 0,
+          'status': enabled ? 'disconnected' : 'disabled',
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
 
   // ================= 拟人化日程 =================
   Future<Map<String, dynamic>?> getLifeSchedule(
@@ -830,6 +991,28 @@ class DBManager {
         whereArgs: [botId],
         orderBy: descending ? 'timestamp DESC' : 'timestamp ASC',
         limit: limit);
+  }
+
+  /// Daily assistant replies and recorded model usage for the chat sidebar.
+  /// Error rows and non-text replies are intentionally excluded from the count.
+  Future<Map<String, int>> todayBotStats(String botId) async {
+    final db = await database;
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final messageRows = await db.rawQuery('''
+      SELECT COUNT(*) AS count FROM chat_history
+      WHERE bot_id = ? AND role = 'assistant' AND type = 'text'
+        AND timestamp >= ? AND COALESCE(error_log, '') = ''
+        AND COALESCE(error_code, '') = ''
+    ''', [botId, start]);
+    final usageRows = await db.rawQuery('''
+      SELECT COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage_events
+      WHERE bot_id = ? AND timestamp >= ?
+    ''', [botId, start]);
+    return {
+      'messages': (messageRows.first['count'] as num?)?.toInt() ?? 0,
+      'tokens': (usageRows.first['tokens'] as num?)?.toInt() ?? 0,
+    };
   }
 
   // 别名：新代码用 deleteMessages (清空聊天)

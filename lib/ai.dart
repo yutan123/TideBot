@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,7 @@ import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
 import 'chat_content.dart';
+import 'skill_runtime.dart';
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -483,41 +485,68 @@ class AIManager {
         lastIsCurrentUser = true;
       }
     }
-    // Images are described independently so every attachment reaches the model.
+    // Images can either be described by a dedicated vision provider, or be sent
+    // directly to the primary OpenAI-compatible model when explicitly selected.
+    const primaryVisionModel = '__use_primary_vision__';
     final effectiveImagePaths = imagePaths.isNotEmpty
         ? imagePaths
         : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
     if (effectiveImagePaths.isNotEmpty) {
-      final mediaDescriptions = <String>[];
-      for (var index = 0; index < effectiveImagePaths.length; index++) {
-        final path = effectiveImagePaths[index];
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          final visionId =
-              (prefs.getString('vision_model_$botId') ?? '').trim();
-          final visionProvider =
-              visionId.isEmpty ? null : await db.getChatProviderById(visionId);
-          final description = visionProvider == null
-              ? await MediaPreprocessor().imageFallbackText(path)
-              : await _describeImage(
-                  provider: visionProvider,
-                  imagePath: path,
-                  userText: text,
-                );
-          mediaDescriptions.add('[图片 ${index + 1}] $description');
-        } catch (e) {
-          mediaDescriptions.add('[图片 ${index + 1} 预处理失败：$e]');
+      final prefs = await SharedPreferences.getInstance();
+      final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
+      if (visionId == primaryVisionModel) {
+        final multimodal = <Map<String, dynamic>>[
+          {'type': 'text', 'text': text.isEmpty ? '请分析这些图片。' : text},
+        ];
+        for (final path in effectiveImagePaths) {
+          final file = File(path);
+          if (!await file.exists()) return {'error': '图片文件不存在，无法使用主模型识图'};
+          final bytes = await file.readAsBytes();
+          if (bytes.length > 8 * 1024 * 1024) {
+            return {'error': '图片超过 8 MB，无法使用主模型识图'};
+          }
+          final extension = path.split('.').last.toLowerCase();
+          final mime = extension == 'png' ? 'image/png' : 'image/jpeg';
+          multimodal.add({
+            'type': 'image_url',
+            'image_url': {'url': 'data:$mime;base64,${base64Encode(bytes)}'},
+          });
         }
-      }
-      final contentWithMedia = '$text\n\n${mediaDescriptions.join('\n\n')}';
-      if (lastIsCurrentUser && messages.isNotEmpty) {
-        // 当前用户消息已从数据库进入上下文时，替换其内容而非重复追加。
-        messages[messages.length - 1] = {
-          'role': 'user',
-          'content': contentWithMedia,
-        };
+        final userMessage = {'role': 'user', 'content': multimodal};
+        if (lastIsCurrentUser && messages.isNotEmpty) {
+          messages[messages.length - 1] = userMessage;
+        } else {
+          messages.add(userMessage);
+        }
       } else {
-        messages.add({'role': 'user', 'content': contentWithMedia});
+        final mediaDescriptions = <String>[];
+        for (var index = 0; index < effectiveImagePaths.length; index++) {
+          final path = effectiveImagePaths[index];
+          try {
+            final visionProvider = visionId.isEmpty
+                ? null
+                : await db.getChatProviderById(visionId);
+            final description = visionProvider == null
+                ? await MediaPreprocessor().imageFallbackText(path)
+                : await _describeImage(
+                    provider: visionProvider,
+                    imagePath: path,
+                    userText: text,
+                  );
+            mediaDescriptions.add('[图片 ${index + 1}] $description');
+          } catch (e) {
+            mediaDescriptions.add('[图片 ${index + 1} 预处理失败：$e]');
+          }
+        }
+        final contentWithMedia = '$text\n\n${mediaDescriptions.join('\n\n')}';
+        if (lastIsCurrentUser && messages.isNotEmpty) {
+          messages[messages.length - 1] = {
+            'role': 'user',
+            'content': contentWithMedia,
+          };
+        } else {
+          messages.add({'role': 'user', 'content': contentWithMedia});
+        }
       }
     } else if (!lastIsCurrentUser) {
       messages.add({'role': 'user', 'content': text});
@@ -2333,7 +2362,35 @@ $transcript''';
     }
     tools.add(_memoryToolSchema());
     tools.add(_diaryToolSchema());
+    tools.addAll(await _buildExternalTools(db));
     // Sticker selection uses an internal text marker, not a callable model tool.
+    return tools;
+  }
+
+  Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async {
+    final tools = <Map<String, dynamic>>[];
+    for (final row in await db.queryEnabledSkillTools()) {
+      final name = 'skill_${row['skill_id']}_${row['name']}';
+      tools.add({
+        'type': 'function',
+        'function': {
+          'name': name,
+          'description': row['description']?.toString() ?? '',
+          'parameters': jsonDecode(row['schema_json']?.toString() ?? '{}'),
+        },
+      });
+    }
+    for (final row in await db.queryEnabledMcpTools()) {
+      final name = 'mcp_${row['server_id']}_${row['name']}';
+      tools.add({
+        'type': 'function',
+        'function': {
+          'name': name,
+          'description': row['description']?.toString() ?? '',
+          'parameters': jsonDecode(row['schema_json']?.toString() ?? '{}'),
+        },
+      });
+    }
     return tools;
   }
 
@@ -2405,6 +2462,191 @@ $transcript''';
         },
       };
 
+  String _redactToolInput(Map<String, dynamic> args) {
+    final safe = <String, dynamic>{};
+    for (final entry in args.entries) {
+      final key = entry.key.toLowerCase();
+      final value = entry.value.toString();
+      safe[entry.key] = key.contains('key') ||
+              key.contains('token') ||
+              key.contains('secret') ||
+              key.contains('password')
+          ? '[redacted]'
+          : value.length > 200
+              ? '${value.substring(0, 200)}...'
+              : entry.value;
+    }
+    return jsonEncode(safe);
+  }
+
+  Future<Map<String, dynamic>> _executeSkillToolCall({
+    required DBManager db,
+    required String name,
+    required Map<String, dynamic> args,
+  }) async {
+    final parts = name.split('_');
+    if (parts.length < 3)
+      return {
+        'result': {'ok': false, 'error': 'Skill 工具名无效'}
+      };
+    final skillId = parts[1];
+    final toolName = parts.sublist(2).join('_');
+    final rows = await db.queryEnabledSkillTools();
+    final row = rows
+        .where(
+            (item) => item['skill_id'] == skillId && item['name'] == toolName)
+        .cast<Map<String, dynamic>>()
+        .firstOrNull;
+    if (row == null)
+      return {
+        'result': {'ok': false, 'error': 'Skill 工具不可用'}
+      };
+    if (row['executor'] == 'mcp_proxy') {
+      return {
+        'result': {
+          'ok': false,
+          'error': 'mcp_proxy 需在 Skill manifest 中声明目标 MCP 工具'
+        }
+      };
+    }
+    if (row['executor'] != 'http') {
+      return {
+        'result': {'ok': false, 'error': '该 Skill 执行器不支持直接调用'}
+      };
+    }
+    final skillRows = await db.querySkills();
+    final skill = skillRows.firstWhere(
+      (item) => item['id'] == skillId,
+      orElse: () => <String, dynamic>{},
+    );
+    final started = DateTime.now();
+    try {
+      final manifest = jsonDecode(skill['manifest_json']?.toString() ?? '{}');
+      final definitions = manifest is Map ? manifest['tools'] : null;
+      final definition = definitions is List
+          ? definitions.cast<dynamic>().firstWhere(
+                (item) => item is Map && item['name']?.toString() == toolName,
+                orElse: () => null,
+              )
+          : null;
+      if (definition is! Map) throw const FormatException('HTTP 工具定义不存在');
+      final uri = Uri.tryParse(definition['url']?.toString() ?? '');
+      if (uri == null || !uri.hasScheme)
+        throw const FormatException('HTTP URL 无效');
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      final secret = await const FlutterSecureStorage()
+          .read(key: 'skill_headers_$skillId');
+      if (secret != null && secret.isNotEmpty) {
+        final decoded = jsonDecode(secret);
+        if (decoded is Map)
+          decoded.forEach(
+              (key, value) => headers[key.toString()] = value.toString());
+      }
+      final response = await http
+          .post(uri, headers: headers, body: jsonEncode(args))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('HTTP Skill ${response.statusCode}');
+      }
+      final body = response.body.length > 100000
+          ? response.body.substring(0, 100000)
+          : response.body;
+      await db.insertToolAudit(
+          source: 'skill',
+          toolName: name,
+          inputSummary: _redactToolInput(args),
+          status: 'success',
+          durationMs: DateTime.now().difference(started).inMilliseconds);
+      return {
+        'result': {'ok': true, 'content': body}
+      };
+    } catch (error) {
+      await db.insertToolAudit(
+          source: 'skill',
+          toolName: name,
+          inputSummary: _redactToolInput(args),
+          status: 'error',
+          durationMs: DateTime.now().difference(started).inMilliseconds,
+          error: error
+              .toString()
+              .substring(0, error.toString().length.clamp(0, 500)));
+      return {
+        'result': {'ok': false, 'error': 'HTTP Skill 调用失败：$error'}
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeMcpToolCall({
+    required DBManager db,
+    required String name,
+    required Map<String, dynamic> args,
+  }) async {
+    final parts = name.split('_');
+    if (parts.length < 3)
+      return {
+        'result': {'ok': false, 'error': 'MCP 工具名无效'}
+      };
+    final serverId = parts[1];
+    final toolName = parts.sublist(2).join('_');
+    final rows = await db.queryEnabledMcpTools();
+    final row = rows
+        .where(
+            (item) => item['server_id'] == serverId && item['name'] == toolName)
+        .cast<Map<String, dynamic>>()
+        .firstOrNull;
+    if (row == null)
+      return {
+        'result': {'ok': false, 'error': 'MCP 工具不可用'}
+      };
+    final started = DateTime.now();
+    try {
+      const secure = FlutterSecureStorage();
+      final storedHeaders = await secure.read(key: 'mcp_headers_$serverId');
+      final headers = <String, String>{};
+      if (storedHeaders != null && storedHeaders.isNotEmpty) {
+        final decoded = jsonDecode(storedHeaders);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (key.toString().toLowerCase() != 'authorization') {
+              headers[key.toString()] = value.toString();
+            } else {
+              headers[key.toString()] = value.toString();
+            }
+          });
+        }
+      }
+      final client = McpClient(url: row['url'].toString(), headers: headers);
+      final value = await client.callTool(toolName, args);
+      await db.insertToolAudit(
+        source: 'mcp',
+        toolName: name,
+        inputSummary: _redactToolInput(args),
+        status: 'success',
+        durationMs: DateTime.now().difference(started).inMilliseconds,
+      );
+      return {
+        'result': {'ok': true, 'content': value}
+      };
+    } catch (error) {
+      await db.insertToolAudit(
+        source: 'mcp',
+        toolName: name,
+        inputSummary: _redactToolInput(args),
+        status: 'error',
+        durationMs: DateTime.now().difference(started).inMilliseconds,
+        error: error
+            .toString()
+            .substring(0, error.toString().length.clamp(0, 500)),
+      );
+      return {
+        'result': {'ok': false, 'error': 'MCP 调用失败：$error'}
+      };
+    } finally {
+      AppLogService.instance.add('MCP',
+          '调用 $serverId/$toolName，耗时 ${DateTime.now().difference(started).inMilliseconds}ms');
+    }
+  }
+
   Future<Map<String, dynamic>> _executeNativeToolCall({
     required DBManager db,
     required String botId,
@@ -2423,6 +2665,12 @@ $transcript''';
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'},
       };
+    }
+    if (name.startsWith('mcp_')) {
+      return _executeMcpToolCall(db: db, name: name, args: args);
+    }
+    if (name.startsWith('skill_')) {
+      return _executeSkillToolCall(db: db, name: name, args: args);
     }
     if (name == 'choose_silence') {
       return {

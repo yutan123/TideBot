@@ -17,7 +17,8 @@ import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
 import 'theme.dart';
-import 'tide_liquid_glass.dart';
+import 'chat_sidebar.dart';
+import 'tool_manager_page.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
@@ -59,6 +60,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   late Map<String, dynamic> _bot;
 
   late AnimationController _bottomBarCtrl;
+  late AnimationController _sidebarCtrl;
+  bool _sidebarOpen = false;
+  bool _sidebarDragActive = false;
   bool _hasText = false;
   // Attachments are staged above the composer and sent together on confirmation.
   final List<String> _pendingImages = [];
@@ -119,6 +123,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     ); // 减慢动画速度
+    _sidebarCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
     // 首帧后启动进场动画，否则 SlideTransition 会一直停在向下偏移 25% 的位置，
     // 这就是输入框一直偏下、"怎么调 padding 都不动"的根因。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -145,6 +153,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _player.dispose();
     _recTimer?.cancel();
     _bottomBarCtrl.dispose(); // 添加动画控制器释放
+    _sidebarCtrl.dispose();
     super.dispose();
   }
 
@@ -159,6 +168,35 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final prefs = await SharedPreferences.getInstance();
     final bg = prefs.getString('chat_bg_${_bot['id']}');
     if (mounted) setState(() => _customBg = bg);
+  }
+
+  void _openSidebar() {
+    if (_sidebarOpen) return;
+    setState(() => _sidebarOpen = true);
+    _sidebarCtrl.forward(from: 0);
+  }
+
+  Future<void> _closeSidebar() async {
+    if (!_sidebarOpen) return;
+    await _sidebarCtrl.reverse();
+    if (mounted) setState(() => _sidebarOpen = false);
+  }
+
+  void _updateSidebarDrag(DragUpdateDetails details) {
+    final width = MediaQuery.sizeOf(context).width * .86;
+    _sidebarCtrl.value =
+        (_sidebarCtrl.value + details.delta.dx / width).clamp(0.0, 1.0);
+  }
+
+  void _endSidebarDrag(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond.dx;
+    final shouldOpen =
+        velocity > 500 || (velocity > -500 && _sidebarCtrl.value >= .5);
+    if (shouldOpen) {
+      _sidebarCtrl.forward();
+    } else {
+      _closeSidebar();
+    }
   }
 
   void _loadChatPreferences() async {
@@ -1315,10 +1353,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           await pickModel('backup_model_$botId', v);
                         }),
                         _mLabel('识图模型'),
-                        _modelPicker(ctx, providers, curVision, (v) async {
-                          curVision = v;
-                          await pickModel('vision_model_$botId', v);
-                        }),
+                        _modelPicker(
+                          ctx,
+                          providers,
+                          curVision,
+                          (v) async {
+                            curVision = v;
+                            await pickModel('vision_model_$botId', v);
+                          },
+                          includePrimaryVision: true,
+                        ),
                         _mLabel('生图模型'),
                         _modelPicker(ctx, providers, curImageGen, (v) async {
                           curImageGen = v;
@@ -1510,11 +1554,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     BuildContext ctx,
     List<Map<String, dynamic>> providers,
     String cur,
-    Function(String) onPick,
-  ) {
+    Function(String) onPick, {
+    bool includePrimaryVision = false,
+  }) {
     final sel = providers.firstWhereOrNull((p) => p['id'] == cur);
     final String disp;
-    if (sel != null) {
+    if (cur == '__use_primary_vision__') {
+      disp = '使用主模型识图';
+    } else if (sel != null) {
       final name = sel['name']?.toString() ?? '未选择';
       final model = sel['model']?.toString().trim() ?? '';
       final voice = sel['voice']?.toString().trim() ?? '';
@@ -1551,6 +1598,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   Navigator.pop(ctx);
                 },
               ),
+              if (includePrimaryVision)
+                ListTile(
+                  leading: const Icon(Icons.visibility_rounded),
+                  title: const Text('使用主模型识图（需要主模型支持识图）',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+                  trailing: cur == '__use_primary_vision__'
+                      ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                      : null,
+                  onTap: () {
+                    onPick('__use_primary_vision__');
+                    Navigator.pop(ctx);
+                  },
+                ),
               for (var pv in providers)
                 ListTile(
                   title: Text(
@@ -2071,93 +2131,134 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       backgroundColor: hasCustomBackground || theme.hasGlobalBackground
           ? Colors.transparent
           : theme.bgColor,
-      body: Stack(
-        children: [
-          // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
-          Positioned.fill(
-            child: hasCustomBackground
-                ? Image.file(File(_customBg!), fit: BoxFit.cover)
-                : theme.hasGlobalBackground
-                    ? const SizedBox.expand()
-                    : DecoratedBox(
-                        decoration: BoxDecoration(color: theme.bgColor),
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              left: -80,
-                              top: -60,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: 240,
-                                  height: 240,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      colors: [
-                                        theme.primaryLight
-                                            .withValues(alpha: 0.25),
-                                        Colors.transparent,
-                                      ],
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (details) {
+          _sidebarDragActive = !_sidebarOpen && details.globalPosition.dx <= 28;
+          if (_sidebarDragActive) setState(() => _sidebarOpen = true);
+        },
+        onHorizontalDragUpdate: (details) {
+          if (_sidebarDragActive) _updateSidebarDrag(details);
+        },
+        onHorizontalDragEnd: (details) {
+          if (_sidebarDragActive) {
+            _sidebarDragActive = false;
+            _endSidebarDrag(details);
+          }
+        },
+        child: Stack(
+          children: [
+            // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
+            Positioned.fill(
+              child: hasCustomBackground
+                  ? Image.file(File(_customBg!), fit: BoxFit.cover)
+                  : theme.hasGlobalBackground
+                      ? const SizedBox.expand()
+                      : DecoratedBox(
+                          decoration: BoxDecoration(color: theme.bgColor),
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                left: -80,
+                                top: -60,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 240,
+                                    height: 240,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: RadialGradient(
+                                        colors: [
+                                          theme.primaryLight
+                                              .withValues(alpha: 0.25),
+                                          Colors.transparent,
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned(
-                              right: -60,
-                              bottom: 120,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: 260,
-                                  height: 260,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      colors: [
-                                        theme.primary.withValues(alpha: 0.15),
-                                        Colors.transparent,
-                                      ],
+                              Positioned(
+                                right: -60,
+                                bottom: 120,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 260,
+                                    height: 260,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: RadialGradient(
+                                        colors: [
+                                          theme.primary.withValues(alpha: 0.15),
+                                          Colors.transparent,
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-          ),
-          Column(
-            children: [
-              _chatHeader(),
-              Expanded(child: _chatBody()),
-            ],
-          ),
-          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
-        ],
+            ),
+            Column(
+              children: [
+                _chatHeader(),
+                Expanded(child: _chatBody()),
+              ],
+            ),
+            Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
+            if (_sidebarOpen)
+              ChatSidebar(
+                bot: _bot,
+                progress: _sidebarCtrl,
+                onClose: _closeSidebar,
+                onDragUpdate: _updateSidebarDrag,
+                onDragEnd: _endSidebarDrag,
+                onOpenManager: (kind) async {
+                  await _closeSidebar();
+                  if (!mounted) return;
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => ToolManagerPage(
+                      kind: kind == 'skill'
+                          ? ToolManagerKind.skill
+                          : ToolManagerKind.mcp,
+                    ),
+                  ));
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _chatHeader() {
-    return TideLiquidGlass(
-      radius: 0,
-      padding: EdgeInsets.zero,
+    final theme = TideTheme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.hasGlobalBackground
+            ? theme.backgroundScrim.withValues(alpha: .42)
+            : theme.surface.withValues(alpha: .94),
+        border: Border(bottom: BorderSide(color: theme.divider)),
+      ),
       child: SafeArea(
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             children: [
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Icon(
-                    Icons.arrow_back_ios_rounded,
-                    size: 20,
-                    color: TideTheme.of(context).textStrong,
-                  ),
-                ),
+              IconButton(
+                tooltip: '打开 TideBot 侧栏',
+                onPressed: _openSidebar,
+                icon:
+                    Icon(Icons.blur_on_rounded, color: theme.onBackgroundIcon),
+              ),
+              IconButton(
+                tooltip: '返回聊天列表',
+                onPressed: () => Navigator.pop(context),
+                icon: Icon(Icons.arrow_back_ios_rounded,
+                    size: 20, color: theme.onBackgroundIcon),
               ),
               Expanded(
                 child: Column(
@@ -2166,60 +2267,40 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     Text(
                       _bot['name'] as String? ?? '',
                       style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong,
-                      ),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont',
+                          color: theme.onBackgroundStrong),
                     ),
                     if (_typing)
-                      Text(
-                        '正在输入中...',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: TideTheme.of(context).primary,
-                          fontFamily: 'TideFont',
-                        ),
-                      ),
+                      Text('正在输入中...',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: theme.primary,
+                              fontFamily: 'TideFont')),
                   ],
                 ),
               ),
               IconButton(
-                tooltip: '通话',
-                icon: Icon(
-                  Icons.call_rounded,
-                  size: 20,
-                  color: TideTheme.of(context).primary,
-                ),
-                onPressed: _openCallPreparation,
-              ),
+                  tooltip: '通话',
+                  icon:
+                      Icon(Icons.call_rounded, size: 20, color: theme.primary),
+                  onPressed: _openCallPreparation),
               IconButton(
-                tooltip: '删除聊天',
-                icon: Icon(
-                  Icons.delete_outline_rounded,
-                  size: 20,
-                  color: TideTheme.of(context).iconMuted,
-                ),
-                onPressed: _showDeleteOptions,
-              ),
+                  tooltip: '删除聊天',
+                  icon: Icon(Icons.delete_outline_rounded,
+                      size: 20, color: theme.onBackgroundWeak),
+                  onPressed: _showDeleteOptions),
               IconButton(
-                tooltip: '模型设置',
-                icon: Icon(
-                  Icons.settings_rounded,
-                  size: 20,
-                  color: TideTheme.of(context).iconMuted,
-                ),
-                onPressed: _showModelSettings,
-              ),
+                  tooltip: '模型设置',
+                  icon: Icon(Icons.settings_rounded,
+                      size: 20, color: theme.onBackgroundWeak),
+                  onPressed: _showModelSettings),
               IconButton(
-                tooltip: '机器人信息',
-                icon: Icon(
-                  Icons.menu_rounded,
-                  size: 20,
-                  color: TideTheme.of(context).iconMuted,
-                ),
-                onPressed: _showBotInfo,
-              ),
+                  tooltip: '机器人信息',
+                  icon: Icon(Icons.menu_rounded,
+                      size: 20, color: theme.onBackgroundWeak),
+                  onPressed: _showBotInfo),
             ],
           ),
         ),
@@ -3048,21 +3129,33 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _inputBar() {
     final theme = TideTheme.of(context);
-    // One clean capsule like the reference: no outer dark outline/card.
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      minimum: EdgeInsets.fromLTRB(
+        12,
+        0,
+        12,
+        10 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
             .animate(
-          CurvedAnimation(
-            parent: _bottomBarCtrl,
-            curve: Curves.easeOutCubic,
-          ),
+          CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
         ),
-        child: TideLiquidGlass(
-          radius: 27,
+        child: Container(
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+          decoration: BoxDecoration(
+            color: theme.surface.withValues(alpha: theme.isDark ? .96 : .98),
+            borderRadius: BorderRadius.circular(27),
+            border: Border.all(color: theme.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .16),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -3076,11 +3169,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   IconButton(
                     tooltip: '添加图片或文件',
                     onPressed: _pickMedia,
-                    icon: Icon(
-                      Icons.add_rounded,
-                      size: 23,
-                      color: theme.iconMuted,
-                    ),
+                    icon: Icon(Icons.add_rounded,
+                        size: 23, color: theme.iconMuted),
                   ),
                   Expanded(
                     child: TextField(
@@ -3090,33 +3180,27 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       maxLines: 4,
                       textInputAction: TextInputAction.newline,
                       style: TextStyle(
-                        fontSize: 15,
-                        fontFamily: 'TideFont',
-                        color: theme.textStrong,
-                      ),
+                          fontSize: 15,
+                          fontFamily: 'TideFont',
+                          color: theme.textStrong),
                       decoration: InputDecoration(
                         hintText: '发消息...',
                         hintStyle: TextStyle(
-                          color: theme.textFaint,
-                          fontSize: 14,
-                          fontFamily: 'TideFont',
-                        ),
+                            color: theme.textFaint,
+                            fontSize: 14,
+                            fontFamily: 'TideFont'),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 10,
-                        ),
+                            horizontal: 4, vertical: 10),
                       ),
                     ),
                   ),
                   IconButton(
                     tooltip: _isRecording ? '结束录音' : '录音',
                     onPressed: _toggleRec,
-                    icon: Icon(
-                      Icons.mic_rounded,
-                      size: 22,
-                      color: _isRecording ? Colors.red : theme.iconMuted,
-                    ),
+                    icon: Icon(Icons.mic_rounded,
+                        size: 22,
+                        color: _isRecording ? Colors.red : theme.iconMuted),
                   ),
                   SizedBox(
                     width: 44,
@@ -3132,18 +3216,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: theme.primary.withValues(
-                            alpha: (_hasText ||
-                                    _pendingImages.isNotEmpty ||
-                                    _pendingDocuments.isNotEmpty)
-                                ? 1
-                                : .42,
-                          ),
+                              alpha: (_hasText ||
+                                      _pendingImages.isNotEmpty ||
+                                      _pendingDocuments.isNotEmpty)
+                                  ? 1
+                                  : .42),
                         ),
-                        child: const Icon(
-                          Icons.arrow_upward_rounded,
-                          size: 18,
-                          color: Colors.white,
-                        ),
+                        child: const Icon(Icons.arrow_upward_rounded,
+                            size: 18, color: Colors.white),
                       ),
                     ),
                   ),
