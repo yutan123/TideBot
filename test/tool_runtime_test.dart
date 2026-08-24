@@ -45,5 +45,24 @@ void main() {
       expect(result.isValid, isFalse);
       expect(result.error, contains('不支持执行器'));
     });
+
+    test('parses JSON and SSE MCP responses', () {
+      expect(
+        McpClient.parseResponseBody('{"result":{"tools":[]}}'),
+        {'tools': []},
+      );
+      expect(
+        McpClient.parseResponseBody(
+            'event: message\ndata: {"result":{"prompts":[]}}\n\n'),
+        {'prompts': []},
+      );
+    });
+
+    test('rejects MCP error responses', () {
+      expect(
+        () => McpClient.parseResponseBody('{"error":{"code":-1}}'),
+        throwsStateError,
+      );
+    });
   });
 }

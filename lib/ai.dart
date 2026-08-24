@@ -2615,7 +2615,12 @@ $transcript''';
           });
         }
       }
-      final client = McpClient(url: row['url'].toString(), headers: headers);
+      final timeoutMs = (row['timeout_ms'] as num?)?.toInt() ?? 20000;
+      final client = McpClient(
+        url: row['url'].toString(),
+        headers: headers,
+        timeout: Duration(milliseconds: timeoutMs),
+      );
       final value = await client.callTool(toolName, args);
       await db.insertToolAudit(
         source: 'mcp',

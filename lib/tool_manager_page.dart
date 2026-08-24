@@ -118,7 +118,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
           'description': item['description']?.toString() ?? '',
           'executor': item['executor'].toString(),
           'schema_json': jsonEncode(item['input_schema'] ?? {'type': 'object'}),
-          'enabled': 1,
+          'risk_level': item['risk_level']?.toString() ?? 'normal',
+          'authorized': 0,
+          'enabled': item['risk_level']?.toString() == 'sensitive' ? 0 : 1,
         };
       }).toList();
       await _db.saveSkill({
@@ -139,14 +141,21 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     }
   }
 
-  Future<void> _discoverMcp(String id, String url,
-      {Map<String, String> headers = const {}}) async {
+  Future<void> _discoverMcp(
+    String id,
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
     await _db.updateMcpStatus(id, 'connecting');
     try {
-      final client = McpClient(url: url, headers: headers);
+      final client = McpClient(url: url, headers: headers, timeout: timeout);
       await client.initialize();
       final tools = await client.listTools();
+      final resources = await client.listResourcesSafe();
+      final prompts = await client.listPromptsSafe();
       await _db.saveMcpTools(id, tools);
+      await _db.saveMcpMetadata(id, resources: resources, prompts: prompts);
       await _reload();
     } catch (error) {
       await _db.updateMcpStatus(id, 'error', error.toString());
@@ -158,6 +167,8 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     final name = TextEditingController();
     final url = TextEditingController();
     final token = TextEditingController();
+    final timeoutSeconds = TextEditingController(text: '20');
+    var autoConnect = false;
     final accepted = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -175,6 +186,19 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                     obscureText: true,
                     decoration:
                         const InputDecoration(labelText: 'Bearer Token（可选）')),
+                TextField(
+                    controller: timeoutSeconds,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: '超时秒数')),
+                StatefulBuilder(
+                  builder: (context, setDialogState) => SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('保存后自动连接'),
+                    value: autoConnect,
+                    onChanged: (value) =>
+                        setDialogState(() => autoConnect = value),
+                  ),
+                ),
               ]),
               actions: [
                 TextButton(
@@ -188,12 +212,18 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     if (accepted != true ||
         name.text.trim().isEmpty ||
         Uri.tryParse(url.text.trim())?.hasScheme != true) return;
+    final timeoutMs =
+        (int.tryParse(timeoutSeconds.text.trim()) ?? 20).clamp(5, 120) * 1000;
     final id = 'mcp_${DateTime.now().millisecondsSinceEpoch}';
     await _db.saveMcpServer({
       'id': id,
       'name': name.text.trim(),
       'url': url.text.trim(),
       'headers_key': null,
+      'timeout_ms': timeoutMs,
+      'auto_connect': autoConnect ? 1 : 0,
+      'resources_json': '[]',
+      'prompts_json': '[]',
       'enabled': 1,
       'status': 'disconnected',
       'error': null,
@@ -208,7 +238,105 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
           .write(key: 'mcp_headers_$id', value: jsonEncode(headers));
     }
     await _reload();
-    await _discoverMcp(id, url.text.trim(), headers: headers);
+    await _discoverMcp(
+      id,
+      url.text.trim(),
+      headers: headers,
+      timeout: Duration(milliseconds: timeoutMs),
+    );
+  }
+
+  Future<void> _showDetails(Map<String, dynamic> item) async {
+    final id = item['id'].toString();
+    final tools =
+        _isSkill ? await _db.querySkillTools(id) : await _db.queryMcpTools(id);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * .72,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Text(item['name']?.toString() ?? '',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(_isSkill
+                  ? (item['description']?.toString() ?? '')
+                  : '${item['url']}\n状态：${item['status']}'),
+              const SizedBox(height: 16),
+              Text(_isSkill ? '工具' : '已发现工具',
+                  style: Theme.of(context).textTheme.titleMedium),
+              for (final tool in tools)
+                SwitchListTile(
+                  title: Text(tool['name']?.toString() ?? ''),
+                  subtitle: Text([
+                    tool['description']?.toString() ?? '',
+                    if (_isSkill && tool['risk_level'] == 'sensitive') '需要授权',
+                  ].where((value) => value.isNotEmpty).join(' · ')),
+                  value: tool['enabled'] == 1,
+                  onChanged: (enabled) async {
+                    if (_isSkill &&
+                        enabled &&
+                        tool['risk_level'] == 'sensitive' &&
+                        tool['authorized'] != 1) {
+                      final approved = await showDialog<bool>(
+                        context: sheetContext,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('授权敏感工具'),
+                          content: Text(
+                            '允许 ${tool['name']} 访问其声明的外部能力。可随时在此处撤销授权。',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              child: const Text('取消'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, true),
+                              child: const Text('授权'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (approved != true) return;
+                      await _db.setSkillToolAuthorized(
+                          tool['id'].toString(), true);
+                    }
+                    if (_isSkill) {
+                      await _db.setSkillToolEnabled(
+                          tool['id'].toString(), enabled);
+                    } else {
+                      await _db.setMcpToolEnabled(
+                          tool['id'].toString(), enabled);
+                    }
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    await _reload();
+                    if (mounted) _showDetails(item);
+                  },
+                ),
+              if (!_isSkill) ...[
+                const SizedBox(height: 12),
+                _McpCachedMetadata(
+                  label: '资源',
+                  rawJson: item['resources_json']?.toString() ?? '[]',
+                  nameKey: 'name',
+                ),
+                const SizedBox(height: 12),
+                _McpCachedMetadata(
+                  label: '提示词',
+                  rawJson: item['prompts_json']?.toString() ?? '[]',
+                  nameKey: 'name',
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -224,6 +352,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                   itemBuilder: (context, index) {
                     final item = _items[index];
                     return ListTile(
+                      onTap: () => _showDetails(item),
                       title: Text(item['name']?.toString() ?? ''),
                       subtitle: Text(_isSkill
                           ? 'v${item['version']} · ${item['status']}'
@@ -248,9 +377,16 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                       ? const <String, String>{}
                                       : Map<String, String>.from(
                                           jsonDecode(stored) as Map);
-                                  await _discoverMcp(item['id'].toString(),
-                                      item['url'].toString(),
-                                      headers: headers);
+                                  await _discoverMcp(
+                                    item['id'].toString(),
+                                    item['url'].toString(),
+                                    headers: headers,
+                                    timeout: Duration(
+                                      milliseconds: (item['timeout_ms'] as num?)
+                                              ?.toInt() ??
+                                          20000,
+                                    ),
+                                  );
                                 }
                               }
                               await _reload();
@@ -269,9 +405,17 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                         ? const <String, String>{}
                                         : Map<String, String>.from(
                                             jsonDecode(stored) as Map);
-                                    await _discoverMcp(item['id'].toString(),
-                                        item['url'].toString(),
-                                        headers: headers);
+                                    await _discoverMcp(
+                                      item['id'].toString(),
+                                      item['url'].toString(),
+                                      headers: headers,
+                                      timeout: Duration(
+                                        milliseconds:
+                                            (item['timeout_ms'] as num?)
+                                                    ?.toInt() ??
+                                                20000,
+                                      ),
+                                    );
                                   },
                           ),
                           IconButton(
@@ -296,6 +440,50 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       floatingActionButton: FloatingActionButton(
           onPressed: _isSkill ? _addSkill : _addMcp,
           child: const Icon(Icons.add)),
+    );
+  }
+}
+
+class _McpCachedMetadata extends StatelessWidget {
+  const _McpCachedMetadata({
+    required this.label,
+    required this.rawJson,
+    required this.nameKey,
+  });
+
+  final String label;
+  final String rawJson;
+  final String nameKey;
+
+  @override
+  Widget build(BuildContext context) {
+    List<dynamic> entries;
+    try {
+      final decoded = jsonDecode(rawJson);
+      entries = decoded is List ? decoded : const [];
+    } catch (_) {
+      entries = const [];
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.titleMedium),
+        if (entries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('暂无缓存内容', style: TextStyle(color: Colors.grey)),
+          ),
+        for (final entry in entries)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(entry is Map
+                ? entry[nameKey]?.toString() ?? '未命名'
+                : entry.toString()),
+            subtitle: entry is Map && entry['description'] != null
+                ? Text(entry['description'].toString())
+                : null,
+          ),
+      ],
     );
   }
 }

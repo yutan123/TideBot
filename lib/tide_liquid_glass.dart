@@ -3,7 +3,39 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'theme.dart';
 
+enum TideGlassPreset { base, dock, accentCapsule }
+
 class TideLiquidGlass extends StatefulWidget {
+  const TideLiquidGlass.base({
+    super.key,
+    required this.child,
+    this.radius = 12,
+    this.padding,
+    this.interactive = false,
+    this.clipExpansion = EdgeInsets.zero,
+  })  : premium = false,
+        preset = TideGlassPreset.base;
+
+  const TideLiquidGlass.dock({
+    super.key,
+    required this.child,
+    this.radius = 28,
+    this.padding,
+    this.interactive = false,
+    this.clipExpansion = EdgeInsets.zero,
+  })  : premium = false,
+        preset = TideGlassPreset.dock;
+
+  const TideLiquidGlass.accentCapsule({
+    super.key,
+    required this.child,
+    this.radius = 20,
+    this.padding,
+    this.interactive = false,
+    this.clipExpansion = EdgeInsets.zero,
+  })  : premium = false,
+        preset = TideGlassPreset.accentCapsule;
+
   const TideLiquidGlass({
     super.key,
     required this.child,
@@ -11,6 +43,7 @@ class TideLiquidGlass extends StatefulWidget {
     this.padding,
     this.interactive = false,
     this.premium = false,
+    this.preset = TideGlassPreset.base,
     this.clipExpansion = EdgeInsets.zero,
   });
 
@@ -19,6 +52,7 @@ class TideLiquidGlass extends StatefulWidget {
   final EdgeInsetsGeometry? padding;
   final bool interactive;
   final bool premium;
+  final TideGlassPreset preset;
   final EdgeInsets clipExpansion;
 
   @override
@@ -43,28 +77,14 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     if (!theme.hasGlobalBackground) return _content();
-    final settings = LiquidGlassSettings(
-      glassColor:
-          theme.isDark ? const Color(0x381B2028) : const Color(0x2AF8FBFF),
-      thickness: widget.premium ? 18 : 9,
-      blur: widget.premium ? 3.2 : 2.2,
-      refractiveIndex: widget.premium ? 1.12 : 1.06,
-      chromaticAberration: widget.premium ? .006 : .002,
-      lightAngle: 5.35,
-      lightIntensity: widget.premium ? .48 : .28,
-      fresnelStrength: widget.premium ? .68 : .34,
-      saturation: 1.08,
-      ambientStrength: .05,
-      glowIntensity: widget.interactive ? .12 : 0,
-      backerColor:
-          theme.isDark ? const Color(0x32151A22) : const Color(0x18FFFFFF),
-    );
+    final settings = _settingsFor(theme);
+    final isPremium = widget.premium || widget.preset != TideGlassPreset.base;
     final glass = AdaptiveGlass(
       shape: LiquidRoundedRectangle(borderRadius: widget.radius),
       settings: settings,
-      quality: widget.premium ? GlassQuality.premium : GlassQuality.minimal,
+      quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
       useOwnLayer: true,
-      allowElevation: widget.premium,
+      allowElevation: isPremium,
       isInteractive: widget.interactive,
       clipExpansion: widget.clipExpansion,
       child: _content(),
@@ -86,6 +106,41 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
         ),
         child: glass,
       ),
+    );
+  }
+
+  LiquidGlassSettings _settingsFor(TideTheme theme) {
+    final isPremium = widget.premium || widget.preset != TideGlassPreset.base;
+    final (
+      thickness,
+      blur,
+      refractiveIndex,
+      chromaticAberration,
+      lightIntensity,
+      fresnelStrength
+    ) = switch (widget.preset) {
+      TideGlassPreset.base => (9.0, 2.2, 1.06, .002, .28, .34),
+      TideGlassPreset.dock => (18.0, 3.2, 1.12, .006, .48, .68),
+      TideGlassPreset.accentCapsule => (13.0, 2.7, 1.09, .004, .40, .52),
+    };
+    return LiquidGlassSettings(
+      glassColor: theme.isDark
+          ? const Color(0x381B2028)
+          : widget.preset == TideGlassPreset.accentCapsule
+              ? theme.primary.withValues(alpha: .18)
+              : const Color(0x2AF8FBFF),
+      thickness: isPremium ? thickness : 9,
+      blur: isPremium ? blur : 2.2,
+      refractiveIndex: isPremium ? refractiveIndex : 1.06,
+      chromaticAberration: isPremium ? chromaticAberration : .002,
+      lightAngle: 5.35,
+      lightIntensity: isPremium ? lightIntensity : .28,
+      fresnelStrength: isPremium ? fresnelStrength : .34,
+      saturation: 1.08,
+      ambientStrength: .05,
+      glowIntensity: widget.interactive ? .12 : 0,
+      backerColor:
+          theme.isDark ? const Color(0x32151A22) : const Color(0x18FFFFFF),
     );
   }
 

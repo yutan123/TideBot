@@ -68,6 +68,24 @@ class TideSkillValidator {
 }
 
 class McpClient {
+  static Map<String, dynamic> parseResponseBody(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) throw const FormatException('MCP 返回为空');
+    final dataLines = trimmed
+        .split(RegExp(r'\r?\n'))
+        .where((line) => line.startsWith('data:'))
+        .map((line) => line.substring(5).trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    final decoded = jsonDecode(dataLines.isEmpty ? trimmed : dataLines.last);
+    if (decoded is! Map) throw const FormatException('MCP 响应格式无效');
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['error'] != null) throw StateError('MCP ${map['error']}');
+    return map['result'] is Map
+        ? Map<String, dynamic>.from(map['result'] as Map)
+        : map;
+  }
+
   final String url;
   final Map<String, String> headers;
   final Duration timeout;
@@ -98,6 +116,42 @@ class McpClient {
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList()
+        : const [];
+  }
+
+  Future<List<Map<String, dynamic>>> listResources() async {
+    final result = await _request('resources/list', const {});
+    return _listResult(result, 'resources');
+  }
+
+  Future<List<Map<String, dynamic>>> listResourcesSafe() async {
+    try {
+      return await listResources();
+    } on StateError {
+      return const [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> listPrompts() async {
+    final result = await _request('prompts/list', const {});
+    return _listResult(result, 'prompts');
+  }
+
+  Future<List<Map<String, dynamic>>> listPromptsSafe() async {
+    try {
+      return await listPrompts();
+    } on StateError {
+      return const [];
+    }
+  }
+
+  List<Map<String, dynamic>> _listResult(
+    Map<String, dynamic> result,
+    String key,
+  ) {
+    final values = result[key];
+    return values is List
+        ? values.whereType<Map>().map(Map<String, dynamic>.from).toList()
         : const [];
   }
 
@@ -141,20 +195,6 @@ class McpClient {
     }
     sessionId ??= response.headers['mcp-session-id'];
     final body = response.body.trim();
-    if (body.isEmpty) throw const FormatException('MCP 返回为空');
-    final jsonText = body.startsWith('data:')
-        ? body
-            .split('\n')
-            .firstWhere((line) => line.startsWith('data:'))
-            .substring(5)
-            .trim()
-        : body;
-    final decoded = jsonDecode(jsonText);
-    if (decoded is! Map) throw const FormatException('MCP 响应格式无效');
-    final map = Map<String, dynamic>.from(decoded);
-    if (map['error'] != null) throw StateError('MCP ${map['error']}');
-    return map['result'] is Map
-        ? Map<String, dynamic>.from(map['result'] as Map)
-        : map;
+    return parseResponseBody(body);
   }
 }

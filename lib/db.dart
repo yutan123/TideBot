@@ -56,7 +56,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 22,
+      version: 24,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -338,6 +338,26 @@ class DBManager {
               'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
         }
         if (oldVersion < 22) await _createSkillTables(db);
+        if (oldVersion < 23) {
+          for (final sql in [
+            'ALTER TABLE mcp_servers ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 20000',
+            'ALTER TABLE mcp_servers ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE mcp_servers ADD COLUMN resources_json TEXT NOT NULL DEFAULT \'[]\'',
+            'ALTER TABLE mcp_servers ADD COLUMN prompts_json TEXT NOT NULL DEFAULT \'[]\'',
+            'ALTER TABLE skill_tools ADD COLUMN risk_level TEXT NOT NULL DEFAULT \'normal\'',
+          ]) {
+            try {
+              await db.execute(sql);
+            } catch (_) {}
+          }
+        }
+        if (oldVersion < 24) {
+          try {
+            await db.execute(
+                'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0');
+          } catch (_) {}
+        }
+
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -381,12 +401,18 @@ class DBManager {
     await db.execute('''CREATE TABLE IF NOT EXISTS skill_tools (
       id TEXT PRIMARY KEY, skill_id TEXT NOT NULL, name TEXT NOT NULL,
       description TEXT DEFAULT '', executor TEXT NOT NULL,
-      schema_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+      schema_json TEXT NOT NULL, risk_level TEXT NOT NULL DEFAULT 'normal',
+      authorized INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
       UNIQUE(skill_id, name))''');
     await db.execute('''CREATE TABLE IF NOT EXISTS mcp_servers (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
-      headers_key TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+      headers_key TEXT, timeout_ms INTEGER NOT NULL DEFAULT 20000,
+      auto_connect INTEGER NOT NULL DEFAULT 0,
+      resources_json TEXT NOT NULL DEFAULT '[]',
+      prompts_json TEXT NOT NULL DEFAULT '[]',
+      enabled INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'disconnected', error TEXT,
       updated_at INTEGER NOT NULL)''');
     await db.execute('''CREATE TABLE IF NOT EXISTS mcp_tools (
@@ -404,13 +430,13 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryEnabledSkillTools() async {
     final db = await database;
     return db.rawQuery(
-        'SELECT * FROM skill_tools WHERE enabled = 1 AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)');
+        "SELECT * FROM skill_tools WHERE enabled = 1 AND (risk_level != 'sensitive' OR authorized = 1) AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)");
   }
 
   Future<List<Map<String, dynamic>>> queryEnabledMcpTools() async {
     final db = await database;
     return db.rawQuery(
-        'SELECT t.*, s.url, s.headers_key FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1');
+        'SELECT t.*, s.url, s.headers_key, s.timeout_ms FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1');
   }
 
   Future<List<Map<String, dynamic>>> querySkills() async =>
@@ -440,6 +466,15 @@ class DBManager {
       String serverId, List<Map<String, dynamic>> tools) async {
     final db = await database;
     await db.transaction((txn) async {
+      final previous = <String, int>{
+        for (final row in await txn.query(
+          'mcp_tools',
+          columns: ['name', 'enabled'],
+          where: 'server_id = ?',
+          whereArgs: [serverId],
+        ))
+          row['name'].toString(): (row['enabled'] as num?)?.toInt() ?? 1,
+      };
       await txn
           .delete('mcp_tools', where: 'server_id = ?', whereArgs: [serverId]);
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -455,7 +490,7 @@ class DBManager {
               'description': tool['description']?.toString() ?? '',
               'schema_json':
                   jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
-              'enabled': 1,
+              'enabled': previous[name] ?? 1,
               'discovered_at': now,
             },
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -531,7 +566,63 @@ class DBManager {
         whereArgs: [id],
       );
 
-  // ================= 拟人化日程 =================
+  Future<void> setSkillToolEnabled(String id, bool enabled) async =>
+      (await database).update(
+        'skill_tools',
+        {'enabled': enabled ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+  Future<void> setSkillToolAuthorized(String id, bool authorized) async =>
+      (await database).update(
+        'skill_tools',
+        {'authorized': authorized ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+  Future<void> setMcpToolEnabled(String id, bool enabled) async =>
+      (await database).update(
+        'mcp_tools',
+        {'enabled': enabled ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+  Future<List<Map<String, dynamic>>> querySkillTools(String skillId) async =>
+      (await database).query('skill_tools',
+          where: 'skill_id = ?', whereArgs: [skillId], orderBy: 'name');
+
+  Future<List<Map<String, dynamic>>> queryMcpTools(String serverId) async =>
+      (await database).query('mcp_tools',
+          where: 'server_id = ?', whereArgs: [serverId], orderBy: 'name');
+
+  Future<void> updateMcpServer(String id, Map<String, dynamic> values) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            ...values,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
+
+  Future<void> saveMcpMetadata(
+    String id, {
+    required List<Map<String, dynamic>> resources,
+    required List<Map<String, dynamic>> prompts,
+  }) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            'resources_json': jsonEncode(resources),
+            'prompts_json': jsonEncode(prompts),
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
+
   Future<Map<String, dynamic>?> getLifeSchedule(
       String botId, String dateKey) async {
     final db = await database;

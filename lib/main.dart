@@ -31,6 +31,8 @@ import 'ai.dart';
 import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
+import 'mcp_connection_service.dart';
+
 import 'daily_launch_animation.dart';
 import 'bot_state.dart';
 
@@ -56,6 +58,7 @@ void main() async {
       hasAcceptedLegal: hasAcceptedLegal,
     ),
   );
+  unawaited(McpConnectionService.instance.connectAuto());
   if (await DBManager().getKV('external_api_enabled') == 'true') {
     unawaited(ExternalApiService.instance.start());
   }
@@ -147,6 +150,7 @@ void onStart(ServiceInstance service) {
           : false;
       if (!isForeground) return;
       await _generateMissingLifeSchedules();
+      await McpConnectionService.instance.connectAuto();
       await LifeScheduleService.instance.runDueEndEvents();
       await _runDueProactiveReplies();
       final due = await DBManager().dueFutureTasks(
@@ -515,7 +519,7 @@ class FlowProvider extends ChangeNotifier {
 
 final FlowProvider flowProvider = FlowProvider();
 
-class FlowGlassBg extends StatelessWidget {
+class FlowGlassBg extends StatefulWidget {
   final Widget child;
   final String? backgroundPath;
   final double opacity;
@@ -527,32 +531,59 @@ class FlowGlassBg extends StatelessWidget {
   });
 
   @override
+  State<FlowGlassBg> createState() => _FlowGlassBgState();
+}
+
+class _FlowGlassBgState extends State<FlowGlassBg> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (widget.backgroundPath == null) {
+      unawaited(TideTheme.of(context, listen: false)
+          .precacheGlobalBackground(context));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final image = backgroundPath == null ? theme.globalBackgroundImage : null;
-    final path = backgroundPath ?? theme.globalBackground;
-    final effectiveOpacity =
-        backgroundPath == null ? theme.effectiveBackgroundOpacity : opacity;
+    final image =
+        widget.backgroundPath == null ? theme.globalBackgroundImage : null;
+    final path = widget.backgroundPath ?? theme.globalBackground;
+    final effectiveOpacity = widget.backgroundPath == null
+        ? theme.effectiveBackgroundOpacity
+        : widget.opacity;
+    final hasImage =
+        image != null || (path.isNotEmpty && File(path).existsSync());
     return Stack(
       fit: StackFit.expand,
       children: [
         ColoredBox(
-            color: theme.isDark
-                ? const Color(0xFF151820)
-                : const Color(0xFFF3F5FA)),
-        if (image != null || (path.isNotEmpty && File(path).existsSync()))
-          Image(
-            image: image ?? FileImage(File(path)),
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, __, ___) => const SizedBox.expand(),
+          color:
+              theme.isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA),
+        ),
+        if (hasImage)
+          AnimatedOpacity(
+            opacity:
+                theme.isGlobalBackgroundReady || widget.backgroundPath != null
+                    ? 1
+                    : 0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: Image(
+              image: image ?? FileImage(File(path)),
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, __, ___) => const SizedBox.expand(),
+            ),
           ),
         if (path.isNotEmpty)
           IgnorePointer(
             child: ColoredBox(
-                color: Colors.black.withValues(alpha: effectiveOpacity)),
+              color: Colors.black.withValues(alpha: effectiveOpacity),
+            ),
           ),
-        child,
+        widget.child,
       ],
     );
   }
@@ -589,6 +620,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
     AppState.updateLifecycle(state);
     if (state == AppLifecycleState.resumed) {
       unawaited(DiaryService.instance.catchUp());
+      unawaited(McpConnectionService.instance.connectAuto());
     }
   }
 
@@ -1112,7 +1144,12 @@ class _JellyDockState extends State<JellyDock>
                               : null),
                     ),
                   );
-                  final selectedPill = pill;
+                  final selectedPill = theme.hasGlobalBackground
+                      ? TideLiquidGlass.accentCapsule(
+                          radius: 20,
+                          child: pill,
+                        )
+                      : pill;
                   return Positioned(
                     left: pillX,
                     top: isDark && _lifting ? 0 : 2,
@@ -1183,9 +1220,8 @@ class _JellyDockState extends State<JellyDock>
     return Padding(
       padding: const EdgeInsets.fromLTRB(40, 12, 40, 0),
       child: theme.hasGlobalBackground
-          ? TideLiquidGlass(
+          ? TideLiquidGlass.dock(
               radius: 28,
-              premium: true,
               clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
               child: dock,
             )

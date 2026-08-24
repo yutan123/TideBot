@@ -18,6 +18,9 @@ class TideTheme extends ChangeNotifier {
   FileImage? _globalBackgroundImage;
   FileImage? _pendingBackgroundImage;
   String _pendingBackgroundPath = '';
+  String _configuredBackgroundPath = '';
+  double _configuredDevicePixelRatio = 0;
+  Size _configuredSize = Size.zero;
   bool _globalBackgroundReady = false;
   double _globalBackgroundOpacity = 0.38;
   final Map<_BackgroundRegion, bool> _backgroundLightness = {};
@@ -34,8 +37,61 @@ class TideTheme extends ChangeNotifier {
 
   void _setGlobalBackgroundImage(String path) {
     _globalBackgroundReady = path.isEmpty;
+    _configuredBackgroundPath = '';
+    _configuredDevicePixelRatio = 0;
+    _configuredSize = Size.zero;
     _backgroundLightness.clear();
     _globalBackgroundImage = path.isEmpty ? null : FileImage(File(path));
+  }
+
+  ImageConfiguration _imageConfiguration(BuildContext context) {
+    final media = MediaQuery.maybeOf(context);
+    return createLocalImageConfiguration(
+      context,
+      size: media?.size,
+    );
+  }
+
+  Future<bool> precacheGlobalBackground(BuildContext context) async {
+    final image = _globalBackgroundImage;
+    if (image == null) return false;
+    final media = MediaQuery.maybeOf(context);
+    final size = media?.size ?? Size.zero;
+    final dpr = media?.devicePixelRatio ?? View.of(context).devicePixelRatio;
+    if (_configuredBackgroundPath == _globalBackground &&
+        _configuredDevicePixelRatio == dpr &&
+        _configuredSize == size &&
+        _globalBackgroundReady) {
+      return true;
+    }
+    try {
+      await precacheImage(image, context, size: size);
+      final stream = image.resolve(_imageConfiguration(context));
+      final ready = Completer<ui.Image>();
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (info, _) {
+          stream.removeListener(listener);
+          if (!ready.isCompleted) ready.complete(info.image);
+        },
+        onError: (_, __) {
+          stream.removeListener(listener);
+          if (!ready.isCompleted) ready.completeError(StateError('背景图片解码失败'));
+        },
+      );
+      stream.addListener(listener);
+      await _sampleBackgroundLightness(await ready.future);
+      _configuredBackgroundPath = _globalBackground;
+      _configuredDevicePixelRatio = dpr;
+      _configuredSize = size;
+      _globalBackgroundReady = true;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _globalBackgroundReady = false;
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> _sampleBackgroundLightness(ui.Image image) async {
@@ -90,31 +146,6 @@ class TideTheme extends ChangeNotifier {
   Color get backgroundScrim => backgroundOverlayColor.withValues(
         alpha: effectiveBackgroundOpacity,
       );
-
-  void _precacheGlobalBackground() {
-    final image = _globalBackgroundImage;
-    if (image == null) {
-      notifyListeners();
-      return;
-    }
-    final stream = image.resolve(ImageConfiguration.empty);
-    late final ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (info, __) {
-        _sampleBackgroundLightness(info.image).whenComplete(() {
-          _globalBackgroundReady = true;
-          stream.removeListener(listener);
-          notifyListeners();
-        });
-      },
-      onError: (_, __) {
-        _globalBackgroundReady = false;
-        stream.removeListener(listener);
-        notifyListeners();
-      },
-    );
-    stream.addListener(listener);
-  }
 
   bool get isDark {
     final brightness =
@@ -266,7 +297,6 @@ class TideTheme extends ChangeNotifier {
         File(globalBackground).existsSync()) {
       _globalBackground = globalBackground;
       _setGlobalBackgroundImage(globalBackground);
-      _precacheGlobalBackground();
     } else if (globalBackground != null && globalBackground.isNotEmpty) {
       await DBManager().insertKV('global_background_image', '');
     }
@@ -326,6 +356,7 @@ class TideTheme extends ChangeNotifier {
 
   Future<void> setGlobalBackground(
     String path, {
+    required BuildContext context,
     double? opacity,
   }) async {
     if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
@@ -348,27 +379,33 @@ class TideTheme extends ChangeNotifier {
     }
 
     final candidate = FileImage(File(path));
+    try {
+      await precacheImage(candidate, context,
+          size: MediaQuery.maybeOf(context)?.size);
+      final stream = candidate.resolve(_imageConfiguration(context));
+      final ready = Completer<ui.Image>();
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (info, __) {
+          stream.removeListener(listener);
+          if (!ready.isCompleted) ready.complete(info.image);
+        },
+        onError: (_, __) {
+          stream.removeListener(listener);
+          if (!ready.isCompleted) {
+            ready.completeError(StateError('背景图片解码失败'));
+          }
+        },
+      );
+      stream.addListener(listener);
+      final decoded = await ready.future;
+      await _sampleBackgroundLightness(decoded);
+    } catch (_) {
+      // Preserve the previously active image and database value on failure.
+      rethrow;
+    }
     _pendingBackgroundImage = candidate;
     _pendingBackgroundPath = path;
-    final stream = candidate.resolve(ImageConfiguration.empty);
-    final ready = Completer<void>();
-    late final ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (info, __) async {
-        stream.removeListener(listener);
-        await _sampleBackgroundLightness(info.image);
-        if (!ready.isCompleted) ready.complete();
-      },
-      onError: (_, __) {
-        stream.removeListener(listener);
-        if (!ready.isCompleted)
-          ready.completeError(
-            StateError('背景图片解码失败'),
-          );
-      },
-    );
-    stream.addListener(listener);
-    await ready.future;
     if (_pendingBackgroundImage != candidate ||
         _pendingBackgroundPath != path) {
       return;
@@ -376,6 +413,11 @@ class TideTheme extends ChangeNotifier {
 
     _globalBackground = path;
     _globalBackgroundImage = candidate;
+    _configuredBackgroundPath = path;
+    _configuredDevicePixelRatio =
+        MediaQuery.maybeOf(context)?.devicePixelRatio ??
+            View.of(context).devicePixelRatio;
+    _configuredSize = MediaQuery.maybeOf(context)?.size ?? Size.zero;
     _globalBackgroundReady = true;
     _pendingBackgroundImage = null;
     _pendingBackgroundPath = '';

@@ -42,7 +42,11 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
 
   Future<void> _save(TideTheme theme) async {
     final old = theme.globalBackground;
-    await theme.setGlobalBackground(_path, opacity: _opacity);
+    await theme.setGlobalBackground(
+      _path,
+      context: context,
+      opacity: _opacity,
+    );
     // The candidate was precached before this page saves it; remove only the old
     // image after the new path has become the active theme value.
     if (old.isNotEmpty &&
