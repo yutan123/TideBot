@@ -3,10 +3,10 @@ import 'dart:io';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'call_message.dart';
 import 'app_permissions.dart';
-import 'call_wave_painter.dart';
-
 import 'package:flutter/material.dart';
+
 import 'theme.dart';
 import 'ui_components.dart';
 import 'ai.dart';
@@ -55,6 +55,11 @@ class _CallPageState extends State<CallPage>
   StreamSubscription<void>? _playSub;
   final DateTime _startedAt = DateTime.now();
   final List<String> _transcript = [];
+  final List<CallMessage> _messages = [];
+  final TextEditingController _textController = TextEditingController();
+  final ScrollController _messageController = ScrollController();
+  Timer? _durationTimer;
+  Duration _elapsed = Duration.zero;
   bool _ending = false;
 
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
@@ -69,6 +74,67 @@ class _CallPageState extends State<CallPage>
   int _silentTicks = 0;
   int _voiceTicks = 0;
   Timer? _autoStopTimer;
+
+  void _appendMessage(String text, {required bool isUser}) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return;
+    setState(() => _messages.add(CallMessage(
+          text: normalized,
+          isUser: isUser,
+          timestamp: DateTime.now(),
+        )));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_messageController.hasClients) {
+        _messageController.animateTo(
+          _messageController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _submitText() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty || _processing || _ending) return;
+    _textController.clear();
+    await _runTextTurn(text);
+  }
+
+  Future<void> _runTextTurn(String text) async {
+    _appendMessage(text, isUser: true);
+    _transcript.add('用户：$text');
+    if (mounted)
+      setState(() {
+        _processing = true;
+        _caption = '正在等待回复…';
+      });
+    try {
+      final reply = await AIManager()
+          .sendMessage(botId: widget.bot['id'].toString(), text: text)
+          .timeout(const Duration(minutes: 2));
+      final answer =
+          reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
+      if (answer.trim().isEmpty) {
+        if (mounted)
+          setState(() => _caption = reply['error']?.toString() ?? '机器人没有返回回复');
+        return;
+      }
+      _appendMessage(answer, isUser: false);
+      _transcript.add('机器人：$answer');
+      if (mounted) setState(() => _caption = answer);
+      final ttsId = widget.bot['tts_model']?.toString() ?? '';
+      if (widget.hasTts && ttsId.isNotEmpty) {
+        final audioPath = await AIManager().generateTTS(answer, ttsId);
+        if (audioPath?.isNotEmpty == true) await _playBotReply(audioPath!);
+      }
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '文字轮次失败：$error');
+      if (mounted) setState(() => _caption = '文字回复失败：$error');
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
 
   /// 开始监听录音振幅（前提是录音已在运行）。
   void _startAmpMonitor() {
@@ -242,6 +308,7 @@ class _CallPageState extends State<CallPage>
       AppLogService.instance
           .add('VOICE_CALL', 'STT 成功，文本长度 ${text.trim().length}');
       _transcript.add('用户：${text.trim()}');
+      _appendMessage(text, isUser: true);
       if (mounted) setState(() => _caption = text);
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
       final reply = await AIManager()
@@ -259,6 +326,7 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
       _transcript.add('机器人：$answer');
+      _appendMessage(answer, isUser: false);
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
       if (ttsId.isEmpty || !widget.hasTts) {
@@ -422,6 +490,10 @@ class _CallPageState extends State<CallPage>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted)
+        setState(() => _elapsed = DateTime.now().difference(_startedAt));
+    });
     if (widget.hasStt) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _startListening();
@@ -432,7 +504,10 @@ class _CallPageState extends State<CallPage>
   @override
   void dispose() {
     _autoStopTimer?.cancel();
+    _durationTimer?.cancel();
     _stopAmpMonitor();
+    _textController.dispose();
+    _messageController.dispose();
     _recorder.dispose();
     _player.dispose();
     _wave.dispose();
@@ -476,32 +551,22 @@ class _CallPageState extends State<CallPage>
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            if (_recording)
-                              CustomPaint(
-                                size: const Size.square(230),
-                                painter: CallWavePainter(
-                                  phase: _wave.value,
-                                  strength: ((_soundLevel + 58) / 45).clamp(
-                                    0.08,
-                                    1.0,
+                            if (_recording || _botSpeaking)
+                              Container(
+                                width: 132 + (_wave.value * 12),
+                                height: 132 + (_wave.value * 12),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: theme.primary.withValues(alpha: .22),
+                                    width: 2,
                                   ),
-                                  color: theme.primary,
                                 ),
                               ),
-                            CircleAvatar(
-                              radius: 57,
-                              backgroundColor:
-                                  theme.primary.withValues(alpha: 0.16),
-                              backgroundImage: avatar.isNotEmpty
-                                  ? FileImage(File(avatar))
-                                  : null,
-                              child: avatar.isEmpty
-                                  ? Icon(
-                                      Icons.smart_toy_rounded,
-                                      size: 56,
-                                      color: theme.primary,
-                                    )
-                                  : null,
+                            TideBotAvatar(
+                              name: name,
+                              path: avatar,
+                              size: 114,
                             ),
                           ],
                         ),
@@ -517,30 +582,21 @@ class _CallPageState extends State<CallPage>
                         fontFamily: 'TideFont',
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 4),
                     Text(
-                      ready ? '语音通话准备就绪' : '还需要完成语音能力配置',
+                      '${_callStateLabel()}  ·  ${_formatClock(_elapsed)}',
                       style: TextStyle(
                         color: ready ? theme.primary : theme.textWeak,
                         fontSize: 14,
                         fontFamily: 'TideFont',
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      ready
-                          ? (_caption.isEmpty ? '正在自动监听，请直接说话' : _caption)
-                          : '缺少：${widget.hasStt ? '' : 'STT 转写模型'}${!widget.hasStt ? '' : ''}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: theme.textFaint,
-                        fontSize: 13,
-                        height: 1.5,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
+                    const SizedBox(height: 12),
+                    Expanded(child: _messageList(theme)),
+                    _textComposer(theme),
+                    const SizedBox(height: 10),
                     if (!ready && widget.onOpenSettings != null) ...[
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       OutlinedButton.icon(
                         onPressed: widget.onOpenSettings,
                         icon:
@@ -628,6 +684,91 @@ class _CallPageState extends State<CallPage>
         ),
       ),
     );
+  }
+
+  Widget _messageList(TideTheme theme) {
+    if (_messages.isEmpty) {
+      return Center(
+        child: Text(
+          _caption.isEmpty ? '正在自动监听，请直接说话' : _caption,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: theme.textFaint, fontFamily: 'TideFont'),
+        ),
+      );
+    }
+    return ListView.separated(
+      controller: _messageController,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      itemCount: _messages.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final message = _messages[index];
+        final color = message.isUser ? theme.primary : theme.surfaceVariant;
+        return Align(
+          alignment:
+              message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 280),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              message.text,
+              style: TextStyle(
+                color: message.isUser ? Colors.white : theme.textStrong,
+                fontFamily: 'TideFont',
+                height: 1.35,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _textComposer(TideTheme theme) => Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _textController,
+              enabled: !_processing && !_ending,
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _submitText(),
+              decoration: InputDecoration(
+                hintText: '输入回复',
+                isDense: true,
+                filled: true,
+                fillColor: theme.surfaceVariant,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: '发送文字回复',
+            onPressed: _processing ? null : _submitText,
+            icon: Icon(Icons.send_rounded, color: theme.primary),
+          ),
+        ],
+      );
+
+  String _formatClock(Duration value) =>
+      '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+
+  String _callStateLabel() {
+    if (!widget.hasStt) return '需要配置语音';
+    if (_muted) return '已静音';
+    if (_botSpeaking) return '机器人正在说话';
+    if (_processing) return '正在识别';
+    if (_recording) return '正在聆听';
+    return '通话中';
   }
 
   Widget _callActionButton(TideTheme theme) {

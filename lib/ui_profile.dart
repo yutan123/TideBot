@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
+import 'persistent_service_coordinator.dart';
 import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
@@ -2055,19 +2055,8 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                             () => _switchingPersistentNotification = true,
                           );
                           try {
-                            // The service is configured during app startup. On a
-                            // fast first visit it may still be initializing, so
-                            // persist the opt-in before requesting its start.
-                            await _setValue('persistent_notification', value);
-                            final service = FlutterBackgroundService();
-                            if (value) {
-                              await Future<void>.delayed(
-                                const Duration(milliseconds: 250),
-                              );
-                              await service.startService();
-                            } else {
-                              service.invoke('stopService');
-                            }
+                            await PersistentServiceCoordinator.instance
+                                .setEnabled(value);
                             if (!mounted) return;
                             setState(() => _keepRunning = value);
                           } catch (e) {

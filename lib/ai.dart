@@ -377,13 +377,16 @@ class AIManager {
 
     final longMemoryContext = memoryLines(longMemories, 1200);
     final shortMemoryContext = memoryLines(shortMemories, 600);
-    final allowSticker = allowTools ? await _shouldOfferSticker(db) : false;
-    final stickerEmotions =
-        allowSticker ? await db.stickerEmotions() : <String>[];
+    final stickerPlan = allowTools
+        ? await _planStickerForTurn(db)
+        : const _StickerPlan.disabled();
+    final allowSticker = stickerPlan.required;
+    final stickerEmotions = stickerPlan.emotions;
     final toolContext = allowTools
         ? await _buildToolContext(
             db,
-            allowSticker: allowSticker,
+            requireEmotion: true,
+            requireSticker: allowSticker,
             stickerEmotions: stickerEmotions,
           )
         : '';
@@ -602,7 +605,9 @@ class AIManager {
           ? await _buildNativeTools(
               db,
               botId: botId,
+              requireEmotion: true,
               allowSticker: allowSticker,
+              stickerIds: stickerPlan.stickerIds,
             )
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
@@ -627,6 +632,8 @@ class AIManager {
       });
       String replyText = '';
       String? generatedImagePath;
+      Map<String, dynamic>? toolSticker;
+      String? toolMood;
       var toolSilenced = false;
       Map usage = const {};
       String errorBody = '';
@@ -687,8 +694,42 @@ class AIManager {
               generatedImageSetter: (p) => generatedImagePath = p,
               pendingDeviceActionSetter: (_) {},
               silenceSetter: () => toolSilenced = true,
+              stickerSetter: (sticker) => toolSticker = sticker,
+              moodSetter: (mood) => toolMood = mood,
+              requiredToolNames: {
+                'set_emotion',
+                if (allowSticker) 'send_sticker',
+              },
+              allowedStickerIds: stickerPlan.stickerIds,
             );
           }
+        } else if (allowTools) {
+          // Providers occasionally ignore tool_choice=auto. Ask once more with
+          // the same request context so the mandatory native state is not lost.
+          await _runStreamedTools(
+            db: db,
+            botId: botId,
+            calls: const [],
+            messages: messages,
+            baseUrl: baseUrl,
+            modelName: modelName,
+            apiKey: provider['api_key']?.toString() ?? '',
+            maxTokens: bot['max_tokens'] ?? 10000,
+            onDelta: null,
+            replyTextCallback: (t) => replyText = t,
+            usageCallback: (u) => usage = u,
+            searchSourcesSetter: (l) => searchSources = l,
+            generatedImageSetter: (p) => generatedImagePath = p,
+            pendingDeviceActionSetter: (_) {},
+            silenceSetter: () => toolSilenced = true,
+            stickerSetter: (sticker) => toolSticker = sticker,
+            moodSetter: (mood) => toolMood = mood,
+            requiredToolNames: {
+              'set_emotion',
+              if (allowSticker) 'send_sticker',
+            },
+            allowedStickerIds: stickerPlan.stickerIds,
+          );
         }
       }
       if (toolSilenced) replyText = '';
@@ -726,24 +767,12 @@ class AIManager {
           AppLogService.instance.add('SILENCE', '机器人通过工具选择本轮不回复');
           return {'success': true, 'silent': true, 'reply': ''};
         }
-        // 情绪、时间、工具与游戏标记均是内部协议，绝不能进入用户可见文本。
-        String mood = _extractMood(replyText);
-        // Normal replies must not use the legacy [记忆:...] text protocol.
-        // Context rollover below retains its dedicated extraction path.
+        // Emotion and sticker state are native tool results. Legacy markers are
+        // stripped only for historical/provider compatibility and are never used
+        // to drive new state transitions.
+        String mood =
+            toolMood ?? await EmotionStateService.instance.currentMood(botId);
         final rawReply = replyText;
-        final stickerRawTag = _stickerTag(rawReply);
-        final stickerEmotion = _extractStickerEmotion(
-          rawReply,
-          stickerEmotions,
-        );
-        if (stickerRawTag == null) {
-          AppLogService.instance.add('STICKER', '模型未输出表情包标签；本轮不发送表情包');
-        } else if (stickerEmotion == null) {
-          AppLogService.instance.add(
-            'STICKER',
-            '表情包标签无法匹配本地分类：原始标签=$stickerRawTag',
-          );
-        }
         replyText = _cleanVisibleReply(rawReply);
         final wantsSources = _userExplicitlyRequestedSources(text);
         if (!wantsSources) replyText = _stripSourceLinks(replyText);
@@ -765,27 +794,8 @@ class AIManager {
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
-        // The model chooses only an allowed category in an internal marker; the app
-        // then randomly samples the actual local file from that category.
-        Map<String, dynamic>? sticker;
-        String? audioPath;
-        if (stickerEmotion != null) {
-          final candidates = await db.queryStickers(emotion: stickerEmotion);
-          if (candidates.isNotEmpty) {
-            sticker = Map<String, dynamic>.from(
-              candidates[Random.secure().nextInt(candidates.length)],
-            );
-            AppLogService.instance.add(
-              'STICKER',
-              '模型选择分类 $stickerEmotion，系统从 ${candidates.length} 个素材中随机发送',
-            );
-          } else {
-            AppLogService.instance.add(
-              'STICKER',
-              '模型选择分类 $stickerEmotion，但素材已不可用',
-            );
-          }
-        }
+        final persistedSticker = toolSticker;
+        Map<String, dynamic>? sticker = persistedSticker;
         if (persistResponse) {
           final ttsModel = bot['tts_model']?.toString().trim() ?? '';
           final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
@@ -926,26 +936,6 @@ class AIManager {
         .where((part) => part.isNotEmpty)
         .toList();
     return parts.isEmpty ? <String>[content] : parts;
-  }
-
-  String? _stickerTag(String raw) => RegExp(
-        r'\[表情包\s*[:：]\s*([^\]]+?)\s*\]',
-        caseSensitive: false,
-      ).firstMatch(raw)?.group(1)?.trim();
-
-  String? _extractStickerEmotion(String raw, List<String> allowed) {
-    final rawTag = _stickerTag(raw);
-    final emotion = rawTag?.replaceAll(RegExp(r'\s+'), '').trim();
-    final normalized = allowed
-        .map((item) => item.replaceAll(RegExp(r'\s+'), '').trim())
-        .toList();
-    AppLogService.instance.add(
-      'STICKER',
-      '候选分类=$normalized，模型标签=${emotion ?? '(无)'}',
-    );
-    if (emotion == null) return null;
-    final index = normalized.indexOf(emotion);
-    return index < 0 ? null : allowed[index];
   }
 
   bool _userExplicitlyRequestedSources(String text) => RegExp(
@@ -2161,13 +2151,30 @@ $transcript''';
     required void Function(String) generatedImageSetter,
     required void Function(Map<String, dynamic>) pendingDeviceActionSetter,
     required void Function() silenceSetter,
+    required void Function(Map<String, dynamic>) stickerSetter,
+    required void Function(String) moodSetter,
+    Set<String> requiredToolNames = const {},
+    Set<String> allowedStickerIds = const {},
   }) async {
-    for (final call in calls) {
-      final result = await _executeNativeToolCall(
-        db: db,
-        botId: botId,
-        call: call,
-      );
+    final completedTools = <String>{};
+
+    Future<void> consumeToolResult(
+      Map<String, dynamic> result, {
+      required String name,
+    }) async {
+      final toolResult = result['result'];
+      if (toolResult is Map && toolResult['ok'] == true) {
+        if (name == 'set_emotion') {
+          final mood = toolResult['mood']?.toString();
+          if (mood != null && mood.isNotEmpty) moodSetter(mood);
+        } else if (name == 'send_sticker') {
+          final sticker = toolResult['sticker'];
+          if (sticker is Map) stickerSetter(Map<String, dynamic>.from(sticker));
+        }
+        if (name == 'set_emotion' || name == 'send_sticker') {
+          completedTools.add(name);
+        }
+      }
       if (result['sources'] is List) {
         searchSourcesSetter(
           (result['sources'] as List)
@@ -2176,19 +2183,51 @@ $transcript''';
               .toList(),
         );
       }
-      final toolResult = result['result'];
       if (toolResult is Map && toolResult['silent'] == true) {
         silenceSetter();
-        return;
       }
       if (toolResult is Map &&
           toolResult['image_path']?.toString().isNotEmpty == true) {
         generatedImageSetter(toolResult['image_path'].toString());
       }
+    }
+
+    Future<Map<String, dynamic>> executeOnce(Map<String, dynamic> call) async {
+      final name = (call['function'] as Map?)?['name']?.toString() ?? '';
+      if ((name == 'set_emotion' || name == 'send_sticker') &&
+          completedTools.contains(name)) {
+        return {
+          'result': {
+            'ok': false,
+            'error': '本轮工具已成功调用，不允许重复执行。',
+          },
+        };
+      }
+      return _executeNativeToolCall(
+        db: db,
+        botId: botId,
+        call: call,
+        allowedStickerIds: allowedStickerIds,
+      );
+    }
+
+    for (final call in calls) {
+      final result = await executeOnce(call);
+      final name = (call['function'] as Map?)?['name']?.toString() ?? '';
+      await consumeToolResult(result, name: name);
+      if ((result['result'] as Map?)?['silent'] == true) return;
       messages.add({
         'role': 'tool',
         'tool_call_id': call['id']?.toString() ?? '',
         'content': jsonEncode(result['result'] ?? result),
+      });
+    }
+    final missingRequired = requiredToolNames.difference(completedTools);
+    if (missingRequired.isNotEmpty) {
+      messages.add({
+        'role': 'system',
+        'content':
+            '本轮仍缺少必须完成的原生工具调用：${missingRequired.join('、')}。请先仅调用缺失工具，再给出正常可见文字回复；不得在正文输出工具协议。',
       });
     }
     // Keep the same transcript across multi-step tools. Each follow-up may ask
@@ -2210,7 +2249,12 @@ $transcript''';
                 ...await _buildNativeTools(
                   db,
                   botId: botId,
-                  allowSticker: false,
+                  requireEmotion: requiredToolNames.contains('set_emotion') &&
+                      !completedTools.contains('set_emotion'),
+                  allowSticker: requiredToolNames.contains('send_sticker') &&
+                      !completedTools.contains('send_sticker'),
+                  allowSilence: false,
+                  stickerIds: allowedStickerIds,
                 ),
               ],
               'tool_choice': 'auto',
@@ -2231,6 +2275,25 @@ $transcript''';
               .toList()
           : <Map<String, dynamic>>[];
       if (nextCalls.isEmpty) {
+        final stillMissing = requiredToolNames.difference(completedTools);
+        if (stillMissing.isNotEmpty && round < 1) {
+          messages.add({
+            'role': 'assistant',
+            'content': next,
+          });
+          messages.add({
+            'role': 'system',
+            'content':
+                '你刚刚遗漏了本轮强制工具调用：${stillMissing.join('、')}。请立即调用这些工具，然后给出可见文字回复。',
+          });
+          continue;
+        }
+        if (stillMissing.isNotEmpty) {
+          AppLogService.instance.add(
+            'TOOLS',
+            '工具补全重试后仍缺少：${stillMissing.join('、')}',
+          );
+        }
         if (next.isNotEmpty) {
           replyTextCallback(next);
           onDelta?.call(next);
@@ -2243,11 +2306,9 @@ $transcript''';
         'tool_calls': nextCalls,
       });
       for (final call in nextCalls) {
-        final result = await _executeNativeToolCall(
-          db: db,
-          botId: botId,
-          call: call,
-        );
+        final result = await executeOnce(call);
+        final name = (call['function'] as Map?)?['name']?.toString() ?? '';
+        await consumeToolResult(result, name: name);
         messages.add({
           'role': 'tool',
           'tool_call_id': call['id']?.toString() ?? '',
@@ -2258,9 +2319,12 @@ $transcript''';
     replyTextCallback('任务已达到连续操作上限，请确认当前结果后再继续。');
   }
 
-  Future<bool> _shouldOfferSticker(DBManager db) async {
-    if (await db.getKV('bot_stickers_enabled') != 'true') return false;
-    if ((await db.stickerEmotions()).isEmpty) return false;
+  Future<_StickerPlan> _planStickerForTurn(DBManager db) async {
+    if (await db.getKV('bot_stickers_enabled') != 'true') {
+      return const _StickerPlan.disabled();
+    }
+    final stickers = await db.queryStickers();
+    if (stickers.isEmpty) return const _StickerPlan.disabled();
     final chance =
         (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 30).clamp(
       0,
@@ -2270,17 +2334,28 @@ $transcript''';
         chance >= 100 || (chance > 0 && Random.secure().nextInt(100) < chance);
     AppLogService.instance.add(
       'STICKER',
-      selected ? '本轮允许模型选择表情包分类（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）',
+      selected ? '本轮必须发送表情包（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）',
     );
-    return selected;
+    return selected
+        ? _StickerPlan.fromStickers(stickers)
+        : const _StickerPlan.disabled();
   }
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(
     DBManager db, {
     required String botId,
-    bool allowSticker = true,
+    bool requireEmotion = false,
+    bool allowSticker = false,
+    bool allowSilence = true,
+    Set<String> stickerIds = const {},
   }) async {
     final tools = <Map<String, dynamic>>[];
+    if (requireEmotion) {
+      tools.add(_setEmotionToolSchema());
+    }
+    if (allowSticker && stickerIds.isNotEmpty) {
+      tools.add(_sendStickerToolSchema(stickerIds));
+    }
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
       tools.add({
@@ -2357,13 +2432,13 @@ $transcript''';
         },
       });
     }
-    if ((await db.getKV('adaptive_silence_enabled')) != 'false') {
+    if (allowSilence &&
+        (await db.getKV('adaptive_silence_enabled')) != 'false') {
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_memoryToolSchema());
     tools.add(_diaryToolSchema());
     tools.addAll(await _buildExternalTools(db));
-    // Sticker selection uses an internal text marker, not a callable model tool.
     return tools;
   }
 
@@ -2393,6 +2468,43 @@ $transcript''';
     }
     return tools;
   }
+
+  Map<String, dynamic> _setEmotionToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'set_emotion',
+          'description': '本轮成功文字回复必须调用一次，用于写入当前心情。不得在聊天正文输出心情标签。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'mood': {
+                'type': 'string',
+                'enum': ['平静', '开心', '伤心', '生气', '害羞', '兴奋'],
+              },
+              'intensity': {'type': 'integer', 'minimum': 0, 'maximum': 100},
+              'reason': {'type': 'string', 'maxLength': 160},
+            },
+            'required': ['mood', 'intensity'],
+            'additionalProperties': false,
+          },
+        },
+      };
+
+  Map<String, dynamic> _sendStickerToolSchema(Set<String> stickerIds) => {
+        'type': 'function',
+        'function': {
+          'name': 'send_sticker',
+          'description': '本轮表情包概率已命中，必须且只能调用一次。sticker_id 必须来自允许列表。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'sticker_id': {'type': 'string', 'enum': stickerIds.toList()},
+            },
+            'required': ['sticker_id'],
+            'additionalProperties': false,
+          },
+        },
+      };
 
   Map<String, dynamic> _adaptiveSilenceToolSchema() => {
         'type': 'function',
@@ -2656,6 +2768,7 @@ $transcript''';
     required DBManager db,
     required String botId,
     required Map<String, dynamic> call,
+    Set<String> allowedStickerIds = const {},
   }) async {
     final function = call['function'];
     if (function is! Map)
@@ -2676,6 +2789,63 @@ $transcript''';
     }
     if (name.startsWith('skill_')) {
       return _executeSkillToolCall(db: db, name: name, args: args);
+    }
+    if (name == 'set_emotion') {
+      const moods = {'平静', '开心', '伤心', '生气', '害羞', '兴奋'};
+      final mood = args['mood']?.toString().trim() ?? '';
+      final intensity = (args['intensity'] as num?)?.toInt();
+      if (!moods.contains(mood) ||
+          intensity == null ||
+          intensity < 0 ||
+          intensity > 100) {
+        return {
+          'result': {'ok': false, 'error': '心情或强度无效'},
+        };
+      }
+      await EmotionStateService.instance
+          .setMood(botId, mood, intensity: intensity);
+      await db.insertToolAudit(
+        source: 'native',
+        toolName: name,
+        inputSummary: _redactToolInput(args),
+        status: 'success',
+        durationMs: 0,
+      );
+      return {
+        'result': {'ok': true, 'mood': mood, 'message': '当前心情已写入。'},
+      };
+    }
+    if (name == 'send_sticker') {
+      final stickerId = args['sticker_id']?.toString().trim() ?? '';
+      if (stickerId.isEmpty || !allowedStickerIds.contains(stickerId)) {
+        return {
+          'result': {'ok': false, 'error': '表情包不在本轮允许列表中'},
+        };
+      }
+      final stickers = await db.queryStickers();
+      final sticker = stickers.firstWhere(
+        (row) => row['id']?.toString() == stickerId,
+        orElse: () => <String, dynamic>{},
+      );
+      if (sticker.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '表情包素材已不存在'},
+        };
+      }
+      await db.insertToolAudit(
+        source: 'native',
+        toolName: name,
+        inputSummary: _redactToolInput(args),
+        status: 'success',
+        durationMs: 0,
+      );
+      return {
+        'result': {
+          'ok': true,
+          'sticker': Map<String, dynamic>.from(sticker),
+          'message': '表情包已加入本轮发送队列。',
+        },
+      };
     }
     if (name == 'choose_silence') {
       return {
@@ -2850,7 +3020,8 @@ $transcript''';
 
   Future<String> _buildToolContext(
     DBManager db, {
-    bool allowSticker = true,
+    bool requireEmotion = false,
+    bool requireSticker = false,
     List<String> stickerEmotions = const [],
   }) async {
     final parts = <String>[];
@@ -2874,9 +3045,14 @@ $transcript''';
         );
       }
     }
-    if (allowSticker && stickerEmotions.isNotEmpty) {
+    if (requireEmotion) {
       parts.add(
-        '【本轮表情包】可在正文末尾仅追加一个内部标记 [表情包:分类]，分类必须为 ${stickerEmotions.join('、')} 之一。该标记不会显示；应用会从该分类随机发送一张本地表情包。若不适合发送则不要输出标记。',
+        '【本轮强制协议】必须先通过 set_emotion 调用一次写入心情，再给出正常、可见的文字回复。不得调用 choose_silence，不得在正文输出心情、表情包、工具名或内部标签。',
+      );
+    }
+    if (requireSticker && stickerEmotions.isNotEmpty) {
+      parts.add(
+        '【本轮强制表情包】概率已命中，必须且只能调用一次 send_sticker；可用分类包括 ${stickerEmotions.join('、')}。选择后仍必须提供正常文字回复，绝不在正文输出表情包标签。',
       );
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
@@ -3327,4 +3503,37 @@ $transcript''';
     final re = RegExp('^我(?=[\\u4e00-\\u9fa5]{2})(?!$keep)');
     return s.replaceAll(re, '');
   }
+}
+
+class _StickerPlan {
+  const _StickerPlan({
+    required this.required,
+    required this.stickerIds,
+    required this.emotions,
+  });
+
+  const _StickerPlan.disabled()
+      : required = false,
+        stickerIds = const {},
+        emotions = const [];
+
+  factory _StickerPlan.fromStickers(List<Map<String, dynamic>> stickers) {
+    final ids = <String>{};
+    final emotions = <String>{};
+    for (final sticker in stickers) {
+      final id = sticker['id']?.toString().trim() ?? '';
+      final emotion = sticker['emotion']?.toString().trim() ?? '';
+      if (id.isNotEmpty) ids.add(id);
+      if (emotion.isNotEmpty) emotions.add(emotion);
+    }
+    return _StickerPlan(
+      required: ids.isNotEmpty,
+      stickerIds: ids,
+      emotions: emotions.toList()..sort(),
+    );
+  }
+
+  final bool required;
+  final Set<String> stickerIds;
+  final List<String> emotions;
 }

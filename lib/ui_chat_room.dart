@@ -17,8 +17,6 @@ import 'db.dart';
 import 'ai.dart';
 import 'ui_components.dart';
 import 'theme.dart';
-import 'chat_sidebar.dart';
-import 'tool_manager_page.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
@@ -60,9 +58,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   late Map<String, dynamic> _bot;
 
   late AnimationController _bottomBarCtrl;
-  late AnimationController _sidebarCtrl;
-  bool _sidebarOpen = false;
-  bool _sidebarDragActive = false;
   bool _hasText = false;
   // Attachments are staged above the composer and sent together on confirmation.
   final List<String> _pendingImages = [];
@@ -123,10 +118,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     ); // 减慢动画速度
-    _sidebarCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    );
     // 首帧后启动进场动画，否则 SlideTransition 会一直停在向下偏移 25% 的位置，
     // 这就是输入框一直偏下、"怎么调 padding 都不动"的根因。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -153,7 +144,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _player.dispose();
     _recTimer?.cancel();
     _bottomBarCtrl.dispose(); // 添加动画控制器释放
-    _sidebarCtrl.dispose();
     super.dispose();
   }
 
@@ -168,35 +158,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final prefs = await SharedPreferences.getInstance();
     final bg = prefs.getString('chat_bg_${_bot['id']}');
     if (mounted) setState(() => _customBg = bg);
-  }
-
-  void _openSidebar() {
-    if (_sidebarOpen) return;
-    setState(() => _sidebarOpen = true);
-    _sidebarCtrl.forward(from: 0);
-  }
-
-  Future<void> _closeSidebar() async {
-    if (!_sidebarOpen) return;
-    await _sidebarCtrl.reverse();
-    if (mounted) setState(() => _sidebarOpen = false);
-  }
-
-  void _updateSidebarDrag(DragUpdateDetails details) {
-    final width = MediaQuery.sizeOf(context).width * .86;
-    _sidebarCtrl.value =
-        (_sidebarCtrl.value + details.delta.dx / width).clamp(0.0, 1.0);
-  }
-
-  void _endSidebarDrag(DragEndDetails details) {
-    final velocity = details.velocity.pixelsPerSecond.dx;
-    final shouldOpen =
-        velocity > 500 || (velocity > -500 && _sidebarCtrl.value >= .5);
-    if (shouldOpen) {
-      _sidebarCtrl.forward();
-    } else {
-      _closeSidebar();
-    }
   }
 
   void _loadChatPreferences() async {
@@ -2127,108 +2088,74 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 未设置任何图片时仍使用明确的聊天背景，不能依赖透明根层兜底。
     final hasCustomBackground = _hasBg && _customBg != null;
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: true,
       backgroundColor: hasCustomBackground || theme.hasGlobalBackground
           ? Colors.transparent
           : theme.bgColor,
-      body: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (details) {
-          _sidebarDragActive = !_sidebarOpen && details.globalPosition.dx <= 28;
-          if (_sidebarDragActive) setState(() => _sidebarOpen = true);
-        },
-        onHorizontalDragUpdate: (details) {
-          if (_sidebarDragActive) _updateSidebarDrag(details);
-        },
-        onHorizontalDragEnd: (details) {
-          if (_sidebarDragActive) {
-            _sidebarDragActive = false;
-            _endSidebarDrag(details);
-          }
-        },
-        child: Stack(
-          children: [
-            // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
-            Positioned.fill(
-              child: hasCustomBackground
-                  ? Image.file(File(_customBg!), fit: BoxFit.cover)
-                  : theme.hasGlobalBackground
-                      ? const SizedBox.expand()
-                      : DecoratedBox(
-                          decoration: BoxDecoration(color: theme.bgColor),
-                          child: Stack(
-                            children: [
-                              Positioned(
-                                left: -80,
-                                top: -60,
-                                child: IgnorePointer(
-                                  child: Container(
-                                    width: 240,
-                                    height: 240,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: RadialGradient(
-                                        colors: [
-                                          theme.primaryLight
-                                              .withValues(alpha: 0.25),
-                                          Colors.transparent,
-                                        ],
-                                      ),
+      body: Stack(
+        children: [
+          // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
+          Positioned.fill(
+            child: hasCustomBackground
+                ? Image.file(File(_customBg!), fit: BoxFit.cover)
+                : theme.hasGlobalBackground
+                    ? const SizedBox.expand()
+                    : DecoratedBox(
+                        decoration: BoxDecoration(color: theme.bgColor),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              left: -80,
+                              top: -60,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 240,
+                                  height: 240,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: RadialGradient(
+                                      colors: [
+                                        theme.primaryLight
+                                            .withValues(alpha: 0.25),
+                                        Colors.transparent,
+                                      ],
                                     ),
                                   ),
                                 ),
                               ),
-                              Positioned(
-                                right: -60,
-                                bottom: 120,
-                                child: IgnorePointer(
-                                  child: Container(
-                                    width: 260,
-                                    height: 260,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: RadialGradient(
-                                        colors: [
-                                          theme.primary.withValues(alpha: 0.15),
-                                          Colors.transparent,
-                                        ],
-                                      ),
+                            ),
+                            Positioned(
+                              right: -60,
+                              bottom: 120,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 260,
+                                  height: 260,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: RadialGradient(
+                                      colors: [
+                                        theme.primary.withValues(alpha: 0.15),
+                                        Colors.transparent,
+                                      ],
                                     ),
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-            ),
-            Column(
-              children: [
-                _chatHeader(),
-                Expanded(child: _chatBody()),
-              ],
-            ),
-            Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
-            if (_sidebarOpen)
-              ChatSidebar(
-                bot: _bot,
-                progress: _sidebarCtrl,
-                onClose: _closeSidebar,
-                onDragUpdate: _updateSidebarDrag,
-                onDragEnd: _endSidebarDrag,
-                onOpenManager: (kind) async {
-                  await _closeSidebar();
-                  if (!mounted) return;
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => ToolManagerPage(
-                      kind: kind == 'skill'
-                          ? ToolManagerKind.skill
-                          : ToolManagerKind.mcp,
-                    ),
-                  ));
-                },
-              ),
-          ],
-        ),
+                      ),
+          ),
+          Column(
+            children: [
+              _chatHeader(),
+              Expanded(child: _chatBody()),
+            ],
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
+        ],
       ),
     );
   }
@@ -2248,12 +2175,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             children: [
-              IconButton(
-                tooltip: '打开 TideBot 侧栏',
-                onPressed: _openSidebar,
-                icon:
-                    Icon(Icons.blur_on_rounded, color: theme.onBackgroundIcon),
-              ),
               IconButton(
                 tooltip: '返回聊天列表',
                 onPressed: () => Navigator.pop(context),

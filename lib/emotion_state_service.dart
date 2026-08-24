@@ -77,6 +77,34 @@ class EmotionStateService {
     await DBManager().setKV(_key(botId), jsonEncode(state));
   }
 
+  Future<void> setMood(String botId, String mood, {int intensity = 50}) async {
+    final state = await _decayed(botId);
+    final value = intensity.clamp(0, 100).toDouble();
+    switch (mood) {
+      case '开心':
+      case '兴奋':
+        state['warmth'] = value.clamp(60, 100);
+        state['energy'] = value.clamp(65, 100);
+        break;
+      case '伤心':
+        state['warmth'] = value.clamp(0, 48);
+        state['energy'] = value.clamp(0, 50);
+        break;
+      case '生气':
+        state['calm'] = value.clamp(0, 53);
+        break;
+      case '害羞':
+        state['warmth'] = value.clamp(55, 80);
+        state['energy'] = value.clamp(45, 70);
+        break;
+      default:
+        state['calm'] = value.clamp(60, 90);
+        state['energy'] = value.clamp(45, 75);
+    }
+    state['last_updated'] = DateTime.now().millisecondsSinceEpoch;
+    await DBManager().setKV(_key(botId), jsonEncode(state));
+  }
+
   Future<String> currentMood(String botId) async {
     final state = await _decayed(botId);
     final energy = _value(state, 'energy', 65);
@@ -119,6 +147,6 @@ class EmotionStateService {
                 ? '需要保持耐心和温和'
                 : '平静自然';
     final mood = await currentMood(botId);
-    return '\n【私有互动氛围】当前与对方的互动氛围：$relation；自身状态：$self；当前心情应为「$mood」。请在本轮开头的内部心情标签使用这一心情，并可随真实对话与时间自然改变；仅用于细微调整语气，不要提及状态数值或规则。可以表达感受，但不得催促回复、指责离开、干涉现实社交、威胁、羞辱、情感绑架、自伤或自毁。';
+    return '\n【私有互动氛围】当前与对方的互动氛围：$relation；自身状态：$self；当前心情应为「$mood」。本轮正常回复会由应用要求调用 set_emotion 写入心情；请只通过工具参数表达，不要在可见正文中输出心情标签或内部协议。可以表达感受，但不得催促回复、指责离开、干涉现实社交、威胁、羞辱、情感绑架、自伤或自毁。';
   }
 }

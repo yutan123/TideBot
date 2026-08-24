@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'db.dart';
 import 'ui_components.dart';
+import 'chat_sidebar.dart';
+import 'tool_manager_page.dart';
 import 'ui_chat_room.dart';
 import 'theme.dart';
 import 'bot_state.dart';
@@ -12,7 +14,8 @@ class ChatListPage extends StatefulWidget {
   State<ChatListPage> createState() => ChatListPageState();
 }
 
-class ChatListPageState extends State<ChatListPage> {
+class ChatListPageState extends State<ChatListPage>
+    with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _bots = [];
   bool _showParticles = false;
   int _particleRun = 0;
@@ -22,15 +25,57 @@ class ChatListPageState extends State<ChatListPage> {
   // their source RenderBox.
   final Map<String, GlobalKey> _botCardKeys = <String, GlobalKey>{};
   final Set<String> _openingBots = <String>{};
+  late final AnimationController _sidebarCtrl;
+  bool _sidebarOpen = false;
+  bool _sidebarDragActive = false;
+  String? _selectedBotId;
 
   @override
   void initState() {
     super.initState();
+    _sidebarCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
     load();
   }
 
+  void _openSidebar() {
+    if (_bots.isEmpty || _sidebarOpen) return;
+    setState(() => _sidebarOpen = true);
+    _sidebarCtrl.forward(from: 0);
+  }
+
+  Future<void> _closeSidebar() async {
+    if (!_sidebarOpen) return;
+    await _sidebarCtrl.reverse();
+    if (mounted) setState(() => _sidebarOpen = false);
+  }
+
+  void _updateSidebarDrag(DragUpdateDetails details) {
+    final width = MediaQuery.sizeOf(context).width * .86;
+    _sidebarCtrl.value =
+        (_sidebarCtrl.value + details.delta.dx / width).clamp(0.0, 1.0);
+  }
+
+  void _endSidebarDrag(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond.dx;
+    if (velocity > 500 || (velocity > -500 && _sidebarCtrl.value >= .5)) {
+      _sidebarCtrl.forward();
+    } else {
+      _closeSidebar();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sidebarCtrl.dispose();
+    super.dispose();
+  }
+
   void load() async {
-    final bots = await DBManager().queryBots();
+    final db = DBManager();
+    final bots = await db.queryBots();
     final enriched = <Map<String, dynamic>>[];
     for (var b in bots) {
       // 取该机器人「最新」一条消息作聊天列表预览（按时间倒序取首条）。
@@ -79,6 +124,18 @@ class ChatListPageState extends State<ChatListPage> {
       if (aPin != bPin) return bPin.compareTo(aPin);
       return (b['lastTime'] as int).compareTo(a['lastTime'] as int);
     });
+    final savedSelectedId =
+        _selectedBotId ?? await db.getKV('chat_sidebar_selected_bot_id');
+    if (enriched.isNotEmpty) {
+      final current = savedSelectedId;
+      _selectedBotId = enriched.any((bot) => bot['id']?.toString() == current)
+          ? current
+          : enriched.first['id']?.toString();
+      await db.setKV('chat_sidebar_selected_bot_id', _selectedBotId ?? '');
+    } else {
+      _selectedBotId = null;
+      await db.setKV('chat_sidebar_selected_bot_id', '');
+    }
     if (mounted) setState(() => _bots = enriched);
   }
 
@@ -194,12 +251,19 @@ class ChatListPageState extends State<ChatListPage> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
             child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('TideBot',
-                    style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        fontFamily: 'TideFont',
-                        color: TideTheme.of(context).textStrong)))),
+                child: Semantics(
+                  button: true,
+                  label: '打开 TideBot 侧栏',
+                  child: GestureDetector(
+                    onTap: _openSidebar,
+                    child: Text('TideBot',
+                        style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: 'TideFont',
+                            color: TideTheme.of(context).textStrong)),
+                  ),
+                ))),
         Expanded(
             child: _bots.isEmpty
                 ? Center(
@@ -221,6 +285,54 @@ class ChatListPageState extends State<ChatListPage> {
                 : _list()),
       ])),
     );
+    final shell = GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (details) {
+        _sidebarDragActive = !_sidebarOpen &&
+            details.globalPosition.dx <= 28 &&
+            _bots.isNotEmpty;
+        if (_sidebarDragActive) setState(() => _sidebarOpen = true);
+      },
+      onHorizontalDragUpdate: (details) {
+        if (_sidebarDragActive) _updateSidebarDrag(details);
+      },
+      onHorizontalDragEnd: (details) {
+        if (_sidebarDragActive) {
+          _sidebarDragActive = false;
+          _endSidebarDrag(details);
+        }
+      },
+      child: Stack(
+        children: [
+          content,
+          if (_sidebarOpen)
+            ChatSidebar(
+              bots: _bots,
+              selectedBotId:
+                  _selectedBotId ?? _bots.first['id']?.toString() ?? '',
+              onSelectBot: (id) async {
+                setState(() => _selectedBotId = id);
+                await DBManager().setKV('chat_sidebar_selected_bot_id', id);
+              },
+              progress: _sidebarCtrl,
+              onClose: _closeSidebar,
+              onDragUpdate: _updateSidebarDrag,
+              onDragEnd: _endSidebarDrag,
+              onOpenManager: (kind) async {
+                await _closeSidebar();
+                if (!mounted) return;
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ToolManagerPage(
+                    kind: kind == 'skill'
+                        ? ToolManagerKind.skill
+                        : ToolManagerKind.mcp,
+                  ),
+                ));
+              },
+            ),
+        ],
+      ),
+    );
     return _showParticles
         ? ParticleOverlay(
             key: ValueKey(_particleRun),
@@ -228,8 +340,9 @@ class ChatListPageState extends State<ChatListPage> {
             onDone: () {
               if (mounted) setState(() => _showParticles = false);
             },
-            child: content)
-        : content;
+            child: shell,
+          )
+        : shell;
   }
 
   Widget _list() => ListView.builder(

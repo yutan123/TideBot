@@ -3,12 +3,15 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'daily_quote_service.dart';
 import 'db.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
 class ChatSidebar extends StatefulWidget {
-  final Map<String, dynamic> bot;
+  final List<Map<String, dynamic>> bots;
+  final String selectedBotId;
+  final ValueChanged<String> onSelectBot;
   final Animation<double> progress;
   final GestureDragUpdateCallback onDragUpdate;
   final GestureDragEndCallback onDragEnd;
@@ -17,7 +20,9 @@ class ChatSidebar extends StatefulWidget {
 
   const ChatSidebar({
     super.key,
-    required this.bot,
+    required this.bots,
+    required this.selectedBotId,
+    required this.onSelectBot,
     required this.progress,
     required this.onDragUpdate,
     required this.onDragEnd,
@@ -29,19 +34,17 @@ class ChatSidebar extends StatefulWidget {
   State<ChatSidebar> createState() => _ChatSidebarState();
 }
 
-class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
-  static const _indexKey = 'chat_sidebar_bot_index';
-  static const _remainingKey = 'chat_sidebar_remaining_ms';
-
+class _ChatSidebarState extends State<ChatSidebar> {
   final DBManager _db = DBManager();
-  List<Map<String, dynamic>> _bots = const [];
+  Map<String, dynamic> get _bot => widget.bots.firstWhere(
+        (item) => item['id']?.toString() == _selectedBotId,
+        orElse: () => widget.bots.first,
+      );
+  String? _selectedBotId;
   Map<String, dynamic>? _latestPost;
   String _userName = '用户';
   String _userAvatar = '';
   String _quote = '';
-  int _index = 0;
-  DateTime _nextRotation = DateTime.now().add(const Duration(seconds: 5));
-  Timer? _ticker;
   Timer? _clock;
   DateTime _now = DateTime.now();
   bool _online = false;
@@ -49,63 +52,38 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _selectedBotId = widget.selectedBotId;
     _load();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
-    _ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!mounted || _bots.length < 2) return;
-      if (DateTime.now().isBefore(_nextRotation)) return;
-      _nextRotation = DateTime.now().add(const Duration(seconds: 5));
-      _index = (_index + 1) % _bots.length;
-      _persistRotation();
-      setState(() {});
-    });
   }
 
   Future<void> _load() async {
+    final bot = _bot;
     final results = await Future.wait([
-      _db.queryBots(),
-      _db.queryPosts(limit: 1),
+      _db.queryPostsForBot(
+        botId: bot['id']?.toString() ?? '',
+        botName: bot['name']?.toString() ?? '',
+        limit: 1,
+      ),
       _db.getKV('user_name'),
       _db.getKV('user_avatar'),
-      _db.getKV(_indexKey),
-      _db.getKV(_remainingKey),
     ]);
-    final bots = results[0] as List<Map<String, dynamic>>;
-    final savedIndex = int.tryParse(results[4]?.toString() ?? '') ?? 0;
-    final savedRemaining = int.tryParse(results[5]?.toString() ?? '');
     final now = DateTime.now();
-    final remaining = (savedRemaining ?? 5000).clamp(250, 5000);
-    final next = now.add(Duration(milliseconds: remaining));
-    final validIndex = bots.isEmpty ? 0 : savedIndex.clamp(0, bots.length - 1);
+    final quote =
+        await DailyQuoteService.instance.get(bot['id']?.toString() ?? '');
     if (!mounted) return;
     setState(() {
-      _bots = bots;
-      _latestPost = (results[1] as List<Map<String, dynamic>>).firstOrNull;
-      _userName = (results[2] as String?)?.trim().isNotEmpty == true
-          ? results[2] as String
+      _latestPost = (results[0] as List<Map<String, dynamic>>).firstOrNull;
+      _userName = (results[1] as String?)?.trim().isNotEmpty == true
+          ? results[1] as String
           : '用户';
-      _userAvatar = results[3] as String? ?? '';
-      _index = validIndex;
-      _nextRotation = next;
-      _quote = _dailyQuote();
+      _userAvatar = results[2] as String? ?? '';
+      _quote = quote;
+      _now = now;
     });
     _checkOnline();
-  }
-
-  String _dailyQuote() {
-    final available = _bots
-        .map((bot) => bot['daily_quote']?.toString().trim() ?? '')
-        .where((quote) => quote.isNotEmpty)
-        .toList();
-    if (available.isEmpty) {
-      return '今天也和你一起，慢慢把事情做好。';
-    }
-    final day = DateTime.now();
-    final seed = day.year * 10000 + day.month * 100 + day.day;
-    return available[seed % available.length];
   }
 
   Future<void> _checkOnline() async {
@@ -118,47 +96,75 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
     if (mounted) setState(() => _online = online);
   }
 
-  Future<void> _persistRotation() async {
-    final remaining = _nextRotation
-        .difference(DateTime.now())
-        .inMilliseconds
-        .clamp(250, 5000);
-    await _db.setKV(_indexKey, '$_index');
-    await _db.setKV(_remainingKey, '$remaining');
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      _ticker?.cancel();
-      _ticker = null;
-      _persistRotation();
-    } else if (state == AppLifecycleState.resumed && _ticker == null) {
-      _ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
-        if (!mounted || _bots.length < 2) return;
-        if (DateTime.now().isBefore(_nextRotation)) return;
-        _nextRotation = DateTime.now().add(const Duration(seconds: 5));
-        _index = (_index + 1) % _bots.length;
-        _persistRotation();
-        setState(() {});
-      });
-    }
-  }
-
   @override
   void dispose() {
-    _persistRotation();
-    WidgetsBinding.instance.removeObserver(this);
-    _ticker?.cancel();
     _clock?.cancel();
     super.dispose();
   }
 
+  void _selectBot(String id) {
+    if (_selectedBotId == id) return;
+    setState(() {
+      _selectedBotId = id;
+      _latestPost = null;
+      _quote = '';
+    });
+    widget.onSelectBot(id);
+    _load();
+  }
+
+  Widget _botPicker(TideTheme theme) => SizedBox(
+        height: 76,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: widget.bots.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final bot = widget.bots[index];
+            final id = bot['id']?.toString() ?? '';
+            final selected = id == _selectedBotId;
+            return BouncyTap(
+              onTap: () => _selectBot(id),
+              child: Container(
+                width: 64,
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? theme.primary.withValues(alpha: .16)
+                      : theme.primary.withValues(alpha: .06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: selected
+                        ? theme.primary.withValues(alpha: .55)
+                        : theme.primary.withValues(alpha: .12),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    TideBotAvatar(
+                      name: bot['name']?.toString() ?? '',
+                      path: bot['avatar']?.toString(),
+                      size: 38,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      bot['name']?.toString() ?? '未命名',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10, color: theme.textStrong),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final bot = _bots.isEmpty ? widget.bot : _bots[_index];
+    final bot = _bot;
     final width = MediaQuery.sizeOf(context).width * .86;
     return AnimatedBuilder(
       animation: widget.progress,
@@ -190,6 +196,8 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _header(theme),
+                          _botPicker(theme),
+                          const Divider(height: 1),
                           Expanded(
                             child: ListView(
                               padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
@@ -198,13 +206,29 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
                                 const SizedBox(height: 12),
                                 _statusCard(theme, bot),
                                 const SizedBox(height: 12),
-                                _postCard(theme),
+                                _postCard(theme, bot),
                                 const SizedBox(height: 16),
-                                _managerButton(theme, Icons.extension_rounded,
-                                    'Skill', 'skill'),
-                                const SizedBox(height: 8),
-                                _managerButton(
-                                    theme, Icons.hub_rounded, 'MCP', 'mcp'),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _managerButton(
+                                        theme,
+                                        Icons.extension_rounded,
+                                        'Skill',
+                                        'skill',
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: _managerButton(
+                                        theme,
+                                        Icons.hub_rounded,
+                                        'MCP',
+                                        'mcp',
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
@@ -320,9 +344,6 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                         fontWeight: FontWeight.w700, color: theme.textStrong))),
-            if (_bots.length > 1)
-              Text('${_index + 1}/${_bots.length}',
-                  style: TextStyle(fontSize: 12, color: theme.textFaint)),
           ]),
           const SizedBox(height: 12),
           Text('当前心情：${_mood(bot)}', style: TextStyle(color: theme.textWeak)),
@@ -339,10 +360,10 @@ class _ChatSidebarState extends State<ChatSidebar> with WidgetsBindingObserver {
         ]),
       );
 
-  Widget _postCard(TideTheme theme) => _panel(
+  Widget _postCard(TideTheme theme, Map<String, dynamic> bot) => _panel(
         theme,
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('最新动态',
+          Text('最新动态 —— ${bot['name']?.toString() ?? 'TideBot'}',
               style: TextStyle(
                   fontWeight: FontWeight.w700, color: theme.textStrong)),
           const SizedBox(height: 8),

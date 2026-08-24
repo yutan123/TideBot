@@ -1533,10 +1533,33 @@ class DBManager {
 
   // ================= Posts 查询（广场分页） =================
   Future<List<Map<String, dynamic>>> queryPosts(
-      {int offset = 0, int limit = 10}) async {
+      {int offset = 0, int limit = 10, String? authorId}) async {
     final db = await database;
-    return await db.query('posts',
-        orderBy: 'timestamp DESC', limit: limit, offset: offset);
+    return db.query(
+      'posts',
+      where: authorId == null ? null : 'author_id = ?',
+      whereArgs: authorId == null ? null : [authorId],
+      orderBy: 'timestamp DESC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  /// New posts use the stable bot ID. Older releases stored the bot name, so
+  /// callers can keep showing legacy posts while bots are renamed over time.
+  Future<List<Map<String, dynamic>>> queryPostsForBot({
+    required String botId,
+    required String botName,
+    int limit = 10,
+  }) async {
+    final db = await database;
+    return db.query(
+      'posts',
+      where: 'author_id = ? OR author_id = ?',
+      whereArgs: [botId, botName],
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
   }
 
   Future<void> insertPost(Map<String, dynamic> post) async {

@@ -31,6 +31,8 @@ import 'ai.dart';
 import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
+import 'app_log_service.dart';
+import 'persistent_service_coordinator.dart';
 import 'mcp_connection_service.dart';
 
 import 'daily_launch_animation.dart';
@@ -119,7 +121,7 @@ Future<void> _initPersistentService({
     // Only restore after an explicit opt-in. The plugin persists this flag and
     // restarts its foreground service after boot/package replacement.
     if (restoreAfterUserOptIn) {
-      await service.startService();
+      await PersistentServiceCoordinator.instance.ensureRunning();
     }
   } catch (e) {
     debugPrint('[service] configure failed: $e');
@@ -131,94 +133,151 @@ void onStart(ServiceInstance service) {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
   Timer? heartbeat;
-  Future<void> tick() async {
+  var tickRunning = false;
+
+  Future<void> recordError(String scope, Object error, StackTrace stack) async {
+    final message = '$scope: $error';
+    debugPrint('[service] $message\n$stack');
+    await DBManager().setKV('persistent_service_last_error', message);
+    AppLogService.instance.add('SERVICE_ERROR', message);
+  }
+
+  Future<void> runTask(String name, Future<void> Function() task) async {
+    final started = DateTime.now().millisecondsSinceEpoch;
     try {
-      await DBManager().setKV(
-        'persistent_service_heartbeat',
-        '${DateTime.now().millisecondsSinceEpoch}',
-      );
-      final keepRunning =
-          await DBManager().getKV('persistent_notification') == 'true';
+      await task();
+      await DBManager().setKV('persistent_service_task_${name}_success_at',
+          '${DateTime.now().millisecondsSinceEpoch}');
+    } catch (error, stack) {
+      await recordError(name, error, stack);
+    } finally {
+      await DBManager().setKV('persistent_service_task_${name}_duration_ms',
+          '${DateTime.now().millisecondsSinceEpoch - started}');
+    }
+  }
+
+  Future<void> tick() async {
+    if (tickRunning) return;
+    tickRunning = true;
+    final db = DBManager();
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.setKV('persistent_service_last_tick_started_at', '$now');
+      await db.setKV('persistent_service_heartbeat', '$now');
+      final keepRunning = await db.getKV('persistent_notification') == 'true';
       if (!keepRunning) {
         heartbeat?.cancel();
-        await DBManager().setKV('persistent_service_heartbeat', '');
+        await db.setKV('persistent_service_state', 'stopped_by_user');
+        await db.setKV('persistent_service_heartbeat', '');
         if (service is AndroidServiceInstance) await service.stopSelf();
         return;
       }
       final isForeground = service is AndroidServiceInstance
           ? await service.isForegroundService()
           : false;
-      if (!isForeground) return;
-      await _generateMissingLifeSchedules();
-      await McpConnectionService.instance.connectAuto();
-      await LifeScheduleService.instance.runDueEndEvents();
-      await _runDueProactiveReplies();
-      final due = await DBManager().dueFutureTasks(
-        DateTime.now().millisecondsSinceEpoch,
-      );
-      for (final task in due) {
-        final id = task['id']?.toString() ?? '';
-        if (id.isEmpty) continue;
-        await DBManager().updateFutureTask(id, {'status': 'running'});
-        final botId = task['bot_id']?.toString() ?? '';
-        final bot = botId.isEmpty ? null : await DBManager().getBotById(botId);
-        if (bot == null || isBotDisabled(bot['is_disabled'])) {
-          await DBManager().updateFutureTask(id, {'status': 'pending'});
-          continue;
-        }
-        final prompt =
-            task['prompt']?.toString() ?? task['note']?.toString() ?? '';
-        if (botId.isEmpty || prompt.isEmpty) continue;
-        try {
-          final result = await AIManager().sendMessage(
-            botId: botId,
-            text: '这是一个定时任务，请完成：$prompt',
-            persistResponse: true,
-          );
-          final answer = result['reply']?.toString() ?? '';
-          await OpsManager().showSystemNotification(
-            id: id.hashCode,
-            title: task['title']?.toString() ?? '未来任务完成',
-            body: answer.isEmpty ? '任务已执行' : answer,
-            botId: botId,
-          );
-          if (task['frequency']?.toString() == 'daily') {
-            // daily 任务：基于原 run_at 的小时/分钟，推进到明天同一时刻，
-            // 而不是从现在开始加 24 小时，避免因任务延迟执行导致设定时间漂移。
-            final prevMs = int.tryParse(task['run_at']?.toString() ?? '') ??
-                DateTime.now().millisecondsSinceEpoch;
-            final prev = DateTime.fromMillisecondsSinceEpoch(prevMs);
-            final next = DateTime(
-              prev.year,
-              prev.month,
-              prev.day + 1,
-              prev.hour,
-              prev.minute,
-            ).millisecondsSinceEpoch;
-            await DBManager().updateFutureTask(id, {
-              'run_at': next,
-              'status': 'pending',
-            });
-          } else {
-            await DBManager().deleteFutureTask(id);
-          }
-        } catch (_) {
-          await DBManager().updateFutureTask(id, {'status': 'pending'});
-        }
+      if (!isForeground) {
+        await db.setKV('persistent_service_state', 'not_foreground');
+        return;
       }
-    } catch (_) {}
+      await db.setKV('persistent_service_state', 'running');
+      await runTask('schedule_generation', _generateMissingLifeSchedules);
+      await runTask(
+          'mcp_auto_connect', McpConnectionService.instance.connectAuto);
+      await runTask(
+          'due_end_events', LifeScheduleService.instance.runDueEndEvents);
+      await runTask('proactive_replies', _runDueProactiveReplies);
+      await runTask('future_tasks', _runDueFutureTasks);
+      await db.setKV('persistent_service_last_tick_finished_at',
+          '${DateTime.now().millisecondsSinceEpoch}');
+    } catch (error, stack) {
+      await recordError('tick', error, stack);
+    } finally {
+      tickRunning = false;
+    }
   }
 
   service.on('stopService').listen((_) async {
     heartbeat?.cancel();
+    await DBManager().setKV('persistent_service_state', 'stopped_by_user');
     await DBManager().setKV('persistent_service_heartbeat', '');
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
-  unawaited(tick());
+  unawaited(() async {
+    final db = DBManager();
+    final restarts = int.tryParse(
+            await db.getKV('persistent_service_restart_count') ?? '0') ??
+        0;
+    await db.setKV('persistent_service_restart_count', '${restarts + 1}');
+    await db.setKV('persistent_service_started_at',
+        '${DateTime.now().millisecondsSinceEpoch}');
+    await db.setKV('persistent_service_state', 'starting');
+    await tick();
+  }());
   heartbeat = Timer.periodic(
     const Duration(minutes: 1),
     (_) => unawaited(tick()),
   );
+}
+
+Future<void> _runDueFutureTasks() async {
+  final db = DBManager();
+  final due = await db.dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
+  for (final task in due) {
+    final id = task['id']?.toString() ?? '';
+    if (id.isEmpty) continue;
+    await db.updateFutureTask(id, {'status': 'running'});
+    try {
+      final botId = task['bot_id']?.toString() ?? '';
+      final bot = botId.isEmpty ? null : await db.getBotById(botId);
+      if (bot == null || isBotDisabled(bot['is_disabled'])) {
+        await db.updateFutureTask(id, {'status': 'pending'});
+        continue;
+      }
+      final prompt =
+          task['prompt']?.toString() ?? task['note']?.toString() ?? '';
+      if (prompt.isEmpty) {
+        await db.updateFutureTask(id, {'status': 'pending'});
+        continue;
+      }
+      final result = await AIManager()
+          .sendMessage(
+            botId: botId,
+            text: '这是一个定时任务，请完成：$prompt',
+            persistResponse: true,
+          )
+          .timeout(const Duration(minutes: 2));
+      final answer = result['reply']?.toString() ?? '';
+      await OpsManager().showSystemNotification(
+        id: id.hashCode,
+        title: task['title']?.toString() ?? '未来任务完成',
+        body: answer.isEmpty ? '任务已执行' : answer,
+        botId: botId,
+      );
+      if (task['frequency']?.toString() == 'daily') {
+        final previous = DateTime.fromMillisecondsSinceEpoch(
+          int.tryParse(task['run_at']?.toString() ?? '') ??
+              DateTime.now().millisecondsSinceEpoch,
+        );
+        await db.updateFutureTask(id, {
+          'run_at': DateTime(
+            previous.year,
+            previous.month,
+            previous.day + 1,
+            previous.hour,
+            previous.minute,
+          ).millisecondsSinceEpoch,
+          'status': 'pending',
+        });
+      } else {
+        await db.deleteFutureTask(id);
+      }
+    } catch (error, stack) {
+      debugPrint('[service] future task $id failed: $error\n$stack');
+      await db.updateFutureTask(id, {'status': 'pending'});
+      await db.setKV(
+          'persistent_service_last_error', 'future_task $id: $error');
+    }
+  }
 }
 
 Future<void> _generateMissingLifeSchedules() async {
