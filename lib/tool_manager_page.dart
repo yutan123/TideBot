@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'db.dart';
 import 'skill_runtime.dart';
+import 'theme.dart';
 import 'ui_components.dart';
 
 enum ToolManagerKind { skill, mcp }
@@ -180,24 +181,48 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
             const Text('添加 MCP 服务',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 14),
-            TextField(controller: name, decoration: const InputDecoration(labelText: '名称')),
-            TextField(controller: url, decoration: const InputDecoration(labelText: 'Streamable HTTP URL')),
-            TextField(controller: token, obscureText: true, decoration: const InputDecoration(labelText: 'Bearer Token（可选）')),
-            TextField(controller: timeoutSeconds, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '超时秒数')),
+            TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: '名称')),
+            TextField(
+                controller: url,
+                decoration:
+                    const InputDecoration(labelText: 'Streamable HTTP URL')),
+            TextField(
+                controller: token,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'Bearer Token（可选）')),
+            TextField(
+                controller: timeoutSeconds,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '超时秒数')),
             StatefulBuilder(
               builder: (context, setDialogState) => Row(
                 children: [
-                  Expanded(child: Text('保存后自动连接', style: TextStyle(color: TideTheme.of(context).textStrong))),
-                  Switch(value: autoConnect, onChanged: (value) => setDialogState(() => autoConnect = value)),
+                  Expanded(
+                      child: Text('保存后自动连接',
+                          style: TextStyle(
+                              color: TideTheme.of(context).textStrong))),
+                  Switch(
+                      value: autoConnect,
+                      onChanged: (value) =>
+                          setDialogState(() => autoConnect = value)),
                 ],
               ),
             ),
             const SizedBox(height: 14),
             Row(
               children: [
-                Expanded(child: TideDialogs.glassButton('取消', onTap: () => Navigator.pop(dialogContext, false), color: TideTheme.of(dialogContext).surface, textColor: TideTheme.of(dialogContext).textStrong)),
+                Expanded(
+                    child: TideDialogs.glassButton('取消',
+                        onTap: () => Navigator.pop(dialogContext, false),
+                        color: TideTheme.of(dialogContext).surface,
+                        textColor: TideTheme.of(dialogContext).textStrong)),
                 const SizedBox(width: 10),
-                Expanded(child: TideDialogs.glassButton('保存', onTap: () => Navigator.pop(dialogContext, true))),
+                Expanded(
+                    child: TideDialogs.glassButton('保存',
+                        onTap: () => Navigator.pop(dialogContext, true))),
               ],
             ),
           ],
@@ -240,6 +265,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       timeout: Duration(milliseconds: timeoutMs),
     );
   }
+
   Future<void> _showDetails(Map<String, dynamic> item) async {
     final id = item['id'].toString();
     final tools =
@@ -293,18 +319,18 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                 children: [
                                   Expanded(
                                     child: TideDialogs.glassButton('取消',
-                                        onTap: () => Navigator.pop(
-                                            dialogContext, false),
-                                        color: TideTheme.of(dialogContext)
-                                            .surface,
+                                        onTap: () =>
+                                            Navigator.pop(dialogContext, false),
+                                        color:
+                                            TideTheme.of(dialogContext).surface,
                                         textColor: TideTheme.of(dialogContext)
                                             .textStrong),
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: TideDialogs.glassButton('授权',
-                                        onTap: () => Navigator.pop(
-                                            dialogContext, true)),
+                                        onTap: () =>
+                                            Navigator.pop(dialogContext, true)),
                                   ),
                                 ],
                               ),
@@ -348,6 +374,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       ),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -453,7 +480,8 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       item['id'].toString(),
       item['url'].toString(),
       headers: headers,
-      timeout: Duration(milliseconds: (item['timeout_ms'] as num?)?.toInt() ?? 20000),
+      timeout: Duration(
+          milliseconds: (item['timeout_ms'] as num?)?.toInt() ?? 20000),
     );
   }
 
@@ -464,14 +492,21 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         content: TideDialogs.glassContent(
           context: dialogContext,
           children: [
-            const Text('确认删除', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const Text('确认删除',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text('删除“${item['name']}”后，其配置和工具状态将被移除。'),
             const SizedBox(height: 16),
             Row(children: [
-              Expanded(child: TideDialogs.glassButton('取消', onTap: () => Navigator.pop(dialogContext, false), color: TideTheme.of(dialogContext).surface, textColor: TideTheme.of(dialogContext).textStrong)),
+              Expanded(
+                  child: TideDialogs.glassButton('取消',
+                      onTap: () => Navigator.pop(dialogContext, false),
+                      color: TideTheme.of(dialogContext).surface,
+                      textColor: TideTheme.of(dialogContext).textStrong)),
               const SizedBox(width: 10),
-              Expanded(child: TideDialogs.glassButton('删除', onTap: () => Navigator.pop(dialogContext, true))),
+              Expanded(
+                  child: TideDialogs.glassButton('删除',
+                      onTap: () => Navigator.pop(dialogContext, true))),
             ]),
           ],
         ),
@@ -487,7 +522,6 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     }
     await _reload();
   }
-
 }
 
 class _ToolToggleRow extends StatelessWidget {

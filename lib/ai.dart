@@ -796,6 +796,7 @@ class AIManager {
         final msgId = 'msg_a_${ts + 1}';
         final persistedSticker = toolSticker;
         Map<String, dynamic>? sticker = persistedSticker;
+        String? audioPath;
         if (persistResponse) {
           final ttsModel = bot['tts_model']?.toString().trim() ?? '';
           final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
