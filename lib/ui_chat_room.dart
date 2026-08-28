@@ -21,6 +21,8 @@ import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
 import 'emotion_state_service.dart';
+import 'advanced_settings_page.dart';
+import 'device_capability_service.dart';
 import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -55,6 +57,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _showMessageTime = true;
   bool _showChatAvatar = false;
   bool _showSearchSources = false;
+  bool _environmentEnabled = false;
   late Map<String, dynamic> _bot;
 
   late AnimationController _bottomBarCtrl;
@@ -110,6 +113,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
     _loadBg();
     _loadChatPreferences();
+    _loadEnvironmentState();
     // Proactive replies are scheduled by the persistent background service.
     // The chat page only refreshes persisted results.
 
@@ -172,6 +176,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         _showSearchSources = showSources == 'true';
       });
     }
+  }
+
+  void _loadEnvironmentState() async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    final enabled = await DeviceCapabilityService.instance.isAuthorized(
+      DeviceCapabilityService.contextFeature,
+      botId,
+    );
+    if (mounted) setState(() => _environmentEnabled = enabled);
+  }
+
+  Future<void> _openEnvironmentSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AdvancedSettingsPage()),
+    );
+    _loadEnvironmentState();
   }
 
   void _loadMsgs() async {
@@ -2154,7 +2175,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               Expanded(child: _chatBody()),
             ],
           ),
-          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: MediaQuery.viewInsetsOf(context).bottom,
+            child: _inputBar(),
+          ),
         ],
       ),
     );
@@ -2185,13 +2211,40 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _bot['name'] as String? ?? '',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'TideFont',
-                          color: theme.onBackgroundStrong),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _bot['name'] as String? ?? '',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont',
+                              color: theme.onBackgroundStrong,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        IconButton(
+                          tooltip:
+                              _environmentEnabled ? '额外信息感知已启用' : '设置额外信息感知',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 28,
+                            height: 28,
+                          ),
+                          icon: Icon(
+                            Icons.sensors_rounded,
+                            size: 18,
+                            color: _environmentEnabled
+                                ? theme.primary
+                                : theme.onBackgroundWeak,
+                          ),
+                          onPressed: _openEnvironmentSettings,
+                        ),
+                      ],
                     ),
                     if (_typing)
                       Text('正在输入中...',
@@ -2481,7 +2534,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         12,
         8,
         12,
-        MediaQuery.of(context).padding.bottom + 84,
+        MediaQuery.of(context).padding.bottom +
+            MediaQuery.viewInsetsOf(context).bottom +
+            84,
       ),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
@@ -3052,12 +3107,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final theme = TideTheme.of(context);
     return SafeArea(
       top: false,
-      minimum: EdgeInsets.fromLTRB(
-        12,
-        0,
-        12,
-        10 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
             .animate(

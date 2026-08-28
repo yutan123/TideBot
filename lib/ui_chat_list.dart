@@ -28,7 +28,6 @@ class ChatListPageState extends State<ChatListPage>
   late final AnimationController _sidebarCtrl;
   bool _sidebarOpen = false;
   bool _sidebarDragActive = false;
-  String? _selectedBotId;
 
   @override
   void initState() {
@@ -124,18 +123,6 @@ class ChatListPageState extends State<ChatListPage>
       if (aPin != bPin) return bPin.compareTo(aPin);
       return (b['lastTime'] as int).compareTo(a['lastTime'] as int);
     });
-    final savedSelectedId =
-        _selectedBotId ?? await db.getKV('chat_sidebar_selected_bot_id');
-    if (enriched.isNotEmpty) {
-      final current = savedSelectedId;
-      _selectedBotId = enriched.any((bot) => bot['id']?.toString() == current)
-          ? current
-          : enriched.first['id']?.toString();
-      await db.setKV('chat_sidebar_selected_bot_id', _selectedBotId ?? '');
-    } else {
-      _selectedBotId = null;
-      await db.setKV('chat_sidebar_selected_bot_id', '');
-    }
     if (mounted) setState(() => _bots = enriched);
   }
 
@@ -307,13 +294,7 @@ class ChatListPageState extends State<ChatListPage>
           content,
           if (_sidebarOpen)
             ChatSidebar(
-              bots: _bots,
-              selectedBotId:
-                  _selectedBotId ?? _bots.first['id']?.toString() ?? '',
-              onSelectBot: (id) async {
-                setState(() => _selectedBotId = id);
-                await DBManager().setKV('chat_sidebar_selected_bot_id', id);
-              },
+              bot: _bots.first,
               progress: _sidebarCtrl,
               onClose: _closeSidebar,
               onDragUpdate: _updateSidebarDrag,

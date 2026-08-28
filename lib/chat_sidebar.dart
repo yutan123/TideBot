@@ -9,9 +9,7 @@ import 'theme.dart';
 import 'ui_components.dart';
 
 class ChatSidebar extends StatefulWidget {
-  final List<Map<String, dynamic>> bots;
-  final String selectedBotId;
-  final ValueChanged<String> onSelectBot;
+  final Map<String, dynamic> bot;
   final Animation<double> progress;
   final GestureDragUpdateCallback onDragUpdate;
   final GestureDragEndCallback onDragEnd;
@@ -20,9 +18,7 @@ class ChatSidebar extends StatefulWidget {
 
   const ChatSidebar({
     super.key,
-    required this.bots,
-    required this.selectedBotId,
-    required this.onSelectBot,
+    required this.bot,
     required this.progress,
     required this.onDragUpdate,
     required this.onDragEnd,
@@ -36,11 +32,7 @@ class ChatSidebar extends StatefulWidget {
 
 class _ChatSidebarState extends State<ChatSidebar> {
   final DBManager _db = DBManager();
-  Map<String, dynamic> get _bot => widget.bots.firstWhere(
-        (item) => item['id']?.toString() == _selectedBotId,
-        orElse: () => widget.bots.first,
-      );
-  String? _selectedBotId;
+  Map<String, dynamic> get _bot => widget.bot;
   Map<String, dynamic>? _latestPost;
   String _userName = '用户';
   String _userAvatar = '';
@@ -52,7 +44,6 @@ class _ChatSidebarState extends State<ChatSidebar> {
   @override
   void initState() {
     super.initState();
-    _selectedBotId = widget.selectedBotId;
     _load();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
@@ -87,12 +78,30 @@ class _ChatSidebarState extends State<ChatSidebar> {
   }
 
   Future<void> _checkOnline() async {
+    // A single DNS lookup can fail behind private DNS, captive portals, or a
+    // filtered resolver. The state represents device internet reachability,
+    // not any model/API provider health.
+    final endpoints = <InternetAddress>[
+      InternetAddress('1.1.1.1'),
+      InternetAddress('8.8.8.8'),
+    ];
     var online = false;
-    try {
-      final addresses = await InternetAddress.lookup('example.com')
-          .timeout(const Duration(seconds: 2));
-      online = addresses.isNotEmpty;
-    } catch (_) {}
+    for (final endpoint in endpoints) {
+      Socket? socket;
+      try {
+        socket = await Socket.connect(
+          endpoint,
+          53,
+          timeout: const Duration(seconds: 2),
+        );
+        online = true;
+        break;
+      } catch (_) {
+        // Try the next independent resolver endpoint.
+      } finally {
+        await socket?.close();
+      }
+    }
     if (mounted) setState(() => _online = online);
   }
 
@@ -102,65 +111,6 @@ class _ChatSidebarState extends State<ChatSidebar> {
     super.dispose();
   }
 
-  void _selectBot(String id) {
-    if (_selectedBotId == id) return;
-    setState(() {
-      _selectedBotId = id;
-      _latestPost = null;
-      _quote = '';
-    });
-    widget.onSelectBot(id);
-    _load();
-  }
-
-  Widget _botPicker(TideTheme theme) => SizedBox(
-        height: 76,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          itemCount: widget.bots.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (context, index) {
-            final bot = widget.bots[index];
-            final id = bot['id']?.toString() ?? '';
-            final selected = id == _selectedBotId;
-            return BouncyTap(
-              onTap: () => _selectBot(id),
-              child: Container(
-                width: 64,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                decoration: BoxDecoration(
-                  color: selected
-                      ? theme.primary.withValues(alpha: .16)
-                      : theme.primary.withValues(alpha: .06),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: selected
-                        ? theme.primary.withValues(alpha: .55)
-                        : theme.primary.withValues(alpha: .12),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    TideBotAvatar(
-                      name: bot['name']?.toString() ?? '',
-                      path: bot['avatar']?.toString(),
-                      size: 38,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      bot['name']?.toString() ?? '未命名',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 10, color: theme.textStrong),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      );
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -196,8 +146,6 @@ class _ChatSidebarState extends State<ChatSidebar> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _header(theme),
-                          _botPicker(theme),
-                          const Divider(height: 1),
                           Expanded(
                             child: ListView(
                               padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
@@ -385,8 +333,10 @@ class _ChatSidebarState extends State<ChatSidebar> {
           height: 52,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-              color: theme.primary.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(8)),
+              color: theme.isDark
+                  ? const Color(0xFF24262C)
+                  : const Color(0xFFF2F2F7),
+              borderRadius: BorderRadius.circular(16)),
           child: Row(children: [
             Icon(icon, color: theme.primary),
             const SizedBox(width: 12),
@@ -403,9 +353,15 @@ class _ChatSidebarState extends State<ChatSidebar> {
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-            color: theme.primary.withValues(alpha: .08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: theme.primary.withValues(alpha: .16))),
+            color: theme.isDark
+                ? const Color(0xFF1C1D21)
+                : const Color(0xFFFFFFFF),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: theme.isDark
+                  ? const Color(0xFF303238)
+                  : const Color(0xFFE5E5EA),
+            )),
         child: child,
       );
 

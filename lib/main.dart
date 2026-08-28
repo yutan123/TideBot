@@ -31,7 +31,6 @@ import 'ai.dart';
 import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
-import 'app_log_service.dart';
 import 'persistent_service_coordinator.dart';
 import 'mcp_connection_service.dart';
 
@@ -1278,13 +1277,11 @@ class _JellyDockState extends State<JellyDock>
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(40, 12, 40, 0),
-      child: theme.hasGlobalBackground
-          ? TideLiquidGlass.dock(
-              radius: 28,
-              clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
-              child: dock,
-            )
-          : dock,
+      child: TideLiquidGlass.dock(
+        radius: 28,
+        clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
+        child: dock,
+      ),
     );
   }
 }

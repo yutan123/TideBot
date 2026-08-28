@@ -400,7 +400,10 @@ class AIManager {
     final emotionContext = await EmotionStateService.instance.promptContext(
       botId,
     );
+    final conversationFocusContext =
+        '\n【当前话题规则】优先回应最新一条用户消息及其直接上下文。旧记忆、旧计划、曾经提过的学习或待办仅在用户本轮明确提及、询问进展或与当前请求直接相关时引用。用户已转向新话题或自然结束话题后，不得主动把旧话题重新带回、重复追问或将一次性提及擅自升级为未来任务。需要澄清时只围绕当前请求提出一个必要问题；同一非当前主题不要连续主动追问。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        conversationFocusContext +
         _safetyContext(text) +
         lifeContext +
         deviceContextPrompt +

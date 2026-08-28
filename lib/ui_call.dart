@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
@@ -57,7 +56,9 @@ class _CallPageState extends State<CallPage>
   final List<String> _transcript = [];
   final List<CallMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
+  final FocusNode _textFocusNode = FocusNode();
   final ScrollController _messageController = ScrollController();
+  bool _showTextComposer = false;
   Timer? _durationTimer;
   Duration _elapsed = Duration.zero;
   bool _ending = false;
@@ -98,7 +99,17 @@ class _CallPageState extends State<CallPage>
     final text = _textController.text.trim();
     if (text.isEmpty || _processing || _ending) return;
     _textController.clear();
+    _textFocusNode.unfocus();
+    setState(() => _showTextComposer = false);
     await _runTextTurn(text);
+  }
+
+  void _openTextComposer() {
+    if (_processing || _ending) return;
+    setState(() => _showTextComposer = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _textFocusNode.requestFocus();
+    });
   }
 
   Future<void> _runTextTurn(String text) async {
@@ -507,6 +518,7 @@ class _CallPageState extends State<CallPage>
     _durationTimer?.cancel();
     _stopAmpMonitor();
     _textController.dispose();
+    _textFocusNode.dispose();
     _messageController.dispose();
     _recorder.dispose();
     _player.dispose();
@@ -539,22 +551,21 @@ class _CallPageState extends State<CallPage>
             ),
             Center(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(28, 60, 28, 34),
+                padding: const EdgeInsets.fromLTRB(28, 34, 28, 20),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     AnimatedBuilder(
                       animation: _wave,
                       builder: (context, _) => SizedBox(
-                        width: 230,
-                        height: 230,
+                        width: 150,
+                        height: 150,
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
                             if (_recording || _botSpeaking)
                               Container(
-                                width: 132 + (_wave.value * 12),
-                                height: 132 + (_wave.value * 12),
+                                width: 124 + (_wave.value * 8),
+                                height: 124 + (_wave.value * 8),
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   border: Border.all(
@@ -563,113 +574,110 @@ class _CallPageState extends State<CallPage>
                                   ),
                                 ),
                               ),
-                            TideBotAvatar(
-                              name: name,
-                              path: avatar,
-                              size: 114,
-                            ),
+                            TideBotAvatar(name: name, path: avatar, size: 104),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 22),
-                    Text(
-                      name,
-                      style: TextStyle(
-                        color: theme.textStrong,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_callStateLabel()}  ·  ${_formatClock(_elapsed)}',
-                      style: TextStyle(
-                        color: ready ? theme.primary : theme.textWeak,
-                        fontSize: 14,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
                     const SizedBox(height: 12),
+                    Text(name,
+                        style: TextStyle(
+                            color: theme.textStrong,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 3),
+                    Text('${_callStateLabel()}  ·  ${_formatClock(_elapsed)}',
+                        style: TextStyle(
+                            color: ready ? theme.primary : theme.textWeak,
+                            fontSize: 14,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 8),
                     Expanded(child: _messageList(theme)),
-                    _textComposer(theme),
-                    const SizedBox(height: 10),
-                    if (!ready && widget.onOpenSettings != null) ...[
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: widget.onOpenSettings,
-                        icon:
-                            Icon(Icons.settings_rounded, color: theme.primary),
-                        label: Text(
-                          '配置语音模型',
-                          style: TextStyle(
-                            color: theme.primary,
-                            fontFamily: 'TideFont',
-                          ),
-                        ),
-                      ),
+                    if (_showTextComposer) ...[
+                      _textComposer(theme),
+                      const SizedBox(height: 8),
                     ],
-                    const Spacer(),
-                    if (ready) _callActionButton(theme),
-                    const SizedBox(height: 18),
+                    if (!ready && widget.onOpenSettings != null) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                          onPressed: widget.onOpenSettings,
+                          icon: Icon(Icons.settings_rounded,
+                              color: theme.primary),
+                          label: Text('配置语音模型',
+                              style: TextStyle(
+                                  color: theme.primary,
+                                  fontFamily: 'TideFont'))),
+                    ],
+                    if (ready) ...[
+                      const SizedBox(height: 8),
+                      _callActionButton(theme),
+                    ],
+                    const SizedBox(height: 12),
                     SafeArea(
                       top: false,
                       child: SizedBox(
-                        height: 78,
+                        height: 64,
                         child: Stack(
                           alignment: Alignment.topCenter,
                           children: [
                             Align(
-                              alignment: Alignment.topLeft,
-                              child: _roundButton(
-                                icon: _muted
-                                    ? Icons.mic_off_rounded
-                                    : Icons.mic_rounded,
-                                label: _muted ? '已静音' : '静音',
-                                color: theme.surfaceVariant,
-                                iconColor: theme.textStrong,
-                                onTap: () async {
-                                  TideHaptics.tap();
-                                  if (_muted) {
-                                    setState(() => _muted = false);
-                                    await _startListening();
-                                  } else {
-                                    _vadActive = false;
-                                    _autoStopTimer?.cancel();
-                                    _stopAmpMonitor();
-                                    _silentTicks = 0;
-                                    if (_recording) await _recorder.stop();
-                                    setState(() {
-                                      _muted = true;
-                                      _recording = false;
-                                    });
-                                  }
-                                },
-                              ),
-                            ),
+                                alignment: Alignment.topLeft,
+                                child: _roundButton(
+                                    icon: _muted
+                                        ? Icons.mic_off_rounded
+                                        : Icons.mic_rounded,
+                                    label: _muted ? '已静音' : '静音',
+                                    color: theme.surfaceVariant,
+                                    iconColor: theme.textStrong,
+                                    onTap: () async {
+                                      TideHaptics.tap();
+                                      if (_muted) {
+                                        setState(() => _muted = false);
+                                        await _startListening();
+                                      } else {
+                                        _vadActive = false;
+                                        _autoStopTimer?.cancel();
+                                        _stopAmpMonitor();
+                                        _silentTicks = 0;
+                                        if (_recording) await _recorder.stop();
+                                        setState(() {
+                                          _muted = true;
+                                          _recording = false;
+                                        });
+                                      }
+                                    })),
                             _roundButton(
-                              icon: Icons.call_end_rounded,
-                              label: '挂断',
-                              color: const Color(0xFFE74C3C),
-                              iconColor: Colors.white,
-                              onTap: _endCall,
-                            ),
+                                icon: Icons.call_end_rounded,
+                                label: '挂断',
+                                color: const Color(0xFFE74C3C),
+                                iconColor: Colors.white,
+                                onTap: _endCall),
                             Align(
-                              alignment: Alignment.topRight,
-                              child: _roundButton(
-                                icon: _speakerMuted
-                                    ? Icons.volume_off_rounded
-                                    : Icons.volume_up_rounded,
-                                label: _speakerMuted ? '声音关闭' : '声音开启',
-                                color: theme.surfaceVariant,
-                                iconColor: theme.textStrong,
-                                onTap: () async {
-                                  TideHaptics.tap();
-                                  final next = !_speakerMuted;
-                                  setState(() => _speakerMuted = next);
-                                  await _player.setVolume(next ? 0 : 1);
-                                },
+                                alignment: Alignment.topRight,
+                                child: _roundButton(
+                                    icon: _speakerMuted
+                                        ? Icons.volume_off_rounded
+                                        : Icons.volume_up_rounded,
+                                    label: _speakerMuted ? '声音关闭' : '声音开启',
+                                    color: theme.surfaceVariant,
+                                    iconColor: theme.textStrong,
+                                    onTap: () async {
+                                      TideHaptics.tap();
+                                      final next = !_speakerMuted;
+                                      setState(() => _speakerMuted = next);
+                                      await _player.setVolume(next ? 0 : 1);
+                                    })),
+                            Positioned(
+                              right: 72,
+                              top: 2,
+                              child: IconButton(
+                                tooltip: '文字回复',
+                                onPressed: _showTextComposer
+                                    ? null
+                                    : _openTextComposer,
+                                icon: Icon(Icons.edit_rounded,
+                                    color: theme.primary),
                               ),
                             ),
                           ],
@@ -732,6 +740,7 @@ class _CallPageState extends State<CallPage>
         children: [
           Expanded(
             child: TextField(
+              focusNode: _textFocusNode,
               controller: _textController,
               enabled: !_processing && !_ending,
               minLines: 1,
