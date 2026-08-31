@@ -9,7 +9,7 @@ import android.util.Log
 class TideAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != TideAlarmScheduler.taskAction) return
-        val serviceIntent = Intent(context, id.flutter.flutter_background_service.BackgroundService::class.java)
+        val serviceIntent = Intent(context, id.flutter.flutter_background_service.FlutterBackgroundService::class.java)
             .setAction(TideAlarmScheduler.taskAction)
             .putExtra(
                 TideAlarmScheduler.taskIdExtra,

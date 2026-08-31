@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ComponentName
 import android.net.Uri
 
+import android.os.Bundle
 import android.os.BatteryManager
 import android.provider.Settings
 import android.graphics.Bitmap
@@ -58,8 +59,8 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    override fun onCreate() {
-        super.onCreate()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         TideBackgroundWork.ensureScheduled(this)
     }
 

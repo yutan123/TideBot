@@ -20,7 +20,7 @@ class TideBackgroundWork(context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         val serviceIntent = Intent(
             applicationContext,
-            id.flutter.flutter_background_service.BackgroundService::class.java,
+            id.flutter.flutter_background_service.FlutterBackgroundService::class.java,
         ).setAction(ACTION_PERIODIC_WAKE)
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
