@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'global_notice.dart';
 import 'package:flutter/services.dart';
@@ -13,21 +14,26 @@ import 'package:heif_converter/heif_converter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'chat_event_bus.dart';
 import 'db.dart';
 import 'ai.dart';
+import 'message_delivery_service.dart';
 import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
 import 'emotion_state_service.dart';
-import 'advanced_settings_page.dart';
-import 'device_capability_service.dart';
 import 'ui_call.dart';
 
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
-  const ChatRoomPage({super.key, required this.botData});
+  final String? initialMessageId;
+  const ChatRoomPage({
+    super.key,
+    required this.botData,
+    this.initialMessageId,
+  });
   @override
   State<ChatRoomPage> createState() => _ChatRoomPageState();
 }
@@ -57,8 +63,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _showMessageTime = true;
   bool _showChatAvatar = false;
   bool _showSearchSources = false;
-  bool _environmentEnabled = false;
   late Map<String, dynamic> _bot;
+  final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
+  String? _highlightedMessageId;
+  int _initialMessageLocateAttempts = 0;
+  StreamSubscription<ChatEvent>? _chatEvents;
 
   late AnimationController _bottomBarCtrl;
   bool _hasText = false;
@@ -83,7 +92,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _bot = Map.from(widget.botData);
-    unawaited(DBManager().markBotRead(_bot['id']?.toString() ?? ''));
+    _highlightedMessageId = widget.initialMessageId;
+    unawaited(
+        MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     _msgC.addListener(_msgChanged);
     _inputFocus.addListener(_handleInputFocus);
     _audioPositionSub = _player.onPositionChanged.listen((v) {
@@ -106,14 +117,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       });
     });
+    _chatEvents = ChatEventBus.instance.events.listen(_onChatEvent);
     _loadMsgs();
-    _messageSyncTimer = Timer.periodic(
-      const Duration(seconds: 4),
-      (_) => _syncLatestMessages(),
-    );
     _loadBg();
     _loadChatPreferences();
-    _loadEnvironmentState();
     // Proactive replies are scheduled by the persistent background service.
     // The chat page only refreshes persisted results.
 
@@ -131,9 +138,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
-    unawaited(DBManager().markBotRead(_bot['id']?.toString() ?? ''));
+    unawaited(
+        MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     WidgetsBinding.instance.removeObserver(this);
-    _messageSyncTimer?.cancel();
+    _chatEvents?.cancel();
     _streamDisplayTimer?.cancel();
     _deferredPersistedMessageIds.clear();
     _msgC.removeListener(_msgChanged);
@@ -158,6 +166,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
+  void _onChatEvent(ChatEvent event) {
+    final botId = _bot['id']?.toString() ?? '';
+    if (!mounted || event.botId != botId) return;
+    final row = event.message == null
+        ? null
+        : Map<String, dynamic>.from(event.message!);
+    final id = event.messageId ?? row?['id']?.toString() ?? '';
+    if (row == null || id.isEmpty) return;
+    final index =
+        _msgs.indexWhere((message) => message['id']?.toString() == id);
+    if (index >= 0) {
+      setState(() => _msgs[index] = row);
+      return;
+    }
+    if (event.type != ChatEventType.inserted) return;
+    setState(() {
+      _msgs.add(row);
+      _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
+          .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+    });
+    if (row['role'] == 'assistant') {
+      unawaited(MessageDeliveryService.instance.markRead(botId));
+    }
+    _scrollDown();
+  }
+
   void _loadBg() async {
     final prefs = await SharedPreferences.getInstance();
     final bg = prefs.getString('chat_bg_${_bot['id']}');
@@ -176,23 +210,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         _showSearchSources = showSources == 'true';
       });
     }
-  }
-
-  void _loadEnvironmentState() async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-    final enabled = await DeviceCapabilityService.instance.isAuthorized(
-      DeviceCapabilityService.contextFeature,
-      botId,
-    );
-    if (mounted) setState(() => _environmentEnabled = enabled);
-  }
-
-  Future<void> _openEnvironmentSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const AdvancedSettingsPage()),
-    );
-    _loadEnvironmentState();
   }
 
   void _loadMsgs() async {
@@ -227,6 +244,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             );
           _msgsLoading = false;
         });
+        _locateInitialMessage();
       }
     } catch (e) {
       print('_loadMsgs error: $e');
@@ -234,6 +252,51 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
     // The list uses reverse layout, so its initial scroll position is already at
     // the newest message. Do not schedule a visible post-frame jump here.
+  }
+
+  void _locateInitialMessage() {
+    final id = _highlightedMessageId;
+    if (id == null || id.isEmpty || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _highlightedMessageId != id) return;
+      final context = _messageKeys[id]?.currentContext;
+      if (context == null) {
+        // ListView builds lazily. Move toward the target's reverse-list index,
+        // then retry after that range has been laid out.
+        final messageIndex =
+            _msgs.indexWhere((message) => message['id']?.toString() == id);
+        if (messageIndex < 0 ||
+            !_scrollC.hasClients ||
+            _initialMessageLocateAttempts >= 2) {
+          return;
+        }
+        _initialMessageLocateAttempts++;
+        final reverseIndex = _msgs.length - 1 - messageIndex;
+        final estimatedOffset = (reverseIndex * 96.0).clamp(
+          _scrollC.position.minScrollExtent,
+          _scrollC.position.maxScrollExtent,
+        );
+        _scrollC
+            .animateTo(
+              estimatedOffset,
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(_locateInitialMessage);
+        return;
+      }
+      _initialMessageLocateAttempts = 0;
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 280),
+        alignment: 0.45,
+      );
+      Future<void>.delayed(const Duration(seconds: 3), () {
+        if (mounted && _highlightedMessageId == id) {
+          setState(() => _highlightedMessageId = null);
+        }
+      });
+    });
   }
 
   void _handleInputFocus() {
@@ -261,7 +324,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Timer? _streamDisplayTimer;
-  Timer? _messageSyncTimer;
   int _messagesRevision = 0;
   // IDs already persisted for the current foreground reply but not yet owned by
   // a visible bubble. The periodic database refresh must not append them early.
@@ -309,7 +371,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       });
       if (changed) _scrollDown(animated: false);
-      await DBManager().markBotRead(botId);
+      await MessageDeliveryService.instance.markRead(botId);
     } catch (_) {}
   }
 
@@ -417,7 +479,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
       try {
         for (final queuedMessage in queuedMessages) {
-          await DBManager().insertMessage({
+          await MessageDeliveryService.instance.insert({
             'id': queuedMessage['id'],
             'bot_id': botId,
             'role': 'user',
@@ -470,7 +532,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
           // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
           for (final userMessage in userMessages) {
-            await DBManager().insertMessage({
+            await MessageDeliveryService.instance.insert({
               'id': userMessage['id'],
               'bot_id': botId,
               'role': 'user',
@@ -602,6 +664,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           setState(() => _msgs.remove(streamingMessage));
         return;
       }
+      if (retryTarget != null) {
+        await DBManager().clearMessageError(retryTarget['id'].toString());
+        retryTarget.remove('is_retrying');
+        retryTarget['retry_status'] = 'none';
+      }
       final persisted = (result['messages'] as List? ?? const [])
           .whereType<Map>()
           .map((message) => Map<String, dynamic>.from(message))
@@ -678,7 +745,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // Images and stickers are included in `messages` after being persisted by
       // AIManager. Rendering result metadata again would duplicate the same
       // media in the visible conversation.
-      if (mounted) unawaited(DBManager().markBotRead(botId));
+      if (mounted) {
+        unawaited(MessageDeliveryService.instance.markRead(botId));
+      }
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
@@ -729,23 +798,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Future<void> _retryMessage(Map<String, dynamic> message) async {
-    if (_loading || message['is_retrying'] == true) return;
+    if (_loading ||
+        message['is_retrying'] == true ||
+        message['retry_status'] == 'retrying') {
+      return;
+    }
     final text = message['content']?.toString().trim() ?? '';
-    if (text.isEmpty) return;
-    if (!mounted) return;
+    if (text.isEmpty || !mounted) return;
     setState(() {
-      message.remove('error_log');
-      message.remove('error_code');
-      message.remove('error_message');
-      message.remove('error_text');
       message['is_retrying'] = true;
+      message['retry_status'] = 'retrying';
       _msgC.text = text;
       _hasText = true;
     });
-    await DBManager().clearMessageError(message['id'].toString());
-    await _send(noUserBubble: true, retryTarget: message);
-    if (mounted && message['is_retrying'] == true) {
-      setState(() => message.remove('is_retrying'));
+    try {
+      await DBManager().markMessageRetrying(message['id'].toString());
+      await _send(noUserBubble: true, retryTarget: message);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          message.remove('is_retrying');
+          message['retry_status'] = 'failed';
+        });
+      }
     }
   }
 
@@ -866,7 +941,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             'timestamp': now,
           };
           try {
-            await DBManager().insertMessage({
+            await MessageDeliveryService.instance.insert({
               'id': m['id'],
               'bot_id': m['bot_id'],
               'role': 'user',
@@ -939,7 +1014,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'timestamp': now,
     };
     try {
-      await DBManager().insertMessage({
+      await MessageDeliveryService.instance.insert({
         'id': message['id'],
         'bot_id': botId,
         'role': 'user',
@@ -2106,20 +2181,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    // 未设置任何图片时仍使用明确的聊天背景，不能依赖透明根层兜底。
-    final hasCustomBackground = _hasBg && _customBg != null;
+    // 背景优先级：单机器人自定义 > 全局主题背景 > 主题底色。
+    // 有全局背景图时只增强前景对比度，不改变 2afdaae 的 Stack/Column 结构。
+    final String? effBg = _hasBg ? _customBg : null;
     return Scaffold(
-      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: true,
-      backgroundColor: hasCustomBackground || theme.hasGlobalBackground
-          ? Colors.transparent
-          : theme.bgColor,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // 背景：与主界面一致的主题底色 + 柔光光斑(不再用强烈渐变)，避免黑屏/割裂
           Positioned.fill(
-            child: hasCustomBackground
-                ? Image.file(File(_customBg!), fit: BoxFit.cover)
+            child: effBg != null
+                ? Image.file(File(effBg), fit: BoxFit.cover)
                 : theme.hasGlobalBackground
                     ? const SizedBox.expand()
                     : DecoratedBox(
@@ -2175,12 +2247,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               Expanded(child: _chatBody()),
             ],
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: MediaQuery.viewInsetsOf(context).bottom,
-            child: _inputBar(),
-          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
         ],
       ),
     );
@@ -2188,94 +2255,80 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _chatHeader() {
     final theme = TideTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
-            ? theme.backgroundScrim.withValues(alpha: .42)
-            : theme.surface.withValues(alpha: .94),
-        border: Border(bottom: BorderSide(color: theme.divider)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Row(
-            children: [
-              IconButton(
-                tooltip: '返回聊天列表',
-                onPressed: () => Navigator.pop(context),
-                icon: Icon(Icons.arrow_back_ios_rounded,
-                    size: 20, color: theme.onBackgroundIcon),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            _bot['name'] as String? ?? '',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'TideFont',
-                              color: theme.onBackgroundStrong,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 2),
-                        IconButton(
-                          tooltip:
-                              _environmentEnabled ? '额外信息感知已启用' : '设置额外信息感知',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints.tightFor(
-                            width: 28,
-                            height: 28,
-                          ),
-                          icon: Icon(
-                            Icons.sensors_rounded,
-                            size: 18,
-                            color: _environmentEnabled
-                                ? theme.primary
-                                : theme.onBackgroundWeak,
-                          ),
-                          onPressed: _openEnvironmentSettings,
-                        ),
-                      ],
+    final frosted = _hasBg || theme.hasGlobalBackground;
+    return ClipRRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          color: frosted
+              ? theme.glass.withValues(alpha: 0.15)
+              : theme.glass.withValues(alpha: 0.55),
+          child: SafeArea(
+            bottom: false,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.arrow_back_ios_rounded,
+                        size: 20,
+                        color: theme.textStrong,
+                      ),
                     ),
-                    if (_typing)
-                      Text('正在输入中...',
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _bot['name'] as String? ?? '',
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont',
+                            color: theme.textStrong,
+                          ),
+                        ),
+                        if (_typing)
+                          Text(
+                            '正在输入中...',
+                            style: TextStyle(
                               fontSize: 11,
                               color: theme.primary,
-                              fontFamily: 'TideFont')),
-                  ],
-                ),
+                              fontFamily: 'TideFont',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.call_rounded,
+                        size: 20, color: theme.primary),
+                    onPressed: _openCallPreparation,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.delete_outline_rounded,
+                        size: 20, color: theme.iconMuted),
+                    onPressed: _showDeleteOptions,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.settings_rounded,
+                        size: 20, color: theme.iconMuted),
+                    onPressed: _showModelSettings,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.menu_rounded,
+                        size: 20, color: theme.iconMuted),
+                    onPressed: _showBotInfo,
+                  ),
+                ],
               ),
-              IconButton(
-                  tooltip: '通话',
-                  icon:
-                      Icon(Icons.call_rounded, size: 20, color: theme.primary),
-                  onPressed: _openCallPreparation),
-              IconButton(
-                  tooltip: '删除聊天',
-                  icon: Icon(Icons.delete_outline_rounded,
-                      size: 20, color: theme.onBackgroundWeak),
-                  onPressed: _showDeleteOptions),
-              IconButton(
-                  tooltip: '模型设置',
-                  icon: Icon(Icons.settings_rounded,
-                      size: 20, color: theme.onBackgroundWeak),
-                  onPressed: _showModelSettings),
-              IconButton(
-                  tooltip: '机器人信息',
-                  icon: Icon(Icons.menu_rounded,
-                      size: 20, color: theme.onBackgroundWeak),
-                  onPressed: _showBotInfo),
-            ],
+            ),
           ),
         ),
       ),
@@ -2588,277 +2641,313 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             sharedPost != null;
         final showTimeHere =
             _showMessageTime && !isStreamingPlaceholder && hasVisibleContent;
+        final isRetrying =
+            m['is_retrying'] == true || m['retry_status'] == 'retrying';
+        final hasRetryFailure = m['retry_status'] == 'failed' ||
+            m['error_log']?.toString().isNotEmpty == true;
         return GestureDetector(
+          key: _messageKeys.putIfAbsent(
+            m['id']?.toString() ?? 'local_$i',
+            GlobalKey.new,
+          ),
           onLongPress: hasSummary ? null : () => _msgLongPress(m),
-          child: hasSummary
-              ? _callSummaryCard(
-                  content: txt,
-                  duration: m['duration'] as int? ?? 0,
-                  failed: m['mood'] == 'failed',
-                )
-              : Align(
-                  alignment:
-                      isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: isUser
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (isUser && m['is_retrying'] == true)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 8, right: 6),
-                              child: SizedBox(
-                                width: 22,
-                                height: 22,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          else if (isUser &&
-                              m['error_log']?.toString().isNotEmpty == true)
-                            GestureDetector(
-                              onTap: () => _showErrorDetails(m),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.only(top: 8, right: 6),
-                                child: Icon(
-                                  Icons.error_outline_rounded,
-                                  color: Colors.red.shade400,
-                                  size: 22,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              color: _highlightedMessageId == m['id']?.toString()
+                  ? TideTheme.of(context).primary.withValues(alpha: 0.14)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: hasSummary
+                ? _callSummaryCard(
+                    content: txt,
+                    duration: m['duration'] as int? ?? 0,
+                    failed: m['mood'] == 'failed',
+                  )
+                : Align(
+                    alignment:
+                        isUser ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: isUser
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isUser && isRetrying)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8, right: 6),
+                                child: SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            else if (isUser && hasRetryFailure)
+                              GestureDetector(
+                                onTap: () => _showErrorDetails(m),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.only(top: 8, right: 6),
+                                  child: Icon(
+                                    Icons.error_outline_rounded,
+                                    color: Colors.red.shade400,
+                                    size: 22,
+                                  ),
                                 ),
                               ),
-                            ),
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            constraints: BoxConstraints(
-                              maxWidth:
-                                  MediaQuery.of(context).size.width * 0.75,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: isUser
-                                  ? CrossAxisAlignment.end
-                                  : CrossAxisAlignment.start,
-                              children: [
-                                if (_showChatAvatar)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 4),
-                                    child: isUser
-                                        ? CircleAvatar(
-                                            radius: 14,
-                                            backgroundColor: TideTheme.of(
-                                              context,
-                                            ).primary.withValues(alpha: 0.15),
-                                            child: Icon(
-                                              Icons.person_rounded,
-                                              size: 16,
-                                              color:
-                                                  TideTheme.of(context).primary,
-                                            ),
-                                          )
-                                        : TideBotAvatar(
-                                            name: _bot['name']?.toString() ??
-                                                'TideBot',
-                                            path: _bot['avatar']?.toString(),
-                                            size: 28,
-                                          ),
-                                  ),
-                                if (hasDocument) ...[
-                                  if (hasPreviousDocument)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.75,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: isUser
+                                    ? CrossAxisAlignment.end
+                                    : CrossAxisAlignment.start,
+                                children: [
+                                  if (_showChatAvatar)
                                     Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 6,
-                                        horizontal: 4,
-                                      ),
-                                      child: Divider(
-                                        height: 1,
-                                        color: TideTheme.of(context).border,
-                                      ),
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: isUser
+                                          ? CircleAvatar(
+                                              radius: 14,
+                                              backgroundColor: TideTheme.of(
+                                                context,
+                                              ).primary.withValues(alpha: 0.15),
+                                              child: Icon(
+                                                Icons.person_rounded,
+                                                size: 16,
+                                                color: TideTheme.of(context)
+                                                    .primary,
+                                              ),
+                                            )
+                                          : TideBotAvatar(
+                                              name: _bot['name']?.toString() ??
+                                                  'TideBot',
+                                              path: _bot['avatar']?.toString(),
+                                              size: 28,
+                                            ),
                                     ),
-                                  GestureDetector(
-                                    onTap: () async {
-                                      if (documentPath != null &&
-                                          await File(documentPath).exists()) {
-                                        final opened = await launchUrl(
-                                          Uri.file(documentPath),
-                                          mode: LaunchMode.externalApplication,
-                                        );
-                                        if (!opened && mounted) {
-                                          GlobalNotice.show('没有可打开此文件的应用');
+                                  if (hasDocument) ...[
+                                    if (hasPreviousDocument)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                          horizontal: 4,
+                                        ),
+                                        child: Divider(
+                                          height: 1,
+                                          color: TideTheme.of(context).border,
+                                        ),
+                                      ),
+                                    GestureDetector(
+                                      onTap: () async {
+                                        if (documentPath != null &&
+                                            await File(documentPath).exists()) {
+                                          final opened = await launchUrl(
+                                            Uri.file(documentPath),
+                                            mode:
+                                                LaunchMode.externalApplication,
+                                          );
+                                          if (!opened && mounted) {
+                                            GlobalNotice.show('没有可打开此文件的应用');
+                                          }
                                         }
-                                      }
-                                    },
-                                    child: Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: isUser
-                                            ? TideTheme.of(context).primary
-                                            : TideTheme.of(context)
-                                                .buttonSecondary,
-                                        borderRadius: BorderRadius.circular(14),
-                                        border: Border.all(
+                                      },
+                                      child: Container(
+                                        margin:
+                                            const EdgeInsets.only(bottom: 8),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
                                           color: isUser
-                                              ? Colors.white
-                                                  .withValues(alpha: .28)
-                                              : TideTheme.of(context).border,
+                                              ? TideTheme.of(context).primary
+                                              : TideTheme.of(context)
+                                                  .buttonSecondary,
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          border: Border.all(
+                                            color: isUser
+                                                ? Colors.white
+                                                    .withValues(alpha: .28)
+                                                : TideTheme.of(context).border,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              width: 38,
+                                              height: 42,
+                                              alignment: Alignment.center,
+                                              decoration: BoxDecoration(
+                                                color: isUser
+                                                    ? Colors.white.withValues(
+                                                        alpha: .18,
+                                                      )
+                                                    : TideTheme.of(
+                                                        context,
+                                                      )
+                                                        .primary
+                                                        .withValues(alpha: .12),
+                                                borderRadius:
+                                                    BorderRadius.circular(9),
+                                              ),
+                                              child: Column(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons
+                                                        .insert_drive_file_rounded,
+                                                    size: 20,
+                                                    color: isUser
+                                                        ? Colors.white
+                                                        : TideTheme.of(context)
+                                                            .primary,
+                                                  ),
+                                                  Text(
+                                                    documentExt,
+                                                    style: TextStyle(
+                                                      fontSize: 8,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: isUser
+                                                          ? Colors.white
+                                                          : TideTheme.of(
+                                                              context,
+                                                            ).primary,
+                                                      fontFamily: 'TideFont',
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Flexible(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    documentName,
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: isUser
+                                                          ? Colors.white
+                                                          : TideTheme.of(
+                                                              context,
+                                                            ).textStrong,
+                                                      fontFamily: 'TideFont',
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 3),
+                                                  Text(
+                                                    '文件附件 · 点击选择应用打开',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: isUser
+                                                          ? Colors.white70
+                                                          : TideTheme.of(
+                                                              context,
+                                                            ).textWeak,
+                                                      fontFamily: 'TideFont',
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Container(
-                                            width: 38,
-                                            height: 42,
-                                            alignment: Alignment.center,
-                                            decoration: BoxDecoration(
-                                              color: isUser
-                                                  ? Colors.white.withValues(
-                                                      alpha: .18,
-                                                    )
-                                                  : TideTheme.of(
-                                                      context,
-                                                    )
-                                                      .primary
-                                                      .withValues(alpha: .12),
-                                              borderRadius:
-                                                  BorderRadius.circular(9),
-                                            ),
-                                            child: Column(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons
-                                                      .insert_drive_file_rounded,
-                                                  size: 20,
-                                                  color: isUser
-                                                      ? Colors.white
-                                                      : TideTheme.of(context)
-                                                          .primary,
-                                                ),
-                                                Text(
-                                                  documentExt,
-                                                  style: TextStyle(
-                                                    fontSize: 8,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: isUser
-                                                        ? Colors.white
-                                                        : TideTheme.of(
-                                                            context,
-                                                          ).primary,
-                                                    fontFamily: 'TideFont',
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
+                                    ),
+                                  ],
+                                  if (hasImg && File(imagePath!).existsSync())
+                                    GestureDetector(
+                                      onTap: () => _previewImg(imagePath),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: SizedBox(
+                                          width: isSticker ? 112 : 144,
+                                          height: isSticker ? 112 : 144,
+                                          child: Image.file(
+                                            File(imagePath),
+                                            fit: BoxFit.cover,
+                                            cacheWidth: isSticker ? 224 : 288,
                                           ),
-                                          const SizedBox(width: 10),
-                                          Flexible(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  documentName,
-                                                  maxLines: 2,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                    color: isUser
-                                                        ? Colors.white
-                                                        : TideTheme.of(
-                                                            context,
-                                                          ).textStrong,
-                                                    fontFamily: 'TideFont',
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 3),
-                                                Text(
-                                                  '文件附件 · 点击选择应用打开',
-                                                  style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: isUser
-                                                        ? Colors.white70
-                                                        : TideTheme.of(
-                                                            context,
-                                                          ).textWeak,
-                                                    fontFamily: 'TideFont',
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                  // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
+                                  if (hasAudio)
+                                    _audioBubble(
+                                      path: audioPath!,
+                                      isUser: isUser,
+                                      fallbackSeconds:
+                                          m['duration'] as int? ?? 0,
+                                      transcript: txt,
+                                    ),
+                                  if (replyId != null && replyId.isNotEmpty)
+                                    _replyCard(replyId, isUser),
+                                  // 动态分享使用独立卡片，JSON 负载不会直接暴露为聊天正文。
+                                  if (sharedPost != null)
+                                    _sharedPostCard(sharedPost, isUser),
+                                  // 普通文字气泡
+                                  if (sharedPost == null &&
+                                      !hasAudio &&
+                                      !hasSummary &&
+                                      txt.isNotEmpty)
+                                    _parseText(txt, isUser),
+                                  if (showTimeHere)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        fmtTime(ts),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                  if (isUser && isRetrying)
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        '重新发送中',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.white70,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
                                 ],
-                                if (hasImg && File(imagePath!).existsSync())
-                                  GestureDetector(
-                                    onTap: () => _previewImg(imagePath),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: SizedBox(
-                                        width: isSticker ? 112 : 144,
-                                        height: isSticker ? 112 : 144,
-                                        child: Image.file(
-                                          File(imagePath),
-                                          fit: BoxFit.cover,
-                                          cacheWidth: isSticker ? 224 : 288,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
-                                if (hasAudio)
-                                  _audioBubble(
-                                    path: audioPath!,
-                                    isUser: isUser,
-                                    fallbackSeconds: m['duration'] as int? ?? 0,
-                                    transcript: txt,
-                                  ),
-                                if (replyId != null && replyId.isNotEmpty)
-                                  _replyCard(replyId, isUser),
-                                // 动态分享使用独立卡片，JSON 负载不会直接暴露为聊天正文。
-                                if (sharedPost != null)
-                                  _sharedPostCard(sharedPost, isUser),
-                                // 普通文字气泡
-                                if (sharedPost == null &&
-                                    !hasAudio &&
-                                    !hasSummary &&
-                                    txt.isNotEmpty)
-                                  _parseText(txt, isUser),
-                                if (showTimeHere)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      fmtTime(ts),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                              ],
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      if (_showSearchSources &&
-                          sources.isNotEmpty &&
-                          _isFinalReplyMessage(m, i))
-                        _sourceButton(sources.last),
-                    ],
+                          ],
+                        ),
+                        if (_showSearchSources &&
+                            sources.isNotEmpty &&
+                            _isFinalReplyMessage(m, i))
+                          _sourceButton(sources.last),
+                      ],
+                    ),
                   ),
-                ),
+          ),
         );
       },
     );
@@ -3105,6 +3194,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _inputBar() {
     final theme = TideTheme.of(context);
+    final frosted = _hasBg || theme.hasGlobalBackground;
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -3114,18 +3204,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
         ),
         child: Container(
+          constraints: const BoxConstraints(minHeight: 54),
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
           decoration: BoxDecoration(
-            color: theme.surface.withValues(alpha: theme.isDark ? .96 : .98),
+            color: theme.surfaceVariant.withValues(alpha: frosted ? .92 : 1),
             borderRadius: BorderRadius.circular(27),
-            border: Border.all(color: theme.border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: .16),
-                blurRadius: 16,
-                offset: const Offset(0, 5),
-              ),
-            ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

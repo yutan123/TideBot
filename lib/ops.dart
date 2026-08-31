@@ -1,13 +1,14 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'app_navigation.dart';
 import 'db.dart';
@@ -41,7 +42,7 @@ class OpsManager {
   }
 
   /// Initializes the shared notification plugin once for all message alerts.
-  /// The payload is a bot id and is resolved against the database on tap.
+  /// Notification payloads are resolved by the root navigator on tap.
   Future<void> initializeNotifications() {
     return _notificationInitialization ??= _initializeNotifications();
   }
@@ -159,6 +160,7 @@ class OpsManager {
     required String title,
     required String body,
     String? botId,
+    String? messageId,
   }) async {
     await initializeNotifications();
     const details = NotificationDetails(
@@ -170,7 +172,11 @@ class OpsManager {
         priority: Priority.high,
       ),
     );
-    await _notifications.show(id, title, body, details, payload: botId);
+    final payload = jsonEncode({
+      'bot_id': botId,
+      'message_id': messageId,
+    });
+    await _notifications.show(id, title, body, details, payload: payload);
   }
 
   /// File download progress notification shown in the status bar.

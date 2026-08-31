@@ -4,7 +4,6 @@ import 'dart:math';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
-import 'ops.dart';
 import 'bot_state.dart';
 
 class LifeScheduleService {
@@ -343,19 +342,11 @@ class LifeScheduleService {
                 text:
                     '【日程结束事件】你今天从 ${item['time']} 到 $endTime 的“$activity”刚刚结束。根据人格、当前心情和最近聊天，自然决定是否想告诉用户；没有分享欲或会打扰时必须保持沉默。若发送，仅发 1-3 句自然短消息，不要提及日程、系统或指令。',
                 persistResponse: true,
+                notifyResponse: true,
               )
               .timeout(const Duration(minutes: 5));
-          if (result['success'] == true && result['silent'] != true) {
-            final reply = result['reply']?.toString().trim() ?? '';
-            if (reply.isNotEmpty &&
-                await db.getKV('unread_notifications') != 'false') {
-              await OpsManager().showSystemNotification(
-                id: eventKey.hashCode,
-                title: bot['name']?.toString() ?? 'TideBot',
-                body: reply,
-                botId: botId,
-              );
-            }
+          if (result['success'] != true) {
+            throw StateError(result['error']?.toString() ?? '日程结束回复失败');
           }
           await db.setKV(eventKey, 'done');
         } catch (e) {

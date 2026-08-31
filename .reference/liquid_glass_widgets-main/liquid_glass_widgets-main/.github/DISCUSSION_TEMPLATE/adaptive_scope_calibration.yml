@@ -1,0 +1,134 @@
+title: "[Threshold Report] Device: YOUR_MODEL"
+labels: ["adaptive-scope", "calibration-data"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📊 GlassAdaptiveScope Threshold Calibration Report
+        Thanks for helping calibrate the `GlassAdaptiveScope` thresholds!
+        This data directly informs when we can remove `@experimental`.
+
+  - type: markdown
+    attributes:
+      value: "### Device Details"
+
+  - type: input
+    id: device_model
+    attributes:
+      label: Device model
+      placeholder: "e.g. Pixel 6a / Samsung Galaxy A54 / OnePlus Nord 2"
+    validations:
+      required: true
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android version
+      placeholder: "e.g. Android 14"
+    validations:
+      required: true
+
+  - type: input
+    id: flutter_version
+    attributes:
+      label: Flutter version
+      description: "Output of `flutter --version`"
+      placeholder: "e.g. Flutter 3.32.0"
+    validations:
+      required: true
+
+  - type: input
+    id: package_version
+    attributes:
+      label: liquid_glass_widgets version
+      placeholder: "e.g. 0.10.2"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "### Quality Result"
+
+  - type: dropdown
+    id: quality_selected
+    attributes:
+      label: Quality tier selected by the library
+      options:
+        - premium
+        - standard
+        - minimal
+    validations:
+      required: true
+
+  - type: dropdown
+    id: expectation_match
+    attributes:
+      label: Did this match your expectation?
+      options:
+        - "Yes — correct"
+        - "No — should have been higher"
+        - "No — should have been lower"
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expectation_detail
+    attributes:
+      label: If incorrect — what did you expect and why?
+      placeholder: "e.g. Expected premium but got standard — the app runs at 60fps smoothly after launch"
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Timing Data *(from `debugLogDiagnostics: true`)*
+        Enable this in your config and paste the console output below:
+        ```dart
+        GlassAdaptiveScopeConfig(debugLogDiagnostics: true)
+        ```
+
+  - type: input
+    id: p75_ms
+    attributes:
+      label: P75 raster time (ms)
+      description: "Shown in the diagnostic log after warmup completes"
+      placeholder: "e.g. 17.6"
+
+  - type: input
+    id: p95_ms
+    attributes:
+      label: P95 raster time (ms)
+      placeholder: "e.g. 22.1"
+
+  - type: textarea
+    id: console_output
+    attributes:
+      label: Full diagnostic console output
+      description: "Paste everything logged by debugLogDiagnostics"
+      render: shell
+
+  - type: markdown
+    attributes:
+      value: "### App Context *(optional)*"
+
+  - type: input
+    id: widget_count
+    attributes:
+      label: Approximate number of glass widgets visible during warmup
+      placeholder: "e.g. 3 (bottom bar + app bar + card)"
+
+  - type: dropdown
+    id: quality_modes
+    attributes:
+      label: Quality modes in use
+      options:
+        - standard only
+        - premium only
+        - mixed standard/premium
+        - adaptive (no override)
+
+  - type: input
+    id: target_frame_ms
+    attributes:
+      label: targetFrameMs override (if any)
+      placeholder: "Leave blank if using default (16)"

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,7 +11,19 @@ import 'theme.dart';
 import 'ui_components.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
-import 'db.dart';
+import 'message_delivery_service.dart';
+
+enum CallFlowState {
+  idle,
+  requestingPermission,
+  recording,
+  speechDetected,
+  transcribing,
+  generatingReply,
+  synthesizing,
+  playing,
+  failed,
+}
 
 /// 全屏语音通话界面；通过 AIManager 串联 STT、聊天和 TTS。
 class CallPage extends StatefulWidget {
@@ -37,6 +50,7 @@ class _CallPageState extends State<CallPage>
   bool _muted = false;
   bool _speakerMuted = false;
   bool _processing = false;
+  CallFlowState _flowState = CallFlowState.idle;
   String _caption = '';
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
@@ -45,7 +59,6 @@ class _CallPageState extends State<CallPage>
   bool _finishingRecording = false;
   bool _botSpeaking = false;
   bool _speechDetected = false;
-  double _soundLevel = 0;
   double? _noiseFloor;
   StreamSubscription<Amplitude>? _ampSub;
 
@@ -72,8 +85,10 @@ class _CallPageState extends State<CallPage>
   static const int _silentStopTicks = 9;
   static const double _minimumVoiceLevel = -52;
   static const double _speechOverNoise = 9;
+  static const Duration _minimumRecordingDuration = Duration(seconds: 1);
   int _silentTicks = 0;
   int _voiceTicks = 0;
+  DateTime? _recordingStartedAt;
   Timer? _autoStopTimer;
 
   void _appendMessage(String text, {required bool isUser}) {
@@ -106,6 +121,11 @@ class _CallPageState extends State<CallPage>
 
   void _openTextComposer() {
     if (_processing || _ending) return;
+    if (_showTextComposer) {
+      _textFocusNode.unfocus();
+      setState(() => _showTextComposer = false);
+      return;
+    }
     setState(() => _showTextComposer = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _textFocusNode.requestFocus();
@@ -118,17 +138,33 @@ class _CallPageState extends State<CallPage>
     if (mounted)
       setState(() {
         _processing = true;
+        _flowState = CallFlowState.generatingReply;
         _caption = '正在等待回复…';
       });
     try {
       final reply = await AIManager()
           .sendMessage(botId: widget.bot['id'].toString(), text: text)
           .timeout(const Duration(minutes: 2));
+      if (reply['success'] != true) {
+        final reason = _replyFailureReason(reply);
+        AppLogService.instance.add('VOICE_CALL', '文字 AI 请求失败：$reason');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = reason;
+          });
+        }
+        return;
+      }
       final answer =
           reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
       if (answer.trim().isEmpty) {
-        if (mounted)
-          setState(() => _caption = reply['error']?.toString() ?? '机器人没有返回回复');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '机器人没有返回回复';
+          });
+        }
         return;
       }
       _appendMessage(answer, isUser: false);
@@ -136,15 +172,42 @@ class _CallPageState extends State<CallPage>
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
       if (widget.hasTts && ttsId.isNotEmpty) {
-        final audioPath = await AIManager().generateTTS(answer, ttsId);
-        if (audioPath?.isNotEmpty == true) await _playBotReply(audioPath!);
+        await _synthesizeAndPlay(answer, ttsId);
       }
     } catch (error) {
       AppLogService.instance.add('VOICE_CALL', '文字轮次失败：$error');
-      if (mounted) setState(() => _caption = '文字回复失败：$error');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '文字回复失败：$error';
+        });
+      }
     } finally {
-      if (mounted) setState(() => _processing = false);
+      if (mounted) {
+        setState(() {
+          _processing = false;
+          if (_flowState != CallFlowState.playing &&
+              _flowState != CallFlowState.failed) {
+            _flowState = CallFlowState.idle;
+          }
+        });
+      }
     }
+  }
+
+  String _replyFailureReason(Map<String, dynamic> reply) {
+    final error = reply['error']?.toString().trim() ?? '';
+    final code = reply['error_code']?.toString().trim() ?? '';
+    final log = reply['error_log']?.toString().trim() ?? '';
+    if (error.isNotEmpty) return error;
+    if (code.isNotEmpty) return '请求失败：$code';
+    if (log.isNotEmpty) {
+      final firstLine = log.split(RegExp(r'\r?\n')).first.trim();
+      return firstLine.length > 120
+          ? '请求失败：${firstLine.substring(0, 120)}…'
+          : '请求失败：$firstLine';
+    }
+    return '机器人回复失败';
   }
 
   /// 开始监听录音振幅（前提是录音已在运行）。
@@ -166,7 +229,6 @@ class _CallPageState extends State<CallPage>
   void _onAmplitudeChanged(Amplitude amp) {
     if (_muted) return;
     final level = amp.current.clamp(-80.0, 0.0).toDouble();
-    if (mounted) setState(() => _soundLevel = level);
     final floor = _noiseFloor ?? level;
     if (!_speechDetected && !_vadActive) {
       _noiseFloor = floor * .86 + level * .14;
@@ -180,7 +242,13 @@ class _CallPageState extends State<CallPage>
         _playSub = null;
         if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
         unawaited(_player.stop());
-        if (mounted) setState(() => _botSpeaking = false);
+        if (mounted) {
+          setState(() {
+            _botSpeaking = false;
+            _flowState = CallFlowState.idle;
+            _caption = '已检测到你的声音';
+          });
+        }
       }
       return;
     }
@@ -192,6 +260,7 @@ class _CallPageState extends State<CallPage>
           if (mounted) {
             setState(() {
               _speechDetected = true;
+              _flowState = CallFlowState.speechDetected;
               _caption = '已识别到你的声音';
             });
           }
@@ -222,8 +291,20 @@ class _CallPageState extends State<CallPage>
   Future<void> _startListening() async {
     if (_muted || _processing || _recording) return;
     AppLogService.instance.add('VOICE_CALL', '请求麦克风权限');
+    if (mounted) {
+      setState(() {
+        _flowState = CallFlowState.requestingPermission;
+        _caption = '正在请求麦克风权限…';
+      });
+    }
     if (!await AppPermissions.microphone(context)) {
       AppLogService.instance.add('VOICE_CALL', '麦克风权限未授予');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '未获得麦克风权限';
+        });
+      }
       return;
     }
     try {
@@ -241,17 +322,24 @@ class _CallPageState extends State<CallPage>
       _voiceTicks = 0;
       _speechDetected = false;
       _noiseFloor = null;
+      _recordingStartedAt = DateTime.now();
       _ensureAutoStopTimer();
       AppLogService.instance.add('VOICE_CALL', '录音已启动：$path');
       if (mounted) {
         setState(() {
           _recording = true;
+          _flowState = CallFlowState.recording;
           _caption = '正在聆听，请说话';
         });
       }
     } catch (error) {
       AppLogService.instance.add('VOICE_CALL', '录音启动失败：$error');
-      if (mounted) setState(() => _caption = '无法开始录音：$error');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '无法开始录音：$error';
+        });
+      }
     }
   }
 
@@ -267,6 +355,7 @@ class _CallPageState extends State<CallPage>
     if (mounted) {
       setState(() {
         _recording = false;
+        _flowState = CallFlowState.transcribing;
         _caption = '正在提交语音识别…';
       });
     }
@@ -277,16 +366,50 @@ class _CallPageState extends State<CallPage>
         path == null ? '录音未生成文件' : '录音已停止：$path，准备请求 STT',
       );
       _vadActive = false;
+      final hadSpeech = _speechDetected;
       _speechDetected = false;
       if (path == null || path.isEmpty) {
-        if (mounted) setState(() => _caption = '录音文件为空，无法请求语音识别');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '录音文件为空，无法请求语音识别';
+          });
+        }
+        return;
+      }
+      final recordingFile = File(path);
+      final bytes = await recordingFile.length();
+      final recordingDuration = _recordingStartedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_recordingStartedAt!);
+      if (!hadSpeech || recordingDuration < _minimumRecordingDuration) {
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = !hadSpeech ? '没有检测到有效语音，请重新说一次' : '录音时间过短，请至少说一句完整的话';
+          });
+        }
+        return;
+      }
+      if (bytes < 1024) {
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '录音内容过短，请至少说一句完整的话';
+          });
+        }
         return;
       }
       _recordingPath = path;
       await _runVoiceTurn();
     } catch (error) {
       AppLogService.instance.add('VOICE_CALL', '录音停止或提交失败：$error');
-      if (mounted) setState(() => _caption = '录音处理失败：$error');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '录音处理失败：$error';
+        });
+      }
     } finally {
       _finishingRecording = false;
     }
@@ -296,12 +419,18 @@ class _CallPageState extends State<CallPage>
     if (_processing || _recordingPath == null) return;
     if (!widget.hasStt) {
       AppLogService.instance.add('VOICE_CALL', 'STT 不可用，无法识别本次录音');
-      if (mounted) setState(() => _caption = '未配置语音识别服务，可在设置中启用 STT');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '未配置语音识别服务，可在设置中启用 STT';
+        });
+      }
       return;
     }
     if (mounted) {
       setState(() {
         _processing = true;
+        _flowState = CallFlowState.transcribing;
         _caption = '正在识别语音…';
       });
     }
@@ -313,7 +442,12 @@ class _CallPageState extends State<CallPage>
           .timeout(const Duration(seconds: 45));
       if (text == null || text.trim().isEmpty) {
         AppLogService.instance.add('VOICE_CALL', 'STT 返回空文本');
-        if (mounted) setState(() => _caption = '没有识别到语音');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '没有识别到有效语音，请重新说一次';
+          });
+        }
         return;
       }
       AppLogService.instance
@@ -321,17 +455,36 @@ class _CallPageState extends State<CallPage>
       _transcript.add('用户：${text.trim()}');
       _appendMessage(text, isUser: true);
       if (mounted) setState(() => _caption = text);
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.generatingReply;
+          _caption = '正在生成回复…';
+        });
+      }
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
       final reply = await AIManager()
           .sendMessage(botId: widget.bot['id'].toString(), text: text)
           .timeout(const Duration(minutes: 2));
+      if (reply['success'] != true) {
+        final reason = _replyFailureReason(reply);
+        AppLogService.instance.add('VOICE_CALL', 'AI 请求失败：$reason');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = reason;
+          });
+        }
+        return;
+      }
       final answer =
           reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
-      if (answer.isEmpty) {
-        AppLogService.instance
-            .add('VOICE_CALL', 'AI 返回空回复：${reply['error'] ?? 'unknown'}');
+      if (answer.trim().isEmpty) {
+        AppLogService.instance.add('VOICE_CALL', 'AI 返回空回复');
         if (mounted) {
-          setState(() => _caption = reply['error']?.toString() ?? '机器人没有返回回复');
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '机器人没有返回回复';
+          });
         }
         return;
       }
@@ -345,21 +498,55 @@ class _CallPageState extends State<CallPage>
         return;
       }
       AppLogService.instance.add('VOICE_CALL', 'TTS 生成开始：$ttsId');
+      await _synthesizeAndPlay(answer, ttsId);
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '语音轮次失败：$error');
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.failed;
+          _caption = '语音通话失败：$error';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _processing = false);
+        if (!_muted && _flowState != CallFlowState.failed) {
+          await _startListening();
+        }
+      }
+    }
+  }
+
+  Future<void> _synthesizeAndPlay(String answer, String ttsId) async {
+    if (mounted) {
+      setState(() {
+        _flowState = CallFlowState.synthesizing;
+        _caption = '正在生成语音…';
+      });
+    }
+    try {
       final audioPath = await AIManager().generateTTS(answer, ttsId);
       if (audioPath == null || audioPath.isEmpty) {
         AppLogService.instance.add('VOICE_CALL', 'TTS 未生成音频，保留文字回复');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.idle;
+            _caption = '语音生成失败，已保留文字回复';
+          });
+        }
         return;
       }
       AppLogService.instance.add('VOICE_CALL', 'TTS 生成成功，开始播放');
       if (mounted) setState(() => _caption = '正在说话…');
       await _playBotReply(audioPath);
     } catch (error) {
-      AppLogService.instance.add('VOICE_CALL', '语音轮次失败：$error');
-      if (mounted) setState(() => _caption = '语音通话失败：$error');
-    } finally {
+      AppLogService.instance.add('VOICE_CALL', 'TTS 或播放失败，保留文字回复：$error');
       if (mounted) {
-        setState(() => _processing = false);
-        if (!_muted) await _startListening();
+        setState(() {
+          _botSpeaking = false;
+          _flowState = CallFlowState.idle;
+          _caption = '语音播放失败，已保留文字回复';
+        });
       }
     }
   }
@@ -368,42 +555,59 @@ class _CallPageState extends State<CallPage>
   /// 让用户随时插话。
   Future<void> _playBotReply(String audioPath) async {
     AppLogService.instance.add('VOICE_CALL', '开始播放 TTS 音频');
-    final dir = await getApplicationDocumentsDirectory();
-    final vadPath =
-        '${dir.path}/call_vad_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
-      path: vadPath,
-    );
-    _playDone = Completer<void>();
-    _startAmpMonitor();
-    _vadActive = true;
-    if (mounted) setState(() => _botSpeaking = true);
-    _playSub?.cancel();
-    _playSub = _player.onPlayerComplete.listen((event) {
-      if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
-    });
-    // 兜底：若插件不触发 onPlayerComplete，则通过状态监听 stopped 结束本次播放。
-    final stateSub = _player.onPlayerStateChanged.listen((state) {
-      if (!_vadActive) return; // 打断路径已由 _onAmplitudeChanged 处理，避免误结束
-      if (state == PlayerState.stopped || state == PlayerState.completed) {
-        if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
+    StreamSubscription<PlayerState>? stateSub;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final vadPath =
+          '${dir.path}/call_vad_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
+        path: vadPath,
+      );
+      _playDone = Completer<void>();
+      _startAmpMonitor();
+      _vadActive = true;
+      if (mounted) {
+        setState(() {
+          _flowState = CallFlowState.playing;
+          _botSpeaking = true;
+        });
       }
-    });
-    await _player.setVolume(_speakerMuted ? 0 : 1);
-    await _player.play(DeviceFileSource(audioPath));
-    await _playDone?.future.timeout(
-      const Duration(minutes: 5),
-      onTimeout: () {},
-    );
-    _vadActive = false;
-    if (mounted) setState(() => _botSpeaking = false);
-    await _playSub?.cancel();
-    _playSub = null;
-    await stateSub.cancel();
-    _stopAmpMonitor();
-    await _recorder.stop();
-    AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
+      await _playSub?.cancel();
+      _playSub = _player.onPlayerComplete.listen((event) {
+        if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
+      });
+      // Some player implementations do not emit onPlayerComplete reliably.
+      stateSub = _player.onPlayerStateChanged.listen((state) {
+        if (!_vadActive) return;
+        if (state == PlayerState.stopped || state == PlayerState.completed) {
+          if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
+        }
+      });
+      await _player.setVolume(_speakerMuted ? 0 : 1);
+      await _player.play(DeviceFileSource(audioPath));
+      await _playDone?.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {},
+      );
+    } finally {
+      _vadActive = false;
+      if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
+      await _playSub?.cancel();
+      _playSub = null;
+      await stateSub?.cancel();
+      _stopAmpMonitor();
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _botSpeaking = false;
+          if (!_processing) _flowState = CallFlowState.idle;
+        });
+      }
+      AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
+    }
   }
 
   Future<void> _pauseBotReply() async {
@@ -411,7 +615,12 @@ class _CallPageState extends State<CallPage>
     _vadActive = false;
     if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
     await _player.stop();
-    if (mounted) setState(() => _botSpeaking = false);
+    if (mounted) {
+      setState(() {
+        _botSpeaking = false;
+        _flowState = CallFlowState.idle;
+      });
+    }
     AppLogService.instance.add('VOICE_CALL', '用户手动暂停机器人语音');
   }
 
@@ -419,6 +628,7 @@ class _CallPageState extends State<CallPage>
     if (_ending) return;
     _ending = true;
     _autoStopTimer?.cancel();
+    _recordingStartedAt = null;
     _vadActive = false;
     _stopAmpMonitor();
     final wasRecording = _recording;
@@ -468,7 +678,7 @@ class _CallPageState extends State<CallPage>
       }
     }
     final now = DateTime.now().millisecondsSinceEpoch;
-    await DBManager().insertMessage({
+    await MessageDeliveryService.instance.insert({
       'id': 'call_$now',
       'bot_id': botId,
       'role': 'assistant',
@@ -611,7 +821,21 @@ class _CallPageState extends State<CallPage>
                     ],
                     if (ready) ...[
                       const SizedBox(height: 8),
-                      _callActionButton(theme),
+                      if (_flowState == CallFlowState.failed)
+                        OutlinedButton.icon(
+                          onPressed: _retryVoiceFlow,
+                          icon:
+                              Icon(Icons.refresh_rounded, color: theme.primary),
+                          label: Text(
+                            '重试',
+                            style: TextStyle(
+                              color: theme.primary,
+                              fontFamily: 'TideFont',
+                            ),
+                          ),
+                        )
+                      else
+                        _callActionButton(theme),
                     ],
                     const SizedBox(height: 12),
                     SafeArea(
@@ -641,9 +865,12 @@ class _CallPageState extends State<CallPage>
                                         _stopAmpMonitor();
                                         _silentTicks = 0;
                                         if (_recording) await _recorder.stop();
+                                        _recordingStartedAt = null;
                                         setState(() {
                                           _muted = true;
                                           _recording = false;
+                                          _flowState = CallFlowState.idle;
+                                          _caption = '已静音';
                                         });
                                       }
                                     })),
@@ -673,11 +900,15 @@ class _CallPageState extends State<CallPage>
                               top: 2,
                               child: IconButton(
                                 tooltip: '文字回复',
-                                onPressed: _showTextComposer
+                                onPressed: _processing || _ending
                                     ? null
                                     : _openTextComposer,
-                                icon: Icon(Icons.edit_rounded,
-                                    color: theme.primary),
+                                icon: Icon(
+                                  _showTextComposer
+                                      ? Icons.edit_off_rounded
+                                      : Icons.edit_rounded,
+                                  color: theme.primary,
+                                ),
                               ),
                             ),
                           ],
@@ -768,16 +999,39 @@ class _CallPageState extends State<CallPage>
         ],
       );
 
+  Future<void> _retryVoiceFlow() async {
+    if (_processing || _recording || _ending) return;
+    _recordingPath = null;
+    _recordingStartedAt = null;
+    _speechDetected = false;
+    _silentTicks = 0;
+    _voiceTicks = 0;
+    if (mounted) {
+      setState(() {
+        _flowState = CallFlowState.idle;
+        _caption = '';
+      });
+    }
+    await _startListening();
+  }
+
   String _formatClock(Duration value) =>
       '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
   String _callStateLabel() {
     if (!widget.hasStt) return '需要配置语音';
     if (_muted) return '已静音';
-    if (_botSpeaking) return '机器人正在说话';
-    if (_processing) return '正在识别';
-    if (_recording) return '正在聆听';
-    return '通话中';
+    return switch (_flowState) {
+      CallFlowState.requestingPermission => '正在请求权限',
+      CallFlowState.recording => '正在聆听',
+      CallFlowState.speechDetected => '已检测到语音',
+      CallFlowState.transcribing => '正在识别语音',
+      CallFlowState.generatingReply => '正在生成回复',
+      CallFlowState.synthesizing => '正在生成语音',
+      CallFlowState.playing => '机器人正在说话',
+      CallFlowState.failed => '需要重试',
+      CallFlowState.idle => '通话中',
+    };
   }
 
   Widget _callActionButton(TideTheme theme) {

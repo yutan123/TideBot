@@ -8,6 +8,76 @@ import 'db.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
+class ChatSidebarController extends ChangeNotifier {
+  AnimationController? _animation;
+  bool _open = false;
+  bool _dragActive = false;
+  Map<String, dynamic>? bot;
+
+  bool get isOpen => _open;
+  bool get dragActive => _dragActive;
+  Animation<double>? get progress => _animation;
+
+  void attach(TickerProvider vsync) {
+    _animation ??= AnimationController(
+      vsync: vsync,
+      duration: const Duration(milliseconds: 220),
+    )..addListener(notifyListeners);
+  }
+
+  void updateBot(Map<String, dynamic>? value) {
+    bot = value;
+    notifyListeners();
+  }
+
+  void open() {
+    if (bot == null || _open) return;
+    _open = true;
+    notifyListeners();
+    _animation?.forward(from: 0);
+  }
+
+  Future<void> close() async {
+    if (!_open) return;
+    await _animation?.reverse();
+    _open = false;
+    _dragActive = false;
+    notifyListeners();
+  }
+
+  void beginDrag() {
+    if (bot == null) return;
+    _dragActive = true;
+    if (!_open) {
+      _open = true;
+      notifyListeners();
+    }
+  }
+
+  void updateDrag(double deltaDx, double width) {
+    if (!_dragActive || _animation == null || width <= 0) return;
+    _animation!.value = (_animation!.value + deltaDx / width).clamp(0.0, 1.0);
+  }
+
+  void endDrag(double velocity) {
+    if (!_dragActive) return;
+    _dragActive = false;
+    if (velocity > 500 || (velocity > -500 && (_animation?.value ?? 0) >= .5)) {
+      _animation?.forward();
+      _open = true;
+      notifyListeners();
+    } else {
+      unawaited(close());
+    }
+  }
+
+  @override
+  void dispose() {
+    _animation?.dispose();
+    super.dispose();
+  }
+}
+
 class ChatSidebar extends StatefulWidget {
   final Map<String, dynamic> bot;
   final Animation<double> progress;
@@ -137,7 +207,10 @@ class _ChatSidebarState extends State<ChatSidebar> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Material(
-                  color: theme.surface.withValues(alpha: .97),
+                  color: Color.alphaBlend(
+                    theme.primary.withValues(alpha: theme.isDark ? .10 : .06),
+                    theme.surface.withValues(alpha: .97),
+                  ),
                   child: SafeArea(
                     right: false,
                     child: SizedBox(
@@ -333,10 +406,15 @@ class _ChatSidebarState extends State<ChatSidebar> {
           height: 52,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-              color: theme.isDark
-                  ? const Color(0xFF24262C)
-                  : const Color(0xFFF2F2F7),
-              borderRadius: BorderRadius.circular(16)),
+            color: Color.alphaBlend(
+              theme.primary.withValues(alpha: theme.isDark ? .22 : .12),
+              theme.surfaceVariant,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: theme.primary.withValues(alpha: theme.isDark ? .28 : .16),
+            ),
+          ),
           child: Row(children: [
             Icon(icon, color: theme.primary),
             const SizedBox(width: 12),
@@ -353,15 +431,15 @@ class _ChatSidebarState extends State<ChatSidebar> {
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-            color: theme.isDark
-                ? const Color(0xFF1C1D21)
-                : const Color(0xFFFFFFFF),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: theme.isDark
-                  ? const Color(0xFF303238)
-                  : const Color(0xFFE5E5EA),
-            )),
+          color: Color.alphaBlend(
+            theme.primary.withValues(alpha: theme.isDark ? .16 : .08),
+            theme.surface,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: theme.primary.withValues(alpha: theme.isDark ? .30 : .18),
+          ),
+        ),
         child: child,
       );
 

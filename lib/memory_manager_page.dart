@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'db.dart';
+import 'future_task_scheduler.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 import 'global_notice.dart';
@@ -420,10 +421,12 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
         }
         final now = DateTime.now().millisecondsSinceEpoch;
         // 每日任务把 run_at 归一为「今天该时刻」的时间戳；每天任务在第二天零点后顺延。
-        final effectiveRunAt = _frequency == 'daily'
-            ? parsedRunAt.millisecondsSinceEpoch
+        final effectiveRunAt = _frequency == 'daily' &&
+                parsedRunAt.millisecondsSinceEpoch <=
+                    DateTime.now().millisecondsSinceEpoch
+            ? parsedRunAt.add(const Duration(days: 1)).millisecondsSinceEpoch
             : parsedRunAt.millisecondsSinceEpoch;
-        await DBManager().insertFutureTask({
+        final task = {
           'id': item?['id'] ?? 'task_$now',
           'bot_id': widget.botId,
           'title': title.text.trim().isEmpty ? '未来任务' : title.text.trim(),
@@ -434,7 +437,11 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
           'frequency': _frequency,
           'is_done': 0,
           'status': 'pending'
-        });
+        };
+        await DBManager().insertFutureTask(task);
+        if (!await FutureTaskScheduler.schedule(task)) {
+          GlobalNotice.show('系统定时唤醒不可用，将由后台任务队列继续处理');
+        }
         await _load();
       }
       title.dispose();
@@ -549,6 +556,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
         });
     if (ok == true) {
       if (_type == 'future') {
+        await FutureTaskScheduler.cancel(item['id'].toString());
         await DBManager().deleteFutureTask(item['id'].toString());
         await _load();
         return;

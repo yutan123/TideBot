@@ -1,21 +1,23 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'chat_event_bus.dart';
+import 'message_delivery_service.dart';
 import 'db.dart';
 import 'ui_components.dart';
 import 'chat_sidebar.dart';
-import 'tool_manager_page.dart';
 import 'ui_chat_room.dart';
 import 'theme.dart';
 import 'bot_state.dart';
 
 class ChatListPage extends StatefulWidget {
   final GlobalKey<ChatListPageState>? pageKey;
-  const ChatListPage({super.key, this.pageKey});
+  final ChatSidebarController? sidebar;
+  const ChatListPage({super.key, this.pageKey, this.sidebar});
   @override
   State<ChatListPage> createState() => ChatListPageState();
 }
 
-class ChatListPageState extends State<ChatListPage>
-    with SingleTickerProviderStateMixin {
+class ChatListPageState extends State<ChatListPage> {
   List<Map<String, dynamic>> _bots = [];
   bool _showParticles = false;
   int _particleRun = 0;
@@ -25,51 +27,36 @@ class ChatListPageState extends State<ChatListPage>
   // their source RenderBox.
   final Map<String, GlobalKey> _botCardKeys = <String, GlobalKey>{};
   final Set<String> _openingBots = <String>{};
-  late final AnimationController _sidebarCtrl;
-  bool _sidebarOpen = false;
-  bool _sidebarDragActive = false;
+
+  StreamSubscription<ChatEvent>? _chatEvents;
 
   @override
   void initState() {
     super.initState();
-    _sidebarCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    );
+    _chatEvents = ChatEventBus.instance.events.listen((event) {
+      if (!mounted || event.botId == null) return;
+      load();
+    });
     load();
-  }
-
-  void _openSidebar() {
-    if (_bots.isEmpty || _sidebarOpen) return;
-    setState(() => _sidebarOpen = true);
-    _sidebarCtrl.forward(from: 0);
-  }
-
-  Future<void> _closeSidebar() async {
-    if (!_sidebarOpen) return;
-    await _sidebarCtrl.reverse();
-    if (mounted) setState(() => _sidebarOpen = false);
-  }
-
-  void _updateSidebarDrag(DragUpdateDetails details) {
-    final width = MediaQuery.sizeOf(context).width * .86;
-    _sidebarCtrl.value =
-        (_sidebarCtrl.value + details.delta.dx / width).clamp(0.0, 1.0);
-  }
-
-  void _endSidebarDrag(DragEndDetails details) {
-    final velocity = details.velocity.pixelsPerSecond.dx;
-    if (velocity > 500 || (velocity > -500 && _sidebarCtrl.value >= .5)) {
-      _sidebarCtrl.forward();
-    } else {
-      _closeSidebar();
-    }
   }
 
   @override
   void dispose() {
-    _sidebarCtrl.dispose();
+    _chatEvents?.cancel();
     super.dispose();
+  }
+
+  void _openSidebar() {
+    widget.sidebar?.open();
+  }
+
+  void _updateSidebarDrag(DragUpdateDetails details) {
+    final width = MediaQuery.sizeOf(context).width * .86;
+    widget.sidebar?.updateDrag(details.delta.dx, width);
+  }
+
+  void _endSidebarDrag(DragEndDetails details) {
+    widget.sidebar?.endDrag(details.velocity.pixelsPerSecond.dx);
   }
 
   void load() async {
@@ -123,7 +110,10 @@ class ChatListPageState extends State<ChatListPage>
       if (aPin != bPin) return bPin.compareTo(aPin);
       return (b['lastTime'] as int).compareTo(a['lastTime'] as int);
     });
-    if (mounted) setState(() => _bots = enriched);
+    if (mounted) {
+      setState(() => _bots = enriched);
+      widget.sidebar?.updateBot(enriched.isEmpty ? null : enriched.first);
+    }
   }
 
   void _deleteBot(Map<String, dynamic> bot, GlobalKey key) async {
@@ -220,7 +210,7 @@ class ChatListPageState extends State<ChatListPage>
           },
         ),
       );
-      await DBManager().markBotRead(id);
+      await MessageDeliveryService.instance.markRead(id);
       if (mounted) load();
     } finally {
       _openingBots.remove(id);
@@ -275,44 +265,22 @@ class ChatListPageState extends State<ChatListPage>
     final shell = GestureDetector(
       behavior: HitTestBehavior.translucent,
       onHorizontalDragStart: (details) {
-        _sidebarDragActive = !_sidebarOpen &&
-            details.globalPosition.dx <= 28 &&
-            _bots.isNotEmpty;
-        if (_sidebarDragActive) setState(() => _sidebarOpen = true);
+        final sidebar = widget.sidebar;
+        if (sidebar == null ||
+            sidebar.isOpen ||
+            details.globalPosition.dx > 28 ||
+            _bots.isEmpty) {
+          return;
+        }
+        sidebar.beginDrag();
       },
       onHorizontalDragUpdate: (details) {
-        if (_sidebarDragActive) _updateSidebarDrag(details);
+        if (widget.sidebar?.dragActive == true) _updateSidebarDrag(details);
       },
       onHorizontalDragEnd: (details) {
-        if (_sidebarDragActive) {
-          _sidebarDragActive = false;
-          _endSidebarDrag(details);
-        }
+        if (widget.sidebar?.dragActive == true) _endSidebarDrag(details);
       },
-      child: Stack(
-        children: [
-          content,
-          if (_sidebarOpen)
-            ChatSidebar(
-              bot: _bots.first,
-              progress: _sidebarCtrl,
-              onClose: _closeSidebar,
-              onDragUpdate: _updateSidebarDrag,
-              onDragEnd: _endSidebarDrag,
-              onOpenManager: (kind) async {
-                await _closeSidebar();
-                if (!mounted) return;
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ToolManagerPage(
-                    kind: kind == 'skill'
-                        ? ToolManagerKind.skill
-                        : ToolManagerKind.mcp,
-                  ),
-                ));
-              },
-            ),
-        ],
-      ),
+      child: content,
     );
     return _showParticles
         ? ParticleOverlay(

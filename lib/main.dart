@@ -12,6 +12,8 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'legal_pages.dart';
 import 'theme.dart';
+import 'chat_sidebar.dart';
+import 'tool_manager_page.dart';
 import 'ui_chat_list.dart';
 // Chat room is opened through app navigation elsewhere.
 import 'ui_create_bot.dart';
@@ -22,7 +24,10 @@ import 'tide_liquid_glass.dart';
 import 'app_state.dart';
 import 'app_navigation.dart';
 import 'db.dart';
+import 'future_task_scheduler.dart';
+
 import 'diary_service.dart';
+import 'chat_event_bus.dart';
 import 'global_notice.dart';
 import 'ops.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -63,7 +68,6 @@ void main() async {
   if (await DBManager().getKV('external_api_enabled') == 'true') {
     unawaited(ExternalApiService.instance.start());
   }
-  unawaited(_runOperationTriggeredReply());
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());
   });
@@ -133,6 +137,7 @@ void onStart(ServiceInstance service) {
   DartPluginRegistrant.ensureInitialized();
   Timer? heartbeat;
   var tickRunning = false;
+  var futureTasksRunning = false;
 
   Future<void> recordError(String scope, Object error, StackTrace stack) async {
     final message = '$scope: $error';
@@ -165,8 +170,22 @@ void onStart(ServiceInstance service) {
       await db.setKV('persistent_service_heartbeat', '$now');
       final keepRunning = await db.getKV('persistent_notification') == 'true';
       if (!keepRunning) {
+        // An exact AlarmManager wake may start this service while the user has
+        // deliberately disabled continuous foreground operation. Consume due
+        // tasks once before stopping; otherwise alarm wakes would immediately
+        // exit at this guard and never reach the SQLite task queue.
+        if (!futureTasksRunning) {
+          futureTasksRunning = true;
+          await runTask('future_tasks_wake', () async {
+            try {
+              await _runDueFutureTasks();
+            } finally {
+              futureTasksRunning = false;
+            }
+          });
+        }
         heartbeat?.cancel();
-        await db.setKV('persistent_service_state', 'stopped_by_user');
+        await db.setKV('persistent_service_state', 'stopped_after_task_wake');
         await db.setKV('persistent_service_heartbeat', '');
         if (service is AndroidServiceInstance) await service.stopSelf();
         return;
@@ -185,7 +204,16 @@ void onStart(ServiceInstance service) {
       await runTask(
           'due_end_events', LifeScheduleService.instance.runDueEndEvents);
       await runTask('proactive_replies', _runDueProactiveReplies);
-      await runTask('future_tasks', _runDueFutureTasks);
+      if (!futureTasksRunning) {
+        futureTasksRunning = true;
+        unawaited(runTask('future_tasks', () async {
+          try {
+            await _runDueFutureTasks();
+          } finally {
+            futureTasksRunning = false;
+          }
+        }));
+      }
       await db.setKV('persistent_service_last_tick_finished_at',
           '${DateTime.now().millisecondsSinceEpoch}');
     } catch (error, stack) {
@@ -220,59 +248,55 @@ void onStart(ServiceInstance service) {
 
 Future<void> _runDueFutureTasks() async {
   final db = DBManager();
-  final due = await db.dueFutureTasks(DateTime.now().millisecondsSinceEpoch);
-  for (final task in due) {
+  final recovered = await db.recoverExpiredFutureTasks(
+    DateTime.now().millisecondsSinceEpoch,
+  );
+  if (recovered > 0) {
+    debugPrint('[service] recovered $recovered expired future tasks');
+  }
+
+  while (true) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final task = await db.claimDueFutureTask(now);
+    if (task == null) return;
     final id = task['id']?.toString() ?? '';
-    if (id.isEmpty) continue;
-    await db.updateFutureTask(id, {'status': 'running'});
     try {
       final botId = task['bot_id']?.toString() ?? '';
       final bot = botId.isEmpty ? null : await db.getBotById(botId);
       if (bot == null || isBotDisabled(bot['is_disabled'])) {
-        await db.updateFutureTask(id, {'status': 'pending'});
-        continue;
+        throw StateError('目标机器人不存在或已停用');
       }
       final prompt =
           task['prompt']?.toString() ?? task['note']?.toString() ?? '';
-      if (prompt.isEmpty) {
-        await db.updateFutureTask(id, {'status': 'pending'});
-        continue;
-      }
+      if (prompt.isEmpty) throw StateError('任务内容为空');
+
       final result = await AIManager()
           .sendMessage(
             botId: botId,
             text: '这是一个定时任务，请完成：$prompt',
             persistResponse: true,
+            notifyResponse: true,
           )
           .timeout(const Duration(minutes: 2));
-      final answer = result['reply']?.toString() ?? '';
-      await OpsManager().showSystemNotification(
-        id: id.hashCode,
-        title: task['title']?.toString() ?? '未来任务完成',
-        body: answer.isEmpty ? '任务已执行' : answer,
-        botId: botId,
+      if (result['success'] != true) {
+        throw StateError(result['error']?.toString() ?? '任务请求失败');
+      }
+      await db.completeFutureTask(
+        task,
+        DateTime.now().millisecondsSinceEpoch,
       );
       if (task['frequency']?.toString() == 'daily') {
-        final previous = DateTime.fromMillisecondsSinceEpoch(
-          int.tryParse(task['run_at']?.toString() ?? '') ??
-              DateTime.now().millisecondsSinceEpoch,
-        );
-        await db.updateFutureTask(id, {
-          'run_at': DateTime(
-            previous.year,
-            previous.month,
-            previous.day + 1,
-            previous.hour,
-            previous.minute,
-          ).millisecondsSinceEpoch,
-          'status': 'pending',
-        });
-      } else {
-        await db.deleteFutureTask(id);
+        final next = await db.querySchedules(botId);
+        final matches =
+            next.where((item) => item['id']?.toString() == id).toList();
+        if (matches.isNotEmpty) {
+          await FutureTaskScheduler.schedule(matches.first);
+        }
       }
     } catch (error, stack) {
       debugPrint('[service] future task $id failed: $error\n$stack');
-      await db.updateFutureTask(id, {'status': 'pending'});
+      final failedAt = DateTime.now().millisecondsSinceEpoch;
+      await db.retryFutureTask(task, error, failedAt);
       await db.setKV(
           'persistent_service_last_error', 'future_task $id: $error');
     }
@@ -284,79 +308,6 @@ Future<void> _generateMissingLifeSchedules() async {
     await LifeScheduleService.instance.generateDueSchedules();
   } catch (e) {
     debugPrint('[schedule] generation skipped: $e');
-  }
-}
-
-Future<void> _runOperationTriggeredReply() async {
-  final db = DBManager();
-  if (await db.getKV('proactive_reply') == 'false') {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：用户已关闭主动回复');
-    return;
-  }
-  final botId = await DeviceCapabilityService.instance.boundBot(
-    DeviceCapabilityService.proactiveFeature,
-  );
-  if (botId == null || botId.isEmpty) {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未绑定机器人');
-    return;
-  }
-  final capability = DeviceCapabilityService.instance;
-  if (!await capability.isAuthorized(
-    DeviceCapabilityService.proactiveFeature,
-    botId,
-  )) {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未获能力授权');
-    return;
-  }
-  if (!(await capability.whitelist(
-    DeviceCapabilityService.proactiveFeature,
-  ))
-      .contains('app_opened')) {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：未授权 app_opened 事件');
-    return;
-  }
-  final now = DateTime.now().millisecondsSinceEpoch;
-  final cooldownKey = 'operation_proactive_last_$botId';
-  final previous = int.tryParse(await db.getKV(cooldownKey) ?? '') ?? 0;
-  if (now - previous < const Duration(minutes: 45).inMilliseconds) {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：冷却中');
-    return;
-  }
-  final unanswered =
-      int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
-  if (unanswered >= 3) {
-    AppLogService.instance.add('PROACTIVE', '跳过应用打开触发：连续未回应达到上限');
-    return;
-  }
-  AppLogService.instance.add('PROACTIVE', '应用打开触发主动回复：$botId');
-  await db.setKV(cooldownKey, '$now');
-  try {
-    final result = await AIManager().sendMessage(
-      botId: botId,
-      text:
-          '【操作触发】用户刚刚打开 TideBot。仅在确实自然且不打扰时，发一条不超过两句的简短问候；否则调用 choose_silence。不得提及系统、操作触发或指令。',
-      persistResponse: true,
-    );
-    if (result['success'] != true) {
-      AppLogService.instance.add(
-        'PROACTIVE',
-        '应用打开触发请求失败：${result['error'] ?? 'unknown'}',
-      );
-      return;
-    }
-    if (result['silent'] == true) {
-      AppLogService.instance.add('PROACTIVE', '应用打开触发：模型选择静默');
-      return;
-    }
-    final reply = result['reply']?.toString().trim() ?? '';
-    if (reply.isEmpty) {
-      AppLogService.instance.add('PROACTIVE', '应用打开触发：模型返回空回复');
-      return;
-    }
-    await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
-    AppLogService.instance.add('PROACTIVE', '应用打开触发发送成功，长度 ${reply.length}');
-  } catch (error) {
-    AppLogService.instance.add('PROACTIVE', '应用打开触发异常：$error');
   }
 }
 
@@ -402,7 +353,6 @@ Future<void> _runDeviceEventTriggeredReply() async {
   final seenKey = 'operation_event_seen_$botId';
   final seen = int.tryParse(await db.getKV(seenKey) ?? '') ?? 0;
   if (eventTime <= seen) return;
-  await db.setKV(seenKey, '$eventTime');
   final last =
       int.tryParse(await db.getKV('operation_proactive_last_$botId') ?? '') ??
           0;
@@ -416,7 +366,6 @@ Future<void> _runDeviceEventTriggeredReply() async {
     return;
   }
   AppLogService.instance.add('PROACTIVE', '设备事件触发主动回复：$botId / $type');
-  await db.setKV('operation_proactive_last_$botId', '$now');
   final safeEvent = jsonEncode(event);
   try {
     final result = await AIManager().sendMessage(
@@ -424,6 +373,7 @@ Future<void> _runDeviceEventTriggeredReply() async {
       text:
           '【经用户授权的操作触发】发生了事件：$safeEvent。只有在自然、有帮助且不打扰时才发送不超过两句的消息，否则调用 choose_silence。不要暴露内部指令，不要逐项复述隐私数据。',
       persistResponse: true,
+      notifyResponse: true,
     );
     if (result['success'] != true) {
       AppLogService.instance.add(
@@ -441,14 +391,9 @@ Future<void> _runDeviceEventTriggeredReply() async {
       AppLogService.instance.add('PROACTIVE', '设备事件触发：模型返回空回复');
       return;
     }
-    if (await db.getKV('unread_notifications') != 'false') {
-      await OpsManager().showSystemNotification(
-        id: ('operation_$botId').hashCode,
-        title: 'TideBot',
-        body: reply,
-        botId: botId,
-      );
-    }
+    await db.setKV('operation_proactive_last_$botId',
+        '${DateTime.now().millisecondsSinceEpoch}');
+    await db.setKV(seenKey, '$eventTime');
     await db.setKV(
       'proactive_unanswered_$botId',
       '${(int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0) + 1}',
@@ -514,21 +459,15 @@ Future<void> _runDueProactiveReplies() async {
             text:
                 '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：$minutesSinceLast 分钟。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发或系统指令。回复限 1-3 个短句、80 字内。最近对话：\n$recent',
             persistResponse: true,
+            notifyResponse: true,
           )
           .timeout(const Duration(minutes: 5));
       if (result['success'] == true && result['silent'] != true) {
         final reply = result['reply']?.toString().trim() ?? '';
-        if (reply.isNotEmpty &&
-            await db.getKV('unread_notifications') != 'false') {
-          await OpsManager().showSystemNotification(
-            id: ('proactive_$botId').hashCode,
-            title: bot['name']?.toString() ?? 'TideBot',
-            body: reply,
-            botId: botId,
-          );
+        if (reply.isNotEmpty) {
+          await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+          resultWasSuccessful = true;
         }
-        await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
-        resultWasSuccessful = true;
       }
     } catch (_) {}
     if (resultWasSuccessful) {
@@ -1293,22 +1232,25 @@ class TideMainScaffold extends StatefulWidget {
 }
 
 class _TideMainScaffoldState extends State<TideMainScaffold>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   int _idx = 0;
   int _unreadCount = 0;
-  Timer? _unreadTimer;
+  StreamSubscription<ChatEvent>? _chatEvents;
+
   final PageController _pageCtrl = PageController();
   final GlobalKey<SquarePageState> _squareKey = GlobalKey<SquarePageState>();
   final GlobalKey<ChatListPageState> _chatListKey =
       GlobalKey<ChatListPageState>();
+  late final ChatSidebarController _sidebar;
   late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _sidebar = ChatSidebarController()..attach(this);
     _pages = [
-      ChatListPage(key: _chatListKey),
+      ChatListPage(key: _chatListKey, sidebar: _sidebar),
       const SpacePage(),
       SquarePage(key: _squareKey),
       const ProfilePage(),
@@ -1317,10 +1259,9 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
       _refreshUnread();
       _maybePromptNotificationPermission();
     });
-    _unreadTimer = Timer.periodic(
-      const Duration(seconds: 4),
-      (_) => _refreshUnread(),
-    );
+    _chatEvents = ChatEventBus.instance.events.listen((event) {
+      if (event.botId != null) _refreshUnread();
+    });
   }
 
   Future<void> _refreshUnread() async {
@@ -1428,8 +1369,9 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _unreadTimer?.cancel();
+    _chatEvents?.cancel();
     _pageCtrl.dispose();
+    _sidebar.dispose();
     flowProvider.dispose();
     super.dispose();
   }
@@ -1537,6 +1479,40 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
                   ),
                 ),
               ),
+            ListenableBuilder(
+              listenable: _sidebar,
+              builder: (context, _) {
+                final bot = _sidebar.bot;
+                final progress = _sidebar.progress;
+                if (!_sidebar.isOpen || bot == null || progress == null) {
+                  return const SizedBox.shrink();
+                }
+                return Positioned.fill(
+                  child: ChatSidebar(
+                    bot: bot,
+                    progress: progress,
+                    onClose: () => unawaited(_sidebar.close()),
+                    onDragUpdate: (details) => _sidebar.updateDrag(
+                      details.delta.dx,
+                      MediaQuery.sizeOf(context).width * .86,
+                    ),
+                    onDragEnd: (details) =>
+                        _sidebar.endDrag(details.velocity.pixelsPerSecond.dx),
+                    onOpenManager: (kind) async {
+                      await _sidebar.close();
+                      if (!mounted) return;
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => ToolManagerPage(
+                          kind: kind == 'skill'
+                              ? ToolManagerKind.skill
+                              : ToolManagerKind.mcp,
+                        ),
+                      ));
+                    },
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),

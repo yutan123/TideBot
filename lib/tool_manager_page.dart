@@ -150,8 +150,8 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     await _db.updateMcpStatus(id, 'connecting');
+    final client = McpClient(url: url, headers: headers, timeout: timeout);
     try {
-      final client = McpClient(url: url, headers: headers, timeout: timeout);
       await client.initialize();
       final tools = await client.listTools();
       final resources = await client.listResourcesSafe();
@@ -160,8 +160,14 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       await _db.saveMcpMetadata(id, resources: resources, prompts: prompts);
       await _reload();
     } catch (error) {
-      await _db.updateMcpStatus(id, 'error', error.toString());
+      await _db.updateMcpStatus(id, 'error', McpClient.describeError(error));
       await _reload();
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        client.dispose();
+      }
     }
   }
 

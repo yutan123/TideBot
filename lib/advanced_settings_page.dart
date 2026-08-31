@@ -12,7 +12,6 @@ import 'device_capability_service.dart';
 import 'external_api_service.dart';
 import 'global_notice.dart';
 import 'log_session_detail_page.dart';
-import 'persistent_service_coordinator.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
@@ -30,7 +29,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _operationProactive = false;
   bool _externalApiEnabled = false;
   String _externalApiPort = '6666';
-  String _externalApiKey = 'tidebot';
+  String _externalApiKey = '';
   String _externalApiBotId = '';
   bool _externalApiSyncMessages = true;
   List<String> _externalApiUrls = const [];
@@ -38,15 +37,12 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   List<Map<String, dynamic>> _bots = const [];
   final Map<String, String> _boundBotNames = {};
   Timer? _ticker;
-  final Map<String, String> _serviceDiagnostics = {};
-  bool _loadingServiceDiagnostics = false;
   final _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _load();
-    _loadServiceDiagnostics();
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted && _logging) {
         setState(() {});
@@ -57,93 +53,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         });
       }
     });
-  }
-
-  Future<void> _loadServiceDiagnostics() async {
-    if (_loadingServiceDiagnostics) return;
-    setState(() => _loadingServiceDiagnostics = true);
-    try {
-      final result = await PersistentServiceCoordinator.instance.diagnostics();
-      if (mounted) {
-        setState(() {
-          _serviceDiagnostics
-            ..clear()
-            ..addAll(result);
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _loadingServiceDiagnostics = false);
-    }
-  }
-
-  String _serviceTime(String key) {
-    final raw = _serviceDiagnostics[key] ?? '';
-    final value = int.tryParse(raw);
-    if (value == null || value <= 0) return raw.isEmpty ? '暂无' : raw;
-    return DateTime.fromMillisecondsSinceEpoch(value).toLocal().toString();
-  }
-
-  Widget _persistentServiceCard(TideTheme theme) {
-    final running =
-        _serviceDiagnostics['persistent_service_is_running'] == 'true';
-    final state = _serviceDiagnostics['persistent_service_state'] ?? '未读取';
-    final error = _serviceDiagnostics['persistent_service_last_error'] ?? '';
-    return FrostCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(
-            child: Text('后台服务诊断',
-                style: TextStyle(
-                    fontFamily: 'TideFont',
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: theme.textStrong)),
-          ),
-          IconButton(
-            tooltip: '刷新后台服务状态',
-            onPressed:
-                _loadingServiceDiagnostics ? null : _loadServiceDiagnostics,
-            icon: _loadingServiceDiagnostics
-                ? SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: theme.primary))
-                : Icon(Icons.refresh_rounded, color: theme.primary),
-          ),
-        ]),
-        Text('服务状态：${running ? '前台运行中' : state}',
-            style: TextStyle(
-                fontFamily: 'TideFont',
-                color: running ? Colors.green : theme.textWeak)),
-        const SizedBox(height: 6),
-        Text('最近心跳：${_serviceTime('persistent_service_heartbeat')}',
-            style: TextStyle(
-                fontFamily: 'TideFont', fontSize: 12, color: theme.textWeak)),
-        Text('启动时间：${_serviceTime('persistent_service_started_at')}',
-            style: TextStyle(
-                fontFamily: 'TideFont', fontSize: 12, color: theme.textWeak)),
-        Text(
-            '最近 tick：${_serviceTime('persistent_service_last_tick_finished_at')}',
-            style: TextStyle(
-                fontFamily: 'TideFont', fontSize: 12, color: theme.textWeak)),
-        Text(
-            '重启次数：${_serviceDiagnostics['persistent_service_restart_count'] ?? '0'}',
-            style: TextStyle(
-                fontFamily: 'TideFont', fontSize: 12, color: theme.textWeak)),
-        if (error.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text('最近错误：$error',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontFamily: 'TideFont',
-                  fontSize: 12,
-                  color: Colors.redAccent)),
-        ],
-      ]),
-    );
   }
 
   Future<void> _load() async {
@@ -169,7 +78,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     }
     final externalEnabled = await db.getKV('external_api_enabled') == 'true';
     final externalPort = await db.getKV('external_api_port') ?? '6666';
-    final externalKey = await db.getKV('external_api_key') ?? 'tidebot';
+    final externalKey = await db.getKV('external_api_key') ?? '';
     final externalBotId = await db.getKV('external_api_bot_id') ?? '';
     final externalSync =
         await db.getKV('external_api_sync_messages') != 'false';
@@ -704,9 +613,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
               ),
             ]),
           ),
-          const SizedBox(height: 12),
-          // 机器人修改主题功能已移除。
-          _persistentServiceCard(theme),
           const SizedBox(height: 12),
           FrostCard(
             padding: const EdgeInsets.all(16),

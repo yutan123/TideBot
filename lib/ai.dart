@@ -9,15 +9,52 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
 import 'holiday_calendar_service.dart';
+import 'message_delivery_service.dart';
+import 'future_task_scheduler.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
-
 import 'app_log_service.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
 import 'chat_content.dart';
 import 'skill_runtime.dart';
+
+class AICancellationToken {
+  bool _cancelled = false;
+  final List<void Function()> _callbacks = [];
+  bool get isCancelled => _cancelled;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final callback in List<void Function()>.from(_callbacks)) {
+      callback();
+    }
+    _callbacks.clear();
+  }
+
+  void addOnCancel(void Function() callback) {
+    if (_cancelled) {
+      callback();
+    } else {
+      _callbacks.add(callback);
+    }
+  }
+
+  void removeOnCancel(void Function() callback) => _callbacks.remove(callback);
+
+  void throwIfCancelled() {
+    if (_cancelled) throw const AICancelledException();
+  }
+}
+
+class AICancelledException implements Exception {
+  const AICancelledException();
+
+  @override
+  String toString() => 'AI 请求已取消';
+}
 
 class AIManager {
   static final AIManager _instance = AIManager._internal();
@@ -89,8 +126,11 @@ class AIManager {
     bool skipLifeState = false,
     bool allowTools = true,
     bool forceSingleReply = false,
+    bool notifyResponse = false,
+    AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
   }) async {
+    cancellationToken?.throwIfCancelled();
     final prefs = await SharedPreferences.getInstance();
     const primaryLocal = '';
     const backupLocal = '';
@@ -139,6 +179,8 @@ class AIManager {
         skipLifeState: skipLifeState,
         allowTools: allowTools,
         forceSingleReply: forceSingleReply,
+        notifyResponse: notifyResponse,
+        cancellationToken: cancellationToken,
         // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
         // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
         onDelta: onDelta,
@@ -279,12 +321,14 @@ class AIManager {
     bool skipLifeState = false,
     bool allowTools = true,
     bool forceSingleReply = false,
+    bool notifyResponse = false,
+    AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
     String forcedLocalId = '',
     String forcedProviderId = '',
   }) async {
     final db = DBManager();
-    // 数据库初始化异常/卡住时必须尽快回到聊天室 finally，不能无限显示“正在输入中”。
+    cancellationToken?.throwIfCancelled();
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
 
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
@@ -369,7 +413,7 @@ class AIManager {
       for (final item in items) {
         final content = item['content']?.toString().trim() ?? '';
         if (content.isEmpty || used + content.length > budget) continue;
-        lines.add('- 【已归属记忆，不能替代对话角色】$content');
+        lines.add('- $content');
         used += content.length;
       }
       return lines.join('\n');
@@ -400,7 +444,7 @@ class AIManager {
     final emotionContext = await EmotionStateService.instance.promptContext(
       botId,
     );
-    final conversationFocusContext =
+    const conversationFocusContext =
         '\n【当前话题规则】优先回应最新一条用户消息及其直接上下文。旧记忆、旧计划、曾经提过的学习或待办仅在用户本轮明确提及、询问进展或与当前请求直接相关时引用。用户已转向新话题或自然结束话题后，不得主动把旧话题重新带回、重复追问或将一次性提及擅自升级为未来任务。需要澄清时只围绕当前请求提出一个必要问题；同一非当前主题不要连续主动追问。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         conversationFocusContext +
@@ -408,13 +452,9 @@ class AIManager {
         lifeContext +
         deviceContextPrompt +
         emotionContext +
-        (longMemoryContext.isEmpty
-            ? ''
-            : '\n【长期记忆：已归属的用户事实或机器人自我身份；不得把机器人事实写成用户事实】\n$longMemoryContext') +
+        (longMemoryContext.isEmpty ? '' : '\n【长期记忆】\n$longMemoryContext') +
         toolContext +
-        (shortMemoryContext.isEmpty
-            ? ''
-            : '\n【短期记忆：已归属的近期事件；仅作参考，不得覆盖 user/assistant 发言角色】\n$shortMemoryContext');
+        (shortMemoryContext.isEmpty ? '' : '\n【近期记忆】\n$shortMemoryContext');
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
@@ -641,16 +681,30 @@ class AIManager {
       Map usage = const {};
       String errorBody = '';
       int statusCode;
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${provider['api_key']}',
-            },
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 40));
+      final token = cancellationToken;
+      final client = http.Client();
+      final request = http.Request(
+        'POST',
+        Uri.parse('$baseUrl/chat/completions'),
+      )
+        ..headers.addAll({
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${provider['api_key']}',
+        })
+        ..body = jsonEncode(payload);
+      void cancelRequest() => client.close();
+      token?.addOnCancel(cancelRequest);
+      http.Response response;
+      try {
+        response = await client
+            .send(request)
+            .then(http.Response.fromStream)
+            .timeout(const Duration(seconds: 40));
+      } finally {
+        token?.removeOnCancel(cancelRequest);
+        client.close();
+      }
+      token?.throwIfCancelled();
       statusCode = response.statusCode;
       errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
       if (statusCode == 200) {
@@ -835,7 +889,10 @@ class AIManager {
                   searchSources.isEmpty ? null : jsonEncode(searchSources),
               'timestamp': ts + 1,
             };
-            await db.insertChatMessage(row);
+            await MessageDeliveryService.instance.insert(
+              row,
+              notify: notifyResponse,
+            );
             persistedMessages.add(row);
           } else {
             for (var index = 0; index < segments.length; index++) {
@@ -854,7 +911,10 @@ class AIManager {
                         : null,
                 'timestamp': ts + 1 + index,
               };
-              await db.insertChatMessage(row);
+              await MessageDeliveryService.instance.insert(
+                row,
+                notify: notifyResponse && index == 0,
+              );
               persistedMessages.add(row);
             }
             if (generatedImagePath != null) {
@@ -869,7 +929,10 @@ class AIManager {
                 'reply_group_id': replyGroupId,
                 'timestamp': ts + 2 + segments.length,
               };
-              await db.insertChatMessage(row);
+              await MessageDeliveryService.instance.insert(
+                row,
+                notify: notifyResponse && persistedMessages.isEmpty,
+              );
               persistedMessages.add(row);
             }
             if (sticker != null) {
@@ -884,7 +947,10 @@ class AIManager {
                 'reply_group_id': replyGroupId,
                 'timestamp': ts + 3 + segments.length,
               };
-              await db.insertChatMessage(row);
+              await MessageDeliveryService.instance.insert(
+                row,
+                notify: notifyResponse && persistedMessages.isEmpty,
+              );
               persistedMessages.add(row);
             }
           }
@@ -903,6 +969,11 @@ class AIManager {
         return {
           'success': true,
           'reply': replyText,
+          'usage': {
+            'prompt_tokens': promptTokens,
+            'completion_tokens': completionTokens,
+            'total_tokens': totalTokens,
+          },
           'message_id': msgId,
           'messages': persistedMessages,
           if (audioPath != null && audioPath.isNotEmpty)
@@ -922,7 +993,10 @@ class AIManager {
           'error_code': statusCode,
         };
       }
+    } on AICancelledException {
+      rethrow;
     } catch (e) {
+      cancellationToken?.throwIfCancelled();
       print('[ai] request failed: $e');
       AppLogService.instance.add('ERROR', '模型请求异常：$e');
       return {
@@ -2528,7 +2602,7 @@ $transcript''';
         'function': {
           'name': 'save_memory',
           'description':
-              '当用户明确要求记住某事，或本轮出现未来对话确实有价值的稳定事实或重要事件时调用。仅在信息已经明确发生或由用户明确确认时保存；不得猜测、编造或保存敏感隐私。只有工具返回 ok:true 后，才能对用户说已记住。',
+              '当用户明确要求记住某事，或本轮出现已发生的用户事实、事件、偏好或状态变化时调用。只保存已明确发生或由用户确认的内容；不得猜测、编造、记录未来计划或保存敏感隐私。相同事实会去重，事实变化会更新既有记忆。只有工具返回 ok:true 后，才能对用户说已记住。',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -2617,35 +2691,50 @@ $transcript''';
       return {
         'result': {'ok': false, 'error': 'Skill 工具不可用'}
       };
-    if (row['executor'] == 'mcp_proxy') {
-      return {
-        'result': {
-          'ok': false,
-          'error': 'mcp_proxy 需在 Skill manifest 中声明目标 MCP 工具'
-        }
-      };
-    }
-    if (row['executor'] != 'http') {
-      return {
-        'result': {'ok': false, 'error': '该 Skill 执行器不支持直接调用'}
-      };
-    }
     final skillRows = await db.querySkills();
     final skill = skillRows.firstWhere(
       (item) => item['id'] == skillId,
       orElse: () => <String, dynamic>{},
     );
+    final manifest = jsonDecode(skill['manifest_json']?.toString() ?? '{}');
+    final definitions = manifest is Map ? manifest['tools'] : null;
+    final definition = definitions is List
+        ? definitions.cast<dynamic>().firstWhere(
+              (item) => item is Map && item['name']?.toString() == toolName,
+              orElse: () => null,
+            )
+        : null;
+    if (definition is! Map) {
+      return {
+        'result': {'ok': false, 'error': 'Skill 工具定义不存在'},
+      };
+    }
+    final executor = row['executor']?.toString() ?? '';
+    if (executor == 'mcp_proxy') {
+      return _executeSkillMcpProxy(
+        db: db,
+        skillName: name,
+        definition: Map<String, dynamic>.from(definition),
+        args: args,
+      );
+    }
+    if (executor == 'prompt') {
+      final template = definition['prompt']?.toString().trim() ?? '';
+      return {
+        'result': {
+          'ok': true,
+          'content': template,
+          'arguments': args,
+        },
+      };
+    }
+    if (executor != 'http') {
+      return {
+        'result': {'ok': false, 'error': '该 Skill 执行器不支持直接调用'},
+      };
+    }
     final started = DateTime.now();
     try {
-      final manifest = jsonDecode(skill['manifest_json']?.toString() ?? '{}');
-      final definitions = manifest is Map ? manifest['tools'] : null;
-      final definition = definitions is List
-          ? definitions.cast<dynamic>().firstWhere(
-                (item) => item is Map && item['name']?.toString() == toolName,
-                orElse: () => null,
-              )
-          : null;
-      if (definition is! Map) throw const FormatException('HTTP 工具定义不存在');
       final uri = Uri.tryParse(definition['url']?.toString() ?? '');
       if (uri == null || !uri.hasScheme)
         throw const FormatException('HTTP URL 无效');
@@ -2688,6 +2777,89 @@ $transcript''';
               .substring(0, error.toString().length.clamp(0, 500)));
       return {
         'result': {'ok': false, 'error': 'HTTP Skill 调用失败：$error'}
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeSkillMcpProxy({
+    required DBManager db,
+    required String skillName,
+    required Map<String, dynamic> definition,
+    required Map<String, dynamic> args,
+  }) async {
+    final serverId = definition['mcp_server_id']?.toString().trim() ?? '';
+    final targetTool = definition['mcp_tool']?.toString().trim() ?? '';
+    final started = DateTime.now();
+    try {
+      final server = (await db.queryMcpServers()).firstWhere(
+        (item) => item['id']?.toString() == serverId && item['enabled'] == 1,
+        orElse: () => <String, dynamic>{},
+      );
+      if (server.isEmpty) {
+        throw StateError('目标 MCP 服务不可用');
+      }
+      final enabledTool = (await db.queryEnabledMcpTools()).any(
+        (item) =>
+            item['server_id']?.toString() == serverId &&
+            item['name']?.toString() == targetTool,
+      );
+      if (!enabledTool) {
+        throw StateError('目标 MCP 工具未发现或已禁用');
+      }
+      const secure = FlutterSecureStorage();
+      final storedHeaders = await secure.read(key: 'mcp_headers_$serverId');
+      final headers = <String, String>{};
+      if (storedHeaders != null && storedHeaders.isNotEmpty) {
+        final decoded = jsonDecode(storedHeaders);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            headers[key.toString()] = value.toString();
+          });
+        }
+      }
+      final timeoutMs = (server['timeout_ms'] as num?)?.toInt() ?? 20000;
+      final client = McpClient(
+        url: server['url'].toString(),
+        headers: headers,
+        timeout: Duration(milliseconds: timeoutMs),
+      );
+      dynamic content;
+      try {
+        await client.initialize();
+        content = await client.callTool(targetTool, args);
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          client.dispose();
+        }
+      }
+      await db.insertToolAudit(
+        source: 'skill:mcp_proxy',
+        toolName: skillName,
+        inputSummary: _redactToolInput(args),
+        status: 'success',
+        durationMs: DateTime.now().difference(started).inMilliseconds,
+      );
+      return {
+        'result': {
+          'ok': true,
+          'content': content,
+        },
+      };
+    } catch (error) {
+      await db.insertToolAudit(
+        source: 'skill:mcp_proxy',
+        toolName: skillName,
+        inputSummary: _redactToolInput(args),
+        status: 'error',
+        durationMs: DateTime.now().difference(started).inMilliseconds,
+        error: error
+            .toString()
+            .substring(0, error.toString().length.clamp(0, 500)),
+      );
+      return {
+        'result': {'ok': false, 'error': 'Skill MCP 代理调用失败：$error'},
       };
     }
   }
@@ -2737,7 +2909,17 @@ $transcript''';
         headers: headers,
         timeout: Duration(milliseconds: timeoutMs),
       );
-      final value = await client.callTool(toolName, args);
+      dynamic value;
+      try {
+        await client.initialize();
+        value = await client.callTool(toolName, args);
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          client.dispose();
+        }
+      }
       await db.insertToolAudit(
         source: 'mcp',
         toolName: name,
@@ -2988,7 +3170,7 @@ $transcript''';
           },
         };
       final id = 'future_${botId}_${runAt}_${title.hashCode.abs()}';
-      await db.insertFutureTask({
+      final task = {
         'id': id,
         'bot_id': botId,
         'title': title,
@@ -2999,7 +3181,9 @@ $transcript''';
         'prompt': prompt,
         'run_at': runAt,
         'status': 'pending',
-      });
+      };
+      await db.insertFutureTask(task);
+      await FutureTaskScheduler.schedule(task);
       return {
         'result': {'ok': true, 'id': id, 'message': '未来任务已创建：$title'},
       };
@@ -3328,7 +3512,7 @@ $transcript''';
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、机器人身份、状态、情绪、日记素材和机器人记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以机器人第一人称记录，只写本机器人实际参与且已明确发生的内容。\n"
         "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。"
-        "【记忆】如有稳定且重要的用户信息，使用原生记忆工具；不要在正文中写记忆标签。\n";
+        "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，可按需使用原生记忆工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n";
 
     if (activeGame == 'poker') {
       p +=
@@ -3353,14 +3537,6 @@ $transcript''';
     final row = await LifeScheduleService.instance.ensureToday(botId);
     if (row == null) return '';
     return '\n${LifeScheduleService.instance.compactContext(row)}';
-  }
-
-  String _extractMood(String text) {
-    // 唯一允许的内部格式是独占首行：[心情:平静]。
-    final match = RegExp(
-      r'^\s*\[心情\s*[:：]\s*(平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
-    ).firstMatch(text);
-    return match?.group(1) ?? '平静';
   }
 
   /// 解析模型通过内部协议 [记忆:类型|内容]（可多条）主动要求记住的信息，

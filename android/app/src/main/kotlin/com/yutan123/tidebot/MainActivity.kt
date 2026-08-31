@@ -58,6 +58,11 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        TideBackgroundWork.ensureScheduled(this)
+    }
+
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
@@ -65,6 +70,16 @@ class MainActivity: FlutterActivity() {
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 // 悬浮窗待处理消息接口已移除。
+                "scheduleFutureTask" -> {
+                    val taskId = call.argument<String>("taskId").orEmpty()
+                    val triggerAt = call.argument<Number>("triggerAt")?.toLong() ?: 0L
+                    val title = call.argument<String>("title") ?: "TideBot 提醒"
+                    result.success(TideAlarmScheduler.schedule(this, taskId, triggerAt, title))
+                }
+                "cancelFutureTask" -> {
+                    TideAlarmScheduler.cancel(this, call.argument<String>("taskId").orEmpty())
+                    result.success(null)
+                }
                 "setAlarmManager" -> {
                     val hour = call.argument<Int>("hour") ?: 0
                     val minute = call.argument<Int>("minute") ?: 0

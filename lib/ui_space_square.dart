@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'app_log_service.dart';
 import 'ui_components.dart';
 import 'global_notice.dart';
+import 'message_delivery_service.dart';
 import 'db.dart';
 import 'theme.dart';
 import 'ai.dart';
@@ -983,7 +984,7 @@ class SquarePageState extends State<SquarePage>
       'image_path': f['image']?.toString() ?? '',
       'timestamp': f['timestamp'] ?? now,
     });
-    await db.insertMessage({
+    await MessageDeliveryService.instance.insert({
       'id': 'share_$now',
       'bot_id': botId,
       'role': 'user',

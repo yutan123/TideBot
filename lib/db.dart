@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
+import 'chat_event_bus.dart';
 
 /// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
 ///
@@ -56,7 +57,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 24,
+      version: 26,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -75,7 +76,7 @@ class DBManager {
           CREATE TABLE chat_history (
             id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
             content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
-            error_log TEXT, error_code TEXT, error_message TEXT, reply_to_id TEXT, reply_group_id TEXT, sources_json TEXT, timestamp INTEGER,
+            error_log TEXT, error_code TEXT, error_message TEXT, retry_status TEXT NOT NULL DEFAULT 'none', reply_to_id TEXT, reply_group_id TEXT, sources_json TEXT, timestamp INTEGER,
 
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
@@ -90,9 +91,13 @@ class DBManager {
         ''');
         await db.execute('''
           CREATE TABLE schedule_tasks (
-            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER, frequency TEXT DEFAULT 'once', prompt TEXT DEFAULT '', run_at INTEGER, status TEXT DEFAULT 'pending',
+            id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER, is_done INTEGER, frequency TEXT DEFAULT 'once', prompt TEXT DEFAULT '', run_at INTEGER, status TEXT DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, retry_at INTEGER, locked_at INTEGER, idempotency_key TEXT,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
+        ''');
+        await db.execute('''
+          CREATE INDEX idx_schedule_tasks_due
+          ON schedule_tasks(status, retry_at, run_at)
         ''');
         await db.execute('''
           CREATE TABLE bot_life_schedules (
@@ -355,6 +360,34 @@ class DBManager {
           try {
             await db.execute(
                 'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0');
+          } catch (_) {}
+        }
+
+        if (oldVersion < 25) {
+          for (final column in [
+            'attempts INTEGER NOT NULL DEFAULT 0',
+            'last_error TEXT',
+            'retry_at INTEGER',
+            'locked_at INTEGER',
+            'idempotency_key TEXT',
+          ]) {
+            try {
+              await db.execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
+            } catch (_) {}
+          }
+          try {
+            await db.execute('''
+              CREATE INDEX IF NOT EXISTS idx_schedule_tasks_due
+              ON schedule_tasks(status, retry_at, run_at)
+            ''');
+          } catch (_) {}
+        }
+
+        if (oldVersion < 26) {
+          try {
+            await db.execute(
+              "ALTER TABLE chat_history ADD COLUMN retry_status TEXT NOT NULL DEFAULT 'none'",
+            );
           } catch (_) {}
         }
 
@@ -678,6 +711,7 @@ class DBManager {
       where: 'id = ?',
       whereArgs: [id],
     );
+    await _publishMessageEvent(id, ChatEventType.updated);
   }
 
   Future<void> updateMessageSources(
@@ -689,6 +723,7 @@ class DBManager {
       where: 'id = ?',
       whereArgs: [id],
     );
+    await _publishMessageEvent(id, ChatEventType.updated);
   }
 
   Future<void> updateMessageError(
@@ -704,20 +739,50 @@ class DBManager {
         'error_log': errorLog,
         'error_code': errorCode,
         'error_message': errorMessage,
+        'retry_status': 'failed',
       },
       where: 'id = ?',
       whereArgs: [id],
     );
+    await _publishMessageEvent(id, ChatEventType.failed);
+  }
+
+  Future<void> markMessageRetrying(String id) async {
+    final db = await database;
+    await db.update(
+      'chat_history',
+      {'retry_status': 'retrying'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    await _publishMessageEvent(id, ChatEventType.retrying);
   }
 
   Future<void> clearMessageError(String id) async {
     final db = await database;
     await db.update(
       'chat_history',
-      {'error_log': null, 'error_code': null, 'error_message': null},
+      {
+        'error_log': null,
+        'error_code': null,
+        'error_message': null,
+        'retry_status': 'none',
+      },
       where: 'id = ?',
       whereArgs: [id],
     );
+    await _publishMessageEvent(id, ChatEventType.updated);
+  }
+
+  Future<void> _publishMessageEvent(String id, ChatEventType type) async {
+    final row = await getMessageById(id);
+    if (row == null) return;
+    ChatEventBus.instance.publish(ChatEvent(
+      type: type,
+      botId: row['bot_id']?.toString(),
+      messageId: id,
+      message: row,
+    ));
   }
 
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
@@ -726,7 +791,10 @@ class DBManager {
         where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
   }
 
-  Future<void> insertChatMessage(Map<String, dynamic> msg) async {
+  Future<void> insertChatMessage(
+    Map<String, dynamic> msg, {
+    bool publishEvent = true,
+  }) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.insert('chat_history', msg,
@@ -736,6 +804,14 @@ class DBManager {
       await txn.update('bots', {'last_msg_time': timestamp},
           where: 'id = ?', whereArgs: [msg['bot_id']]);
     });
+    if (publishEvent) {
+      ChatEventBus.instance.publish(ChatEvent(
+        type: ChatEventType.inserted,
+        botId: msg['bot_id']?.toString(),
+        messageId: msg['id']?.toString(),
+        message: Map<String, dynamic>.from(msg),
+      ));
+    }
   }
 
   Future<int> unreadBotCount() async {
@@ -1035,6 +1111,10 @@ class DBManager {
     final latest = (rows.first['latest'] as num?)?.toInt() ?? 0;
     await db.update('bots', {'last_read_at': latest > now ? latest : now},
         where: 'id = ?', whereArgs: [botId]);
+    ChatEventBus.instance.publish(ChatEvent(
+      type: ChatEventType.read,
+      botId: botId,
+    ));
   }
 
   // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。
@@ -1136,12 +1216,111 @@ class DBManager {
     await db.update('schedule_tasks', values, where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Restores tasks stranded by a process kill or an expired execution lease.
+  Future<int> recoverExpiredFutureTasks(int now, {int leaseMs = 180000}) async {
+    final db = await database;
+    return db.update(
+      'schedule_tasks',
+      {
+        'status': 'pending',
+        'locked_at': null,
+        'retry_at': now,
+        'last_error': '执行租约超时，已恢复重试',
+      },
+      where: "status = ? AND (locked_at IS NULL OR locked_at <= ?)",
+      whereArgs: ['running', now - leaseMs],
+    );
+  }
+
+  /// Atomically claims one runnable task. A conditional update makes claims safe
+  /// when multiple service instances wake at the same time.
+  Future<Map<String, dynamic>?> claimDueFutureTask(int now) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final rows = await txn.query(
+        'schedule_tasks',
+        where:
+            "status = ? AND run_at <= ? AND (retry_at IS NULL OR retry_at <= ?)",
+        whereArgs: ['pending', now, now],
+        orderBy: 'run_at ASC',
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      final task = rows.first;
+      final id = task['id']?.toString() ?? '';
+      if (id.isEmpty) return null;
+      final changed = await txn.update(
+        'schedule_tasks',
+        {'status': 'running', 'locked_at': now},
+        where:
+            "id = ? AND status = 'pending' AND (retry_at IS NULL OR retry_at <= ?)",
+        whereArgs: [id, now],
+      );
+      if (changed != 1) return null;
+      return {...task, 'status': 'running', 'locked_at': now};
+    });
+  }
+
+  Future<void> completeFutureTask(Map<String, dynamic> task, int now) async {
+    final id = task['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    if (task['frequency']?.toString() != 'daily') {
+      await deleteFutureTask(id);
+      return;
+    }
+    final previous = DateTime.fromMillisecondsSinceEpoch(
+      int.tryParse(task['run_at']?.toString() ?? '') ?? now,
+    );
+    final nextRun = DateTime(
+      previous.year,
+      previous.month,
+      previous.day + 1,
+      previous.hour,
+      previous.minute,
+    ).millisecondsSinceEpoch;
+    await updateFutureTask(id, {
+      'run_at': nextRun,
+      'status': 'pending',
+      'attempts': 0,
+      'last_error': null,
+      'retry_at': null,
+      'locked_at': null,
+    });
+  }
+
+  Future<void> retryFutureTask(
+    Map<String, dynamic> task,
+    Object error,
+    int now, {
+    int maxAttempts = 5,
+  }) async {
+    final id = task['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    final attempts = (task['attempts'] as num?)?.toInt() ??
+        int.tryParse(task['attempts']?.toString() ?? '') ??
+        0;
+    final nextAttempts = attempts + 1;
+    final failed = nextAttempts >= maxAttempts;
+    final exponent = (nextAttempts - 1).clamp(0, 6);
+    final delaySeconds = 30 * (1 << exponent);
+    await updateFutureTask(id, {
+      'status': failed ? 'failed' : 'pending',
+      'attempts': nextAttempts,
+      'last_error': error.toString(),
+      'retry_at': failed ? null : now + delaySeconds * 1000,
+      'locked_at': null,
+    });
+  }
+
   Future<List<Map<String, dynamic>>> dueFutureTasks(int now) async {
     final db = await database;
-    return db.query('schedule_tasks',
-        where: 'run_at <= ? AND status = ?',
-        whereArgs: [now, 'pending'],
-        orderBy: 'run_at ASC');
+    return db.query(
+      'schedule_tasks',
+      where:
+          "run_at <= ? AND status = ? AND (retry_at IS NULL OR retry_at <= ?)",
+      whereArgs: [now, 'pending', now],
+      orderBy: 'run_at ASC',
+    );
   }
 
   // 查询记忆 (memories 表)

@@ -51,18 +51,30 @@ class McpConnectionService {
         headers: headers,
         timeout: Duration(milliseconds: timeoutMs),
       );
-      await client.initialize();
-      final tools = await client.listTools();
-      final resources = await client.listResourcesSafe();
-      final prompts = await client.listPromptsSafe();
-      await DBManager().saveMcpTools(id, tools);
-      await DBManager().saveMcpMetadata(
-        id,
-        resources: resources,
-        prompts: prompts,
-      );
+      try {
+        await client.initialize();
+        final tools = await client.listTools();
+        final resources = await client.listResourcesSafe();
+        final prompts = await client.listPromptsSafe();
+        await DBManager().saveMcpTools(id, tools);
+        await DBManager().saveMcpMetadata(
+          id,
+          resources: resources,
+          prompts: prompts,
+        );
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          client.dispose();
+        }
+      }
     } catch (error) {
-      await DBManager().updateMcpStatus(id, 'error', error.toString());
+      await DBManager().updateMcpStatus(
+        id,
+        'error',
+        McpClient.describeError(error),
+      );
     }
   }
 }
