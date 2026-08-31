@@ -18,10 +18,13 @@ import java.util.concurrent.TimeUnit
 class TideBackgroundWork(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val serviceIntent = Intent(
-            applicationContext,
-            id.flutter.flutter_background_service.FlutterBackgroundService::class.java,
-        ).setAction(ACTION_PERIODIC_WAKE)
+        val serviceIntent = Intent().apply {
+            setClassName(
+                applicationContext,
+                "id.flutter.flutter_background_service.BackgroundService",
+            )
+            action = ACTION_PERIODIC_WAKE
+        }
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 applicationContext.startForegroundService(serviceIntent)

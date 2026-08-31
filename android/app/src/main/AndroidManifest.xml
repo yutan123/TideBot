@@ -61,7 +61,7 @@
 
         <!-- 注册前台保活服务 (flutter_background_service) -->
         <service
-            android:name="id.flutter.flutter_background_service.FlutterBackgroundService"
+            android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="dataSync" />
 
         <provider
