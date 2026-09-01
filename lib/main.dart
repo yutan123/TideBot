@@ -44,46 +44,55 @@ import 'bot_state.dart';
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
-
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  final prefs = await SharedPreferences.getInstance();
-  await tideTheme.loadFromDB();
-  await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
-  await TideHaptics.load();
-  await AppLogService.instance.restoreForLaunch();
-  final bool hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
-  final bool hasAcceptedLegal =
-      (prefs.getBool('legal_agreement_accepted') ?? false) &&
-          (prefs.getBool('legal_age_confirmed') ?? false);
-  runApp(
-    TideBotApp(
-      hasSeenOnboarding: hasSeenOnboarding,
-      hasAcceptedLegal: hasAcceptedLegal,
+
+  // Never wait for storage, database upgrades, or platform plugins before the
+  // first Flutter frame. A failed initialization must not leave LaunchTheme on
+  // screen indefinitely.
+  runApp(const TideBotApp());
+  unawaited(_startBackgroundServices());
+}
+
+Future<void> _startBackgroundServices() async {
+  unawaited(_runStartupTask('theme', tideTheme.loadFromDB));
+  unawaited(
+    _runStartupTask(
+      'liquid glass',
+      () => LiquidGlassWidgets.initialize(enablePerformanceMonitor: false),
     ),
   );
-  unawaited(McpConnectionService.instance.connectAuto());
-  if (await DBManager().getKV('external_api_enabled') == 'true') {
-    unawaited(ExternalApiService.instance.start());
+  unawaited(_runStartupTask('haptics', TideHaptics.load));
+  unawaited(
+      _runStartupTask('app log', AppLogService.instance.restoreForLaunch));
+  unawaited(McpConnectionService.instance.connectAuto().catchError((e, st) {
+    debugPrint('[startup] MCP auto-connect skipped: $e');
+  }));
+
+  final externalApiEnabled = await _readStartupKV('external_api_enabled');
+  if (externalApiEnabled == 'true') {
+    unawaited(ExternalApiService.instance.start().catchError((e, st) {
+      debugPrint('[startup] external API skipped: $e');
+      return false;
+    }));
   }
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());
   });
   Future<void>.delayed(const Duration(seconds: 2), OtaUpdate.checkOncePerDay);
 
-  // 通知回调需要在根导航器建立后才能打开对应聊天室。
+  // Notification callbacks need the root navigator, which runApp has now
+  // created. All startup work remains best-effort.
   unawaited(
     OpsManager().initializeNotifications().catchError((e, st) {
       debugPrint('[notification] init skipped: $e');
     }),
   );
 
-  // 与通知设置页共用 DB KV，避免 SharedPreferences 与数据库的状态分叉。
-  // 只恢复用户此前主动开启过的运行中服务；首次启动和关闭开关后绝不自启。
   final restorePersistentService =
-      (await DBManager().getKV('persistent_notification')) == 'true';
+      (await _readStartupKV('persistent_notification')) == 'true';
   unawaited(
     _initPersistentService(
       restoreAfterUserOptIn: restorePersistentService,
@@ -91,6 +100,26 @@ void main() async {
       debugPrint('[service] init skipped: $e');
     }),
   );
+}
+
+Future<String?> _readStartupKV(String key) async {
+  try {
+    return await DBManager().getKV(key).timeout(const Duration(seconds: 5));
+  } catch (error) {
+    debugPrint('[startup] failed to read $key: $error');
+    return null;
+  }
+}
+
+Future<void> _runStartupTask(
+  String name,
+  Future<void> Function() action,
+) async {
+  try {
+    await action().timeout(const Duration(seconds: 5));
+  } catch (error) {
+    debugPrint('[startup] $name skipped: $error');
+  }
 }
 
 Future<void> _initPersistentService({
@@ -581,23 +610,36 @@ class _FlowGlassBgState extends State<FlowGlassBg> {
 }
 
 class TideBotApp extends StatefulWidget {
-  final bool hasSeenOnboarding;
-  final bool hasAcceptedLegal;
-  const TideBotApp({
-    super.key,
-    required this.hasSeenOnboarding,
-    required this.hasAcceptedLegal,
-  });
+  const TideBotApp({super.key});
   @override
   State<TideBotApp> createState() => _TideBotAppState();
 }
 
 class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
+  bool _loadingLaunchPreferences = true;
+  bool _hasSeenOnboarding = false;
+  bool _hasAcceptedLegal = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadLaunchPreferences());
     unawaited(DiaryService.instance.catchUp());
+  }
+
+  Future<void> _loadLaunchPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 5));
+      _hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
+      _hasAcceptedLegal =
+          (prefs.getBool('legal_agreement_accepted') ?? false) &&
+              (prefs.getBool('legal_age_confirmed') ?? false);
+    } catch (error) {
+      debugPrint('[startup] launch preferences skipped: $error');
+    }
+    if (mounted) setState(() => _loadingLaunchPreferences = false);
   }
 
   @override
@@ -707,12 +749,29 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
               ),
             ),
           ),
-          home: !widget.hasSeenOnboarding
-              ? const OnboardingScreen()
-              : !widget.hasAcceptedLegal
-                  ? const LegalAgreementPage(requiredAcceptance: true)
-                  : const DailyLaunchAnimation(child: TideMainScaffold()),
+          home: _loadingLaunchPreferences
+              ? const _StartupScreen()
+              : !_hasSeenOnboarding
+                  ? const OnboardingScreen()
+                  : !_hasAcceptedLegal
+                      ? const LegalAgreementPage(requiredAcceptance: true)
+                      : const DailyLaunchAnimation(child: TideMainScaffold()),
         ),
+      ),
+    );
+  }
+}
+
+class _StartupScreen extends StatelessWidget {
+  const _StartupScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.bgColor,
+      body: Center(
+        child: CircularProgressIndicator(color: theme.primary),
       ),
     );
   }

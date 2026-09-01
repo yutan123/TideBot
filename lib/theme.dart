@@ -301,40 +301,54 @@ class TideTheme extends ChangeNotifier {
       .toList();
 
   Future<void> loadFromDB() async {
-    final name = await DBManager().getKV('theme_color');
-    if (name != null && _themes.containsKey(name)) {
-      _name = name;
-      _applyColors();
-    }
-    // 读取日夜模式
-    final modeStr = await DBManager().getKV('theme_mode');
-    if (modeStr != null) {
-      if (modeStr == 'system') {
-        _mode = ThemeMode.system;
-        _manualMode = false;
-      } else if (modeStr == 'light') {
-        _mode = ThemeMode.light;
-        _manualMode = true;
-      } else if (modeStr == 'dark') {
-        _mode = ThemeMode.dark;
-        _manualMode = true;
+    try {
+      final db = DBManager();
+      final name =
+          await db.getKV('theme_color').timeout(const Duration(seconds: 5));
+      if (name != null && _themes.containsKey(name)) {
+        _name = name;
+        _applyColors();
       }
+      // 读取日夜模式
+      final modeStr =
+          await db.getKV('theme_mode').timeout(const Duration(seconds: 5));
+      if (modeStr != null) {
+        if (modeStr == 'system') {
+          _mode = ThemeMode.system;
+          _manualMode = false;
+        } else if (modeStr == 'light') {
+          _mode = ThemeMode.light;
+          _manualMode = true;
+        } else if (modeStr == 'dark') {
+          _mode = ThemeMode.dark;
+          _manualMode = true;
+        }
+      }
+      // 读取全局背景图。它与每个机器人各自的聊天背景完全独立。
+      final globalBackground = await db
+          .getKV('global_background_image')
+          .timeout(const Duration(seconds: 5));
+      if (globalBackground != null &&
+          globalBackground.isNotEmpty &&
+          File(globalBackground).existsSync()) {
+        _globalBackground = globalBackground;
+        _setGlobalBackgroundImage(globalBackground);
+      } else if (globalBackground != null && globalBackground.isNotEmpty) {
+        await db
+            .insertKV('global_background_image', '')
+            .timeout(const Duration(seconds: 5));
+      }
+      _globalBackgroundOpacity = (double.tryParse(
+                await db
+                        .getKV('global_background_opacity')
+                        .timeout(const Duration(seconds: 5)) ??
+                    '',
+              ) ??
+              _globalBackgroundOpacity)
+          .clamp(0.18, 0.70);
+    } catch (error) {
+      debugPrint('[theme] using defaults after database load failure: $error');
     }
-    // 读取全局背景图。它与每个机器人各自的聊天背景完全独立。
-    final globalBackground = await DBManager().getKV('global_background_image');
-    if (globalBackground != null &&
-        globalBackground.isNotEmpty &&
-        File(globalBackground).existsSync()) {
-      _globalBackground = globalBackground;
-      _setGlobalBackgroundImage(globalBackground);
-    } else if (globalBackground != null && globalBackground.isNotEmpty) {
-      await DBManager().insertKV('global_background_image', '');
-    }
-    _globalBackgroundOpacity = (double.tryParse(
-              await DBManager().getKV('global_background_opacity') ?? '',
-            ) ??
-            _globalBackgroundOpacity)
-        .clamp(0.18, 0.70);
     notifyListeners();
   }
 
