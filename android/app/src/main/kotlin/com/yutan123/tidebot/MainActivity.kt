@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.BatteryManager
 import android.provider.Settings
+
 import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -42,6 +43,7 @@ import java.io.FileOutputStream
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
+    private var pendingInstallApk: File? = null
     // 悬浮窗消息转发已移除。
 
 
@@ -62,6 +64,26 @@ class MainActivity: FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         TideBackgroundWork.ensureScheduled(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val apk = pendingInstallApk ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+            pendingInstallApk = null
+            openApkInstaller(apk)
+        }
+    }
+
+    private fun openApkInstaller(apk: File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            this, "$packageName.fileprovider", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
@@ -235,15 +257,21 @@ class MainActivity: FlutterActivity() {
                         val apk = File(path)
                         if (!apk.exists()) {
                             result.error("missing_file", "APK file does not exist", null)
-                        } else {
-                            val uri = androidx.core.content.FileProvider.getUriForFile(
-                                this, "$packageName.fileprovider", apk)
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "application/vnd.android.package-archive")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            !packageManager.canRequestPackageInstalls()) {
+                            val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                                data = Uri.parse("package:$packageName")
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
-                            startActivity(intent)
+                            if (settingsIntent.resolveActivity(packageManager) != null) {
+                                pendingInstallApk = apk
+                                startActivity(settingsIntent)
+                                result.success(mapOf("permissionRequested" to true))
+                            } else {
+                                result.error("install_permission_unavailable", "无法打开未知来源安装授权设置", null)
+                            }
+                        } else {
+                            openApkInstaller(apk)
                             result.success(true)
                         }
                     }

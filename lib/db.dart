@@ -57,7 +57,7 @@ class DBManager {
     String path = join(await getDatabasesPath(), 'tidebot.db');
     return await openDatabase(
       path,
-      version: 26,
+      version: 28,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -163,6 +163,7 @@ class DBManager {
           )
         ''');
         await _createSkillTables(db);
+        await _createCallTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -390,7 +391,8 @@ class DBManager {
             );
           } catch (_) {}
         }
-
+        if (oldVersion < 27) await _createCallTables(db);
+        if (oldVersion < 28) await _migrateLegacyCallSummaries(db);
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -423,6 +425,51 @@ class DBManager {
         }
       },
     );
+  }
+
+  Future<void> _migrateLegacyCallSummaries(Database db) async {
+    final summaries = await db.query(
+      'chat_history',
+      where: "type = 'call_summary'",
+      orderBy: 'timestamp ASC',
+    );
+    if (summaries.isEmpty) return;
+
+    await db.transaction((txn) async {
+      for (final summary in summaries) {
+        final id = summary['id']?.toString() ?? '';
+        final botId = summary['bot_id']?.toString() ?? '';
+        if (id.isEmpty || botId.isEmpty) continue;
+        await txn.insert(
+          'call_sessions',
+          {
+            'id': 'legacy_$id',
+            'bot_id': botId,
+            'summary': summary['content']?.toString() ?? '',
+            'duration': (summary['duration'] as num?)?.toInt() ?? 0,
+            'status': 'completed',
+            'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        await txn.delete('chat_history', where: 'id = ?', whereArgs: [id]);
+      }
+    });
+  }
+
+  Future<void> _createCallTables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS call_sessions (
+      id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, summary TEXT NOT NULL,
+      duration INTEGER NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
+      FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS call_messages (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+      content TEXT NOT NULL, timestamp INTEGER NOT NULL,
+      FOREIGN KEY(session_id) REFERENCES call_sessions(id) ON DELETE CASCADE)''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_call_sessions_bot_created ON call_sessions(bot_id, created_at DESC)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_call_messages_session_time ON call_messages(session_id, timestamp)');
   }
 
   Future<void> _createSkillTables(Database db) async {
@@ -788,7 +835,9 @@ class DBManager {
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
     final db = await database;
     return await db.query('chat_history',
-        where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
+        where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
+        whereArgs: [botId],
+        orderBy: 'timestamp ASC');
   }
 
   Future<void> insertChatMessage(
@@ -855,6 +904,35 @@ class DBManager {
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> insertCallSession({
+    required Map<String, dynamic> session,
+    required List<Map<String, dynamic>> messages,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('call_sessions', session,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      for (final message in messages) {
+        await txn.insert('call_messages', message,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> queryCallSessions(String botId) async {
+    final db = await database;
+    return db.query('call_sessions',
+        where: 'bot_id = ?', whereArgs: [botId], orderBy: 'created_at DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> queryCallMessages(String sessionId) async {
+    final db = await database;
+    return db.query('call_messages',
+        where: 'session_id = ?',
+        whereArgs: [sessionId],
+        orderBy: 'timestamp ASC');
   }
 
   Future<void> clearChatHistory(String botId) async {
@@ -1158,7 +1236,7 @@ class DBManager {
       {int? limit, bool descending = false}) async {
     final db = await database;
     return await db.query('chat_history',
-        where: 'bot_id = ?',
+        where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
         whereArgs: [botId],
         orderBy: descending ? 'timestamp DESC' : 'timestamp ASC',
         limit: limit);

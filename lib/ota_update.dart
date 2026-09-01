@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app_navigation.dart';
 import 'db.dart';
@@ -108,18 +109,29 @@ class OtaUpdate {
         : '有新的 TideBot 版本可用。';
     final action = await TideDialogs.show<String>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (ctx) {
         final theme = TideTheme.of(ctx);
         return Center(
           child: Material(
             type: MaterialType.transparency,
             child: TideDialogs.glassContent(context: ctx, children: [
-              Text('发现新版本 $version',
-                  style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'TideFont')),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('发现新版本 $version',
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont')),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
               const SizedBox(height: 10),
               Text(notes,
                   style:
@@ -155,12 +167,111 @@ class OtaUpdate {
     try {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/TideBot.apk');
-      await _download(await _rankUrls(urls), file);
+      final selectedUrls = await _rankUrls(urls);
+      await _showDownloadProgress(context, selectedUrls, file);
       await _channel.invokeMethod('installApk', {'path': file.path});
     } catch (error) {
       if (context.mounted) {
-        GlobalNotice.show('更新下载失败：$error', color: const Color(0xFFE74C3C));
+        GlobalNotice.show('更新失败，正在打开浏览器下载：${_errorMessage(error)}',
+            color: const Color(0xFFE74C3C));
       }
+      try {
+        await _openBrowserFallback(urls.first);
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> _openBrowserFallback(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw const HttpException('无法打开浏览器下载页面');
+    }
+  }
+
+  static Future<void> _showDownloadProgress(
+    BuildContext context,
+    List<String> urls,
+    File destination,
+  ) async {
+    var cancelled = false;
+    http.Client? activeClient;
+    var dialogVisible = false;
+    var received = 0;
+    var total = 0;
+    void Function(void Function())? refresh;
+
+    void closeDialog() {
+      if (!dialogVisible || !context.mounted) return;
+      dialogVisible = false;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    final dialog = TideDialogs.show<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          refresh = setState;
+          final progress = total > 0 ? received / total : null;
+          return Center(
+            child: Material(
+              type: MaterialType.transparency,
+              child: TideDialogs.glassContent(
+                context: ctx,
+                children: [
+                  const Text('正在下载更新',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'TideFont')),
+                  const SizedBox(height: 14),
+                  LinearProgressIndicator(value: progress),
+                  const SizedBox(height: 8),
+                  Text(
+                    total > 0
+                        ? '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB'
+                        : '${(received / 1024 / 1024).toStringAsFixed(1)} MB',
+                    style: const TextStyle(fontFamily: 'TideFont'),
+                  ),
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        cancelled = true;
+                        activeClient?.close();
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('取消'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    dialogVisible = true;
+    try {
+      await _download(
+        urls,
+        destination,
+        isCancelled: () => cancelled,
+        onClientCreated: (client) => activeClient = client,
+        onProgress: (next, size) {
+          received = next;
+          total = size;
+          refresh?.call(() {});
+        },
+      );
+      closeDialog();
+    } catch (_) {
+      closeDialog();
+      rethrow;
+    } finally {
+      await dialog;
     }
   }
 
@@ -220,10 +331,20 @@ class OtaUpdate {
     return [...valid.map((probe) => probe.url), ...urls];
   }
 
-  static Future<void> _download(List<String> urls, File destination) async {
+  static Future<void> _download(
+    List<String> urls,
+    File destination, {
+    void Function(int received, int total)? onProgress,
+    bool Function()? isCancelled,
+    void Function(http.Client client)? onClientCreated,
+  }) async {
     final errors = <String>[];
     for (final url in urls) {
+      if (isCancelled?.call() == true) {
+        throw const HttpException('用户取消下载');
+      }
       final client = http.Client();
+      onClientCreated?.call(client);
       IOSink? sink;
       try {
         if (await destination.exists()) await destination.delete();
@@ -236,7 +357,20 @@ class OtaUpdate {
           continue;
         }
         sink = destination.openWrite(mode: FileMode.writeOnly);
-        await response.stream.pipe(sink);
+        var received = 0;
+        final total =
+            int.tryParse(response.headers['content-length'] ?? '') ?? 0;
+        await for (final chunk in response.stream) {
+          if (isCancelled?.call() == true) {
+            client.close();
+            throw const HttpException('用户取消下载');
+          }
+          sink.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received, total);
+        }
+        await sink.flush();
+        await sink.close();
         sink = null;
         final bytes = await destination.readAsBytes();
         if (bytes.length >= 4 &&
@@ -248,6 +382,10 @@ class OtaUpdate {
         }
         errors.add('$url 不是有效 APK 文件');
       } catch (error) {
+        if (isCancelled?.call() == true) {
+          if (await destination.exists()) await destination.delete();
+          rethrow;
+        }
         errors.add('$url $error');
       } finally {
         await sink?.close();

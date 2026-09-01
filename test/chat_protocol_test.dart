@@ -18,6 +18,7 @@ void main() {
       expect(chatListPreview(type: 'audio', rawContent: ''), '[语音]');
       expect(chatListPreview(type: 'call_summary', rawContent: ''), '[通话]');
       expect(chatListPreview(type: 'sticker', rawContent: ''), '[表情包]');
+      expect(chatListPreview(type: 'emoji', rawContent: ''), '[表情]');
     });
 
     test('uses trimmed text for ordinary messages', () {

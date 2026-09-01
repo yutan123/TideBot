@@ -21,6 +21,7 @@ class TideTheme extends ChangeNotifier {
   Size _configuredSize = Size.zero;
   bool _globalBackgroundReady = false;
   double _globalBackgroundOpacity = 0.38;
+  int _backgroundRequest = 0;
   final Map<_BackgroundRegion, bool> _backgroundLightness = {};
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
@@ -34,6 +35,7 @@ class TideTheme extends ChangeNotifier {
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
 
   void _setGlobalBackgroundImage(String path) {
+    _backgroundRequest++;
     _configuredBackgroundPath = '';
     _configuredDevicePixelRatio = 0;
     _configuredSize = Size.zero;
@@ -56,6 +58,8 @@ class TideTheme extends ChangeNotifier {
   }
 
   Future<bool> precacheGlobalBackground(BuildContext context) async {
+    final request = _backgroundRequest;
+    final path = _globalBackground;
     final image = _globalBackgroundImage;
     if (image == null) return false;
     final media = MediaQuery.maybeOf(context);
@@ -86,7 +90,10 @@ class TideTheme extends ChangeNotifier {
       );
       stream.addListener(listener);
       await _sampleBackgroundLightness(await ready.future);
-      _configuredBackgroundPath = _globalBackground;
+      if (request != _backgroundRequest || path != _globalBackground) {
+        return false;
+      }
+      _configuredBackgroundPath = path;
       _configuredDevicePixelRatio = dpr;
       _configuredSize = size;
       notifyListeners();
@@ -99,37 +106,56 @@ class TideTheme extends ChangeNotifier {
   }
 
   Future<void> _sampleBackgroundLightness(ui.Image image) async {
-    final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (bytes == null || image.width == 0 || image.height == 0) return;
-    final samples = <_BackgroundRegion, Rect>{
-      _BackgroundRegion.header: const Rect.fromLTWH(.15, 0, .7, .18),
-      _BackgroundRegion.content: const Rect.fromLTWH(.1, .25, .8, .5),
-      _BackgroundRegion.footer: const Rect.fromLTWH(.15, .78, .7, .2),
-    };
-    for (final entry in samples.entries) {
-      var total = 0.0;
-      var count = 0;
-      for (var y = 0; y < 3; y++) {
-        for (var x = 0; x < 3; x++) {
-          final px = ((entry.value.left + entry.value.width * (x / 2)) *
-                  (image.width - 1))
-              .round()
-              .clamp(0, image.width - 1)
-              .toInt();
-          final py = ((entry.value.top + entry.value.height * (y / 2)) *
-                  (image.height - 1))
-              .round()
-              .clamp(0, image.height - 1)
-              .toInt();
-          final offset = (py * image.width + px) * 4;
-          final r = bytes.getUint8(offset) / 255;
-          final g = bytes.getUint8(offset + 1) / 255;
-          final b = bytes.getUint8(offset + 2) / 255;
-          total += .2126 * r + .7152 * g + .0722 * b;
-          count++;
+    // Read a small rendered thumbnail rather than allocating a full RGBA copy of
+    // a potentially multi-megapixel camera image on the UI image pipeline.
+    const sampleSize = 48;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final paint = Paint()..filterQuality = FilterQuality.low;
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      const Rect.fromLTWH(0, 0, 48, 48),
+      paint,
+    );
+    final thumbnail =
+        await recorder.endRecording().toImage(sampleSize, sampleSize);
+    try {
+      final bytes =
+          await thumbnail.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (bytes == null) return;
+      final samples = <_BackgroundRegion, Rect>{
+        _BackgroundRegion.header: const Rect.fromLTWH(.15, 0, .7, .18),
+        _BackgroundRegion.content: const Rect.fromLTWH(.1, .25, .8, .5),
+        _BackgroundRegion.footer: const Rect.fromLTWH(.15, .78, .7, .2),
+      };
+      for (final entry in samples.entries) {
+        var total = 0.0;
+        var count = 0;
+        for (var y = 0; y < 3; y++) {
+          for (var x = 0; x < 3; x++) {
+            final px = ((entry.value.left + entry.value.width * (x / 2)) *
+                    (sampleSize - 1))
+                .round()
+                .clamp(0, sampleSize - 1)
+                .toInt();
+            final py = ((entry.value.top + entry.value.height * (y / 2)) *
+                    (sampleSize - 1))
+                .round()
+                .clamp(0, sampleSize - 1)
+                .toInt();
+            final offset = (py * sampleSize + px) * 4;
+            final r = bytes.getUint8(offset) / 255;
+            final g = bytes.getUint8(offset + 1) / 255;
+            final b = bytes.getUint8(offset + 2) / 255;
+            total += .2126 * r + .7152 * g + .0722 * b;
+            count++;
+          }
         }
+        _backgroundLightness[entry.key] = total / count > .55;
       }
-      _backgroundLightness[entry.key] = total / count > .55;
+    } finally {
+      thumbnail.dispose();
     }
   }
 
@@ -380,15 +406,18 @@ class TideTheme extends ChangeNotifier {
 
     final candidate = FileImage(File(path));
     final oldPath = _globalBackground;
-    _globalBackground = path;
-    _globalBackgroundImage = candidate;
-    _globalBackgroundReady = true;
-    _configuredBackgroundPath = '';
-    _configuredDevicePixelRatio = 0;
-    _configuredSize = Size.zero;
-    _backgroundLightness.clear();
-    notifyListeners();
     try {
+      await DBManager().insertKV('global_background_image', path);
+      await DBManager().insertKV('global_background_opacity',
+          _globalBackgroundOpacity.toStringAsFixed(2));
+      _globalBackground = path;
+      _globalBackgroundImage = candidate;
+      _globalBackgroundReady = true;
+      _configuredBackgroundPath = '';
+      _configuredDevicePixelRatio = 0;
+      _configuredSize = Size.zero;
+      _backgroundLightness.clear();
+      notifyListeners();
       await precacheImage(candidate, context,
           size: MediaQuery.maybeOf(context)?.size);
       final stream = candidate.resolve(_imageConfiguration(context));

@@ -12,7 +12,6 @@ import 'ui_components.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
-import 'message_delivery_service.dart';
 
 enum CallFlowState {
   idle,
@@ -83,11 +82,13 @@ class _CallPageState extends State<CallPage>
 
   // A fixed dBFS threshold breaks across microphones and misses whispering.
   // Speech must rise above the measured room floor for several samples.
-  static const int _speechStartTicks = 3;
-  static const int _silentStopTicks = 9;
-  static const double _minimumVoiceLevel = -52;
-  static const double _speechOverNoise = 9;
-  static const Duration _minimumRecordingDuration = Duration(seconds: 1);
+  static const int _speechStartTicks = 2;
+  static const int _silentStopTicks = 12;
+  static const double _minimumVoiceLevel = -58;
+  static const double _speechOverNoise = 6;
+  static const Duration _minimumRecordingDuration = Duration(milliseconds: 600);
+  static const String _callSystemPrompt =
+      '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   int _silentTicks = 0;
   int _voiceTicks = 0;
   DateTime? _recordingStartedAt;
@@ -159,6 +160,7 @@ class _CallPageState extends State<CallPage>
             allowTools: false,
             forceSingleReply: true,
             cancellationToken: token,
+            extraSystemPrompt: _callSystemPrompt,
           )
           .timeout(const Duration(seconds: 45));
       if (_ending) return;
@@ -386,7 +388,6 @@ class _CallPageState extends State<CallPage>
         path == null ? '录音未生成文件' : '录音已停止：$path，准备请求 STT',
       );
       _vadActive = false;
-      final hadSpeech = _speechDetected;
       _speechDetected = false;
       if (path == null || path.isEmpty) {
         if (mounted) {
@@ -402,16 +403,16 @@ class _CallPageState extends State<CallPage>
       final recordingDuration = _recordingStartedAt == null
           ? Duration.zero
           : DateTime.now().difference(_recordingStartedAt!);
-      if (!hadSpeech || recordingDuration < _minimumRecordingDuration) {
+      if (recordingDuration < _minimumRecordingDuration) {
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
-            _caption = !hadSpeech ? '没有检测到有效语音，请重新说一次' : '录音时间过短，请至少说一句完整的话';
+            _caption = '录音时间过短，请至少说一句完整的话';
           });
         }
         return;
       }
-      if (bytes < 1024) {
+      if (bytes < 512) {
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
@@ -494,6 +495,7 @@ class _CallPageState extends State<CallPage>
             allowTools: false,
             forceSingleReply: true,
             cancellationToken: token,
+            extraSystemPrompt: _callSystemPrompt,
           )
           .timeout(const Duration(seconds: 45));
       if (_ending) return;
@@ -694,9 +696,6 @@ class _CallPageState extends State<CallPage>
     ));
   }
 
-  String _callSummaryContent(String summary, List<String> transcript) =>
-      '$summary\n\n--- 通话原文 ---\n${transcript.join('\n')}';
-
   Future<void> _stopCallMedia(bool wasRecording) async {
     try {
       if (wasRecording) await _recorder.stop();
@@ -738,17 +737,32 @@ class _CallPageState extends State<CallPage>
       }
     }
     final now = DateTime.now().millisecondsSinceEpoch;
-    final content = _callSummaryContent(summary, transcript);
-    await MessageDeliveryService.instance.insert({
-      'id': 'call_$now',
-      'bot_id': botId,
-      'role': 'assistant',
-      'type': 'call_summary',
-      'content': content,
-      'duration': duration.inSeconds,
-      'mood': failed ? 'failed' : 'complete',
-      'timestamp': now,
-    });
+    final sessionId = 'call_$now';
+    final messages = <Map<String, dynamic>>[];
+    for (var index = 0; index < transcript.length; index++) {
+      final line = transcript[index];
+      final isUser = line.startsWith('用户：');
+      final content = line.replaceFirst(RegExp(r'^(用户|机器人)：'), '').trim();
+      if (content.isEmpty) continue;
+      messages.add({
+        'id': '${sessionId}_$index',
+        'session_id': sessionId,
+        'role': isUser ? 'user' : 'assistant',
+        'content': content,
+        'timestamp': now + index,
+      });
+    }
+    await DBManager().insertCallSession(
+      session: {
+        'id': sessionId,
+        'bot_id': botId,
+        'summary': summary,
+        'duration': duration.inSeconds,
+        'status': failed ? 'failed' : 'complete',
+        'created_at': now,
+      },
+      messages: messages,
+    );
     if (!failed && summary.isNotEmpty) {
       await DBManager().upsertMemoryItem(
         botId: botId,

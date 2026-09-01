@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
 import 'global_notice.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,6 +28,7 @@ import 'media_preprocessor.dart';
 import 'emotion_state_service.dart';
 import 'chat_protocol.dart';
 import 'ui_call.dart';
+import 'ui_call_history.dart';
 import 'ui_space_square.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -417,6 +420,209 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // 手机操控确认流程已移除。
 
   // ========== 发送消息 ==========
+  static const _emoji = <({String asset, String label})>[
+    (asset: 'assets/emoji/1f600.svg', label: '开心'),
+    (asset: 'assets/emoji/1f602.svg', label: '大笑'),
+    (asset: 'assets/emoji/1f97a.svg', label: '感动'),
+    (asset: 'assets/emoji/1f60d.svg', label: '喜欢'),
+    (asset: 'assets/emoji/1f618.svg', label: '亲亲'),
+    (asset: 'assets/emoji/1f622.svg', label: '难过'),
+    (asset: 'assets/emoji/1f62d.svg', label: '哭泣'),
+    (asset: 'assets/emoji/1f621.svg', label: '生气'),
+    (asset: 'assets/emoji/1f633.svg', label: '惊讶'),
+    (asset: 'assets/emoji/1f634.svg', label: '困倦'),
+    (asset: 'assets/emoji/1f914.svg', label: '思考'),
+    (asset: 'assets/emoji/1f644.svg', label: '无语'),
+    (asset: 'assets/emoji/1f44d.svg', label: '点赞'),
+    (asset: 'assets/emoji/1f44f.svg', label: '鼓掌'),
+    (asset: 'assets/emoji/1f64f.svg', label: '感谢'),
+    (asset: 'assets/emoji/1f91d.svg', label: '握手'),
+    (asset: 'assets/emoji/2764.svg', label: '爱心'),
+    (asset: 'assets/emoji/1f389.svg', label: '庆祝'),
+    (asset: 'assets/emoji/2728.svg', label: '闪耀'),
+    (asset: 'assets/emoji/1f339.svg', label: '送花'),
+  ];
+
+  Future<void> _sendEmoji(({String asset, String label}) emoji) async {
+    if (_loading) return;
+    final botId = _bot['id']?.toString() ?? '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final message = <String, dynamic>{
+      'id': 'emoji_$now',
+      'bot_id': botId,
+      'role': 'user',
+      'type': 'emoji',
+      'content': emoji.label,
+      'file_path': emoji.asset,
+      'timestamp': now,
+    };
+    setState(() {
+      _msgs.add(message);
+      _loading = true;
+      _typing = true;
+    });
+    _scrollDown();
+    try {
+      await MessageDeliveryService.instance.insert(message);
+      await _send(
+        noUserBubble: true,
+        mediaContext: '[表情：${emoji.label}]',
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _msgs.remove(message);
+          _loading = false;
+          _typing = false;
+        });
+      }
+      GlobalNotice.show('发送表情失败：$error');
+    }
+  }
+
+  Future<void> _sendSticker(Map<String, dynamic> sticker) async {
+    if (_loading) return;
+    final path = sticker['file_path']?.toString() ?? '';
+    if (path.isEmpty || !File(path).existsSync()) {
+      GlobalNotice.show('表情包文件不可用');
+      return;
+    }
+    final botId = _bot['id']?.toString() ?? '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final message = <String, dynamic>{
+      'id': 'sticker_$now',
+      'bot_id': botId,
+      'role': 'user',
+      'type': 'sticker',
+      'content': sticker['emotion']?.toString().trim() ?? '',
+      'file_path': path,
+      'timestamp': now,
+    };
+    setState(() {
+      _msgs.add(message);
+      _loading = true;
+      _typing = true;
+    });
+    _scrollDown();
+    try {
+      await MessageDeliveryService.instance.insert(message);
+      await _send(
+        noUserBubble: true,
+        mediaContext:
+            '[用户发送了一个表情包，类型：${message['content'].toString().isEmpty ? '未分类' : message['content']}]',
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _msgs.remove(message);
+          _loading = false;
+          _typing = false;
+        });
+      }
+      GlobalNotice.show('发送表情包失败：$error');
+    }
+  }
+
+  Future<void> _showEmojiPanel() async {
+    _inputFocus.unfocus();
+    final stickers = await DBManager().queryStickers();
+    if (!mounted) return;
+    await showTideSheet<void>(
+      context: context,
+      height: 360,
+      child: Builder(builder: (ctx) {
+        final theme = TideTheme.of(ctx);
+        return DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(tabs: [Tab(text: 'Emoji'), Tab(text: '我的表情')]),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    GridView.builder(
+                      padding: const EdgeInsets.all(12),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 5,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                      ),
+                      itemCount: _emoji.length,
+                      itemBuilder: (_, index) {
+                        final emoji = _emoji[index];
+                        return Tooltip(
+                          message: emoji.label,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              unawaited(_sendEmoji(emoji));
+                            },
+                            child: Center(
+                              child: SvgPicture.asset(
+                                emoji.asset,
+                                width: 30,
+                                height: 30,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    stickers.isEmpty
+                        ? Center(
+                            child: Text('暂无我的表情',
+                                style: TextStyle(
+                                    color: theme.textWeak,
+                                    fontFamily: 'TideFont')))
+                        : GridView.builder(
+                            padding: const EdgeInsets.all(12),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 4,
+                              mainAxisSpacing: 10,
+                              crossAxisSpacing: 10,
+                            ),
+                            itemCount: stickers.length,
+                            itemBuilder: (_, index) {
+                              final sticker = stickers[index];
+                              final path =
+                                  sticker['file_path']?.toString() ?? '';
+                              return Tooltip(
+                                message:
+                                    sticker['emotion']?.toString() ?? '表情包',
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    unawaited(_sendSticker(sticker));
+                                  },
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: path.isNotEmpty &&
+                                            File(path).existsSync()
+                                        ? Image.file(File(path),
+                                            fit: BoxFit.cover)
+                                        : ColoredBox(
+                                            color: theme.surfaceVariant,
+                                            child: const Icon(
+                                                Icons.broken_image_outlined)),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
   Future<void> _send({
     List<String>? images,
     List<String>? documents,
@@ -2210,7 +2416,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 有全局背景图时只增强前景对比度，不改变 2afdaae 的 Stack/Column 结构。
     final String? effBg = _hasBg ? _customBg : null;
     return Scaffold(
-      resizeToAvoidBottomInset: false,
+      resizeToAvoidBottomInset: true,
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       body: Stack(
@@ -2336,6 +2542,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     icon: Icon(Icons.call_rounded,
                         size: 20, color: theme.primary),
                     onPressed: _openCallPreparation,
+                  ),
+                  IconButton(
+                    tooltip: '通话记录',
+                    icon: Icon(Icons.history_rounded,
+                        size: 20, color: theme.iconMuted),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => CallHistoryPage(bot: _bot),
+                      ),
+                    ),
                   ),
                   IconButton(
                     icon: Icon(Icons.delete_outline_rounded,
@@ -2529,6 +2745,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             ((m['type'] == 'image' || m['type'] == 'sticker')
                 ? filePath
                 : null);
+        final emojiAsset = m['type'] == 'emoji' ? filePath : null;
         final audioPath =
             m['audio']?.toString() ?? (m['type'] == 'audio' ? filePath : null);
         final documentPath = m['type'] == 'document' ? filePath : null;
@@ -2545,9 +2762,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             ? documentName.split('.').last.toUpperCase()
             : '文件';
         final isSticker = m['type'] == 'sticker';
-        // 表情包的 content 是内部情绪分类，绝不能作为正文显示。
+        final isEmoji = m['type'] == 'emoji';
+        // 表情包和固定 emoji 的 content 都是模型语义，绝不能作为正文显示。
         final hasSummary = m['type'] == 'call_summary';
-        final txt = isSticker ? '' : ((m['content'] as String?) ?? '');
+        final txt =
+            (isSticker || isEmoji) ? '' : ((m['content'] as String?) ?? '');
         final sharedPost = _sharedPostPayload(m);
         final replyId = m['reply_to_id']?.toString();
         final sources = _decodeSources(m['sources_json']);
@@ -2817,6 +3036,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                           ),
                                         ),
                                       ),
+                                    ),
+                                  if (isEmoji && emojiAsset != null)
+                                    SizedBox(
+                                      width: 48,
+                                      height: 48,
+                                      child: SvgPicture.asset(emojiAsset),
                                     ),
                                   // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
                                   if (hasAudio)
@@ -3131,72 +3356,65 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Widget _inputBar() {
     final theme = TideTheme.of(context);
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: SafeArea(
-        key: _composerKey,
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-        child: SlideTransition(
-          position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
-              .animate(
-            CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
+    final hasSendContent =
+        _hasText || _pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty;
+    return SafeArea(
+      key: _composerKey,
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
+            .animate(
+          CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
+        ),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 54),
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+          decoration: BoxDecoration(
+            color: theme.surfaceVariant,
+            borderRadius: BorderRadius.circular(27),
           ),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 54),
-            padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-            decoration: BoxDecoration(
-              color: theme.surfaceVariant,
-              borderRadius: BorderRadius.circular(27),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-                    child: _attachmentPreview(theme),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                  child: _attachmentPreview(theme),
+                ),
+              Row(
+                children: [
+                  IconButton(
+                    tooltip: '表情',
+                    onPressed: _showEmojiPanel,
+                    onLongPress: _pickMedia,
+                    icon: Icon(Icons.emoji_emotions_outlined,
+                        size: 23, color: theme.iconMuted),
                   ),
-                Row(
-                  children: [
-                    IconButton(
-                      tooltip: '添加图片或文件',
-                      onPressed: _pickMedia,
-                      icon: Icon(Icons.add_rounded,
-                          size: 23, color: theme.iconMuted),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        focusNode: _inputFocus,
-                        controller: _msgC,
-                        minLines: 1,
-                        maxLines: 4,
-                        textInputAction: TextInputAction.newline,
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontFamily: 'TideFont',
-                            color: theme.textStrong),
-                        decoration: InputDecoration(
-                          hintText: '发消息...',
-                          hintStyle: TextStyle(
-                              color: theme.textFaint,
-                              fontSize: 14,
-                              fontFamily: 'TideFont'),
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 10),
-                        ),
+                  Expanded(
+                    child: TextField(
+                      focusNode: _inputFocus,
+                      controller: _msgC,
+                      minLines: 1,
+                      maxLines: 4,
+                      textInputAction: TextInputAction.newline,
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontFamily: 'TideFont',
+                          color: theme.textStrong),
+                      decoration: InputDecoration(
+                        hintText: '发消息...',
+                        hintStyle: TextStyle(
+                            color: theme.textFaint,
+                            fontSize: 14,
+                            fontFamily: 'TideFont'),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 10),
                       ),
                     ),
-                    IconButton(
-                      tooltip: _isRecording ? '结束录音' : '录音',
-                      onPressed: _toggleRec,
-                      icon: Icon(Icons.mic_rounded,
-                          size: 22,
-                          color: _isRecording ? Colors.red : theme.iconMuted),
-                    ),
+                  ),
+                  if (hasSendContent)
                     SizedBox(
                       width: 44,
                       height: 44,
@@ -3204,28 +3422,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         tooltip: '发送',
                         splashRadius: 22,
                         onPressed: _send,
-                        icon: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
+                        icon: Container(
                           width: 34,
                           height: 34,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: theme.primary.withValues(
-                                alpha: (_hasText ||
-                                        _pendingImages.isNotEmpty ||
-                                        _pendingDocuments.isNotEmpty)
-                                    ? 1
-                                    : .42),
+                            color: theme.primary,
                           ),
                           child: const Icon(Icons.arrow_upward_rounded,
                               size: 18, color: Colors.white),
                         ),
                       ),
+                    )
+                  else
+                    IconButton(
+                      tooltip: _isRecording ? '结束录音' : '录音',
+                      onPressed: _toggleRec,
+                      icon: Icon(Icons.mic_rounded,
+                          size: 22,
+                          color: _isRecording ? Colors.red : theme.iconMuted),
                     ),
-                  ],
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

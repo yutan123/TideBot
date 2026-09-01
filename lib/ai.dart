@@ -128,6 +128,7 @@ class AIManager {
     bool allowTools = true,
     bool forceSingleReply = false,
     bool notifyResponse = false,
+    String extraSystemPrompt = '',
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
   }) async {
@@ -184,6 +185,7 @@ class AIManager {
           allowTools: allowTools,
           forceSingleReply: forceSingleReply,
           notifyResponse: notifyResponse,
+          extraSystemPrompt: extraSystemPrompt,
           cancellationToken: cancellationToken,
           // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
           // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
@@ -284,14 +286,6 @@ class AIManager {
       if (message is Map) {
         final content = fromValue(message['content']);
         if (content.isNotEmpty) return content;
-        // DeepSeek-compatible endpoints occasionally place the only human
-        // readable answer in reasoning_content while content is empty.
-        final reasoning = fromValue(
-          message['reasoning_content'] ??
-              message['reasoning'] ??
-              message['analysis'],
-        );
-        if (reasoning.isNotEmpty) return reasoning;
       }
       final text = fromValue(choice['text']);
       if (text.isNotEmpty) return text;
@@ -329,6 +323,7 @@ class AIManager {
     bool allowTools = true,
     bool forceSingleReply = false,
     bool notifyResponse = false,
+    String extraSystemPrompt = '',
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
     String forcedLocalId = '',
@@ -502,6 +497,9 @@ class AIManager {
     const conversationFocusContext =
         '\n【当前话题规则】优先回应最新一条用户消息及其直接上下文。旧记忆、旧计划、曾经提过的学习或待办仅在用户本轮明确提及、询问进展或与当前请求直接相关时引用。用户已转向新话题或自然结束话题后，不得主动把旧话题重新带回、重复追问或将一次性提及擅自升级为未来任务。需要澄清时只围绕当前请求提出一个必要问题；同一非当前主题不要连续主动追问。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
+        (extraSystemPrompt.trim().isEmpty
+            ? ''
+            : '\n【当前会话约束】${extraSystemPrompt.trim()}') +
         conversationFocusContext +
         _safetyContext(text) +
         lifeContext +
@@ -524,9 +522,9 @@ class AIManager {
     for (final msg in history.reversed) {
       final type = msg['type']?.toString() ?? 'text';
       if (type != 'text' &&
-          type != 'call_summary' &&
           type != 'image' &&
           type != 'sticker' &&
+          type != 'emoji' &&
           type != 'shared_post') {
         continue;
       }
@@ -572,9 +570,9 @@ class AIManager {
       (msg) {
         final type = msg['type']?.toString() ?? 'text';
         return (type == 'text' ||
-                type == 'call_summary' ||
                 type == 'image' ||
                 type == 'sticker' ||
+                type == 'emoji' ||
                 type == 'shared_post') &&
             msg['error_log']?.toString().isNotEmpty != true &&
             msg['error_code']?.toString().isNotEmpty != true;
@@ -2226,6 +2224,12 @@ $transcript''';
         force: true,
       );
 
+  String _imagePromptWithStyle(String prompt, String style) {
+    final normalized = prompt.trim();
+    if (style.isEmpty || style == '不选择') return normalized;
+    return '$normalized。画面必须严格采用$style风格，除该风格外不得使用冲突的视觉表现。';
+  }
+
   Future<String?> _generateImageIfAuthorized({
     required DBManager db,
     required String botId,
@@ -2245,11 +2249,8 @@ $transcript''';
       '',
     );
     if (baseUrl.isEmpty) return null;
-    // “不选择”或空风格时不给生图模型任何风格约束，让模型自行决定；
-    // 只有填写了具体风格才拼进 prompt。
     final styleRaw = (await db.getKV('bot_image_style') ?? '').trim();
-    final styleSuffix =
-        (styleRaw.isEmpty || styleRaw == '不选择') ? '' : '，画面风格：$styleRaw。';
+    final imagePrompt = _imagePromptWithStyle(prompt, styleRaw);
     try {
       final response = await http
           .post(
@@ -2260,7 +2261,7 @@ $transcript''';
             },
             body: jsonEncode({
               'model': provider['model'],
-              'prompt': '$prompt$styleSuffix',
+              'prompt': imagePrompt,
               'n': 1,
               'size': '1024x1024',
             }),
@@ -3407,9 +3408,7 @@ $transcript''';
   }) {
     final type = msg['type']?.toString() ?? 'text';
     final content = msg['content']?.toString() ?? '';
-    if (type == 'call_summary') {
-      return '【语音通话记录】时长：${msg['duration'] ?? 0} 秒。通话摘要：$content';
-    }
+    if (type == 'call_summary') return null;
     if (type == 'image') {
       final path = msg['file_path']?.toString() ?? '';
       final number = imageNumberByPath[path];
@@ -3417,7 +3416,12 @@ $transcript''';
       return formatImagePlaceholder(number, caption: content);
     }
     if (type == 'sticker') {
-      return '[表情包]';
+      final emotion = content.trim();
+      return emotion.isEmpty ? '[用户发送了一个表情包]' : '[用户发送了一个表情包，类型：$emotion]';
+    }
+    if (type == 'emoji') {
+      final label = content.trim();
+      return label.isEmpty ? '[表情]' : '[表情：$label]';
     }
     if (type == 'shared_post') {
       return sharedPostContexts[_sharedPostHistoryKey(msg)] ??

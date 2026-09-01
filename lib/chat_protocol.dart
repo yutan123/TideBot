@@ -11,6 +11,7 @@ String chatListPreview({
     'video' => '[视频]',
     'document' || 'file' => '[文件]',
     'sticker' => '[表情包]',
+    'emoji' => '[表情]',
     'call_summary' => '[通话]',
     _ => '[消息]',
   };

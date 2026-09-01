@@ -209,15 +209,15 @@ class _ProfilePageState extends State<ProfilePage> {
     return FrostCard(
       margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            Icon(s['icon'] as IconData, size: 22, color: theme.primary),
+            Icon(s['icon'] as IconData, size: 20, color: theme.primary),
             const SizedBox(width: 14),
             Expanded(
               child: Text(s['title'] ?? '',
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 15,
                       fontFamily: 'TideFont',
                       color: theme.onBackgroundStrong)),
             ),
