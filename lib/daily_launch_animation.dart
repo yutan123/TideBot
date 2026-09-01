@@ -27,19 +27,28 @@ class _DailyLaunchAnimationState extends State<DailyLaunchAnimation>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     );
-    _prepare();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_prepare());
+    });
   }
 
   Future<void> _prepare() async {
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month}-${now.day}';
-    if (prefs.getString('launch_animation_date') == today) return;
-    await prefs.setString('launch_animation_date', today);
-    if (!mounted) return;
-    setState(() => _visible = true);
-    _controller.forward();
-    _timer = Timer(const Duration(milliseconds: 1600), _dismiss);
+    try {
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 3));
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month}-${now.day}';
+      if (prefs.getString('launch_animation_date') == today) return;
+      await prefs
+          .setString('launch_animation_date', today)
+          .timeout(const Duration(seconds: 3));
+      if (!mounted) return;
+      setState(() => _visible = true);
+      _controller.forward();
+      _timer = Timer(const Duration(milliseconds: 1600), _dismiss);
+    } catch (_) {
+      // This decorative transition must never delay access to the app.
+    }
   }
 
   void _dismiss() {

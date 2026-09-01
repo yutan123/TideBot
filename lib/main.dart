@@ -57,6 +57,8 @@ void main() {
 }
 
 Future<void> _startBackgroundServices() async {
+  // Delay all nonessential work until Flutter has had an opportunity to paint.
+  await Future<void>.delayed(Duration.zero);
   unawaited(_runStartupTask('theme', tideTheme.loadFromDB));
   unawaited(
     _runStartupTask(
