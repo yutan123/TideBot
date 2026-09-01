@@ -18,7 +18,7 @@ import 'ui_components.dart';
 class OtaUpdate {
   static const _channel = MethodChannel('tidebot.native.channel');
   static const _releaseApi =
-      'https://api.github.com/repos/yutan123/TideBot/releases';
+      'https://api.github.com/repos/yutan123/TideBot-OTA/releases';
 
   static Future<void> checkOncePerDay() async {
     final db = DBManager();

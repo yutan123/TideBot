@@ -432,7 +432,8 @@ class AIManager {
         ? await _planStickerForTurn(db)
         : const _StickerPlan.disabled();
     final allowSticker = stickerPlan.required;
-    final stickerEmotions = stickerPlan.emotions;
+    final stickerEmotions =
+        allowTools ? await _availableStickerEmotions(db) : const <String>[];
     final effectiveImagePaths = imagePaths.isNotEmpty
         ? imagePaths
         : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
@@ -2463,6 +2464,18 @@ $transcript''';
     replyTextCallback('任务已达到连续操作上限，请确认当前结果后再继续。');
   }
 
+  Future<List<String>> _availableStickerEmotions(DBManager db) async {
+    if (await db.getKV('bot_stickers_enabled') != 'true') {
+      return const [];
+    }
+    final emotions = <String>{};
+    for (final sticker in await db.queryStickers()) {
+      final emotion = sticker['emotion']?.toString().trim() ?? '';
+      if (emotion.isNotEmpty) emotions.add(emotion);
+    }
+    return emotions.toList()..sort();
+  }
+
   Future<_StickerPlan> _planStickerForTurn(DBManager db) async {
     if (await db.getKV('bot_stickers_enabled') != 'true') {
       return const _StickerPlan.disabled();
@@ -3350,9 +3363,9 @@ $transcript''';
         '【本轮强制协议】必须先通过 set_emotion 调用一次写入心情，再给出正常、可见的文字回复。不得调用 choose_silence，不得在正文输出心情、表情包、工具名或内部标签。',
       );
     }
-    if (requireSticker && stickerEmotions.isNotEmpty) {
+    if (stickerEmotions.isNotEmpty) {
       parts.add(
-        '【本轮强制表情包】概率已命中，必须且只能调用一次 send_sticker(type=分类)；可用分类包括 ${stickerEmotions.join('、')}。不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。选择后仍必须提供正常文字回复，绝不在正文输出表情包标签。',
+        '【本轮可用表情包】可用分类包括 ${stickerEmotions.join('、')}。只有确实需要发送表情包时才调用 send_sticker，type 必须来自上述列表；不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。',
       );
     }
     if (inspectableImageNumbers.isNotEmpty) {

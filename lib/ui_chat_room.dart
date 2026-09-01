@@ -304,11 +304,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _handleInputFocus() {
-    if (!_inputFocus.hasFocus) return;
-    // 等键盘 inset 完成布局后再定位，末条消息会和输入栏一起露出，且不触发进场跳动。
-    Future<void>.delayed(const Duration(milliseconds: 260), () {
-      if (mounted && _inputFocus.hasFocus) _scrollDown(animated: false);
-    });
+    // The composer is attached to the keyboard; do not perform a second scroll.
   }
 
   void _scrollDown({bool animated = true}) {
@@ -2189,6 +2185,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 有全局背景图时只增强前景对比度，不改变 2afdaae 的 Stack/Column 结构。
     final String? effBg = _hasBg ? _customBg : null;
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       body: Stack(
@@ -3109,96 +3106,101 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Widget _inputBar() {
     final theme = TideTheme.of(context);
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
-    return SafeArea(
-      key: _composerKey,
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-      child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
-            .animate(
-          CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
-        ),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 54),
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-          decoration: BoxDecoration(
-            color: theme.surfaceVariant,
-            borderRadius: BorderRadius.circular(27),
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        key: _composerKey,
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, .08), end: Offset.zero)
+              .animate(
+            CurvedAnimation(parent: _bottomBarCtrl, curve: Curves.easeOutCubic),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-                  child: _attachmentPreview(theme),
-                ),
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: '添加图片或文件',
-                    onPressed: _pickMedia,
-                    icon: Icon(Icons.add_rounded,
-                        size: 23, color: theme.iconMuted),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 54),
+            padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+            decoration: BoxDecoration(
+              color: theme.surfaceVariant,
+              borderRadius: BorderRadius.circular(27),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                    child: _attachmentPreview(theme),
                   ),
-                  Expanded(
-                    child: TextField(
-                      focusNode: _inputFocus,
-                      controller: _msgC,
-                      minLines: 1,
-                      maxLines: 4,
-                      textInputAction: TextInputAction.newline,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontFamily: 'TideFont',
-                          color: theme.textStrong),
-                      decoration: InputDecoration(
-                        hintText: '发消息...',
-                        hintStyle: TextStyle(
-                            color: theme.textFaint,
-                            fontSize: 14,
-                            fontFamily: 'TideFont'),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 10),
-                      ),
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: '添加图片或文件',
+                      onPressed: _pickMedia,
+                      icon: Icon(Icons.add_rounded,
+                          size: 23, color: theme.iconMuted),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: _isRecording ? '结束录音' : '录音',
-                    onPressed: _toggleRec,
-                    icon: Icon(Icons.mic_rounded,
-                        size: 22,
-                        color: _isRecording ? Colors.red : theme.iconMuted),
-                  ),
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: IconButton(
-                      tooltip: '发送',
-                      splashRadius: 22,
-                      onPressed: _send,
-                      icon: AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: theme.primary.withValues(
-                              alpha: (_hasText ||
-                                      _pendingImages.isNotEmpty ||
-                                      _pendingDocuments.isNotEmpty)
-                                  ? 1
-                                  : .42),
+                    Expanded(
+                      child: TextField(
+                        focusNode: _inputFocus,
+                        controller: _msgC,
+                        minLines: 1,
+                        maxLines: 4,
+                        textInputAction: TextInputAction.newline,
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontFamily: 'TideFont',
+                            color: theme.textStrong),
+                        decoration: InputDecoration(
+                          hintText: '发消息...',
+                          hintStyle: TextStyle(
+                              color: theme.textFaint,
+                              fontSize: 14,
+                              fontFamily: 'TideFont'),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 10),
                         ),
-                        child: const Icon(Icons.arrow_upward_rounded,
-                            size: 18, color: Colors.white),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                    IconButton(
+                      tooltip: _isRecording ? '结束录音' : '录音',
+                      onPressed: _toggleRec,
+                      icon: Icon(Icons.mic_rounded,
+                          size: 22,
+                          color: _isRecording ? Colors.red : theme.iconMuted),
+                    ),
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: IconButton(
+                        tooltip: '发送',
+                        splashRadius: 22,
+                        onPressed: _send,
+                        icon: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: theme.primary.withValues(
+                                alpha: (_hasText ||
+                                        _pendingImages.isNotEmpty ||
+                                        _pendingDocuments.isNotEmpty)
+                                    ? 1
+                                    : .42),
+                          ),
+                          child: const Icon(Icons.arrow_upward_rounded,
+                              size: 18, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

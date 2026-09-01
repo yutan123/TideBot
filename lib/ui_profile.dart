@@ -200,7 +200,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     return FrostCard(
       padding: const EdgeInsets.all(20),
-      liquid: theme.hasGlobalBackground,
       child: content,
     );
   }
@@ -209,22 +208,23 @@ class _ProfilePageState extends State<ProfilePage> {
     final theme = TideTheme.of(context);
     return FrostCard(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      liquid: theme.hasGlobalBackground,
-      child: Row(
-        children: [
-          Icon(s['icon'] as IconData, size: 22, color: theme.primary),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(s['title'] ?? '',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontFamily: 'TideFont',
-                    color: theme.onBackgroundStrong)),
-          ),
-          Icon(Icons.arrow_forward_ios_rounded,
-              size: 14, color: theme.onBackgroundWeak),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(s['icon'] as IconData, size: 22, color: theme.primary),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(s['title'] ?? '',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontFamily: 'TideFont',
+                      color: theme.onBackgroundStrong)),
+            ),
+            Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: theme.onBackgroundWeak),
+          ],
+        ),
       ),
     );
   }

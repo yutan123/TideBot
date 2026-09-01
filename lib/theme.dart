@@ -16,8 +16,6 @@ class TideTheme extends ChangeNotifier {
   Color _primaryLight = const Color(0xFF9CD4BC);
   String _globalBackground = '';
   FileImage? _globalBackgroundImage;
-  FileImage? _pendingBackgroundImage;
-  String _pendingBackgroundPath = '';
   String _configuredBackgroundPath = '';
   double _configuredDevicePixelRatio = 0;
   Size _configuredSize = Size.zero;
@@ -369,12 +367,8 @@ class TideTheme extends ChangeNotifier {
 
     if (path.isEmpty) {
       await DBManager().insertKV('global_background_image', '');
-      await DBManager().insertKV(
-        'global_background_opacity',
-        _globalBackgroundOpacity.toStringAsFixed(2),
-      );
-      _pendingBackgroundImage = null;
-      _pendingBackgroundPath = '';
+      await DBManager().insertKV('global_background_opacity',
+          _globalBackgroundOpacity.toStringAsFixed(2));
       _globalBackground = '';
       _setGlobalBackgroundImage('');
       notifyListeners();
@@ -385,6 +379,15 @@ class TideTheme extends ChangeNotifier {
     }
 
     final candidate = FileImage(File(path));
+    final oldPath = _globalBackground;
+    _globalBackground = path;
+    _globalBackgroundImage = candidate;
+    _globalBackgroundReady = true;
+    _configuredBackgroundPath = '';
+    _configuredDevicePixelRatio = 0;
+    _configuredSize = Size.zero;
+    _backgroundLightness.clear();
+    notifyListeners();
     try {
       await precacheImage(candidate, context,
           size: MediaQuery.maybeOf(context)?.size);
@@ -398,41 +401,27 @@ class TideTheme extends ChangeNotifier {
         },
         onError: (_, __) {
           stream.removeListener(listener);
-          if (!ready.isCompleted) {
-            ready.completeError(StateError('背景图片解码失败'));
-          }
+          if (!ready.isCompleted) ready.completeError(StateError('背景图片解码失败'));
         },
       );
       stream.addListener(listener);
-      final decoded = await ready.future;
-      await _sampleBackgroundLightness(decoded);
+      await _sampleBackgroundLightness(await ready.future);
+      _configuredBackgroundPath = path;
+      _configuredDevicePixelRatio =
+          MediaQuery.maybeOf(context)?.devicePixelRatio ??
+              View.of(context).devicePixelRatio;
+      _configuredSize = MediaQuery.maybeOf(context)?.size ?? Size.zero;
+      await DBManager().insertKV('global_background_image', path);
+      await DBManager().insertKV('global_background_opacity',
+          _globalBackgroundOpacity.toStringAsFixed(2));
+      notifyListeners();
     } catch (_) {
-      // Preserve the previously active image and database value on failure.
+      _globalBackground = oldPath;
+      _setGlobalBackgroundImage(oldPath);
+      _globalBackgroundReady = true;
+      notifyListeners();
       rethrow;
     }
-    _pendingBackgroundImage = candidate;
-    _pendingBackgroundPath = path;
-    if (_pendingBackgroundImage != candidate ||
-        _pendingBackgroundPath != path) {
-      return;
-    }
-
-    _globalBackground = path;
-    _globalBackgroundImage = candidate;
-    _configuredBackgroundPath = path;
-    _configuredDevicePixelRatio =
-        MediaQuery.maybeOf(context)?.devicePixelRatio ??
-            View.of(context).devicePixelRatio;
-    _configuredSize = MediaQuery.maybeOf(context)?.size ?? Size.zero;
-    _globalBackgroundReady = true;
-    _pendingBackgroundImage = null;
-    _pendingBackgroundPath = '';
-    await DBManager().insertKV('global_background_image', path);
-    await DBManager().insertKV(
-      'global_background_opacity',
-      _globalBackgroundOpacity.toStringAsFixed(2),
-    );
-    notifyListeners();
   }
 
   /// Restores the shipped mint palette and system appearance.

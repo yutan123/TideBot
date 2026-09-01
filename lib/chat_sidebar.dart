@@ -207,10 +207,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Material(
-                  color: Color.alphaBlend(
-                    theme.primary.withValues(alpha: theme.isDark ? .10 : .06),
-                    theme.surface.withValues(alpha: .97),
-                  ),
+                  color: theme.surface,
                   child: SafeArea(
                     right: false,
                     child: SizedBox(

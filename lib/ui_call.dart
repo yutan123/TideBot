@@ -11,6 +11,7 @@ import 'theme.dart';
 import 'ui_components.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
+import 'db.dart';
 import 'message_delivery_service.dart';
 
 enum CallFlowState {
@@ -679,21 +680,28 @@ class _CallPageState extends State<CallPage>
     final wasRecording = _recording;
     _recording = false;
     _botSpeaking = false;
-    try {
-      if (wasRecording) await _recorder.stop();
-      await _player.stop();
-    } catch (_) {}
 
     final duration = DateTime.now().difference(_startedAt);
     final botId = widget.bot['id']?.toString() ?? '';
     final transcript = List<String>.from(_transcript);
     if (mounted) Navigator.pop(context);
+    unawaited(_stopCallMedia(wasRecording));
     if (duration.inMilliseconds < 1000 || botId.isEmpty) return;
     unawaited(_persistCallSummary(
       botId: botId,
       duration: duration,
       transcript: transcript,
     ));
+  }
+
+  String _callSummaryContent(String summary, List<String> transcript) =>
+      '$summary\n\n--- 通话原文 ---\n${transcript.join('\n')}';
+
+  Future<void> _stopCallMedia(bool wasRecording) async {
+    try {
+      if (wasRecording) await _recorder.stop();
+      await _player.stop();
+    } catch (_) {}
   }
 
   Future<void> _persistCallSummary({
@@ -709,7 +717,7 @@ class _CallPageState extends State<CallPage>
         final result = await AIManager().sendMessage(
           botId: botId,
           text:
-              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
           persistResponse: false,
           includeChatHistory: false,
           enableAutoSummary: false,
@@ -730,16 +738,28 @@ class _CallPageState extends State<CallPage>
       }
     }
     final now = DateTime.now().millisecondsSinceEpoch;
+    final content = _callSummaryContent(summary, transcript);
     await MessageDeliveryService.instance.insert({
       'id': 'call_$now',
       'bot_id': botId,
       'role': 'assistant',
       'type': 'call_summary',
-      'content': summary,
+      'content': content,
       'duration': duration.inSeconds,
       'mood': failed ? 'failed' : 'complete',
       'timestamp': now,
     });
+    if (!failed && summary.isNotEmpty) {
+      await DBManager().upsertMemoryItem(
+        botId: botId,
+        type: 'call_summary',
+        title: '通话摘要',
+        content: summary,
+        category: 'event',
+        importance: 4,
+        timestamp: now,
+      );
+    }
     AppLogService.instance
         .add('VOICE_CALL', '通话结束：$durationText，摘要${failed ? '失败' : '已保存'}');
   }
