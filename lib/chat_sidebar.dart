@@ -406,13 +406,13 @@ class _ChatSidebarState extends State<ChatSidebar> {
           height: 52,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: Color.alphaBlend(
-              theme.primary.withValues(alpha: theme.isDark ? .22 : .12),
-              theme.surfaceVariant,
-            ),
+            color: theme.surfaceVariant,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: theme.primary.withValues(alpha: theme.isDark ? .28 : .16),
+              color: theme.isDark
+                  ? const Color(0x66E8ECF2)
+                  : const Color(0x3D1C1C1E),
+              width: 1,
             ),
           ),
           child: Row(children: [
@@ -431,13 +431,13 @@ class _ChatSidebarState extends State<ChatSidebar> {
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Color.alphaBlend(
-            theme.primary.withValues(alpha: theme.isDark ? .16 : .08),
-            theme.surface,
-          ),
+          color: theme.surface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: theme.primary.withValues(alpha: theme.isDark ? .30 : .18),
+            color: theme.isDark
+                ? const Color(0x73F2F4F8)
+                : const Color(0x4D1C1C1E),
+            width: 1,
           ),
         ),
         child: child,

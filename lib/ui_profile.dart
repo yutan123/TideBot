@@ -198,18 +198,19 @@ class _ProfilePageState extends State<ProfilePage> {
         Icon(Icons.edit_rounded, size: 18, color: theme.onBackgroundWeak),
       ],
     );
-    if (theme.hasGlobalBackground) {
-      return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: content);
-    }
-    return FrostCard(child: content);
+    return FrostCard(
+      padding: const EdgeInsets.all(20),
+      liquid: theme.hasGlobalBackground,
+      child: content,
+    );
   }
 
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
-    final content = Padding(
+    return FrostCard(
+      margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      liquid: theme.hasGlobalBackground,
       child: Row(
         children: [
           Icon(s['icon'] as IconData, size: 22, color: theme.primary),
@@ -226,11 +227,6 @@ class _ProfilePageState extends State<ProfilePage> {
         ],
       ),
     );
-    if (theme.hasGlobalBackground) {
-      return Padding(
-          padding: const EdgeInsets.only(bottom: 10), child: content);
-    }
-    return FrostCard(margin: const EdgeInsets.only(bottom: 10), child: content);
   }
 
   Future<String?> _pickDataBot(String title) async {

@@ -560,19 +560,11 @@ class _FlowGlassBgState extends State<FlowGlassBg> {
               theme.isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA),
         ),
         if (hasImage)
-          AnimatedOpacity(
-            opacity:
-                theme.isGlobalBackgroundReady || widget.backgroundPath != null
-                    ? 1
-                    : 0,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            child: Image(
-              image: image ?? FileImage(File(path)),
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              errorBuilder: (_, __, ___) => const SizedBox.expand(),
-            ),
+          Image(
+            image: image ?? FileImage(File(path)),
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
         if (path.isNotEmpty)
           IgnorePointer(

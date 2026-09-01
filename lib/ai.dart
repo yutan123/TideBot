@@ -18,6 +18,7 @@ import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
 import 'chat_content.dart';
+import 'chat_protocol.dart';
 import 'skill_runtime.dart';
 
 class AICancellationToken {
@@ -162,33 +163,39 @@ class AIManager {
 
     Map<String, dynamic>? lastFailure;
     for (var index = 0; index < attempts.length; index++) {
+      cancellationToken?.throwIfCancelled();
       final candidate = attempts[index];
       final selectedImagePaths = <String>[
         if (imagePath?.isNotEmpty == true) imagePath!,
         ...?imagePaths,
       ];
-      final result = await _sendMessageOnce(
-        botId: botId,
-        text: text,
-        imagePath: selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-        imagePaths: selectedImagePaths,
-        activeGame: activeGame,
-        persistResponse: persistResponse,
-        includeChatHistory: includeChatHistory,
-        enableAutoSummary: enableAutoSummary,
-        skipLifeState: skipLifeState,
-        allowTools: allowTools,
-        forceSingleReply: forceSingleReply,
-        notifyResponse: notifyResponse,
-        cancellationToken: cancellationToken,
-        // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-        // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-        onDelta: onDelta,
-        forcedLocalId: candidate['local']!,
-        forcedProviderId: candidate['provider']!,
-      );
-      if (result['success'] == true) return result;
-      lastFailure = result;
+      try {
+        final result = await _sendMessageOnce(
+          botId: botId,
+          text: text,
+          imagePath:
+              selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+          imagePaths: selectedImagePaths,
+          activeGame: activeGame,
+          persistResponse: persistResponse,
+          includeChatHistory: includeChatHistory,
+          enableAutoSummary: enableAutoSummary,
+          skipLifeState: skipLifeState,
+          allowTools: allowTools,
+          forceSingleReply: forceSingleReply,
+          notifyResponse: notifyResponse,
+          cancellationToken: cancellationToken,
+          // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+          // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+          onDelta: onDelta,
+          forcedLocalId: candidate['local']!,
+          forcedProviderId: candidate['provider']!,
+        );
+        if (result['success'] == true) return result;
+        lastFailure = result;
+      } on AICancelledException {
+        rethrow;
+      }
     }
     return {
       ...?lastFailure,
@@ -426,12 +433,43 @@ class AIManager {
         : const _StickerPlan.disabled();
     final allowSticker = stickerPlan.required;
     final stickerEmotions = stickerPlan.emotions;
+    final effectiveImagePaths = imagePaths.isNotEmpty
+        ? imagePaths
+        : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
+    final inspectableImages = <int, String>{};
+    final imageNumberByPath = <String, int>{};
+    void registerImage(String path) {
+      final normalized = path.trim();
+      if (normalized.isEmpty || imageNumberByPath.containsKey(normalized)) {
+        return;
+      }
+      final number = imageNumberByPath.length + 1;
+      imageNumberByPath[normalized] = number;
+      inspectableImages[number] = normalized;
+    }
+
+    for (final msg in history) {
+      if (msg['type']?.toString() != 'image') continue;
+      registerImage(msg['file_path']?.toString() ?? '');
+    }
+    for (final path in effectiveImagePaths) {
+      registerImage(path);
+    }
+    final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
+    final sharedPostContexts = <String, String>{};
+    for (final msg in history) {
+      if (msg['type']?.toString() != 'shared_post') continue;
+      final key = _sharedPostHistoryKey(msg);
+      sharedPostContexts[key] =
+          await _sharedPostModelContextForMessage(db, msg);
+    }
     final toolContext = allowTools
         ? await _buildToolContext(
             db,
             requireEmotion: true,
             requireSticker: allowSticker,
             stickerEmotions: stickerEmotions,
+            inspectableImageNumbers: inspectableImageNumbers,
           )
         : '';
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
@@ -467,8 +505,14 @@ class AIManager {
     // are represented by the memory store, avoiding repeated full transcripts.
     final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
     for (final msg in history.reversed) {
-      final isCallSummary = msg['type'] == 'call_summary';
-      if (msg['type'] != 'text' && !isCallSummary) continue;
+      final type = msg['type']?.toString() ?? 'text';
+      if (type != 'text' &&
+          type != 'call_summary' &&
+          type != 'image' &&
+          type != 'sticker' &&
+          type != 'shared_post') {
+        continue;
+      }
       // Failed/unsent messages must never become model context. They may be
       // visible as an error bubble, but are not part of the conversation.
       if (msg['error_log']?.toString().isNotEmpty == true ||
@@ -478,17 +522,18 @@ class AIManager {
       final rawRole = msg['role']?.toString();
       if (rawRole != 'user' && rawRole != 'assistant') continue;
       final normalizedRole = rawRole;
-      final content = msg['content']?.toString() ?? '';
-      if (content.isEmpty) continue;
-      final normalizedContent = isCallSummary
-          ? '【语音通话记录】时长：${msg['duration'] ?? 0} 秒。通话摘要：$content'
-          : content;
+      final normalizedContent = _modelContextForHistoryMessage(
+        msg,
+        imageNumberByPath: imageNumberByPath,
+        sharedPostContexts: sharedPostContexts,
+      );
+      if (normalizedContent == null || normalizedContent.isEmpty) continue;
       final tokens = estimateTokens(normalizedContent);
       if (usedTokens + tokens > historyBudget) {
         if (historyMessages.isEmpty) {
           final keepChars = (historyBudget * 2.6).floor().clamp(
                 200,
-                content.length,
+                normalizedContent.length,
               );
           historyMessages.add({
             'role': normalizedRole,
@@ -506,15 +551,18 @@ class AIManager {
       usedTokens += tokens;
     }
     messages.addAll(historyMessages.reversed);
-    final eligibleHistoryCount = history
-        .where(
-          (msg) =>
-              msg['type'] == 'text' &&
-              msg['error_log']?.toString().isNotEmpty != true &&
-              msg['error_code']?.toString().isNotEmpty != true &&
-              (msg['content']?.toString().trim().isNotEmpty ?? false),
-        )
-        .length;
+    final eligibleHistoryCount = history.where(
+      (msg) {
+        final type = msg['type']?.toString() ?? 'text';
+        return (type == 'text' ||
+                type == 'call_summary' ||
+                type == 'image' ||
+                type == 'sticker' ||
+                type == 'shared_post') &&
+            msg['error_log']?.toString().isNotEmpty != true &&
+            msg['error_code']?.toString().isNotEmpty != true;
+      },
+    ).length;
     final roleSequence =
         historyMessages.reversed.map((message) => message['role']).join(',');
     AppLogService.instance.add(
@@ -522,80 +570,39 @@ class AIManager {
       '远程模型上下文：历史 ${historyMessages.length}/$eligibleHistoryCount 条，估算 $usedTokens/$historyBudget token，角色[$roleSequence]${historyMessages.length < eligibleHistoryCount ? '，已截断较早历史' : ''}',
     );
     var lastIsCurrentUser = false;
-    // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
+    // 若最末一条上下文恰好就是本次发送的 user 文本或图片（内存补写导致），
     // 标记以免下方再次追加造成重复喂给模型
     if (history.isNotEmpty) {
       final lastMsg = history.last;
-      if ((lastMsg['role']?.toString() == 'user') &&
-          (lastMsg['content']?.toString() == text)) {
-        lastIsCurrentUser = true;
+      if (lastMsg['role']?.toString() == 'user') {
+        final lastType = lastMsg['type']?.toString() ?? 'text';
+        final lastPath = lastMsg['file_path']?.toString() ?? '';
+        lastIsCurrentUser = lastMsg['content']?.toString() == text ||
+            (lastType == 'image' &&
+                lastPath.isNotEmpty &&
+                effectiveImagePaths.contains(lastPath)) ||
+            lastType == 'shared_post';
       }
     }
-    // Images can either be described by a dedicated vision provider, or be sent
-    // directly to the primary OpenAI-compatible model when explicitly selected.
-    const primaryVisionModel = '__use_primary_vision__';
-    final effectiveImagePaths = imagePaths.isNotEmpty
-        ? imagePaths
-        : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
-    if (effectiveImagePaths.isNotEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
-      if (visionId == primaryVisionModel) {
-        final multimodal = <Map<String, dynamic>>[
-          {'type': 'text', 'text': text.isEmpty ? '请分析这些图片。' : text},
+    if (!lastIsCurrentUser) {
+      if (effectiveImagePaths.isNotEmpty) {
+        final chunks = <String>[
+          for (final path in effectiveImagePaths)
+            if (imageNumberByPath[path] != null)
+              formatImagePlaceholder(imageNumberByPath[path]!),
         ];
-        for (final path in effectiveImagePaths) {
-          final file = File(path);
-          if (!await file.exists()) return {'error': '图片文件不存在，无法使用主模型识图'};
-          final bytes = await file.readAsBytes();
-          if (bytes.length > 8 * 1024 * 1024) {
-            return {'error': '图片超过 8 MB，无法使用主模型识图'};
-          }
-          final extension = path.split('.').last.toLowerCase();
-          final mime = extension == 'png' ? 'image/png' : 'image/jpeg';
-          multimodal.add({
-            'type': 'image_url',
-            'image_url': {'url': 'data:$mime;base64,${base64Encode(bytes)}'},
-          });
-        }
-        final userMessage = {'role': 'user', 'content': multimodal};
-        if (lastIsCurrentUser && messages.isNotEmpty) {
-          messages[messages.length - 1] = userMessage;
-        } else {
-          messages.add(userMessage);
-        }
+        final caption = text.trim();
+        final content = [
+          ...chunks,
+          if (caption.isNotEmpty) caption,
+        ].join('\n');
+        messages.add({
+          'role': 'user',
+          'content': content.isEmpty ? text : content,
+        });
       } else {
-        final mediaDescriptions = <String>[];
-        for (var index = 0; index < effectiveImagePaths.length; index++) {
-          final path = effectiveImagePaths[index];
-          try {
-            final visionProvider = visionId.isEmpty
-                ? null
-                : await db.getChatProviderById(visionId);
-            final description = visionProvider == null
-                ? await MediaPreprocessor().imageFallbackText(path)
-                : await _describeImage(
-                    provider: visionProvider,
-                    imagePath: path,
-                    userText: text,
-                  );
-            mediaDescriptions.add('[图片 ${index + 1}] $description');
-          } catch (e) {
-            mediaDescriptions.add('[图片 ${index + 1} 预处理失败：$e]');
-          }
-        }
-        final contentWithMedia = '$text\n\n${mediaDescriptions.join('\n\n')}';
-        if (lastIsCurrentUser && messages.isNotEmpty) {
-          messages[messages.length - 1] = {
-            'role': 'user',
-            'content': contentWithMedia,
-          };
-        } else {
-          messages.add({'role': 'user', 'content': contentWithMedia});
-        }
+        messages.add({'role': 'user', 'content': text});
       }
-    } else if (!lastIsCurrentUser) {
-      messages.add({'role': 'user', 'content': text});
     }
     if (timeAware) {
       final now = DateTime.now();
@@ -650,7 +657,8 @@ class AIManager {
               botId: botId,
               requireEmotion: true,
               allowSticker: allowSticker,
-              stickerIds: stickerPlan.stickerIds,
+              stickerTypes: stickerEmotions.toSet(),
+              inspectableImageNumbers: inspectableImageNumbers,
             )
           : const <Map<String, dynamic>>[];
       // Native tools remain enabled for every normal chat request. Provider
@@ -757,7 +765,8 @@ class AIManager {
                 'set_emotion',
                 if (allowSticker) 'send_sticker',
               },
-              allowedStickerIds: stickerPlan.stickerIds,
+              allowedStickerTypes: stickerEmotions.toSet(),
+              inspectableImages: inspectableImages,
             );
           }
         } else if (allowTools) {
@@ -785,7 +794,8 @@ class AIManager {
               'set_emotion',
               if (allowSticker) 'send_sticker',
             },
-            allowedStickerIds: stickerPlan.stickerIds,
+            allowedStickerTypes: stickerEmotions.toSet(),
+            inspectableImages: inspectableImages,
           );
         }
       }
@@ -1347,9 +1357,31 @@ $transcript''';
   /// MiMo audio models use the OpenAI-compatible chat-completions endpoint.
   /// The API requires exactly one `input_audio` content part; `audio_url` is an
   /// image-style field and is rejected by MiMo ASR.
+  Future<T> _withCancellableClient<T>(
+    AICancellationToken? token,
+    Future<T> Function(http.Client client) action,
+  ) async {
+    token?.throwIfCancelled();
+    final client = http.Client();
+    void cancel() => client.close();
+    token?.addOnCancel(cancel);
+    try {
+      return await action(client);
+    } on AICancelledException {
+      rethrow;
+    } catch (_) {
+      token?.throwIfCancelled();
+      rethrow;
+    } finally {
+      token?.removeOnCancel(cancel);
+      client.close();
+    }
+  }
+
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
+    AICancellationToken? cancellationToken,
   }) async {
     final db = DBManager();
     final prefs = await SharedPreferences.getInstance();
@@ -1367,14 +1399,20 @@ $transcript''';
       AppLogService.instance.add('STT', '未找到 STT 服务配置：$providerId');
       return null;
     }
-    return transcribeWithProvider(provider, audioPath);
+    return transcribeWithProvider(
+      provider,
+      audioPath,
+      cancellationToken: cancellationToken,
+    );
   }
 
   Future<String?> transcribeWithProvider(
     Map<String, dynamic> provider,
-    String audioPath,
-  ) async {
+    String audioPath, {
+    AICancellationToken? cancellationToken,
+  }) async {
     try {
+      cancellationToken?.throwIfCancelled();
       final audio = File(audioPath);
       if (!await audio.exists()) {
         AppLogService.instance.add('STT', '语音文件不存在');
@@ -1400,6 +1438,7 @@ $transcript''';
           model: model,
           audio: audio,
           providerName: provider['name']?.toString() ?? 'MiMo STT',
+          cancellationToken: cancellationToken,
         );
       }
       if (protocol != 'openai') {
@@ -1412,9 +1451,12 @@ $transcript''';
         ..fields['model'] = model
         ..fields['response_format'] = 'json'
         ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-      final response = await http.Response.fromStream(
-        await request.send().timeout(const Duration(seconds: 45)),
-      );
+      final response =
+          await _withCancellableClient(cancellationToken, (client) async {
+        return http.Response.fromStream(
+          await client.send(request).timeout(const Duration(seconds: 45)),
+        );
+      });
       final body = utf8.decode(response.bodyBytes, allowMalformed: true);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         AppLogService.instance.add(
@@ -1427,7 +1469,10 @@ $transcript''';
       final transcript =
           decoded is Map ? decoded['text']?.toString().trim() : '';
       return transcript?.isEmpty == true ? null : transcript;
+    } on AICancelledException {
+      rethrow;
     } catch (e) {
+      cancellationToken?.throwIfCancelled();
       AppLogService.instance.add('STT', '语音转文字异常：$e');
       return null;
     }
@@ -1473,6 +1518,7 @@ $transcript''';
     required String model,
     required File audio,
     required String providerName,
+    AICancellationToken? cancellationToken,
   }) async {
     final endpoint = _chatCompletionsEndpoint(baseUrl);
     final bytes = await audio.readAsBytes();
@@ -1501,16 +1547,18 @@ $transcript''';
       'STT',
       '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes',
     );
-    final response = await http
-        .post(
-          Uri.parse(endpoint),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-          },
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 60));
+    final response = await _withCancellableClient(cancellationToken, (client) {
+      return client
+          .post(
+            Uri.parse(endpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+    });
     final body = utf8.decode(response.bodyBytes, allowMalformed: true);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       AppLogService.instance.add(
@@ -1557,6 +1605,7 @@ $transcript''';
     String text,
     String providerId, {
     String mood = '平静',
+    AICancellationToken? cancellationToken,
   }) async {
     final list = await DBManager().queryTtsProviders();
     Map<String, dynamic>? provider;
@@ -1646,6 +1695,7 @@ $transcript''';
             if (moodSpeed != 1.0) 'speed': moodSpeed,
           },
       };
+      cancellationToken?.throwIfCancelled();
       AppLogService.instance.add(
         'TTS',
         '请求语音：provider=${provider['name'] ?? providerId}，protocol=$protocol，model=$model，endpoint=$endpoint，文本 ${text.length} 字',
@@ -1654,13 +1704,15 @@ $transcript''';
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
       };
-      final res = await http
-          .post(
-            Uri.parse(endpoint),
-            headers: headers,
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 30));
+      final res = await _withCancellableClient(cancellationToken, (client) {
+        return client
+            .post(
+              Uri.parse(endpoint),
+              headers: headers,
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 30));
+      });
       AppLogService.instance.add(
         'TTS',
         '语音服务响应 HTTP ${res.statusCode}，content-type=${res.headers['content-type'] ?? 'unknown'}',
@@ -1746,9 +1798,16 @@ $transcript''';
             }
           }
           if (audioUrl != null && audioUrl.isNotEmpty) {
-            final audioResponse = await http
-                .get(Uri.parse(audioUrl))
-                .timeout(const Duration(seconds: 30));
+            final resolvedAudioUrl = audioUrl;
+            cancellationToken?.throwIfCancelled();
+            final audioResponse = await _withCancellableClient(
+              cancellationToken,
+              (client) {
+                return client
+                    .get(Uri.parse(resolvedAudioUrl))
+                    .timeout(const Duration(seconds: 30));
+              },
+            );
             if (audioResponse.statusCode < 200 ||
                 audioResponse.statusCode >= 300 ||
                 audioResponse.bodyBytes.isEmpty) {
@@ -1776,7 +1835,10 @@ $transcript''';
         '语音合成成功：${text.length} 字，${bytes.length} bytes，已保存 $path',
       );
       return path;
+    } on AICancelledException {
+      rethrow;
     } catch (e) {
+      cancellationToken?.throwIfCancelled();
       AppLogService.instance.add('TTS', '语音合成异常：$e');
       return null;
     }
@@ -2232,7 +2294,8 @@ $transcript''';
     required void Function(Map<String, dynamic>) stickerSetter,
     required void Function(String) moodSetter,
     Set<String> requiredToolNames = const {},
-    Set<String> allowedStickerIds = const {},
+    Set<String> allowedStickerTypes = const {},
+    Map<int, String> inspectableImages = const {},
   }) async {
     final completedTools = <String>{};
 
@@ -2285,7 +2348,8 @@ $transcript''';
         db: db,
         botId: botId,
         call: call,
-        allowedStickerIds: allowedStickerIds,
+        allowedStickerTypes: allowedStickerTypes,
+        inspectableImages: inspectableImages,
       );
     }
 
@@ -2332,7 +2396,9 @@ $transcript''';
                   allowSticker: requiredToolNames.contains('send_sticker') &&
                       !completedTools.contains('send_sticker'),
                   allowSilence: false,
-                  stickerIds: allowedStickerIds,
+                  stickerTypes: allowedStickerTypes,
+                  inspectableImageNumbers: inspectableImages.keys.toList()
+                    ..sort(),
                 ),
               ],
               'tool_choice': 'auto',
@@ -2425,14 +2491,29 @@ $transcript''';
     bool requireEmotion = false,
     bool allowSticker = false,
     bool allowSilence = true,
-    Set<String> stickerIds = const {},
+    Set<String> stickerTypes = const {},
+    List<int> inspectableImageNumbers = const [],
   }) async {
     final tools = <Map<String, dynamic>>[];
     if (requireEmotion) {
       tools.add(_setEmotionToolSchema());
     }
-    if (allowSticker && stickerIds.isNotEmpty) {
-      tools.add(_sendStickerToolSchema(stickerIds));
+    if (allowSticker && stickerTypes.isNotEmpty) {
+      tools.add(sendStickerToolSchema(stickerTypes.toList()..sort()));
+    }
+    if (inspectableImageNumbers.isNotEmpty) {
+      tools.add(
+        inspectImageToolSchema(
+          name: 'inspect_image',
+          numbers: inspectableImageNumbers,
+        ),
+      );
+      tools.add(
+        inspectImageToolSchema(
+          name: 'look_at_image',
+          numbers: inspectableImageNumbers,
+        ),
+      );
     }
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
@@ -2563,22 +2644,6 @@ $transcript''';
               'reason': {'type': 'string', 'maxLength': 160},
             },
             'required': ['mood', 'intensity'],
-            'additionalProperties': false,
-          },
-        },
-      };
-
-  Map<String, dynamic> _sendStickerToolSchema(Set<String> stickerIds) => {
-        'type': 'function',
-        'function': {
-          'name': 'send_sticker',
-          'description': '本轮表情包概率已命中，必须且只能调用一次。sticker_id 必须来自允许列表。',
-          'parameters': {
-            'type': 'object',
-            'properties': {
-              'sticker_id': {'type': 'string', 'enum': stickerIds.toList()},
-            },
-            'required': ['sticker_id'],
             'additionalProperties': false,
           },
         },
@@ -2954,7 +3019,8 @@ $transcript''';
     required DBManager db,
     required String botId,
     required Map<String, dynamic> call,
-    Set<String> allowedStickerIds = const {},
+    Set<String> allowedStickerTypes = const {},
+    Map<int, String> inspectableImages = const {},
   }) async {
     final function = call['function'];
     if (function is! Map)
@@ -3002,36 +3068,81 @@ $transcript''';
       };
     }
     if (name == 'send_sticker') {
-      final stickerId = args['sticker_id']?.toString().trim() ?? '';
-      if (stickerId.isEmpty || !allowedStickerIds.contains(stickerId)) {
+      final type = (args['type'] ?? args['emotion'])?.toString().trim() ?? '';
+      if (type.isEmpty || !allowedStickerTypes.contains(type)) {
         return {
-          'result': {'ok': false, 'error': '表情包不在本轮允许列表中'},
+          'result': {'ok': false, 'error': '表情包类型不在本轮允许列表中'},
         };
       }
-      final stickers = await db.queryStickers();
-      final sticker = stickers.firstWhere(
-        (row) => row['id']?.toString() == stickerId,
-        orElse: () => <String, dynamic>{},
+      final stickers = await db.queryStickers(emotion: type);
+      if (stickers.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '该类型表情包素材池为空'},
+        };
+      }
+      final sticker = Map<String, dynamic>.from(
+        stickers[Random.secure().nextInt(stickers.length)],
       );
-      if (sticker.isEmpty) {
-        return {
-          'result': {'ok': false, 'error': '表情包素材已不存在'},
-        };
-      }
       await db.insertToolAudit(
         source: 'native',
         toolName: name,
-        inputSummary: _redactToolInput(args),
+        inputSummary: _redactToolInput({'type': type}),
         status: 'success',
         durationMs: 0,
       );
       return {
         'result': {
           'ok': true,
-          'sticker': Map<String, dynamic>.from(sticker),
-          'message': '表情包已加入本轮发送队列。',
+          'sticker': sticker,
+          'type': type,
+          'message': '已按类型 $type 选择表情包并加入本轮发送队列。',
         },
       };
+    }
+    if (name == 'inspect_image' || name == 'look_at_image') {
+      final number = parseImageNumber(args['image_number'] ?? args['number']);
+      if (number == null) {
+        return {
+          'result': {'ok': false, 'error': '缺少有效的图片编号'},
+        };
+      }
+      final path = inspectableImages[number] ?? '';
+      if (path.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '图片编号 $number 不在当前上下文中'},
+        };
+      }
+      if (!await File(path).exists()) {
+        return {
+          'result': {'ok': false, 'error': '图片#$number 文件不存在或已失效'},
+        };
+      }
+      try {
+        final description = await _inspectImageForBot(
+          botId: botId,
+          imagePath: path,
+          imageNumber: number,
+        );
+        await db.insertToolAudit(
+          source: 'native',
+          toolName: name,
+          inputSummary: _redactToolInput({'image_number': number}),
+          status: 'success',
+          durationMs: 0,
+        );
+        return {
+          'result': {
+            'ok': true,
+            'image_number': number,
+            'description': description,
+            'message': '已查看 [图片#$number]。不要向用户复述文件路径。',
+          },
+        };
+      } catch (error) {
+        return {
+          'result': {'ok': false, 'error': '识图失败：$error'},
+        };
+      }
     }
     if (name == 'choose_silence') {
       return {
@@ -3211,6 +3322,7 @@ $transcript''';
     bool requireEmotion = false,
     bool requireSticker = false,
     List<String> stickerEmotions = const [],
+    List<int> inspectableImageNumbers = const [],
   }) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
@@ -3240,15 +3352,139 @@ $transcript''';
     }
     if (requireSticker && stickerEmotions.isNotEmpty) {
       parts.add(
-        '【本轮强制表情包】概率已命中，必须且只能调用一次 send_sticker；可用分类包括 ${stickerEmotions.join('、')}。选择后仍必须提供正常文字回复，绝不在正文输出表情包标签。',
+        '【本轮强制表情包】概率已命中，必须且只能调用一次 send_sticker(type=分类)；可用分类包括 ${stickerEmotions.join('、')}。不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。选择后仍必须提供正常文字回复，绝不在正文输出表情包标签。',
+      );
+    }
+    if (inspectableImageNumbers.isNotEmpty) {
+      parts.add(
+        '【按需识图】用户图片在上下文中以 [图片#n] 表示，当前可用编号：${inspectableImageNumbers.map((n) => '#$n').join('、')}。默认不要自动看图；只有需要理解画面时才调用 inspect_image 或 look_at_image，并传入 image_number。不要编造未提供的编号。',
       );
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }
 
+  String _sharedPostHistoryKey(Map<String, dynamic> msg) {
+    final id = msg['id']?.toString() ?? '';
+    if (id.isNotEmpty) return id;
+    return '${msg['timestamp']}_${msg['content']}';
+  }
+
+  String? _modelContextForHistoryMessage(
+    Map<String, dynamic> msg, {
+    required Map<String, int> imageNumberByPath,
+    required Map<String, String> sharedPostContexts,
+  }) {
+    final type = msg['type']?.toString() ?? 'text';
+    final content = msg['content']?.toString() ?? '';
+    if (type == 'call_summary') {
+      return '【语音通话记录】时长：${msg['duration'] ?? 0} 秒。通话摘要：$content';
+    }
+    if (type == 'image') {
+      final path = msg['file_path']?.toString() ?? '';
+      final number = imageNumberByPath[path];
+      if (number == null) return content.trim().isEmpty ? null : content;
+      return formatImagePlaceholder(number, caption: content);
+    }
+    if (type == 'sticker') {
+      return '[表情包]';
+    }
+    if (type == 'shared_post') {
+      return sharedPostContexts[_sharedPostHistoryKey(msg)] ??
+          sharedPostDeletedModelCopy;
+    }
+    return content;
+  }
+
+  Future<String> _sharedPostModelContextForMessage(
+    DBManager db,
+    Map<String, dynamic> msg,
+  ) async {
+    Map<String, dynamic>? payload;
+    try {
+      final raw = jsonDecode(msg['content']?.toString() ?? '');
+      if (raw is Map) payload = Map<String, dynamic>.from(raw);
+    } catch (_) {}
+    final postId = payload?['post_id']?.toString().trim() ??
+        payload?['id']?.toString().trim() ??
+        '';
+    if (postId.isNotEmpty) {
+      final post = await db.getPostById(postId);
+      if (post == null) return sharedPostDeletedModelCopy;
+      return sharedPostModelContext(
+        deleted: false,
+        author: post['author_id']?.toString() ??
+            payload?['author']?.toString() ??
+            '',
+        content: post['content']?.toString() ??
+            payload?['content']?.toString() ??
+            '',
+        time: payload?['timestamp']?.toString() ??
+            post['timestamp']?.toString() ??
+            '',
+        hasImage: (post['image_path']?.toString() ??
+                payload?['image_path']?.toString() ??
+                '')
+            .isNotEmpty,
+      );
+    }
+    final author = payload?['author']?.toString() ?? '';
+    final content = payload?['content']?.toString() ?? '';
+    if (author.isEmpty && content.isEmpty) return sharedPostDeletedModelCopy;
+    return sharedPostModelContext(
+      deleted: false,
+      author: author,
+      content: content,
+      time: payload?['timestamp']?.toString() ?? '',
+      hasImage: (payload?['image_path']?.toString() ?? '').isNotEmpty,
+    );
+  }
+
+  Future<String> _inspectImageForBot({
+    required String botId,
+    required String imagePath,
+    required int imageNumber,
+  }) async {
+    const primaryVisionModel = '__use_primary_vision__';
+    final prefs = await SharedPreferences.getInstance();
+    final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
+    final userText = '请转述 [图片#$imageNumber]。';
+    if (visionId == primaryVisionModel) {
+      final bots = await DBManager().getAllBots();
+      final bot =
+          bots.firstWhere((item) => item['id'] == botId, orElse: () => {});
+      final providerId = bot['chat_model']?.toString().trim() ?? '';
+      final provider = providerId.isEmpty
+          ? null
+          : await DBManager().getChatProviderById(providerId);
+      if (provider == null) {
+        return MediaPreprocessor().imageFallbackText(imagePath);
+      }
+      return _describeImage(
+        provider: provider,
+        imagePath: imagePath,
+        userText: userText,
+      );
+    }
+    final provider = visionId.isEmpty
+        ? null
+        : await DBManager().getChatProviderById(visionId);
+    if (provider == null) {
+      return MediaPreprocessor().imageFallbackText(imagePath);
+    }
+    return _describeImage(
+      provider: provider,
+      imagePath: imagePath,
+      userText: userText,
+    );
+  }
+
   // 构建核心防御护栏与游戏机制注入
-  Future<String?> generateTTS(String text, String providerId) =>
-      _generateTTS(text, providerId);
+  Future<String?> generateTTS(
+    String text,
+    String providerId, {
+    AICancellationToken? cancellationToken,
+  }) =>
+      _generateTTS(text, providerId, cancellationToken: cancellationToken);
   Future<Map<String, dynamic>> testProviderCapabilities(
     String baseUrl,
     String apiKey,
@@ -3707,7 +3943,7 @@ class _StickerPlan {
       if (emotion.isNotEmpty) emotions.add(emotion);
     }
     return _StickerPlan(
-      required: ids.isNotEmpty,
+      required: emotions.isNotEmpty,
       stickerIds: ids,
       emotions: emotions.toList()..sort(),
     );

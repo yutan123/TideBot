@@ -979,6 +979,7 @@ class SquarePageState extends State<SquarePage>
     if (botId == null) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final payload = jsonEncode({
+      'post_id': f['id']?.toString() ?? '',
       'author': f['user']?.toString() ?? '匿名',
       'content': f['content']?.toString() ?? '',
       'image_path': f['image']?.toString() ?? '',
@@ -1052,23 +1053,12 @@ class SquarePageState extends State<SquarePage>
   }
 
   void _openFeedDetail(Map<String, dynamic> f) {
-    Navigator.push(
+    openFeedDetail(
       context,
-      PageRouteBuilder(
-        pageBuilder: (c, a, s) => _FeedDetailPage(
-          feed: f,
-          onUpdate: () {
-            if (mounted) setState(() {});
-          },
-        ),
-        transitionsBuilder: (c, a, s, child) => SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.15),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-          child: FadeTransition(opacity: a, child: child),
-        ),
-      ),
+      f,
+      onUpdate: () {
+        if (mounted) setState(() {});
+      },
     );
   }
 
@@ -1746,6 +1736,72 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
       ),
     );
   }
+}
+
+Future<Map<String, dynamic>?> feedMapFromPostId(String postId) async {
+  final id = postId.trim();
+  if (id.isEmpty) return null;
+  final db = DBManager();
+  final post = await db.getPostById(id);
+  if (post == null) return null;
+  final bots = await db.queryBots();
+  final author = post['author_id']?.toString().trim() ?? '匿名';
+  Map<String, dynamic> bot = const {};
+  for (final item in bots) {
+    if (item['id']?.toString() == author ||
+        item['name']?.toString() == author) {
+      bot = item;
+      break;
+    }
+  }
+  final displayAuthor =
+      bot.isNotEmpty ? bot['name']?.toString() ?? author : author;
+  return {
+    'user': displayAuthor == '我' ? '我' : displayAuthor,
+    'author_id': author,
+    'is_bot': bot.isNotEmpty,
+    'bot_avatar': bot['avatar']?.toString(),
+    'content': post['content'] ?? '',
+    'image': post['image_path'] ?? '',
+    'likes': await db.countPostLikes(id),
+    'comments': await db.countPostComments(id),
+    'favorited': await db.hasFeedEvent(
+      postId: id,
+      actorId: 'me',
+      eventType: 'like',
+    ),
+    'collected': await db.hasFeedEvent(
+      postId: id,
+      actorId: 'me',
+      eventType: 'collect',
+    ),
+    'time': post['timestamp'] != null ? formatTime(post['timestamp']) : '',
+    'id': id,
+    'timestamp': post['timestamp'],
+  };
+}
+
+void openFeedDetail(
+  BuildContext context,
+  Map<String, dynamic> feed, {
+  VoidCallback? onUpdate,
+}) {
+  Navigator.push(
+    context,
+    PageRouteBuilder(
+      pageBuilder: (c, a, s) => _FeedDetailPage(
+        feed: feed,
+        onUpdate: onUpdate ?? () {},
+      ),
+      transitionsBuilder: (c, a, s, child) => SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.15),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+        child: FadeTransition(opacity: a, child: child),
+      ),
+    ),
+  );
 }
 
 // ==================== 动态详情页 ====================

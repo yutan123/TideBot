@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'chat_event_bus.dart';
+import 'chat_protocol.dart';
 import 'message_delivery_service.dart';
 import 'db.dart';
 import 'ui_components.dart';
@@ -75,18 +76,10 @@ class ChatListPageState extends State<ChatListPage> {
             (m) => m['type']?.toString() != 'sticker',
             orElse: () => msgs.first);
         final type = chosen['type']?.toString() ?? 'text';
-        final raw =
-            chosen['content']?.toString().replaceAll('\n', ' ').trim() ?? '';
-        preview = raw.isNotEmpty
-            ? raw
-            : switch (type) {
-                'image' => '[图片]',
-                'audio' => '[语音]',
-                'video' => '[视频]',
-                'document' || 'file' => '[文件]',
-                'sticker' => '[表情包]',
-                _ => '[消息]',
-              };
+        preview = chatListPreview(
+          type: type,
+          rawContent: chosen['content']?.toString() ?? '',
+        );
         if (preview.length > 25) preview = '${preview.substring(0, 25)}...';
         lastTime = msgs.first['timestamp'] as int? ?? lastTime;
       }

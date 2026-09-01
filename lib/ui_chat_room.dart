@@ -24,7 +24,9 @@ import 'app_permissions.dart';
 import 'media_preprocessor.dart';
 // Device control has been removed; device context remains in the AI layer.
 import 'emotion_state_service.dart';
+import 'chat_protocol.dart';
 import 'ui_call.dart';
+import 'ui_space_square.dart';
 
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
@@ -75,6 +77,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   final List<String> _pendingImages = [];
   final List<String> _pendingDocuments = [];
   String? _pendingMediaContext;
+  final GlobalKey _composerKey = GlobalKey();
+  double _composerReserve = 84;
 
   // ===== 防抖/合并：请求代次 + 待重发队列 =====
   // 用户连续发送多条时，递增代次让在途请求的渲染结果作废，并把新文本并入
@@ -2472,102 +2476,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Widget _sharedPostCard(Map<String, dynamic> payload, bool isUser) {
-    final theme = TideTheme.of(context);
-    final author = payload['author']?.toString().trim().isNotEmpty == true
-        ? payload['author'].toString()
-        : '匿名';
-    final content = payload['content']?.toString() ?? '';
-    final imagePath = payload['image_path']?.toString() ?? '';
-    final timestamp = (payload['timestamp'] as num?)?.toInt();
-    final imageExists = imagePath.isNotEmpty && File(imagePath).existsSync();
-    final foreground = isUser ? Colors.white : theme.textStrong;
-    final muted =
-        isUser ? Colors.white.withValues(alpha: 0.76) : theme.textWeak;
-    return Container(
-      width: 245,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isUser
-            ? theme.primary.withValues(alpha: 0.92)
-            : theme.buttonSecondary,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.dynamic_feed_rounded, size: 17, color: foreground),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '分享的动态',
-                  style: TextStyle(
-                    color: foreground,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'TideFont',
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            author,
-            style: TextStyle(
-              color: foreground,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'TideFont',
-            ),
-          ),
-          if (timestamp != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              fmtTime(timestamp),
-              style: TextStyle(
-                color: muted,
-                fontSize: 11,
-                fontFamily: 'TideFont',
-              ),
-            ),
-          ],
-          if (content.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              content,
-              style: TextStyle(
-                color: foreground,
-                height: 1.35,
-                fontFamily: 'TideFont',
-              ),
-            ),
-          ],
-          if (imageExists) ...[
-            const SizedBox(height: 10),
-            GestureDetector(
-              onTap: () => _previewImg(imagePath),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 144,
-                  height: 144,
-                  child: Image.file(File(imagePath), fit: BoxFit.cover),
-                ),
-              ),
-            ),
-          ] else if (imagePath.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              '图片已失效或不可访问',
-              style: TextStyle(
-                color: muted,
-                fontSize: 12,
-                fontFamily: 'TideFont',
-              ),
-            ),
-          ],
-        ],
-      ),
+    return _SharedPostCard(
+      payload: payload,
+      isUser: isUser,
+      onPreviewImage: _previewImg,
     );
   }
 
@@ -2582,15 +2494,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       controller: _scrollC,
       reverse: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      // The composer is overlaid on the stack; reserve its full height so the last bubble is never covered.
-      padding: EdgeInsets.fromLTRB(
-        12,
-        8,
-        12,
-        MediaQuery.of(context).padding.bottom +
-            MediaQuery.viewInsetsOf(context).bottom +
-            84,
-      ),
+      // The composer already follows the keyboard. Reserve only the island
+      // height plus a small gap so the last bubble sits just above it.
+      padding: EdgeInsets.fromLTRB(12, 8, 12, _composerReserve),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
         final m = _msgs[_msgs.length - 1 - i];
@@ -3192,10 +3098,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
+  void _syncComposerReserve() {
+    final height = _composerKey.currentContext?.size?.height;
+    if (height == null || !height.isFinite) return;
+    final next = height + 8;
+    if ((next - _composerReserve).abs() < 0.5) return;
+    setState(() => _composerReserve = next);
+  }
+
   Widget _inputBar() {
     final theme = TideTheme.of(context);
-    final frosted = _hasBg || theme.hasGlobalBackground;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
     return SafeArea(
+      key: _composerKey,
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: SlideTransition(
@@ -3207,7 +3122,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           constraints: const BoxConstraints(minHeight: 54),
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
           decoration: BoxDecoration(
-            color: theme.surfaceVariant.withValues(alpha: frosted ? .92 : 1),
+            color: theme.surfaceVariant,
             borderRadius: BorderRadius.circular(27),
           ),
           child: Column(
@@ -3326,6 +3241,186 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           contentPadding: EdgeInsets.all(10),
           border: InputBorder.none,
         ),
+      ),
+    );
+  }
+}
+
+class _SharedPostCard extends StatefulWidget {
+  final Map<String, dynamic> payload;
+  final bool isUser;
+  final ValueChanged<String> onPreviewImage;
+
+  const _SharedPostCard({
+    required this.payload,
+    required this.isUser,
+    required this.onPreviewImage,
+  });
+
+  @override
+  State<_SharedPostCard> createState() => _SharedPostCardState();
+}
+
+class _SharedPostCardState extends State<_SharedPostCard> {
+  bool _deleted = false;
+  Map<String, dynamic>? _feed;
+
+  String get _postId {
+    final payload = widget.payload;
+    return payload['post_id']?.toString().trim() ??
+        payload['id']?.toString().trim() ??
+        '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  Future<void> _resolve() async {
+    final postId = _postId;
+    if (postId.isEmpty) {
+      if (mounted) setState(() => _deleted = true);
+      return;
+    }
+    try {
+      final feed = await feedMapFromPostId(postId);
+      if (!mounted) return;
+      setState(() {
+        _deleted = feed == null;
+        _feed = feed;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _deleted = true);
+    }
+  }
+
+  Future<void> _open() async {
+    if (_deleted) return;
+    var feed = _feed;
+    feed ??= await feedMapFromPostId(_postId);
+    if (!mounted) return;
+    if (feed == null) {
+      setState(() {
+        _deleted = true;
+        _feed = null;
+      });
+      return;
+    }
+    openFeedDetail(context, feed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    final isUser = widget.isUser;
+    final payload = widget.payload;
+    final author = (_feed?['user'] ?? payload['author'])?.toString().trim();
+    final content = (_feed?['content'] ?? payload['content'])?.toString() ?? '';
+    final imagePath =
+        (_feed?['image'] ?? payload['image_path'])?.toString() ?? '';
+    final timestamp = (payload['timestamp'] as num?)?.toInt();
+    final imageExists = imagePath.isNotEmpty && File(imagePath).existsSync();
+    final foreground = isUser ? Colors.white : theme.textStrong;
+    final muted =
+        isUser ? Colors.white.withValues(alpha: 0.76) : theme.textWeak;
+    return GestureDetector(
+      onTap: _deleted ? null : _open,
+      child: Container(
+        width: 245,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isUser
+              ? theme.primary.withValues(alpha: 0.92)
+              : theme.buttonSecondary,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: _deleted
+            ? Text(
+                sharedPostDeletedUserCopy,
+                style: TextStyle(
+                  color: muted,
+                  fontFamily: 'TideFont',
+                ),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.dynamic_feed_rounded,
+                          size: 17, color: foreground),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '分享的动态',
+                          style: TextStyle(
+                            color: foreground,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    (author == null || author.isEmpty) ? '匿名' : author,
+                    style: TextStyle(
+                      color: foreground,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                  if (timestamp != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      fmtTime(timestamp),
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 11,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                  ],
+                  if (content.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      content,
+                      style: TextStyle(
+                        color: foreground,
+                        height: 1.35,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                  ],
+                  if (imageExists) ...[
+                    const SizedBox(height: 10),
+                    GestureDetector(
+                      onTap: () => widget.onPreviewImage(imagePath),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                          width: 144,
+                          height: 144,
+                          child: Image.file(File(imagePath), fit: BoxFit.cover),
+                        ),
+                      ),
+                    ),
+                  ] else if (imagePath.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '图片已失效或不可访问',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 12,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                  ],
+                ],
+              ),
       ),
     );
   }

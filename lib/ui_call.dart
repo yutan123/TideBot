@@ -75,6 +75,7 @@ class _CallPageState extends State<CallPage>
   Timer? _durationTimer;
   Duration _elapsed = Duration.zero;
   bool _ending = false;
+  AICancellationToken? _turnToken;
 
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
@@ -132,6 +133,13 @@ class _CallPageState extends State<CallPage>
     });
   }
 
+  AICancellationToken _beginTurn() {
+    _turnToken?.cancel();
+    final token = AICancellationToken();
+    _turnToken = token;
+    return token;
+  }
+
   Future<void> _runTextTurn(String text) async {
     _appendMessage(text, isUser: true);
     _transcript.add('用户：$text');
@@ -142,9 +150,17 @@ class _CallPageState extends State<CallPage>
         _caption = '正在等待回复…';
       });
     try {
+      final token = _beginTurn();
       final reply = await AIManager()
-          .sendMessage(botId: widget.bot['id'].toString(), text: text)
-          .timeout(const Duration(minutes: 2));
+          .sendMessage(
+            botId: widget.bot['id'].toString(),
+            text: text,
+            allowTools: false,
+            forceSingleReply: true,
+            cancellationToken: token,
+          )
+          .timeout(const Duration(seconds: 45));
+      if (_ending) return;
       if (reply['success'] != true) {
         final reason = _replyFailureReason(reply);
         AppLogService.instance.add('VOICE_CALL', '文字 AI 请求失败：$reason');
@@ -174,7 +190,10 @@ class _CallPageState extends State<CallPage>
       if (widget.hasTts && ttsId.isNotEmpty) {
         await _synthesizeAndPlay(answer, ttsId);
       }
+    } on AICancelledException {
+      return;
     } catch (error) {
+      if (_ending) return;
       AppLogService.instance.add('VOICE_CALL', '文字轮次失败：$error');
       if (mounted) {
         setState(() {
@@ -183,7 +202,7 @@ class _CallPageState extends State<CallPage>
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && !_ending) {
         setState(() {
           _processing = false;
           if (_flowState != CallFlowState.playing &&
@@ -289,7 +308,7 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _startListening() async {
-    if (_muted || _processing || _recording) return;
+    if (_muted || _processing || _recording || _ending) return;
     AppLogService.instance.add('VOICE_CALL', '请求麦克风权限');
     if (mounted) {
       setState(() {
@@ -344,7 +363,7 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _finishListening() async {
-    if (_finishingRecording) return;
+    if (_finishingRecording || _ending) return;
     _finishingRecording = true;
     _autoStopTimer?.cancel();
     _stopAmpMonitor();
@@ -416,7 +435,7 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _runVoiceTurn() async {
-    if (_processing || _recordingPath == null) return;
+    if (_processing || _recordingPath == null || _ending) return;
     if (!widget.hasStt) {
       AppLogService.instance.add('VOICE_CALL', 'STT 不可用，无法识别本次录音');
       if (mounted) {
@@ -436,10 +455,15 @@ class _CallPageState extends State<CallPage>
     }
     AppLogService.instance.add('VOICE_CALL', 'STT 开始：${_recordingPath!}');
     try {
+      final token = _beginTurn();
       final text = await AIManager()
           .transcribeAudio(
-              botId: widget.bot['id'].toString(), audioPath: _recordingPath!)
+            botId: widget.bot['id'].toString(),
+            audioPath: _recordingPath!,
+            cancellationToken: token,
+          )
           .timeout(const Duration(seconds: 45));
+      if (_ending) return;
       if (text == null || text.trim().isEmpty) {
         AppLogService.instance.add('VOICE_CALL', 'STT 返回空文本');
         if (mounted) {
@@ -463,8 +487,15 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
       final reply = await AIManager()
-          .sendMessage(botId: widget.bot['id'].toString(), text: text)
-          .timeout(const Duration(minutes: 2));
+          .sendMessage(
+            botId: widget.bot['id'].toString(),
+            text: text,
+            allowTools: false,
+            forceSingleReply: true,
+            cancellationToken: token,
+          )
+          .timeout(const Duration(seconds: 45));
+      if (_ending) return;
       if (reply['success'] != true) {
         final reason = _replyFailureReason(reply);
         AppLogService.instance.add('VOICE_CALL', 'AI 请求失败：$reason');
@@ -499,7 +530,10 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'TTS 生成开始：$ttsId');
       await _synthesizeAndPlay(answer, ttsId);
+    } on AICancelledException {
+      return;
     } catch (error) {
+      if (_ending) return;
       AppLogService.instance.add('VOICE_CALL', '语音轮次失败：$error');
       if (mounted) {
         setState(() {
@@ -508,7 +542,7 @@ class _CallPageState extends State<CallPage>
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && !_ending) {
         setState(() => _processing = false);
         if (!_muted && _flowState != CallFlowState.failed) {
           await _startListening();
@@ -525,7 +559,13 @@ class _CallPageState extends State<CallPage>
       });
     }
     try {
-      final audioPath = await AIManager().generateTTS(answer, ttsId);
+      if (_ending) return;
+      final audioPath = await AIManager().generateTTS(
+        answer,
+        ttsId,
+        cancellationToken: _turnToken,
+      );
+      if (_ending) return;
       if (audioPath == null || audioPath.isEmpty) {
         AppLogService.instance.add('VOICE_CALL', 'TTS 未生成音频，保留文字回复');
         if (mounted) {
@@ -539,7 +579,10 @@ class _CallPageState extends State<CallPage>
       AppLogService.instance.add('VOICE_CALL', 'TTS 生成成功，开始播放');
       if (mounted) setState(() => _caption = '正在说话…');
       await _playBotReply(audioPath);
+    } on AICancelledException {
+      return;
     } catch (error) {
+      if (_ending) return;
       AppLogService.instance.add('VOICE_CALL', 'TTS 或播放失败，保留文字回复：$error');
       if (mounted) {
         setState(() {
@@ -627,6 +670,8 @@ class _CallPageState extends State<CallPage>
   Future<void> _endCall() async {
     if (_ending) return;
     _ending = true;
+    _turnToken?.cancel();
+    _turnToken = null;
     _autoStopTimer?.cancel();
     _recordingStartedAt = null;
     _vadActive = false;
@@ -640,24 +685,31 @@ class _CallPageState extends State<CallPage>
     } catch (_) {}
 
     final duration = DateTime.now().difference(_startedAt);
-    if (duration.inMilliseconds < 1000) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
     final botId = widget.bot['id']?.toString() ?? '';
-    if (botId.isEmpty) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
+    final transcript = List<String>.from(_transcript);
+    if (mounted) Navigator.pop(context);
+    if (duration.inMilliseconds < 1000 || botId.isEmpty) return;
+    unawaited(_persistCallSummary(
+      botId: botId,
+      duration: duration,
+      transcript: transcript,
+    ));
+  }
+
+  Future<void> _persistCallSummary({
+    required String botId,
+    required Duration duration,
+    required List<String> transcript,
+  }) async {
     final durationText = _formatDuration(duration);
     var summary = '本次通话未获取到有用信息。';
     var failed = false;
-    if (_transcript.isNotEmpty) {
+    if (transcript.isNotEmpty) {
       try {
         final result = await AIManager().sendMessage(
           botId: botId,
           text:
-              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${_transcript.join('\n')}',
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
           persistResponse: false,
           includeChatHistory: false,
           enableAutoSummary: false,
@@ -690,7 +742,6 @@ class _CallPageState extends State<CallPage>
     });
     AppLogService.instance
         .add('VOICE_CALL', '通话结束：$durationText，摘要${failed ? '失败' : '已保存'}');
-    if (mounted) Navigator.pop(context);
   }
 
   String _formatDuration(Duration value) {
@@ -724,6 +775,7 @@ class _CallPageState extends State<CallPage>
 
   @override
   void dispose() {
+    _turnToken?.cancel();
     _autoStopTimer?.cancel();
     _durationTimer?.cancel();
     _stopAmpMonitor();

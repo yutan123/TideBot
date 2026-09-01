@@ -11,13 +11,14 @@ import 'package:path_provider/path_provider.dart';
 import 'app_navigation.dart';
 import 'db.dart';
 import 'global_notice.dart';
+import 'ota_release.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
 class OtaUpdate {
   static const _channel = MethodChannel('tidebot.native.channel');
   static const _releaseApi =
-      'https://api.github.com/repos/yutan123/TideBot/releases/latest';
+      'https://api.github.com/repos/yutan123/TideBot/releases';
 
   static Future<void> checkOncePerDay() async {
     final db = DBManager();
@@ -36,9 +37,10 @@ class OtaUpdate {
   }) async {
     try {
       final release = await _latestRelease();
-      final version = _releaseVersion(release);
+      final version = OtaReleasePicker.versionOf(release);
       final installed = (await PackageInfo.fromPlatform()).version;
-      if (version.isEmpty || _compare(version, installed) <= 0) {
+      if (version.isEmpty ||
+          OtaReleasePicker.compareVersions(version, installed) <= 0) {
         if (showWhenCurrent && context != null && context.mounted) {
           GlobalNotice.show('当前已是最新版本');
         }
@@ -82,34 +84,12 @@ class OtaUpdate {
       throw HttpException('GitHub Release HTTP ${response.statusCode}');
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) throw const FormatException('Release 响应格式错误');
-    return Map<String, dynamic>.from(decoded);
-  }
-
-  static String _releaseVersion(Map<String, dynamic> release) {
-    final raw =
-        (release['tag_name'] ?? release['name'] ?? '').toString().trim();
-    return raw.replaceFirst(RegExp(r'^[vV]'), '').split('+').first.trim();
-  }
-
-  static List<String> _apkUrls(Map<String, dynamic> release) {
-    final assets = release['assets'];
-    if (assets is! List) return const [];
-    final preferred = <String>[];
-    final fallback = <String>[];
-    for (final raw in assets.whereType<Map>()) {
-      final name = raw['name']?.toString() ?? '';
-      final url = raw['browser_download_url']?.toString() ?? '';
-      if (!url.startsWith('https://') || !name.toLowerCase().endsWith('.apk')) {
-        continue;
-      }
-      if (name.toLowerCase() == 'tidebot.apk') {
-        preferred.add(url);
-      } else {
-        fallback.add(url);
-      }
+    if (decoded is! List) throw const FormatException('Release 响应格式错误');
+    final picked = OtaReleasePicker.pickLatest(decoded);
+    if (picked == null) {
+      throw const HttpException('GitHub Release HTTP 404');
     }
-    return [...preferred, ...fallback];
+    return picked;
   }
 
   static Future<void> _showUpdate(
@@ -117,7 +97,7 @@ class OtaUpdate {
     Map<String, dynamic> release,
     String version,
   ) async {
-    final urls = _apkUrls(release);
+    final urls = OtaReleasePicker.apkUrls(release);
     if (urls.isEmpty) {
       GlobalNotice.show('该版本没有 TideBot.apk 安装包',
           color: const Color(0xFFE74C3C));
@@ -278,16 +258,5 @@ class OtaUpdate {
       }
     }
     throw HttpException('安装包下载失败：${errors.join('；')}');
-  }
-
-  static int _compare(String a, String b) {
-    final aa = a.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final bb = b.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    for (var i = 0; i < (aa.length > bb.length ? aa.length : bb.length); i++) {
-      final x = i < aa.length ? aa[i] : 0;
-      final y = i < bb.length ? bb[i] : 0;
-      if (x != y) return x.compareTo(y);
-    }
-    return 0;
   }
 }

@@ -1741,6 +1741,19 @@ class DBManager {
     );
   }
 
+  Future<Map<String, dynamic>?> getPostById(String postId) async {
+    final id = postId.trim();
+    if (id.isEmpty) return null;
+    final db = await database;
+    final rows = await db.query(
+      'posts',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Map<String, dynamic>.from(rows.first);
+  }
+
   Future<void> insertPost(Map<String, dynamic> post) async {
     final db = await database;
     await db.insert('posts', post,

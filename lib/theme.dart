@@ -36,12 +36,17 @@ class TideTheme extends ChangeNotifier {
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
 
   void _setGlobalBackgroundImage(String path) {
-    _globalBackgroundReady = path.isEmpty;
     _configuredBackgroundPath = '';
     _configuredDevicePixelRatio = 0;
     _configuredSize = Size.zero;
     _backgroundLightness.clear();
-    _globalBackgroundImage = path.isEmpty ? null : FileImage(File(path));
+    if (path.isEmpty) {
+      _globalBackgroundImage = null;
+      _globalBackgroundReady = true;
+      return;
+    }
+    _globalBackgroundImage = FileImage(File(path));
+    _globalBackgroundReady = File(path).existsSync();
   }
 
   ImageConfiguration _imageConfiguration(BuildContext context) {
@@ -65,6 +70,8 @@ class TideTheme extends ChangeNotifier {
       return true;
     }
     try {
+      _globalBackgroundReady = true;
+      notifyListeners();
       await precacheImage(image, context, size: size);
       final stream = image.resolve(_imageConfiguration(context));
       final ready = Completer<ui.Image>();
@@ -84,11 +91,10 @@ class TideTheme extends ChangeNotifier {
       _configuredBackgroundPath = _globalBackground;
       _configuredDevicePixelRatio = dpr;
       _configuredSize = size;
-      _globalBackgroundReady = true;
       notifyListeners();
       return true;
     } catch (_) {
-      _globalBackgroundReady = false;
+      _globalBackgroundReady = File(_globalBackground).existsSync();
       notifyListeners();
       return false;
     }
