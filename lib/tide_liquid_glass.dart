@@ -121,16 +121,16 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
       lightIntensity,
       fresnelStrength
     ) = switch (widget.preset) {
-      TideGlassPreset.base => (30.0, 2.4, 1.30, .16, .62, .82),
-      TideGlassPreset.dock => (32.0, 2.8, 1.34, .20, .72, .92),
-      TideGlassPreset.accentCapsule => (30.0, 2.6, 1.32, .18, .68, .86),
+      TideGlassPreset.base => (32.0, 2.6, 1.32, .18, .70, .88),
+      TideGlassPreset.dock => (34.0, 2.8, 1.35, .22, .78, .96),
+      TideGlassPreset.accentCapsule => (31.0, 2.6, 1.33, .20, .72, .90),
     };
     return LiquidGlassSettings(
       glassColor: theme.isDark
-          ? const Color(0x381B2028)
+          ? const Color(0x241B2028)
           : widget.preset == TideGlassPreset.accentCapsule
-              ? theme.primary.withValues(alpha: .18)
-              : const Color(0x2AF8FBFF),
+              ? theme.primary.withValues(alpha: .12)
+              : const Color(0x16F8FBFF),
       thickness: isPremium ? thickness : 9,
       blur: isPremium ? blur : 2.2,
       refractiveIndex: isPremium ? refractiveIndex : 1.06,

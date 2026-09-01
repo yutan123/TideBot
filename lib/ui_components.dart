@@ -632,6 +632,7 @@ class FrostCard extends StatelessWidget {
       padding: margin,
       child: TideLiquidGlass(
         radius: radius,
+        premium: true,
         child: GestureDetector(
           onTap: onTap,
           onLongPress: onLongPress,

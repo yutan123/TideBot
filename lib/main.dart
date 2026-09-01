@@ -544,24 +544,26 @@ class _FlowGlassBgState extends State<FlowGlassBg> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final image =
-        widget.backgroundPath == null ? theme.globalBackgroundImage : null;
+    final image = widget.backgroundPath == null
+        ? theme.globalBackgroundImage
+        : FileImage(File(widget.backgroundPath!));
     final path = widget.backgroundPath ?? theme.globalBackground;
     final effectiveOpacity = widget.backgroundPath == null
         ? theme.effectiveBackgroundOpacity
         : widget.opacity;
-    final hasImage =
-        image != null || (path.isNotEmpty && File(path).existsSync());
+    final hasImage = image != null && (path.isEmpty || File(path).existsSync());
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColoredBox(
-          color:
-              theme.isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA),
-        ),
+        if (!hasImage)
+          ColoredBox(
+            color: theme.isDark
+                ? const Color(0xFF151820)
+                : const Color(0xFFF3F5FA),
+          ),
         if (hasImage)
           Image(
-            image: image ?? FileImage(File(path)),
+            image: image,
             fit: BoxFit.cover,
             gaplessPlayback: true,
             errorBuilder: (_, __, ___) => const SizedBox.expand(),

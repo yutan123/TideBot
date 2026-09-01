@@ -303,9 +303,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
   }
 
-  void _handleInputFocus() {
-    // The composer is attached to the keyboard; do not perform a second scroll.
-  }
+  void _handleInputFocus() {}
 
   void _scrollDown({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1991,6 +1989,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (minutes > 0 || hours > 0) '$minutes 分钟',
       if (hours == 0 && minutes == 0) '$seconds 秒',
     ].join(' ');
+    const separator = '\n\n--- 通话原文 ---\n';
+    final splitAt = content.indexOf(separator);
+    final summary = splitAt < 0 ? content : content.substring(0, splitAt);
+    final transcript =
+        splitAt < 0 ? '' : content.substring(splitAt + separator.length);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Material(
@@ -2005,8 +2008,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         appBar: AppBar(title: const Text('通话摘要')),
                         body: SingleChildScrollView(
                           padding: const EdgeInsets.all(20),
-                          child: Text(content,
-                              style: const TextStyle(height: 1.6)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                summary,
+                                style: const TextStyle(height: 1.6),
+                              ),
+                              if (transcript.isNotEmpty) ...[
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Divider(),
+                                ),
+                                const Text(
+                                  '通话原文',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  transcript,
+                                  style: const TextStyle(height: 1.6),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),

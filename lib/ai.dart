@@ -457,6 +457,22 @@ class AIManager {
       registerImage(path);
     }
     final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
+    final currentImageDescriptions = <int, String>{};
+    if (effectiveImagePaths.isNotEmpty) {
+      for (final path in effectiveImagePaths) {
+        final number = imageNumberByPath[path];
+        if (number == null) continue;
+        try {
+          currentImageDescriptions[number] = await _inspectImageForBot(
+            botId: botId,
+            imagePath: path,
+            imageNumber: number,
+          );
+        } catch (error) {
+          currentImageDescriptions[number] = '图片识别暂时失败：$error';
+        }
+      }
+    }
     final sharedPostContexts = <String, String>{};
     for (final msg in history) {
       if (msg['type']?.toString() != 'shared_post') continue;
@@ -596,6 +612,8 @@ class AIManager {
         final content = [
           ...chunks,
           if (caption.isNotEmpty) caption,
+          for (final entry in currentImageDescriptions.entries)
+            '【${formatImagePlaceholder(entry.key)} 识别结果】${entry.value}',
         ].join('\n');
         messages.add({
           'role': 'user',
