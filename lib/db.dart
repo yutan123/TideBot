@@ -435,26 +435,24 @@ class DBManager {
     );
     if (summaries.isEmpty) return;
 
-    await db.transaction((txn) async {
-      for (final summary in summaries) {
-        final id = summary['id']?.toString() ?? '';
-        final botId = summary['bot_id']?.toString() ?? '';
-        if (id.isEmpty || botId.isEmpty) continue;
-        await txn.insert(
-          'call_sessions',
-          {
-            'id': 'legacy_$id',
-            'bot_id': botId,
-            'summary': summary['content']?.toString() ?? '',
-            'duration': (summary['duration'] as num?)?.toInt() ?? 0,
-            'status': 'completed',
-            'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
-          },
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
-        await txn.delete('chat_history', where: 'id = ?', whereArgs: [id]);
-      }
-    });
+    for (final summary in summaries) {
+      final id = summary['id']?.toString() ?? '';
+      final botId = summary['bot_id']?.toString() ?? '';
+      if (id.isEmpty || botId.isEmpty) continue;
+      await db.insert(
+        'call_sessions',
+        {
+          'id': 'legacy_$id',
+          'bot_id': botId,
+          'summary': summary['content']?.toString() ?? '',
+          'duration': (summary['duration'] as num?)?.toInt() ?? 0,
+          'status': 'completed',
+          'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      await db.delete('chat_history', where: 'id = ?', whereArgs: [id]);
+    }
   }
 
   Future<void> _createCallTables(Database db) async {
