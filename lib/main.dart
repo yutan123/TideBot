@@ -616,16 +616,19 @@ class TideBotApp extends StatefulWidget {
 }
 
 class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
-  bool _loadingLaunchPreferences = true;
-  bool _hasSeenOnboarding = false;
-  bool _hasAcceptedLegal = false;
+  // Existing installs must remain usable if preferences are temporarily
+  // unavailable. A fresh install is redirected once its preferences load.
+  bool _hasSeenOnboarding = true;
+  bool _hasAcceptedLegal = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadLaunchPreferences());
-    unawaited(DiaryService.instance.catchUp());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(DiaryService.instance.catchUp());
+    });
   }
 
   Future<void> _loadLaunchPreferences() async {
@@ -639,7 +642,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
     } catch (error) {
       debugPrint('[startup] launch preferences skipped: $error');
     }
-    if (mounted) setState(() => _loadingLaunchPreferences = false);
+    if (mounted) setState(() {});
   }
 
   @override
@@ -749,29 +752,12 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
               ),
             ),
           ),
-          home: _loadingLaunchPreferences
-              ? const _StartupScreen()
-              : !_hasSeenOnboarding
-                  ? const OnboardingScreen()
-                  : !_hasAcceptedLegal
-                      ? const LegalAgreementPage(requiredAcceptance: true)
-                      : const DailyLaunchAnimation(child: TideMainScaffold()),
+          home: !_hasSeenOnboarding
+              ? const OnboardingScreen()
+              : !_hasAcceptedLegal
+                  ? const LegalAgreementPage(requiredAcceptance: true)
+                  : const DailyLaunchAnimation(child: TideMainScaffold()),
         ),
-      ),
-    );
-  }
-}
-
-class _StartupScreen extends StatelessWidget {
-  const _StartupScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: theme.bgColor,
-      body: Center(
-        child: CircularProgressIndicator(color: theme.primary),
       ),
     );
   }
