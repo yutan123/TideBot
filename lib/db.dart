@@ -450,7 +450,7 @@ class DBManager {
       }).timeout(
         const Duration(seconds: 5),
         onTimeout: () {
-          debugPrint('[db] call summary migration deferred: timed out');
+          print('[db] call summary migration deferred: timed out');
         },
       ),
     );
@@ -487,7 +487,7 @@ class DBManager {
     } catch (error) {
       // Preserve legacy rows if migration cannot complete. Database open must
       // remain available; this idempotent cleanup will retry next open.
-      debugPrint('[db] call summary migration deferred: $error');
+      print('[db] call summary migration deferred: $error');
     }
   }
 
