@@ -582,7 +582,9 @@ class _FlowGlassBgState extends State<FlowGlassBg> {
     final effectiveOpacity = widget.backgroundPath == null
         ? theme.effectiveBackgroundOpacity
         : widget.opacity;
-    final hasImage = image != null && (path.isEmpty || File(path).existsSync());
+    final hasImage = image != null &&
+        (widget.backgroundPath != null || theme.isGlobalBackgroundReady) &&
+        (path.isEmpty || File(path).existsSync());
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -990,42 +992,41 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _scale;
   int _prev = 0;
   bool _lifting = false;
-  int? _dragTarget;
+  double? _dragPosition;
 
-  int _targetForGlobalPosition(Offset globalPosition) {
+  double _positionForGlobalPosition(Offset globalPosition) {
     final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return widget.currentIndex;
+    if (box == null || !box.hasSize) return widget.currentIndex.toDouble();
     final local = box.globalToLocal(globalPosition);
-    return (local.dx / (box.size.width / _icons.length))
-        .floor()
-        .clamp(0, _icons.length - 1);
+    final slotWidth = box.size.width / _icons.length;
+    return (local.dx / slotWidth - .5).clamp(0.0, _icons.length - 1.0);
   }
 
-  void _startDrag(LongPressStartDetails details) {
+  void _startDrag(DragStartDetails details) {
     TideHaptics.tap();
     setState(() {
       _lifting = true;
-      _dragTarget = _targetForGlobalPosition(details.globalPosition);
+      _dragPosition = _positionForGlobalPosition(details.globalPosition);
     });
   }
 
-  void _updateDrag(LongPressMoveUpdateDetails details) {
-    final target = _targetForGlobalPosition(details.globalPosition);
-    if (target != _dragTarget) setState(() => _dragTarget = target);
+  void _updateDrag(DragUpdateDetails details) {
+    final position = _positionForGlobalPosition(details.globalPosition);
+    if (position != _dragPosition) setState(() => _dragPosition = position);
   }
 
-  void _endDrag(LongPressEndDetails details) {
-    final target = _dragTarget;
+  void _endDrag(DragEndDetails details) {
+    final position = _dragPosition;
     setState(() {
       _lifting = false;
-      _dragTarget = null;
+      _dragPosition = null;
     });
-    if (target != null) widget.onTap(target);
+    if (position != null) widget.onTap(position.round());
   }
 
   void _cancelDrag() => setState(() {
         _lifting = false;
-        _dragTarget = null;
+        _dragPosition = null;
       });
 
   static const _icons = [
@@ -1137,13 +1138,48 @@ class _JellyDockState extends State<JellyDock>
     super.dispose();
   }
 
+  Widget _selectedPill(TideTheme theme, bool isDark) {
+    final pill = Container(
+      width: _w.value,
+      height: 40,
+      decoration: BoxDecoration(
+        color: theme.hasGlobalBackground
+            ? (theme.isDark ? const Color(0x3D1D2C33) : const Color(0x36FFFFFF))
+            : theme.primary.withValues(alpha: isDark ? 0.28 : 0.18),
+        borderRadius: BorderRadius.circular(20),
+        border: theme.hasGlobalBackground
+            ? Border.all(color: Colors.white.withValues(alpha: .34))
+            : null,
+        boxShadow: theme.hasGlobalBackground
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : (isDark
+                ? [
+                    BoxShadow(
+                      color: theme.primary.withValues(alpha: .20),
+                      blurRadius: 10,
+                      offset: const Offset(0, -2),
+                    ),
+                  ]
+                : null),
+      ),
+    );
+    return theme.hasGlobalBackground
+        ? TideLiquidGlass.accentCapsule(radius: 20, child: pill)
+        : pill;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
     final dock = Container(
       height: 56,
-      clipBehavior: Clip.none,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
@@ -1172,84 +1208,39 @@ class _JellyDockState extends State<JellyDock>
       ),
       child: LayoutBuilder(
         builder: (ctx, cs) {
-          final activeIndex = _dragTarget ?? widget.currentIndex;
-          final totalW = cs.maxWidth;
-          final slotW = totalW / 4;
+          final dragPosition = _dragPosition;
+          final activeIndex = (dragPosition ?? widget.currentIndex).round();
           return Stack(
             clipBehavior: Clip.none,
             children: [
               AnimatedBuilder(
                 animation: Listenable.merge([_pos, _w, _scale]),
-                builder: (c, child) {
-                  final pillX =
-                      (_lifting ? activeIndex : _pos.value * 4) * slotW +
-                          (slotW - _w.value) / 2;
-                  final pill = Container(
-                    width: _w.value,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: theme.hasGlobalBackground
-                          ? (theme.isDark
-                              ? const Color(0x261D2C33)
-                              : const Color(0x24FFFFFF))
-                          : theme.primary.withValues(
-                              alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
-                            ),
-                      borderRadius: BorderRadius.circular(20),
-                      border: theme.hasGlobalBackground
-                          ? Border.all(
-                              color: Colors.white.withValues(alpha: .34))
-                          : null,
-                      boxShadow: theme.hasGlobalBackground
-                          ? [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: .12),
-                                blurRadius: 10,
-                                offset: const Offset(0, 3),
-                              ),
-                            ]
-                          : (isDark
-                              ? [
-                                  BoxShadow(
-                                    color: theme.primary.withValues(
-                                      alpha: _lifting ? 0.42 : 0.20,
-                                    ),
-                                    blurRadius: _lifting ? 18 : 10,
-                                    spreadRadius: _lifting ? 1 : 0,
-                                    offset: const Offset(0, -2),
-                                  ),
-                                ]
-                              : null),
-                    ),
-                  );
-                  final selectedPill = theme.hasGlobalBackground
-                      ? TideLiquidGlass.accentCapsule(
-                          radius: 20,
-                          child: pill,
-                        )
-                      : pill;
+                builder: (context, child) {
+                  final position = dragPosition ?? _pos.value * _icons.length;
+                  final slotWidth = cs.maxWidth / _icons.length;
                   return Positioned(
-                    left: pillX,
-                    top: _lifting ? -12 : 2,
+                    left: position * slotWidth + (slotWidth - _w.value) / 2,
+                    top: _lifting ? -18 : 2,
                     child: Transform.scale(
-                      scale: _scale.value * (_lifting ? 1.26 : 1.0),
+                      scale: _scale.value * (_lifting ? 1.12 : 1.0),
                       alignment: Alignment.center,
-                      child: selectedPill,
+                      child: child,
                     ),
                   );
                 },
+                child: _selectedPill(theme, isDark),
               ),
               Row(
-                children: List.generate(4, (i) {
-                  final act = (_dragTarget ?? widget.currentIndex) == i;
+                children: List.generate(_icons.length, (i) {
+                  final act = activeIndex == i;
                   return Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (_) => TideHaptics.tap(),
-                      onLongPressStart: _startDrag,
-                      onLongPressMoveUpdate: _updateDrag,
-                      onLongPressEnd: _endDrag,
-                      onLongPressCancel: _cancelDrag,
+                      onHorizontalDragStart: _startDrag,
+                      onHorizontalDragUpdate: _updateDrag,
+                      onHorizontalDragEnd: _endDrag,
+                      onHorizontalDragCancel: _cancelDrag,
                       onTap: () => widget.onTap(i),
                       child: Center(
                         child: Stack(
@@ -1291,10 +1282,10 @@ class _JellyDockState extends State<JellyDock>
       ),
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(40, 12, 40, 0),
+      padding: const EdgeInsets.fromLTRB(40, 0, 40, 0),
       child: TideLiquidGlass.dock(
         radius: 28,
-        clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
+        clipExpansion: const EdgeInsets.fromLTRB(16, 28, 16, 18),
         child: dock,
       ),
     );

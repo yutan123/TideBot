@@ -20,6 +20,11 @@ class OtaUpdate {
   static const _channel = MethodChannel('tidebot.native.channel');
   static const _releaseApi =
       'https://api.github.com/repos/yutan123/TideBot-OTA/releases';
+  static const _releaseApiFallbacks = <String>[
+    'https://ghproxy.net/https://api.github.com/repos/yutan123/TideBot-OTA/releases',
+    'https://mirror.ghproxy.com/https://api.github.com/repos/yutan123/TideBot-OTA/releases',
+    'https://gh-proxy.com/https://api.github.com/repos/yutan123/TideBot-OTA/releases',
+  ];
 
   static Future<void> checkOncePerDay() async {
     final db = DBManager();
@@ -74,23 +79,42 @@ class OtaUpdate {
   }
 
   static Future<Map<String, dynamic>> _latestRelease() async {
-    final response = await http.get(
-      Uri.parse(_releaseApi),
-      headers: const {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': 'TideBot',
-      },
-    ).timeout(const Duration(seconds: 20));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException('GitHub Release HTTP ${response.statusCode}');
+    final errors = <String>[];
+    for (final endpoint in <String>[_releaseApi, ..._releaseApiFallbacks]) {
+      final client = http.Client();
+      try {
+        final response = await client.get(
+          Uri.parse(endpoint),
+          headers: const {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'TideBot',
+          },
+        ).timeout(const Duration(seconds: 12));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          errors.add('$endpoint HTTP ${response.statusCode}');
+          continue;
+        }
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is! List) {
+          errors.add('$endpoint 响应不是 Release 列表');
+          continue;
+        }
+        final picked = OtaReleasePicker.pickLatest(decoded);
+        if (picked != null) return picked;
+        errors.add('$endpoint 未找到可用 Release');
+      } on TimeoutException {
+        errors.add('$endpoint 超时');
+      } on SocketException {
+        errors.add('$endpoint 网络不可达');
+      } on FormatException {
+        errors.add('$endpoint 返回非 JSON 数据');
+      } catch (error) {
+        errors.add('$endpoint $error');
+      } finally {
+        client.close();
+      }
     }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! List) throw const FormatException('Release 响应格式错误');
-    final picked = OtaReleasePicker.pickLatest(decoded);
-    if (picked == null) {
-      throw const HttpException('GitHub Release HTTP 404');
-    }
-    return picked;
+    throw HttpException('所有更新源均不可用：${errors.join('；')}');
   }
 
   static Future<void> _showUpdate(

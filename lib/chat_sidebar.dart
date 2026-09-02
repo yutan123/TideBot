@@ -330,25 +330,26 @@ class _ChatSidebarState extends State<ChatSidebar> {
         theme,
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
-              '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
-              style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              )),
+            '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w700,
+              color: theme.textStrong,
+            ),
+          ),
           Text(
             '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
-            style: const TextStyle(color: Color(0xDFFFFFFF)),
+            style: TextStyle(color: theme.textWeak),
           ),
           const SizedBox(height: 10),
           Text(
             '“$_quote”',
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.4,
-              color: Colors.white,
+              color: theme.textStrong,
             ),
           ),
         ]),
@@ -433,15 +434,28 @@ class _ChatSidebarState extends State<ChatSidebar> {
 
   Widget _panel(TideTheme theme, Widget child) => Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: theme.primary,
-          borderRadius: BorderRadius.circular(8),
+          color:
+              theme.hasGlobalBackground ? theme.surface : theme.surfaceVariant,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: theme.hasGlobalBackground
+                ? Colors.white.withValues(alpha: theme.isDark ? .20 : .48)
+                : theme.primary.withValues(alpha: .16),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: theme.isDark ? .16 : .07),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: DefaultTextStyle.merge(
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: theme.textStrong),
           child: IconTheme.merge(
-            data: const IconThemeData(color: Colors.white),
+            data: IconThemeData(color: theme.iconMuted),
             child: child,
           ),
         ),

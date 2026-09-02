@@ -198,6 +198,12 @@ class _ProfilePageState extends State<ProfilePage> {
         Icon(Icons.edit_rounded, size: 18, color: theme.onBackgroundWeak),
       ],
     );
+    if (theme.hasGlobalBackground) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: content,
+      );
+    }
     return FrostCard(
       padding: const EdgeInsets.all(20),
       child: content,
@@ -206,26 +212,46 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
+    final content = Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: theme.hasGlobalBackground ? 8 : 14,
+        vertical: theme.hasGlobalBackground ? 7 : 10,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            s['icon'] as IconData,
+            size: theme.hasGlobalBackground ? 18 : 20,
+            color: theme.primary,
+          ),
+          SizedBox(width: theme.hasGlobalBackground ? 12 : 14),
+          Expanded(
+            child: Text(
+              s['title'] ?? '',
+              style: TextStyle(
+                fontSize: theme.hasGlobalBackground ? 14 : 15,
+                fontFamily: 'TideFont',
+                color: theme.onBackgroundStrong,
+              ),
+            ),
+          ),
+          Icon(
+            Icons.arrow_forward_ios_rounded,
+            size: 14,
+            color: theme.onBackgroundWeak,
+          ),
+        ],
+      ),
+    );
+    if (theme.hasGlobalBackground) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: content,
+      );
+    }
     return FrostCard(
       margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          children: [
-            Icon(s['icon'] as IconData, size: 20, color: theme.primary),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(s['title'] ?? '',
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontFamily: 'TideFont',
-                      color: theme.onBackgroundStrong)),
-            ),
-            Icon(Icons.arrow_forward_ios_rounded,
-                size: 14, color: theme.onBackgroundWeak),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 

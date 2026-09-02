@@ -602,6 +602,7 @@ class FrostCard extends StatelessWidget {
       this.transparent = false});
   @override
   Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
     final card = Padding(
       padding: margin,
       child: GestureDetector(
@@ -612,7 +613,11 @@ class FrostCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: transparent
                 ? Colors.transparent
-                : TideTheme.of(context).glass.withValues(alpha: 0.7),
+                : theme.hasGlobalBackground
+                    ? theme.glass.withValues(
+                        alpha: theme.isDark ? 0.36 : 0.48,
+                      )
+                    : theme.glass.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(color: TideTheme.of(context).border, width: 0.5),
             boxShadow: [

@@ -127,10 +127,10 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
     };
     return LiquidGlassSettings(
       glassColor: theme.isDark
-          ? const Color(0x241B2028)
+          ? const Color(0x4D1B2028)
           : widget.preset == TideGlassPreset.accentCapsule
-              ? theme.primary.withValues(alpha: .12)
-              : const Color(0x16F8FBFF),
+              ? theme.primary.withValues(alpha: .16)
+              : const Color(0x38F8FBFF),
       thickness: isPremium ? thickness : 9,
       blur: isPremium ? blur : 2.2,
       refractiveIndex: isPremium ? refractiveIndex : 1.06,
@@ -142,7 +142,7 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
       ambientStrength: .05,
       glowIntensity: widget.interactive ? .12 : 0,
       backerColor:
-          theme.isDark ? const Color(0x32151A22) : const Color(0x18FFFFFF),
+          theme.isDark ? const Color(0x52151A22) : const Color(0x30FFFFFF),
     );
   }
 

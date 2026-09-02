@@ -81,6 +81,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String? _pendingMediaContext;
   final GlobalKey _composerKey = GlobalKey();
   double _composerReserve = 84;
+  bool _showEmojiPanel = false;
+  int _emojiTab = 0;
+  List<Map<String, dynamic>> _stickers = const <Map<String, dynamic>>[];
+  bool _stickersLoaded = false;
 
   // ===== 防抖/合并：请求代次 + 待重发队列 =====
   // 用户连续发送多条时，递增代次让在途请求的渲染结果作废，并把新文本并入
@@ -522,103 +526,162 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  Future<void> _showEmojiPanel() async {
-    _inputFocus.unfocus();
-    final stickers = await DBManager().queryStickers();
-    if (!mounted) return;
-    await showTideSheet<void>(
-      context: context,
-      height: 360,
-      child: Builder(builder: (ctx) {
-        final theme = TideTheme.of(ctx);
-        return DefaultTabController(
-          length: 2,
-          child: Column(
+  void _toggleEmojiPanel() {
+    final opening = !_showEmojiPanel;
+    setState(() => _showEmojiPanel = opening);
+    if (!opening || _stickersLoaded) return;
+    unawaited(_loadStickers());
+  }
+
+  Future<void> _loadStickers() async {
+    try {
+      final stickers = await DBManager().queryStickers();
+      if (mounted) {
+        setState(() {
+          _stickers = stickers;
+          _stickersLoaded = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _stickersLoaded = true);
+    }
+  }
+
+  void _selectEmoji(({String asset, String label}) emoji) {
+    if (_msgC.text.trim().isEmpty) {
+      setState(() => _showEmojiPanel = false);
+      unawaited(_sendEmoji(emoji));
+      return;
+    }
+    _insertEmoji(emoji);
+  }
+
+  void _insertEmoji(({String asset, String label}) emoji) {
+    final selection = _msgC.selection;
+    final start = selection.isValid ? selection.start : _msgC.text.length;
+    final end = selection.isValid ? selection.end : _msgC.text.length;
+    final next = _msgC.text.replaceRange(start, end, emoji.label);
+    _msgC.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + emoji.label.length),
+    );
+    _inputFocus.requestFocus();
+  }
+
+  Widget _emojiPicker(TideTheme theme) {
+    final isEmoji = _emojiTab == 0;
+    return SizedBox(
+      height: 226,
+      child: Column(
+        children: [
+          Row(
             children: [
-              const TabBar(tabs: [Tab(text: 'Emoji'), Tab(text: '我的表情')]),
-              Expanded(
-                child: TabBarView(
-                  children: [
-                    GridView.builder(
-                      padding: const EdgeInsets.all(12),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 5,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                      ),
-                      itemCount: _emoji.length,
-                      itemBuilder: (_, index) {
-                        final emoji = _emoji[index];
-                        return Tooltip(
-                          message: emoji.label,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(8),
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              unawaited(_sendEmoji(emoji));
-                            },
-                            child: Center(
-                              child: SvgPicture.asset(
-                                emoji.asset,
-                                width: 30,
-                                height: 30,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    stickers.isEmpty
-                        ? Center(
-                            child: Text('暂无我的表情',
-                                style: TextStyle(
-                                    color: theme.textWeak,
-                                    fontFamily: 'TideFont')))
-                        : GridView.builder(
-                            padding: const EdgeInsets.all(12),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 4,
-                              mainAxisSpacing: 10,
-                              crossAxisSpacing: 10,
-                            ),
-                            itemCount: stickers.length,
-                            itemBuilder: (_, index) {
-                              final sticker = stickers[index];
-                              final path =
-                                  sticker['file_path']?.toString() ?? '';
-                              return Tooltip(
-                                message:
-                                    sticker['emotion']?.toString() ?? '表情包',
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(8),
-                                  onTap: () {
-                                    Navigator.pop(ctx);
-                                    unawaited(_sendSticker(sticker));
-                                  },
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: path.isNotEmpty &&
-                                            File(path).existsSync()
-                                        ? Image.file(File(path),
-                                            fit: BoxFit.cover)
-                                        : ColoredBox(
-                                            color: theme.surfaceVariant,
-                                            child: const Icon(
-                                                Icons.broken_image_outlined)),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ],
+              _emojiPickerTab(theme, 'Emoji', 0),
+              _emojiPickerTab(theme, '我的表情', 1),
+              const Spacer(),
+              IconButton(
+                tooltip: '收起表情',
+                onPressed: _toggleEmojiPanel,
+                icon: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: theme.iconMuted,
                 ),
               ),
             ],
           ),
-        );
-      }),
+          Expanded(
+            child: isEmoji
+                ? GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 6,
+                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 6,
+                    ),
+                    itemCount: _emoji.length,
+                    itemBuilder: (_, index) {
+                      final emoji = _emoji[index];
+                      return Tooltip(
+                        message: emoji.label,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => _selectEmoji(emoji),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: SvgPicture.asset(emoji.asset),
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                : !_stickersLoaded
+                    ? Center(
+                        child: CircularProgressIndicator(color: theme.primary),
+                      )
+                    : _stickers.isEmpty
+                        ? Center(
+                            child: Text(
+                              '暂无我的表情',
+                              style: TextStyle(
+                                color: theme.textWeak,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          )
+                        : GridView.builder(
+                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 5,
+                              mainAxisSpacing: 8,
+                              crossAxisSpacing: 8,
+                            ),
+                            itemCount: _stickers.length,
+                            itemBuilder: (_, index) {
+                              final sticker = _stickers[index];
+                              final path =
+                                  sticker['file_path']?.toString() ?? '';
+                              return InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () {
+                                  setState(() => _showEmojiPanel = false);
+                                  unawaited(_sendSticker(sticker));
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child:
+                                      path.isNotEmpty && File(path).existsSync()
+                                          ? Image.file(File(path),
+                                              fit: BoxFit.cover)
+                                          : ColoredBox(
+                                              color: theme.surfaceVariant,
+                                              child: const Icon(
+                                                Icons.broken_image_outlined,
+                                              ),
+                                            ),
+                                ),
+                              );
+                            },
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emojiPickerTab(TideTheme theme, String label, int index) {
+    final selected = _emojiTab == index;
+    return TextButton(
+      onPressed: () => setState(() => _emojiTab = index),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: selected ? theme.primary : theme.textWeak,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          fontFamily: 'TideFont',
+        ),
+      ),
     );
   }
 
@@ -3369,6 +3432,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_showEmojiPanel) _emojiPicker(theme),
               if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
@@ -3379,14 +3443,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   IconButton(
                     tooltip: '图片和文件',
                     onPressed: _pickMedia,
-                    icon: Icon(Icons.add_circle_outline_rounded,
-                        size: 23, color: theme.iconMuted),
-                  ),
-                  IconButton(
-                    tooltip: '表情',
-                    onPressed: _showEmojiPanel,
-                    icon: Icon(Icons.emoji_emotions_outlined,
-                        size: 23, color: theme.iconMuted),
+                    icon: Icon(Icons.add_rounded,
+                        size: 26, color: theme.iconMuted),
                   ),
                   Expanded(
                     child: TextField(
@@ -3409,6 +3467,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 4, vertical: 10),
                       ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: _showEmojiPanel ? '收起表情' : '表情',
+                    onPressed: _toggleEmojiPanel,
+                    icon: Icon(
+                      _showEmojiPanel
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.emoji_emotions_outlined,
+                      size: 23,
+                      color: _showEmojiPanel ? theme.primary : theme.iconMuted,
                     ),
                   ),
                   if (hasSendContent)

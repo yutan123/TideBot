@@ -8,6 +8,8 @@ import 'db.dart';
 // ================= 全局主题系统 =================
 // 每个主题含日/夜两套主色，夜间更沉静、更护眼。
 class TideTheme extends ChangeNotifier {
+  static const int _maxBackgroundBytes = 12 * 1024 * 1024;
+  static const int _maxBackgroundPixels = 12 * 1000 * 1000;
   // 薄荷绿是产品默认主题；其他颜色仅在用户主动选择后使用。
   String _name = 'mint';
   ThemeMode _mode = ThemeMode.system; // 跟随系统，用户可手动切日/夜
@@ -23,7 +25,7 @@ class TideTheme extends ChangeNotifier {
   // Backgrounds saved before this marker predate the guarded image pipeline.
   // They are discarded at the next launch so an old malformed file cannot crash
   // the renderer before the user can remove it.
-  static const _globalBackgroundSafetyKey = 'global_background_safe_v2';
+  static const _globalBackgroundSafetyKey = 'global_background_safe_v3';
   double _globalBackgroundOpacity = 0.38;
   int _backgroundRequest = 0;
   final Map<_BackgroundRegion, bool> _backgroundLightness = {};
@@ -50,7 +52,7 @@ class TideTheme extends ChangeNotifier {
       return;
     }
     _globalBackgroundImage = FileImage(File(path));
-    _globalBackgroundReady = File(path).existsSync();
+    _globalBackgroundReady = false;
   }
 
   ImageConfiguration _imageConfiguration(BuildContext context) {
@@ -59,6 +61,41 @@ class TideTheme extends ChangeNotifier {
       context,
       size: media?.size,
     );
+  }
+
+  Future<bool> _isSafeBackgroundFile(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return false;
+      final byteLength = await file.length();
+      if (byteLength <= 0 || byteLength > _maxBackgroundBytes) return false;
+
+      final codec = await ui.instantiateImageCodec(
+        await file.readAsBytes(),
+        targetWidth: 2048,
+        targetHeight: 2048,
+      );
+      try {
+        final frame = await codec.getNextFrame();
+        try {
+          return frame.image.width * frame.image.height <= _maxBackgroundPixels;
+        } finally {
+          frame.image.dispose();
+        }
+      } finally {
+        codec.dispose();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _clearPersistedBackground(DBManager db) async {
+    _globalBackground = '';
+    _setGlobalBackgroundImage('');
+    _backgroundLightness.clear();
+    await db.insertKV('global_background_image', '');
+    await db.insertKV(_globalBackgroundSafetyKey, '');
   }
 
   Future<bool> precacheGlobalBackground(BuildContext context) async {
@@ -76,7 +113,7 @@ class TideTheme extends ChangeNotifier {
       return true;
     }
     try {
-      _globalBackgroundReady = true;
+      _globalBackgroundReady = false;
       notifyListeners();
       await precacheImage(image, context, size: size);
       final stream = image.resolve(_imageConfiguration(context));
@@ -347,17 +384,15 @@ class TideTheme extends ChangeNotifier {
       final backgroundIsSafe = await db
           .getKV(_globalBackgroundSafetyKey)
           .timeout(const Duration(seconds: 5));
-      if (globalBackground != null &&
-          globalBackground.isNotEmpty &&
-          backgroundIsSafe == 'true' &&
-          File(globalBackground).existsSync()) {
-        _globalBackground = globalBackground;
-        _setGlobalBackgroundImage(globalBackground);
-      } else if (globalBackground != null && globalBackground.isNotEmpty) {
-        _globalBackground = '';
-        _setGlobalBackgroundImage('');
-        await db.insertKV('global_background_image', '');
-        await db.insertKV(_globalBackgroundSafetyKey, '');
+      if (globalBackground != null && globalBackground.isNotEmpty) {
+        final isSafe = backgroundIsSafe == 'true' &&
+            await _isSafeBackgroundFile(globalBackground);
+        if (isSafe) {
+          _globalBackground = globalBackground;
+          _setGlobalBackgroundImage(globalBackground);
+        } else {
+          await _clearPersistedBackground(db);
+        }
       }
       _globalBackgroundOpacity = (double.tryParse(
                 await db
@@ -440,8 +475,8 @@ class TideTheme extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!File(path).existsSync()) {
-      throw StateError('背景图片不存在或无法读取');
+    if (!await _isSafeBackgroundFile(path)) {
+      throw StateError('背景图片过大或无法安全解码');
     }
 
     final candidate = FileImage(File(path));
@@ -478,13 +513,12 @@ class TideTheme extends ChangeNotifier {
       _globalBackgroundOpacity = nextOpacity;
       _globalBackground = path;
       _globalBackgroundImage = candidate;
-      _globalBackgroundReady = true;
-      _configuredBackgroundPath = path;
-      _configuredDevicePixelRatio =
-          MediaQuery.maybeOf(context)?.devicePixelRatio ??
-              View.of(context).devicePixelRatio;
-      _configuredSize = MediaQuery.maybeOf(context)?.size ?? Size.zero;
+      _globalBackgroundReady = false;
+      _configuredBackgroundPath = '';
+      _configuredDevicePixelRatio = 0;
+      _configuredSize = Size.zero;
       notifyListeners();
+      await precacheGlobalBackground(context);
     } catch (_) {
       // Nothing has been persisted or made active until a candidate decodes.
       rethrow;
