@@ -87,9 +87,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
         _fileSize(dbShm),
       ]).then((sizes) => sizes[0] + sizes[1]),
       _children(docs),
-      DBManager().databaseDiagnostics(),
-      DBManager().getAllBots(),
-      DBManager().chatStorageByBot(),
+      DBManager().databaseDiagnostics().catchError((_) => <String, Object>{}),
+      DBManager().getAllBots().catchError((_) => <Map<String, dynamic>>[]),
+      DBManager().chatStorageByBot().catchError((_) => <String, int>{}),
     ]);
     if (!mounted) return;
     setState(() {
@@ -128,7 +128,10 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       builder: (dialogContext) => TideDialogSurface(
         title: const Text('数据库诊断'),
         content: SelectableText(
-          '路径\n${_databaseInfo['path'] ?? '不可用'}\n\n'
+          '路径\n${_databaseInfo['path'] ?? '不可用'}\n'
+          '打开前: ${_databaseInfo['existedBeforeOpen'] == true ? '已存在' : '不存在'}，'
+          '${_databaseInfo['bytesBeforeOpen'] ?? 0} B\n'
+          '打开后: ${_databaseInfo['bytesAfterOpen'] ?? 0} B\n\n'
           'SQLite 版本: ${_databaseInfo['userVersion'] ?? '不可用'}\n\n'
           '记录数\n$rows',
         ),

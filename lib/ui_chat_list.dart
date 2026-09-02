@@ -62,12 +62,27 @@ class ChatListPageState extends State<ChatListPage> {
 
   void load() async {
     final db = DBManager();
-    final bots = await db.queryBots();
+    List<Map<String, dynamic>> bots;
+    try {
+      bots = await db.queryBots();
+    } catch (error) {
+      print('[chat_list] queryBots failed: $error');
+      if (mounted) {
+        setState(() => _bots = []);
+        widget.sidebar?.updateBot(null);
+      }
+      return;
+    }
     final enriched = <Map<String, dynamic>>[];
     for (var b in bots) {
       // 取该机器人「最新」一条消息作聊天列表预览（按时间倒序取首条）。
-      final msgs = await DBManager()
-          .queryMessages(b['id'] as String, limit: 30, descending: true);
+      List<Map<String, dynamic>> msgs = const [];
+      try {
+        msgs = await DBManager()
+            .queryMessages(b['id'] as String, limit: 30, descending: true);
+      } catch (error) {
+        print('[chat_list] queryMessages failed: $error');
+      }
       String preview = '';
       int lastTime =
           (b['last_msg_time'] as int?) ?? (b['created_at'] as int?) ?? 0;

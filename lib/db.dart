@@ -65,6 +65,9 @@ class DBManager {
 
   Future<Map<String, Object>> databaseDiagnostics() async {
     final path = join(await getDatabasesPath(), 'tidebot.db');
+    final file = File(path);
+    final existedBeforeOpen = await file.exists();
+    final bytesBeforeOpen = existedBeforeOpen ? await file.length() : 0;
     final db = await database;
     final tables = <String, int>{};
     for (final table in const [
@@ -85,6 +88,9 @@ class DBManager {
     final version = await db.rawQuery('PRAGMA user_version');
     return {
       'path': path,
+      'existedBeforeOpen': existedBeforeOpen,
+      'bytesBeforeOpen': bytesBeforeOpen,
+      'bytesAfterOpen': await file.length(),
       'userVersion': (version.first.values.first as num?)?.toInt() ?? 0,
       'tables': tables,
     };
@@ -97,14 +103,262 @@ class DBManager {
     if (current != null) await current.close();
   }
 
-  // 严格落实 6 大核心表与外键级联约束
+  Future<void> _execSql(DatabaseExecutor db, String sql) async {
+    try {
+      await db.execute(sql);
+    } catch (error) {
+      print('[db] schema sql skipped: $error');
+    }
+  }
+
+  Future<Set<String>> _tableColumns(DatabaseExecutor db, String table) async {
+    try {
+      final info = await db.rawQuery('PRAGMA table_info($table)');
+      return info
+          .map((row) => row['name']?.toString() ?? '')
+          .where((name) => name.isNotEmpty)
+          .toSet();
+    } catch (error) {
+      print('[db] table_info $table failed: $error');
+      return <String>{};
+    }
+  }
+
+  Future<void> _ensureColumns(
+    DatabaseExecutor db,
+    String table,
+    Map<String, String> columns,
+  ) async {
+    final existing = await _tableColumns(db, table);
+    if (existing.isEmpty) return;
+    for (final entry in columns.entries) {
+      if (existing.contains(entry.key)) continue;
+      await _execSql(
+        db,
+        'ALTER TABLE $table ADD COLUMN ${entry.key} ${entry.value}',
+      );
+    }
+  }
+
+  Future<void> _createRepairCoreTables(DatabaseExecutor db) async {
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
+        content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
+        expires_at INTEGER, timestamp INTEGER, updated_at INTEGER,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS schedule_tasks (
+        id TEXT PRIMARY KEY, bot_id TEXT, title TEXT, note TEXT, time INTEGER,
+        is_done INTEGER, frequency TEXT DEFAULT 'once', prompt TEXT DEFAULT '',
+        run_at INTEGER, status TEXT DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT, retry_at INTEGER, locked_at INTEGER, idempotency_key TEXT,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS post_comments (
+        id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author_id TEXT,
+        content TEXT NOT NULL, parent_id TEXT, timestamp INTEGER,
+        FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS feed_events (
+        id TEXT PRIMARY KEY, post_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+        event_type TEXT NOT NULL, timestamp INTEGER NOT NULL,
+        UNIQUE(post_id, actor_id, event_type),
+        FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS stickers (
+        id TEXT PRIMARY KEY, emotion TEXT NOT NULL, file_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS bot_diaries (
+        id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+        content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE,
+        UNIQUE(bot_id, date_key)
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS bot_life_schedules (
+        id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
+        theme TEXT DEFAULT '', mood TEXT DEFAULT '', outfit_style TEXT DEFAULT '',
+        outfit TEXT DEFAULT '', timeline_json TEXT DEFAULT '[]',
+        generated_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        UNIQUE(bot_id, date_key),
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS ai_usage_events (
+        id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS kv_store (
+        key TEXT PRIMARY KEY, value TEXT
+      )
+    ''');
+  }
+
+  Future<void> _repairExistingDatabase(Database db) async {
+    try {
+      await _execSql(db, '''
+        CREATE TABLE IF NOT EXISTS bots (
+          id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
+          avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
+          max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
+          last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0,
+          last_read_at INTEGER DEFAULT 0, is_disabled INTEGER DEFAULT 0
+        )
+      ''');
+      await _execSql(db, '''
+        CREATE TABLE IF NOT EXISTS chat_history (
+          id TEXT PRIMARY KEY, bot_id TEXT, role TEXT, type TEXT,
+          content TEXT, file_path TEXT, mood TEXT, duration INTEGER,
+          error_log TEXT, error_code TEXT, error_message TEXT,
+          retry_status TEXT NOT NULL DEFAULT 'none', reply_to_id TEXT,
+          reply_group_id TEXT, sources_json TEXT, timestamp INTEGER,
+          FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+        )
+      ''');
+      await _execSql(db, '''
+        CREATE TABLE IF NOT EXISTS posts (
+          id TEXT PRIMARY KEY, author_id TEXT, content TEXT, image_path TEXT,
+          likes INTEGER DEFAULT 0, comments INTEGER DEFAULT 0,
+          user_liked INTEGER DEFAULT 0, user_collected INTEGER DEFAULT 0,
+          timestamp INTEGER
+        )
+      ''');
+      await _createRepairCoreTables(db);
+      await _createCallTables(db);
+      await _createSkillTables(db);
+      await _ensureColumns(db, 'bots', const {
+        'name': 'TEXT',
+        'desc': 'TEXT',
+        'prompt': 'TEXT',
+        'avatar': 'TEXT',
+        'chat_model': 'TEXT',
+        'stt_model': 'TEXT',
+        'tts_model': 'TEXT',
+        'max_tokens': 'INTEGER',
+        'created_at': 'INTEGER',
+        'daily_quote': 'TEXT',
+        'last_msg_time': 'INTEGER',
+        'is_pinned': 'INTEGER DEFAULT 0',
+        'last_read_at': 'INTEGER DEFAULT 0',
+        'is_disabled': 'INTEGER DEFAULT 0',
+      });
+      await _ensureColumns(db, 'chat_history', const {
+        'bot_id': 'TEXT',
+        'role': 'TEXT',
+        'type': 'TEXT',
+        'content': 'TEXT',
+        'file_path': 'TEXT',
+        'mood': 'TEXT',
+        'duration': 'INTEGER',
+        'error_log': 'TEXT',
+        'error_code': 'TEXT',
+        'error_message': 'TEXT',
+        'retry_status': "TEXT NOT NULL DEFAULT 'none'",
+        'reply_to_id': 'TEXT',
+        'reply_group_id': 'TEXT',
+        'sources_json': 'TEXT',
+        'timestamp': 'INTEGER',
+      });
+      await _ensureColumns(db, 'posts', const {
+        'author_id': 'TEXT',
+        'content': 'TEXT',
+        'image_path': 'TEXT',
+        'likes': 'INTEGER DEFAULT 0',
+        'comments': 'INTEGER DEFAULT 0',
+        'user_liked': 'INTEGER DEFAULT 0',
+        'user_collected': 'INTEGER DEFAULT 0',
+        'timestamp': 'INTEGER',
+      });
+      await _ensureColumns(db, 'memories', const {
+        'bot_id': 'TEXT',
+        'title': "TEXT DEFAULT ''",
+        'type': 'TEXT',
+        'content': 'TEXT',
+        'category': "TEXT DEFAULT 'fact'",
+        'importance': 'INTEGER DEFAULT 3',
+        'expires_at': 'INTEGER',
+        'timestamp': 'INTEGER',
+        'updated_at': 'INTEGER',
+      });
+      await _ensureColumns(db, 'schedule_tasks', const {
+        'bot_id': 'TEXT',
+        'title': 'TEXT',
+        'note': 'TEXT',
+        'time': 'INTEGER',
+        'is_done': 'INTEGER',
+        'frequency': "TEXT DEFAULT 'once'",
+        'prompt': "TEXT DEFAULT ''",
+        'run_at': 'INTEGER',
+        'status': "TEXT DEFAULT 'pending'",
+        'attempts': 'INTEGER NOT NULL DEFAULT 0',
+        'last_error': 'TEXT',
+        'retry_at': 'INTEGER',
+        'locked_at': 'INTEGER',
+        'idempotency_key': 'TEXT',
+      });
+      await _ensureColumns(db, 'post_comments', const {
+        'post_id': 'TEXT',
+        'author_id': 'TEXT',
+        'content': 'TEXT',
+        'parent_id': 'TEXT',
+        'timestamp': 'INTEGER',
+      });
+      await _ensureColumns(db, 'mcp_servers', const {
+        'timeout_ms': 'INTEGER NOT NULL DEFAULT 20000',
+        'auto_connect': 'INTEGER NOT NULL DEFAULT 0',
+        'resources_json': "TEXT NOT NULL DEFAULT '[]'",
+        'prompts_json': "TEXT NOT NULL DEFAULT '[]'",
+      });
+      await _ensureColumns(db, 'skill_tools', const {
+        'risk_level': "TEXT NOT NULL DEFAULT 'normal'",
+        'authorized': 'INTEGER NOT NULL DEFAULT 0',
+      });
+      for (final sql in const [
+        'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)',
+        'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)',
+        'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)',
+        'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)',
+        'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)',
+        'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)',
+        'CREATE INDEX IF NOT EXISTS idx_schedule_tasks_due ON schedule_tasks(status, retry_at, run_at)',
+        'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)',
+      ]) {
+        await _execSql(db, sql);
+      }
+    } catch (error) {
+      print('[db] schema repair failed: $error');
+    }
+  }
+
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 29,
+      version: 30,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
+      },
+      onOpen: (db) async {
+        await _repairExistingDatabase(db);
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -207,78 +461,85 @@ class DBManager {
             reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
           )
         ''');
-        await _createSkillTables(db);
         await _createCallTables(db);
+        await _createSkillTables(db);
+      },
+      onDowngrade: (db, oldVersion, newVersion) async {
+        print('[db] onDowngrade $oldVersion -> $newVersion; preserving data');
+        await _repairExistingDatabase(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          try {
-            await db.execute('ALTER TABLE bots ADD COLUMN avatar TEXT');
-          } catch (_) {}
-          try {
-            await db.execute('ALTER TABLE bots ADD COLUMN daily_quote TEXT');
-          } catch (_) {}
-          try {
-            await db.execute('ALTER TABLE schedule_tasks ADD COLUMN note TEXT');
-          } catch (_) {}
-          try {
-            await db.execute(
-                'ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0');
-          } catch (_) {}
-          try {
-            await db.execute(
-                'ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0');
-          } catch (_) {}
-          try {
-            await db
-                .execute('ALTER TABLE bots ADD COLUMN last_msg_time INTEGER');
-          } catch (_) {}
-          try {
-            await db.execute(
-                'ALTER TABLE bots ADD COLUMN is_pinned INTEGER DEFAULT 0');
-          } catch (_) {}
-        }
-        if (oldVersion < 4) {
-          try {
-            await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN duration INTEGER');
-          } catch (_) {}
-        }
-        if (oldVersion < 5) {
-          try {
-            await db.execute(
-                'ALTER TABLE posts ADD COLUMN user_liked INTEGER DEFAULT 0');
-          } catch (_) {}
-          try {
-            await db.execute(
-                'ALTER TABLE posts ADD COLUMN user_collected INTEGER DEFAULT 0');
-          } catch (_) {}
-          await db.execute('''
+        await _repairExistingDatabase(db);
+        try {
+          if (oldVersion < 2) {
+            try {
+              await db.execute('ALTER TABLE bots ADD COLUMN avatar TEXT');
+            } catch (_) {}
+            try {
+              await db.execute('ALTER TABLE bots ADD COLUMN daily_quote TEXT');
+            } catch (_) {}
+            try {
+              await db
+                  .execute('ALTER TABLE schedule_tasks ADD COLUMN note TEXT');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0');
+            } catch (_) {}
+            try {
+              await db
+                  .execute('ALTER TABLE bots ADD COLUMN last_msg_time INTEGER');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE bots ADD COLUMN is_pinned INTEGER DEFAULT 0');
+            } catch (_) {}
+          }
+          if (oldVersion < 4) {
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN duration INTEGER');
+            } catch (_) {}
+          }
+          if (oldVersion < 5) {
+            try {
+              await db.execute(
+                  'ALTER TABLE posts ADD COLUMN user_liked INTEGER DEFAULT 0');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE posts ADD COLUMN user_collected INTEGER DEFAULT 0');
+            } catch (_) {}
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS post_comments (
               id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author_id TEXT,
               content TEXT NOT NULL, parent_id TEXT, timestamp INTEGER,
               FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
             )
           ''');
-        }
-        if (oldVersion < 6) {
-          try {
-            await db
-                .execute('ALTER TABLE chat_history ADD COLUMN error_log TEXT');
-          } catch (_) {}
-          try {
-            await db
-                .execute('ALTER TABLE chat_history ADD COLUMN error_code TEXT');
-          } catch (_) {}
-        }
-        if (oldVersion < 7) {
-          try {
-            await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN error_message TEXT');
-          } catch (_) {}
-        }
-        if (oldVersion < 8) {
-          await db.execute('''
+          }
+          if (oldVersion < 6) {
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN error_log TEXT');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN error_code TEXT');
+            } catch (_) {}
+          }
+          if (oldVersion < 7) {
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN error_message TEXT');
+            } catch (_) {}
+          }
+          if (oldVersion < 8) {
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS feed_events (
               id TEXT PRIMARY KEY, post_id TEXT NOT NULL, actor_id TEXT NOT NULL,
               event_type TEXT NOT NULL, timestamp INTEGER NOT NULL,
@@ -286,9 +547,9 @@ class DBManager {
               FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
             )
           ''');
-        }
-        if (oldVersion < 9) {
-          await db.execute('''
+          }
+          if (oldVersion < 9) {
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS ai_usage_events (
               id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
               prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -297,77 +558,77 @@ class DBManager {
               reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
             )
           ''');
-        }
-        if (oldVersion < 10) {
-          try {
-            await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT');
-          } catch (_) {}
-        }
-        if (oldVersion < 11) {
-          try {
-            await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN sources_json TEXT');
-          } catch (_) {}
-          await db.execute('''
+          }
+          if (oldVersion < 10) {
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT');
+            } catch (_) {}
+          }
+          if (oldVersion < 11) {
+            try {
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN sources_json TEXT');
+            } catch (_) {}
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS stickers (
               id TEXT PRIMARY KEY, emotion TEXT NOT NULL, file_path TEXT NOT NULL,
               created_at INTEGER NOT NULL
             )
           ''');
-        }
-        if (oldVersion < 12) {
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)');
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)');
-        }
-        if (oldVersion < 13) {
-          try {
+          }
+          if (oldVersion < 12) {
             await db.execute(
-                "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'fact'");
-          } catch (_) {}
-          try {
+                'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)');
             await db.execute(
-                'ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 3');
-          } catch (_) {}
-          try {
-            await db
-                .execute('ALTER TABLE memories ADD COLUMN expires_at INTEGER');
-          } catch (_) {}
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
-        }
-        if (oldVersion < 16) {
-          try {
-            await db
-                .execute('ALTER TABLE memories ADD COLUMN updated_at INTEGER');
-          } catch (_) {}
-          await db.execute(
-              'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL');
-        }
-        if (oldVersion < 17) {
-          try {
-            await db
-                .execute('ALTER TABLE post_comments ADD COLUMN parent_id TEXT');
-          } catch (_) {}
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)');
-        }
-        if (oldVersion < 18) {
-          try {
+                'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)');
+          }
+          if (oldVersion < 13) {
+            try {
+              await db.execute(
+                  "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'fact'");
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 3');
+            } catch (_) {}
+            try {
+              await db.execute(
+                  'ALTER TABLE memories ADD COLUMN expires_at INTEGER');
+            } catch (_) {}
             await db.execute(
-                'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0');
-          } catch (_) {}
-        }
-        if (oldVersion < 19) {
-          try {
+                'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
+          }
+          if (oldVersion < 16) {
+            try {
+              await db.execute(
+                  'ALTER TABLE memories ADD COLUMN updated_at INTEGER');
+            } catch (_) {}
             await db.execute(
-                'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0');
-          } catch (_) {}
-        }
-        if (oldVersion < 20) {
-          await db.execute('''
+                'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL');
+          }
+          if (oldVersion < 17) {
+            try {
+              await db.execute(
+                  'ALTER TABLE post_comments ADD COLUMN parent_id TEXT');
+            } catch (_) {}
+            await db.execute(
+                'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)');
+          }
+          if (oldVersion < 18) {
+            try {
+              await db.execute(
+                  'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0');
+            } catch (_) {}
+          }
+          if (oldVersion < 19) {
+            try {
+              await db.execute(
+                  'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0');
+            } catch (_) {}
+          }
+          if (oldVersion < 20) {
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS bot_diaries (
               id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
               content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
@@ -375,86 +636,91 @@ class DBManager {
               UNIQUE(bot_id, date_key)
             )
           ''');
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
-          await db.execute(
-              "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL");
-        }
-        if (oldVersion < 21) {
-          try {
             await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN reply_group_id TEXT');
-          } catch (_) {}
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
-        }
-        if (oldVersion < 22) await _createSkillTables(db);
-        if (oldVersion < 23) {
-          for (final sql in [
-            'ALTER TABLE mcp_servers ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 20000',
-            'ALTER TABLE mcp_servers ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0',
-            'ALTER TABLE mcp_servers ADD COLUMN resources_json TEXT NOT NULL DEFAULT \'[]\'',
-            'ALTER TABLE mcp_servers ADD COLUMN prompts_json TEXT NOT NULL DEFAULT \'[]\'',
-            'ALTER TABLE skill_tools ADD COLUMN risk_level TEXT NOT NULL DEFAULT \'normal\'',
-          ]) {
+                'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
+            await db.execute(
+                "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL");
+          }
+          if (oldVersion < 21) {
             try {
-              await db.execute(sql);
+              await db.execute(
+                  'ALTER TABLE chat_history ADD COLUMN reply_group_id TEXT');
+            } catch (_) {}
+            await db.execute(
+                'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
+          }
+          if (oldVersion < 22) await _createSkillTables(db);
+          if (oldVersion < 23) {
+            for (final sql in [
+              'ALTER TABLE mcp_servers ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 20000',
+              'ALTER TABLE mcp_servers ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0',
+              'ALTER TABLE mcp_servers ADD COLUMN resources_json TEXT NOT NULL DEFAULT \'[]\'',
+              'ALTER TABLE mcp_servers ADD COLUMN prompts_json TEXT NOT NULL DEFAULT \'[]\'',
+              'ALTER TABLE skill_tools ADD COLUMN risk_level TEXT NOT NULL DEFAULT \'normal\'',
+            ]) {
+              try {
+                await db.execute(sql);
+              } catch (_) {}
+            }
+          }
+          if (oldVersion < 24) {
+            try {
+              await db.execute(
+                  'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0');
             } catch (_) {}
           }
-        }
-        if (oldVersion < 24) {
-          try {
-            await db.execute(
-                'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0');
-          } catch (_) {}
-        }
 
-        if (oldVersion < 25) {
-          for (final column in [
-            'attempts INTEGER NOT NULL DEFAULT 0',
-            'last_error TEXT',
-            'retry_at INTEGER',
-            'locked_at INTEGER',
-            'idempotency_key TEXT',
-          ]) {
+          if (oldVersion < 25) {
+            for (final column in [
+              'attempts INTEGER NOT NULL DEFAULT 0',
+              'last_error TEXT',
+              'retry_at INTEGER',
+              'locked_at INTEGER',
+              'idempotency_key TEXT',
+            ]) {
+              try {
+                await db
+                    .execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
+              } catch (_) {}
+            }
             try {
-              await db.execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
-            } catch (_) {}
-          }
-          try {
-            await db.execute('''
+              await db.execute('''
               CREATE INDEX IF NOT EXISTS idx_schedule_tasks_due
               ON schedule_tasks(status, retry_at, run_at)
             ''');
-          } catch (_) {}
-        }
-
-        if (oldVersion < 26) {
-          try {
-            await db.execute(
-              "ALTER TABLE chat_history ADD COLUMN retry_status TEXT NOT NULL DEFAULT 'none'",
-            );
-          } catch (_) {}
-        }
-        if (oldVersion < 29) await _createCallTables(db);
-        if (oldVersion < 15) {
-          for (final column in [
-            "frequency TEXT DEFAULT 'once'",
-            "prompt TEXT DEFAULT ''",
-            'run_at INTEGER',
-            "status TEXT DEFAULT 'pending'"
-          ]) {
-            try {
-              await db.execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
             } catch (_) {}
           }
-          try {
-            await db.update('memories', {'type': 'long'},
-                where: 'type = ?', whereArgs: ['medium']);
-          } catch (_) {}
-        }
-        if (oldVersion < 14) {
-          await db.execute('''
+
+          if (oldVersion < 26) {
+            try {
+              await db.execute(
+                "ALTER TABLE chat_history ADD COLUMN retry_status TEXT NOT NULL DEFAULT 'none'",
+              );
+            } catch (_) {}
+          }
+          if (oldVersion < 29) await _createCallTables(db);
+          if (oldVersion < 30) {
+            print('[db] schema repair pass for version 30');
+          }
+          if (oldVersion < 15) {
+            for (final column in [
+              "frequency TEXT DEFAULT 'once'",
+              "prompt TEXT DEFAULT ''",
+              'run_at INTEGER',
+              "status TEXT DEFAULT 'pending'"
+            ]) {
+              try {
+                await db
+                    .execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
+              } catch (_) {}
+            }
+            try {
+              await db.update('memories', {'type': 'long'},
+                  where: 'type = ?', whereArgs: ['medium']);
+            } catch (_) {}
+          }
+          if (oldVersion < 14) {
+            await db.execute('''
             CREATE TABLE IF NOT EXISTS bot_life_schedules (
               id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
               theme TEXT DEFAULT '', mood TEXT DEFAULT '', outfit_style TEXT DEFAULT '',
@@ -464,9 +730,13 @@ class DBManager {
               FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
             )
           ''');
-          await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)');
+            await db.execute(
+                'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)');
+          }
+        } catch (error) {
+          print('[db] onUpgrade continued after error: $error');
         }
+        await _repairExistingDatabase(db);
       },
     );
     // Legacy summaries are optional cleanup. Schedule it after the database
@@ -520,28 +790,32 @@ class DBManager {
     }
   }
 
-  Future<void> _createCallTables(Database db) async {
-    await db.execute('''CREATE TABLE IF NOT EXISTS call_sessions (
+  Future<void> _createCallTables(DatabaseExecutor db) async {
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS call_sessions (
       id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, summary TEXT NOT NULL,
       duration INTEGER NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
       FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE)''');
-    await db.execute('''CREATE TABLE IF NOT EXISTS call_messages (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS call_messages (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
       content TEXT NOT NULL, timestamp INTEGER NOT NULL,
       FOREIGN KEY(session_id) REFERENCES call_sessions(id) ON DELETE CASCADE)''');
-    await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_call_sessions_bot_created ON call_sessions(bot_id, created_at DESC)');
-    await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_call_messages_session_time ON call_messages(session_id, timestamp)');
+    await _execSql(
+      db,
+      'CREATE INDEX IF NOT EXISTS idx_call_sessions_bot_created ON call_sessions(bot_id, created_at DESC)',
+    );
+    await _execSql(
+      db,
+      'CREATE INDEX IF NOT EXISTS idx_call_messages_session_time ON call_messages(session_id, timestamp)',
+    );
   }
 
-  Future<void> _createSkillTables(Database db) async {
-    await db.execute('''CREATE TABLE IF NOT EXISTS skills (
+  Future<void> _createSkillTables(DatabaseExecutor db) async {
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS skills (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
       description TEXT DEFAULT '', manifest_json TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ready',
       error TEXT, updated_at INTEGER NOT NULL)''');
-    await db.execute('''CREATE TABLE IF NOT EXISTS skill_tools (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS skill_tools (
       id TEXT PRIMARY KEY, skill_id TEXT NOT NULL, name TEXT NOT NULL,
       description TEXT DEFAULT '', executor TEXT NOT NULL,
       schema_json TEXT NOT NULL, risk_level TEXT NOT NULL DEFAULT 'normal',
@@ -549,7 +823,7 @@ class DBManager {
       enabled INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
       UNIQUE(skill_id, name))''');
-    await db.execute('''CREATE TABLE IF NOT EXISTS mcp_servers (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS mcp_servers (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
       headers_key TEXT, timeout_ms INTEGER NOT NULL DEFAULT 20000,
       auto_connect INTEGER NOT NULL DEFAULT 0,
@@ -558,13 +832,13 @@ class DBManager {
       enabled INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'disconnected', error TEXT,
       updated_at INTEGER NOT NULL)''');
-    await db.execute('''CREATE TABLE IF NOT EXISTS mcp_tools (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS mcp_tools (
       id TEXT PRIMARY KEY, server_id TEXT NOT NULL, name TEXT NOT NULL,
       description TEXT DEFAULT '', schema_json TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1, discovered_at INTEGER NOT NULL,
       FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE,
       UNIQUE(server_id, name))''');
-    await db.execute('''CREATE TABLE IF NOT EXISTS tool_audit (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS tool_audit (
       id TEXT PRIMARY KEY, source TEXT NOT NULL, tool_name TEXT NOT NULL,
       input_summary TEXT NOT NULL, status TEXT NOT NULL, duration_ms INTEGER NOT NULL,
       error TEXT, created_at INTEGER NOT NULL)''');
@@ -785,7 +1059,17 @@ class DBManager {
   // ================= Bots CRUD =================
   Future<List<Map<String, dynamic>>> getAllBots() async {
     final db = await database;
-    return await db.query('bots', orderBy: 'created_at DESC');
+    try {
+      return await db.query('bots', orderBy: 'created_at DESC');
+    } catch (error) {
+      print('[db] getAllBots ordered query failed: $error');
+      try {
+        return await db.query('bots');
+      } catch (fallbackError) {
+        print('[db] getAllBots fallback failed: $fallbackError');
+        return const [];
+      }
+    }
   }
 
   Future<void> insertBot(Map<String, dynamic> bot) async {
@@ -896,13 +1180,7 @@ class DBManager {
   }
 
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
-    final db = await database;
-    return await db.query(
-      'chat_history',
-      where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
-      whereArgs: [botId],
-      orderBy: 'timestamp ASC',
-    );
+    return queryMessages(botId);
   }
 
   Future<void> insertChatMessage(
@@ -930,29 +1208,52 @@ class DBManager {
 
   Future<int> unreadBotCount() async {
     final db = await database;
-    final rows = await db.rawQuery('''
-      SELECT COUNT(*) AS count FROM bots b
-      WHERE COALESCE((SELECT MAX(timestamp) FROM chat_history h
-        WHERE h.bot_id = b.id AND h.role = 'assistant'), 0)
-        > COALESCE(b.last_read_at, 0)
-    ''');
-    return (rows.first['count'] as num?)?.toInt() ?? 0;
+    try {
+      final rows = await db.rawQuery('''
+        SELECT COUNT(*) AS count FROM bots b
+        WHERE COALESCE((SELECT MAX(timestamp) FROM chat_history h
+          WHERE h.bot_id = b.id AND h.role = 'assistant'), 0)
+          > COALESCE(b.last_read_at, 0)
+      ''');
+      return (rows.first['count'] as num?)?.toInt() ?? 0;
+    } catch (error) {
+      print('[db] unreadBotCount failed: $error');
+      return 0;
+    }
   }
 
   /// Byte usage of each bot's persisted chat rows. SQLite stores every bot in
   /// one database file, so allocate the file proportionally by row payload.
   Future<Map<String, int>> chatStorageByBot() async {
     final db = await database;
-    final rows = await db.rawQuery('''
-      SELECT bot_id, SUM(
-        length(COALESCE(content, '')) + length(COALESCE(file_path, '')) +
-        length(COALESCE(error_log, '')) + length(COALESCE(sources_json, '')) + 96
-      ) AS bytes FROM chat_history GROUP BY bot_id
-    ''');
-    return {
-      for (final row in rows)
-        row['bot_id']?.toString() ?? '': (row['bytes'] as num?)?.toInt() ?? 0
-    };
+    try {
+      final rows = await db.rawQuery('''
+        SELECT bot_id, SUM(
+          length(COALESCE(content, '')) + length(COALESCE(file_path, '')) +
+          length(COALESCE(error_log, '')) + length(COALESCE(sources_json, '')) + 96
+        ) AS bytes FROM chat_history GROUP BY bot_id
+      ''');
+      return {
+        for (final row in rows)
+          row['bot_id']?.toString() ?? '': (row['bytes'] as num?)?.toInt() ?? 0
+      };
+    } catch (error) {
+      print('[db] chatStorageByBot failed: $error');
+      try {
+        final rows = await db.rawQuery('''
+          SELECT bot_id, SUM(length(COALESCE(content, '')) + 96) AS bytes
+          FROM chat_history GROUP BY bot_id
+        ''');
+        return {
+          for (final row in rows)
+            row['bot_id']?.toString() ?? '':
+                (row['bytes'] as num?)?.toInt() ?? 0
+        };
+      } catch (fallbackError) {
+        print('[db] chatStorageByBot fallback failed: $fallbackError');
+        return const {};
+      }
+    }
   }
 
   Future<void> deleteMessage(String msgId) async {
@@ -1310,11 +1611,30 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryMessages(String botId,
       {int? limit, bool descending = false}) async {
     final db = await database;
-    return await db.query('chat_history',
+    final orderBy = descending ? 'timestamp DESC' : 'timestamp ASC';
+    try {
+      return await db.query(
+        'chat_history',
         where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
         whereArgs: [botId],
-        orderBy: descending ? 'timestamp DESC' : 'timestamp ASC',
-        limit: limit);
+        orderBy: orderBy,
+        limit: limit,
+      );
+    } catch (error) {
+      print('[db] queryMessages typed query failed: $error');
+      try {
+        return await db.query(
+          'chat_history',
+          where: 'bot_id = ?',
+          whereArgs: [botId],
+          orderBy: orderBy,
+          limit: limit,
+        );
+      } catch (fallbackError) {
+        print('[db] queryMessages fallback failed: $fallbackError');
+        return const [];
+      }
+    }
   }
 
   /// Daily assistant replies and recorded model usage for the chat sidebar.
@@ -1867,14 +2187,19 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryPosts(
       {int offset = 0, int limit = 10, String? authorId}) async {
     final db = await database;
-    return db.query(
-      'posts',
-      where: authorId == null ? null : 'author_id = ?',
-      whereArgs: authorId == null ? null : [authorId],
-      orderBy: 'timestamp DESC',
-      limit: limit,
-      offset: offset,
-    );
+    try {
+      return await db.query(
+        'posts',
+        where: authorId == null ? null : 'author_id = ?',
+        whereArgs: authorId == null ? null : [authorId],
+        orderBy: 'timestamp DESC',
+        limit: limit,
+        offset: offset,
+      );
+    } catch (error) {
+      print('[db] queryPosts failed: $error');
+      return const [];
+    }
   }
 
   /// New posts use the stable bot ID. Older releases stored the bot name, so
@@ -1885,26 +2210,46 @@ class DBManager {
     int limit = 10,
   }) async {
     final db = await database;
-    return db.query(
-      'posts',
-      where: 'author_id = ? OR author_id = ?',
-      whereArgs: [botId, botName],
-      orderBy: 'timestamp DESC',
-      limit: limit,
-    );
+    try {
+      return await db.query(
+        'posts',
+        where: 'author_id = ? OR author_id = ?',
+        whereArgs: [botId, botName],
+        orderBy: 'timestamp DESC',
+        limit: limit,
+      );
+    } catch (error) {
+      print('[db] queryPostsForBot failed: $error');
+      try {
+        return await db.query(
+          'posts',
+          where: 'author_id = ? OR author_id = ?',
+          whereArgs: [botId, botName],
+          limit: limit,
+        );
+      } catch (fallbackError) {
+        print('[db] queryPostsForBot fallback failed: $fallbackError');
+        return const [];
+      }
+    }
   }
 
   Future<Map<String, dynamic>?> getPostById(String postId) async {
     final id = postId.trim();
     if (id.isEmpty) return null;
     final db = await database;
-    final rows = await db.query(
-      'posts',
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : Map<String, dynamic>.from(rows.first);
+    try {
+      final rows = await db.query(
+        'posts',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      return rows.isEmpty ? null : Map<String, dynamic>.from(rows.first);
+    } catch (error) {
+      print('[db] getPostById failed: $error');
+      return null;
+    }
   }
 
   Future<void> insertPost(Map<String, dynamic> post) async {
