@@ -466,6 +466,9 @@ class DBManager {
       );
       if (summaries.isEmpty) return;
 
+      // Keep the legacy row as the source of truth. A failed or interrupted
+      // conversion must never remove a user's historical record. The call view
+      // reads call_sessions, while the legacy chat row remains recoverable.
       for (final summary in summaries) {
         final id = summary['id']?.toString() ?? '';
         final botId = summary['bot_id']?.toString() ?? '';
@@ -482,7 +485,6 @@ class DBManager {
           },
           conflictAlgorithm: ConflictAlgorithm.ignore,
         );
-        await db.delete('chat_history', where: 'id = ?', whereArgs: [id]);
       }
     } catch (error) {
       // Preserve legacy rows if migration cannot complete. Database open must
@@ -868,10 +870,12 @@ class DBManager {
 
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
     final db = await database;
-    return await db.query('chat_history',
-        where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
-        whereArgs: [botId],
-        orderBy: 'timestamp ASC');
+    return await db.query(
+      'chat_history',
+      where: "bot_id = ? AND (type IS NULL OR type != 'call_summary')",
+      whereArgs: [botId],
+      orderBy: 'timestamp ASC',
+    );
   }
 
   Future<void> insertChatMessage(
