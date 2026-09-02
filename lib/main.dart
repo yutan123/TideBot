@@ -44,22 +44,29 @@ import 'bot_state.dart';
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
-  // Never wait for storage, database upgrades, or platform plugins before the
-  // first Flutter frame. A failed initialization must not leave LaunchTheme on
-  // screen indefinitely.
+  // Keep the native launch surface visible until the last successful global
+  // background selection has been restored. This prevents a default Flutter
+  // surface from flashing before the selected image.
+  try {
+    await tideTheme.loadFromDB().timeout(const Duration(seconds: 4));
+  } catch (error) {
+    debugPrint('[startup] theme bootstrap skipped: $error');
+  }
   runApp(const TideBotApp());
-  unawaited(_startBackgroundServices());
+  unawaited(_startBackgroundServices(loadTheme: false));
 }
 
-Future<void> _startBackgroundServices() async {
+Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   // Delay all nonessential work until Flutter has had an opportunity to paint.
   await Future<void>.delayed(Duration.zero);
-  unawaited(_runStartupTask('theme', tideTheme.loadFromDB));
+  if (loadTheme) {
+    unawaited(_runStartupTask('theme', tideTheme.loadFromDB));
+  }
   unawaited(
     _runStartupTask(
       'liquid glass',
@@ -547,7 +554,7 @@ class FlowProvider extends ChangeNotifier {
 
 final FlowProvider flowProvider = FlowProvider();
 
-class FlowGlassBg extends StatefulWidget {
+class FlowGlassBg extends StatelessWidget {
   final Widget child;
   final String? backgroundPath;
   final double opacity;
@@ -559,31 +566,16 @@ class FlowGlassBg extends StatefulWidget {
   });
 
   @override
-  State<FlowGlassBg> createState() => _FlowGlassBgState();
-}
-
-class _FlowGlassBgState extends State<FlowGlassBg> {
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (widget.backgroundPath == null) {
-      unawaited(TideTheme.of(context, listen: false)
-          .precacheGlobalBackground(context));
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final image = widget.backgroundPath == null
+    final image = backgroundPath == null
         ? theme.globalBackgroundImage
-        : FileImage(File(widget.backgroundPath!));
-    final path = widget.backgroundPath ?? theme.globalBackground;
-    final effectiveOpacity = widget.backgroundPath == null
-        ? theme.effectiveBackgroundOpacity
-        : widget.opacity;
+        : FileImage(File(backgroundPath!));
+    final path = backgroundPath ?? theme.globalBackground;
+    final effectiveOpacity =
+        backgroundPath == null ? theme.effectiveBackgroundOpacity : opacity;
     final hasImage = image != null &&
-        (widget.backgroundPath != null || theme.isGlobalBackgroundReady) &&
+        (backgroundPath != null || theme.isGlobalBackgroundReady) &&
         (path.isEmpty || File(path).existsSync());
     return Stack(
       fit: StackFit.expand,
@@ -601,13 +593,13 @@ class _FlowGlassBgState extends State<FlowGlassBg> {
             gaplessPlayback: true,
             errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
-        if (path.isNotEmpty)
+        if (hasImage)
           IgnorePointer(
             child: ColoredBox(
               color: Colors.black.withValues(alpha: effectiveOpacity),
             ),
           ),
-        widget.child,
+        child,
       ],
     );
   }
@@ -632,6 +624,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
     unawaited(_loadLaunchPreferences());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(DiaryService.instance.catchUp());
+      unawaited(tideTheme.precacheGlobalBackground(context));
     });
   }
 
@@ -970,27 +963,36 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
 class JellyDock extends StatefulWidget {
   final int currentIndex;
-  final Function(int) onTap;
+  final ValueChanged<int> onTap;
   final int unreadCount;
+
   const JellyDock({
     super.key,
     required this.currentIndex,
     required this.onTap,
     this.unreadCount = 0,
   });
+
   @override
   State<JellyDock> createState() => _JellyDockState();
 }
 
 class _JellyDockState extends State<JellyDock>
     with SingleTickerProviderStateMixin {
-  static const double _baseW = 62.0;
-  static const double _growW = 70.0; // 仅轻微左右放大，主要靠整体缩放体现"鼓起来"
-  late AnimationController _c;
-  late Animation<double> _pos;
-  late Animation<double> _w;
+  static const double _baseW = 62;
+  static const double _growW = 70;
+  static const _icons = <IconData>[
+    Icons.chat_bubble_rounded,
+    Icons.space_dashboard_rounded,
+    Icons.explore_rounded,
+    Icons.person_rounded,
+  ];
+
+  late final AnimationController _controller;
+  late Animation<double> _position;
+  late Animation<double> _width;
   late Animation<double> _scale;
-  int _prev = 0;
+  int _previousIndex = 0;
   bool _lifting = false;
   double? _dragPosition;
 
@@ -1002,7 +1004,7 @@ class _JellyDockState extends State<JellyDock>
     return (local.dx / slotWidth - .5).clamp(0.0, _icons.length - 1.0);
   }
 
-  void _startDrag(DragStartDetails details) {
+  void _startLift(LongPressStartDetails details) {
     TideHaptics.tap();
     setState(() {
       _lifting = true;
@@ -1010,12 +1012,12 @@ class _JellyDockState extends State<JellyDock>
     });
   }
 
-  void _updateDrag(DragUpdateDetails details) {
+  void _updateLift(LongPressMoveUpdateDetails details) {
     final position = _positionForGlobalPosition(details.globalPosition);
     if (position != _dragPosition) setState(() => _dragPosition = position);
   }
 
-  void _endDrag(DragEndDetails details) {
+  void _endLift(LongPressEndDetails details) {
     final position = _dragPosition;
     setState(() {
       _lifting = false;
@@ -1024,128 +1026,79 @@ class _JellyDockState extends State<JellyDock>
     if (position != null) widget.onTap(position.round());
   }
 
-  void _cancelDrag() => setState(() {
+  void _cancelLift() => setState(() {
         _lifting = false;
         _dragPosition = null;
       });
 
-  static const _icons = [
-    Icons.chat_bubble_rounded,
-    Icons.space_dashboard_rounded,
-    Icons.explore_rounded,
-    Icons.person_rounded,
-  ];
-
   @override
   void initState() {
     super.initState();
-    _prev = widget.currentIndex;
-    // 加速移动：800ms -> 360ms
-    _c = AnimationController(
+    _previousIndex = widget.currentIndex;
+    _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 360),
     );
-    _pos = Tween<double>(
-      begin: _prev * 0.25,
-      end: widget.currentIndex * 0.25,
-    ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutQuart));
-    // 宽度仅微扩：移动中从 62 -> 70，落地后缩回
-    _w = TweenSequence<double>([
+    _configureAnimations();
+    _controller.forward();
+  }
+
+  void _configureAnimations() {
+    _position = Tween<double>(
+      begin: _previousIndex / _icons.length,
+      end: widget.currentIndex / _icons.length,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
+    _width = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(
-          begin: _baseW,
-          end: _growW,
-        ).chain(CurveTween(curve: Curves.easeOutCubic)),
+        tween: Tween(begin: _baseW, end: _growW)
+            .chain(CurveTween(curve: Curves.easeOutCubic)),
         weight: 55,
       ),
       TweenSequenceItem(
-        tween: Tween(
-          begin: _growW,
-          end: _baseW,
-        ).chain(CurveTween(curve: Curves.easeInOutCubic)),
+        tween: Tween(begin: _growW, end: _baseW)
+            .chain(CurveTween(curve: Curves.easeInOutCubic)),
         weight: 45,
       ),
-    ]).animate(_c);
-    // 整体等比例放大一点再回落(非只左右扩)，营造整体"鼓起来"的丝滑感
+    ]).animate(_controller);
     _scale = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(
-          begin: 1.0,
-          end: 1.12,
-        ).chain(CurveTween(curve: Curves.easeOutBack)),
+        tween: Tween(begin: 1.0, end: 1.12)
+            .chain(CurveTween(curve: Curves.easeOutBack)),
         weight: 60,
       ),
       TweenSequenceItem(
-        tween: Tween(
-          begin: 1.12,
-          end: 1.0,
-        ).chain(CurveTween(curve: Curves.easeInOutCubic)),
+        tween: Tween(begin: 1.12, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOutCubic)),
         weight: 40,
       ),
-    ]).animate(_c);
-    _c.forward();
+    ]).animate(_controller);
   }
 
   @override
-  void didUpdateWidget(JellyDock old) {
-    super.didUpdateWidget(old);
-    if (old.currentIndex != widget.currentIndex) {
-      _prev = old.currentIndex;
-      _pos = Tween<double>(
-        begin: _prev * 0.25,
-        end: widget.currentIndex * 0.25,
-      ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutQuart));
-      _w = TweenSequence<double>([
-        TweenSequenceItem(
-          tween: Tween(
-            begin: _baseW,
-            end: _growW,
-          ).chain(CurveTween(curve: Curves.easeOutCubic)),
-          weight: 55,
-        ),
-        TweenSequenceItem(
-          tween: Tween(
-            begin: _growW,
-            end: _baseW,
-          ).chain(CurveTween(curve: Curves.easeInOutCubic)),
-          weight: 45,
-        ),
-      ]).animate(_c);
-      _scale = TweenSequence<double>([
-        TweenSequenceItem(
-          tween: Tween(
-            begin: 1.0,
-            end: 1.12,
-          ).chain(CurveTween(curve: Curves.easeOutBack)),
-          weight: 60,
-        ),
-        TweenSequenceItem(
-          tween: Tween(
-            begin: 1.12,
-            end: 1.0,
-          ).chain(CurveTween(curve: Curves.easeInOutCubic)),
-          weight: 40,
-        ),
-      ]).animate(_c);
-      _c.reset();
-      _c.forward();
-    }
+  void didUpdateWidget(JellyDock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentIndex == widget.currentIndex) return;
+    _previousIndex = oldWidget.currentIndex;
+    _configureAnimations();
+    _controller
+      ..reset()
+      ..forward();
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   Widget _selectedPill(TideTheme theme, bool isDark) {
     final pill = Container(
-      width: _w.value,
+      width: _width.value,
       height: 40,
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
             ? (theme.isDark ? const Color(0x3D1D2C33) : const Color(0x36FFFFFF))
-            : theme.primary.withValues(alpha: isDark ? 0.28 : 0.18),
+            : theme.primary.withValues(alpha: isDark ? .28 : .18),
         borderRadius: BorderRadius.circular(20),
         border: theme.hasGlobalBackground
             ? Border.all(color: Colors.white.withValues(alpha: .34))
@@ -1158,15 +1111,7 @@ class _JellyDockState extends State<JellyDock>
                   offset: const Offset(0, 3),
                 ),
               ]
-            : (isDark
-                ? [
-                    BoxShadow(
-                      color: theme.primary.withValues(alpha: .20),
-                      blurRadius: 10,
-                      offset: const Offset(0, -2),
-                    ),
-                  ]
-                : null),
+            : null,
       ),
     );
     return theme.hasGlobalBackground
@@ -1178,115 +1123,111 @@ class _JellyDockState extends State<JellyDock>
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
-    final dock = Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
-            ? Colors.transparent
-            : (isDark
-                ? const Color(0xB9172A31)
-                : Colors.white.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(28),
-        border: theme.hasGlobalBackground
-            ? null
-            : Border.all(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.16)
-                    : Colors.white.withValues(alpha: 0.25),
-                width: 0.5,
-              ),
-        boxShadow: theme.hasGlobalBackground
-            ? null
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-      ),
-      child: LayoutBuilder(
-        builder: (ctx, cs) {
-          final dragPosition = _dragPosition;
-          final activeIndex = (dragPosition ?? widget.currentIndex).round();
-          return Stack(
-            clipBehavior: Clip.none,
-            children: [
-              AnimatedBuilder(
-                animation: Listenable.merge([_pos, _w, _scale]),
-                builder: (context, child) {
-                  final position = dragPosition ?? _pos.value * _icons.length;
-                  final slotWidth = cs.maxWidth / _icons.length;
-                  return Positioned(
-                    left: position * slotWidth + (slotWidth - _w.value) / 2,
-                    top: _lifting ? -18 : 2,
-                    child: Transform.scale(
-                      scale: _scale.value * (_lifting ? 1.12 : 1.0),
-                      alignment: Alignment.center,
-                      child: child,
-                    ),
-                  );
-                },
-                child: _selectedPill(theme, isDark),
-              ),
-              Row(
-                children: List.generate(_icons.length, (i) {
-                  final act = activeIndex == i;
-                  return Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (_) => TideHaptics.tap(),
-                      onHorizontalDragStart: _startDrag,
-                      onHorizontalDragUpdate: _updateDrag,
-                      onHorizontalDragEnd: _endDrag,
-                      onHorizontalDragCancel: _cancelDrag,
-                      onTap: () => widget.onTap(i),
-                      child: Center(
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Icon(
-                              _icons[i],
-                              color:
-                                  act ? theme.primary : const Color(0xFFAEAEB2),
-                              size: 22,
-                            ),
-                            if (i == 0 && widget.unreadCount > 0)
-                              Positioned(
-                                right: -5,
-                                top: -5,
-                                child: Container(
-                                  width: 9,
-                                  height: 9,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFF3B30),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: theme.surface,
-                                      width: 1.5,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: SizedBox(
+        height: 92,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final slotWidth = constraints.maxWidth / _icons.length;
+            final position = _dragPosition ?? _position.value * _icons.length;
+            final activeIndex = position.round();
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 56,
+                  child: TideLiquidGlass.dock(
+                    radius: 28,
+                    clipExpansion: const EdgeInsets.fromLTRB(16, 28, 16, 18),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: theme.hasGlobalBackground
+                            ? Colors.transparent
+                            : (isDark
+                                ? const Color(0xB9172A31)
+                                : Colors.white.withValues(alpha: .35)),
+                        borderRadius: BorderRadius.circular(28),
+                        border: theme.hasGlobalBackground
+                            ? null
+                            : Border.all(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: .16)
+                                    : Colors.white.withValues(alpha: .25),
+                                width: .5,
+                              ),
+                      ),
+                      child: Row(
+                        children: List.generate(_icons.length, (index) {
+                          final active = activeIndex == index;
+                          return Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (_) => TideHaptics.tap(),
+                              onTap: () => widget.onTap(index),
+                              onLongPressStart: _startLift,
+                              onLongPressMoveUpdate: _updateLift,
+                              onLongPressEnd: _endLift,
+                              onLongPressCancel: _cancelLift,
+                              child: Center(
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    Icon(
+                                      _icons[index],
+                                      color: active
+                                          ? theme.primary
+                                          : const Color(0xFFAEAEB2),
+                                      size: 22,
                                     ),
-                                  ),
+                                    if (index == 0 && widget.unreadCount > 0)
+                                      Positioned(
+                                        right: -5,
+                                        top: -5,
+                                        child: Container(
+                                          width: 9,
+                                          height: 9,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFF3B30),
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: theme.surface,
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
-                          ],
-                        ),
+                            ),
+                          );
+                        }),
                       ),
                     ),
-                  );
-                }),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(40, 0, 40, 0),
-      child: TideLiquidGlass.dock(
-        radius: 28,
-        clipExpansion: const EdgeInsets.fromLTRB(16, 28, 16, 18),
-        child: dock,
+                  ),
+                ),
+                AnimatedBuilder(
+                  animation: Listenable.merge([_position, _width, _scale]),
+                  builder: (context, child) => Positioned(
+                    left: position * slotWidth + (slotWidth - _width.value) / 2,
+                    bottom: _lifting ? 52 : 8,
+                    child: Transform.scale(
+                      scale: _scale.value * (_lifting ? 1.12 : 1),
+                      child: child,
+                    ),
+                  ),
+                  child: IgnorePointer(child: _selectedPill(theme, isDark)),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

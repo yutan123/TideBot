@@ -30,6 +30,31 @@ import 'chat_protocol.dart';
 import 'ui_call.dart';
 import 'ui_space_square.dart';
 
+class _EmojiAsset {
+  final String asset;
+  final String category;
+  final String name;
+  final int order;
+
+  const _EmojiAsset({
+    required this.asset,
+    required this.category,
+    required this.name,
+    required this.order,
+  });
+}
+
+final _emojiCategoryIcons = <String, (IconData, String)>{
+  'people': (Icons.emoji_emotions_outlined, '表情和人物'),
+  'nature': (Icons.pets_outlined, '动物和自然'),
+  'food': (Icons.restaurant_outlined, '食物和饮料'),
+  'activity': (Icons.sports_basketball_outlined, '活动'),
+  'travel': (Icons.directions_car_outlined, '旅行和地点'),
+  'objects': (Icons.lightbulb_outline_rounded, '物品'),
+  'symbols': (Icons.sentiment_satisfied_alt_outlined, '符号'),
+  'flags': (Icons.flag_outlined, '旗帜'),
+};
+
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
   final String? initialMessageId;
@@ -83,6 +108,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   double _composerReserve = 84;
   bool _showEmojiPanel = false;
   int _emojiTab = 0;
+  String _emojiCategory = 'people';
+  bool _emojiCatalogLoading = false;
+  List<_EmojiAsset> _emojiCatalog = const <_EmojiAsset>[];
   List<Map<String, dynamic>> _stickers = const <Map<String, dynamic>>[];
   bool _stickersLoaded = false;
 
@@ -309,7 +337,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
   }
 
-  void _handleInputFocus() {}
+  void _handleInputFocus() {
+    if (_inputFocus.hasFocus && _showEmojiPanel) {
+      setState(() => _showEmojiPanel = false);
+    }
+  }
 
   void _scrollDown({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -421,32 +453,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   // 手机操控确认流程已移除。
-
-  // ========== 发送消息 ==========
-  static const _emoji = <({String asset, String label})>[
-    (asset: 'assets/emoji/1f600.svg', label: '开心'),
-    (asset: 'assets/emoji/1f602.svg', label: '大笑'),
-    (asset: 'assets/emoji/1f97a.svg', label: '感动'),
-    (asset: 'assets/emoji/1f60d.svg', label: '喜欢'),
-    (asset: 'assets/emoji/1f618.svg', label: '亲亲'),
-    (asset: 'assets/emoji/1f622.svg', label: '难过'),
-    (asset: 'assets/emoji/1f62d.svg', label: '哭泣'),
-    (asset: 'assets/emoji/1f621.svg', label: '生气'),
-    (asset: 'assets/emoji/1f633.svg', label: '惊讶'),
-    (asset: 'assets/emoji/1f634.svg', label: '困倦'),
-    (asset: 'assets/emoji/1f914.svg', label: '思考'),
-    (asset: 'assets/emoji/1f644.svg', label: '无语'),
-    (asset: 'assets/emoji/1f44d.svg', label: '点赞'),
-    (asset: 'assets/emoji/1f44f.svg', label: '鼓掌'),
-    (asset: 'assets/emoji/1f64f.svg', label: '感谢'),
-    (asset: 'assets/emoji/1f91d.svg', label: '握手'),
-    (asset: 'assets/emoji/2764.svg', label: '爱心'),
-    (asset: 'assets/emoji/1f389.svg', label: '庆祝'),
-    (asset: 'assets/emoji/2728.svg', label: '闪耀'),
-    (asset: 'assets/emoji/1f339.svg', label: '送花'),
-  ];
-
-  Future<void> _sendEmoji(({String asset, String label}) emoji) async {
+  Future<void> _sendEmoji(_EmojiAsset emoji) async {
     if (_loading) return;
     final botId = _bot['id']?.toString() ?? '';
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -455,30 +462,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'bot_id': botId,
       'role': 'user',
       'type': 'emoji',
-      'content': emoji.label,
+      'content': emoji.name,
       'file_path': emoji.asset,
       'timestamp': now,
     };
-    setState(() {
-      _msgs.add(message);
-      _loading = true;
-      _typing = true;
-    });
+    setState(() => _msgs.add(message));
     _scrollDown();
     try {
       await MessageDeliveryService.instance.insert(message);
-      await _send(
-        noUserBubble: true,
-        mediaContext: '[表情：${emoji.label}]',
-      );
+      await _send(noUserBubble: true, mediaContext: '[Emoji：${emoji.name}]');
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _msgs.remove(message);
-          _loading = false;
-          _typing = false;
-        });
-      }
+      if (mounted) setState(() => _msgs.remove(message));
       GlobalNotice.show('发送表情失败：$error');
     }
   }
@@ -501,11 +495,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'file_path': path,
       'timestamp': now,
     };
-    setState(() {
-      _msgs.add(message);
-      _loading = true;
-      _typing = true;
-    });
+    setState(() => _msgs.add(message));
     _scrollDown();
     try {
       await MessageDeliveryService.instance.insert(message);
@@ -515,22 +505,47 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             '[用户发送了一个表情包，类型：${message['content'].toString().isEmpty ? '未分类' : message['content']}]',
       );
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _msgs.remove(message);
-          _loading = false;
-          _typing = false;
-        });
-      }
+      if (mounted) setState(() => _msgs.remove(message));
       GlobalNotice.show('发送表情包失败：$error');
+    }
+  }
+
+  Future<void> _loadEmojiCatalog() async {
+    if (_emojiCatalogLoading || _emojiCatalog.isNotEmpty) return;
+    setState(() => _emojiCatalogLoading = true);
+    try {
+      final raw = await rootBundle.loadString('assets/emojitwo/emoji.json');
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final catalog = <_EmojiAsset>[];
+      data.forEach((code, value) {
+        final entry = value as Map<String, dynamic>;
+        final category = entry['category']?.toString() ?? '';
+        if (!_emojiCategoryIcons.containsKey(category)) return;
+        final asset = 'assets/emojitwo/$code.png';
+        catalog.add(_EmojiAsset(
+          asset: asset,
+          category: category,
+          name: entry['name']?.toString() ?? code,
+          order: int.tryParse(entry['emoji_order']?.toString() ?? '') ?? 99999,
+        ));
+      });
+      catalog.sort((a, b) => a.order.compareTo(b.order));
+      if (mounted) setState(() => _emojiCatalog = catalog);
+    } catch (error) {
+      debugPrint('[emoji] catalog load failed: $error');
+      if (mounted) GlobalNotice.show('Emoji 资源加载失败');
+    } finally {
+      if (mounted) setState(() => _emojiCatalogLoading = false);
     }
   }
 
   void _toggleEmojiPanel() {
     final opening = !_showEmojiPanel;
+    if (opening) _inputFocus.unfocus();
     setState(() => _showEmojiPanel = opening);
-    if (!opening || _stickersLoaded) return;
-    unawaited(_loadStickers());
+    if (!opening) return;
+    unawaited(_loadEmojiCatalog());
+    if (!_stickersLoaded) unawaited(_loadStickers());
   }
 
   Future<void> _loadStickers() async {
@@ -547,139 +562,146 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  void _selectEmoji(({String asset, String label}) emoji) {
-    if (_msgC.text.trim().isEmpty) {
-      setState(() => _showEmojiPanel = false);
-      unawaited(_sendEmoji(emoji));
-      return;
+  Widget _localStickerPreview(
+    String path, {
+    required BoxFit fit,
+    int? cacheWidth,
+  }) {
+    if (path.isEmpty || !File(path).existsSync()) {
+      return const ColoredBox(
+        color: Colors.transparent,
+        child: Center(child: Icon(Icons.broken_image_outlined)),
+      );
     }
-    _insertEmoji(emoji);
+    if (path.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.file(File(path), fit: fit);
+    }
+    return Image.file(File(path), fit: fit, cacheWidth: cacheWidth);
   }
 
-  void _insertEmoji(({String asset, String label}) emoji) {
-    final selection = _msgC.selection;
-    final start = selection.isValid ? selection.start : _msgC.text.length;
-    final end = selection.isValid ? selection.end : _msgC.text.length;
-    final next = _msgC.text.replaceRange(start, end, emoji.label);
-    _msgC.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: start + emoji.label.length),
-    );
-    _inputFocus.requestFocus();
+  void _selectEmoji(_EmojiAsset emoji) {
+    setState(() => _showEmojiPanel = false);
+    unawaited(_sendEmoji(emoji));
   }
 
   Widget _emojiPicker(TideTheme theme) {
-    final isEmoji = _emojiTab == 0;
-    return SizedBox(
-      height: 226,
-      child: Column(
-        children: [
-          Row(
+    final items = _emojiCatalog
+        .where((emoji) => emoji.category == _emojiCategory)
+        .toList(growable: false);
+    return Material(
+      color: theme.surfaceVariant,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 286,
+          child: Column(
             children: [
-              _emojiPickerTab(theme, 'Emoji', 0),
-              _emojiPickerTab(theme, '我的表情', 1),
-              const Spacer(),
-              IconButton(
-                tooltip: '收起表情',
-                onPressed: _toggleEmojiPanel,
-                icon: Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: theme.iconMuted,
+              Expanded(
+                child: _emojiTab == 0
+                    ? _emojiCatalogLoading
+                        ? Center(
+                            child:
+                                CircularProgressIndicator(color: theme.primary))
+                        : GridView.builder(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 7,
+                              mainAxisSpacing: 8,
+                              crossAxisSpacing: 8,
+                            ),
+                            itemCount: items.length,
+                            itemBuilder: (_, index) {
+                              final emoji = items[index];
+                              return Tooltip(
+                                message: emoji.name,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(6),
+                                  onTap: () => _selectEmoji(emoji),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(5),
+                                    child: Image.asset(emoji.asset),
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                    : !_stickersLoaded
+                        ? Center(
+                            child:
+                                CircularProgressIndicator(color: theme.primary))
+                        : _stickers.isEmpty
+                            ? Center(
+                                child: Text('暂无我的表情',
+                                    style: TextStyle(
+                                        color: theme.textWeak,
+                                        fontFamily: 'TideFont')))
+                            : GridView.builder(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 5,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                ),
+                                itemCount: _stickers.length,
+                                itemBuilder: (_, index) {
+                                  final sticker = _stickers[index];
+                                  final path =
+                                      sticker['file_path']?.toString() ?? '';
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(6),
+                                    onTap: () {
+                                      setState(() => _showEmojiPanel = false);
+                                      unawaited(_sendSticker(sticker));
+                                    },
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: _localStickerPreview(
+                                        path,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+              ),
+              SizedBox(
+                height: 52,
+                child: Row(
+                  children: [
+                    ..._emojiCategoryIcons.entries.map((entry) => IconButton(
+                          tooltip: entry.value.$2,
+                          onPressed: () => setState(() {
+                            _emojiTab = 0;
+                            _emojiCategory = entry.key;
+                          }),
+                          icon: Icon(entry.value.$1,
+                              color:
+                                  _emojiTab == 0 && _emojiCategory == entry.key
+                                      ? theme.primary
+                                      : theme.iconMuted),
+                        )),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: '我的表情',
+                      onPressed: () => setState(() => _emojiTab = 1),
+                      icon: Icon(Icons.sticky_note_2_outlined,
+                          color:
+                              _emojiTab == 1 ? theme.primary : theme.iconMuted),
+                    ),
+                    IconButton(
+                      tooltip: '收起表情',
+                      onPressed: _toggleEmojiPanel,
+                      icon: Icon(Icons.keyboard_arrow_down_rounded,
+                          color: theme.iconMuted),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          Expanded(
-            child: isEmoji
-                ? GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 6,
-                      mainAxisSpacing: 6,
-                      crossAxisSpacing: 6,
-                    ),
-                    itemCount: _emoji.length,
-                    itemBuilder: (_, index) {
-                      final emoji = _emoji[index];
-                      return Tooltip(
-                        message: emoji.label,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(8),
-                          onTap: () => _selectEmoji(emoji),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: SvgPicture.asset(emoji.asset),
-                          ),
-                        ),
-                      );
-                    },
-                  )
-                : !_stickersLoaded
-                    ? Center(
-                        child: CircularProgressIndicator(color: theme.primary),
-                      )
-                    : _stickers.isEmpty
-                        ? Center(
-                            child: Text(
-                              '暂无我的表情',
-                              style: TextStyle(
-                                color: theme.textWeak,
-                                fontFamily: 'TideFont',
-                              ),
-                            ),
-                          )
-                        : GridView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 5,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8,
-                            ),
-                            itemCount: _stickers.length,
-                            itemBuilder: (_, index) {
-                              final sticker = _stickers[index];
-                              final path =
-                                  sticker['file_path']?.toString() ?? '';
-                              return InkWell(
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () {
-                                  setState(() => _showEmojiPanel = false);
-                                  unawaited(_sendSticker(sticker));
-                                },
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child:
-                                      path.isNotEmpty && File(path).existsSync()
-                                          ? Image.file(File(path),
-                                              fit: BoxFit.cover)
-                                          : ColoredBox(
-                                              color: theme.surfaceVariant,
-                                              child: const Icon(
-                                                Icons.broken_image_outlined,
-                                              ),
-                                            ),
-                                ),
-                              );
-                            },
-                          ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emojiPickerTab(TideTheme theme, String label, int index) {
-    final selected = _emojiTab == index;
-    return TextButton(
-      onPressed: () => setState(() => _emojiTab = index),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: selected ? theme.primary : theme.textWeak,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          fontFamily: 'TideFont',
         ),
       ),
     );
@@ -2541,7 +2563,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               Expanded(child: _chatBody()),
             ],
           ),
-          Positioned(left: 0, right: 0, bottom: 0, child: _inputBar()),
+          Positioned(left: 0, right: 0, bottom: 0, child: _composer()),
         ],
       ),
     );
@@ -3084,19 +3106,27 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         child: SizedBox(
                                           width: isSticker ? 112 : 144,
                                           height: isSticker ? 112 : 144,
-                                          child: Image.file(
-                                            File(imagePath),
-                                            fit: BoxFit.cover,
-                                            cacheWidth: isSticker ? 224 : 288,
-                                          ),
+                                          child: isSticker
+                                              ? _localStickerPreview(
+                                                  imagePath,
+                                                  fit: BoxFit.cover,
+                                                  cacheWidth: 224,
+                                                )
+                                              : Image.file(
+                                                  File(imagePath),
+                                                  fit: BoxFit.cover,
+                                                  cacheWidth: 288,
+                                                ),
                                         ),
                                       ),
                                     ),
                                   if (isEmoji && emojiAsset != null)
                                     SizedBox(
-                                      width: 48,
-                                      height: 48,
-                                      child: SvgPicture.asset(emojiAsset),
+                                      width: 52,
+                                      height: 52,
+                                      child: emojiAsset.endsWith('.svg')
+                                          ? SvgPicture.asset(emojiAsset)
+                                          : Image.asset(emojiAsset),
                                     ),
                                   // 音频卡片：同一结构兼容用户与机器人语音；转写文字会显示在卡片下方。
                                   if (hasAudio)
@@ -3408,13 +3438,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     setState(() => _composerReserve = next);
   }
 
+  Widget _composer() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
+    return Container(
+      key: _composerKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _inputBar(),
+          if (_showEmojiPanel) _emojiPicker(TideTheme.of(context)),
+        ],
+      ),
+    );
+  }
+
   Widget _inputBar() {
     final theme = TideTheme.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
     final hasSendContent =
         _hasText || _pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty;
     return SafeArea(
-      key: _composerKey,
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: SlideTransition(
@@ -3432,7 +3474,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_showEmojiPanel) _emojiPicker(theme),
               if (_pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),

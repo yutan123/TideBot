@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'db.dart';
@@ -85,24 +86,30 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
         });
     emotion.dispose();
     if (result == null || result.isEmpty) return;
-    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (image == null) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'],
+    );
+    final sourcePath = picked?.files.single.path;
+    if (sourcePath == null || sourcePath.isEmpty) return;
+    final source = File(sourcePath);
+    if (!await source.exists()) return;
     final now = DateTime.now().millisecondsSinceEpoch;
-    // 复制到应用私有目录，避免 image_picker 的临时文件在重启或清理缓存后失效，
-    // 否则聊天里重现的表情包会因路径不存在而加载不出来。
-    String storedPath = image.path;
+    // Copy imported files to app storage so persisted stickers do not depend on
+    // a transient gallery or document-provider path.
+    String storedPath = source.path;
     try {
       final docs = await getApplicationDocumentsDirectory();
       final dir = Directory('${docs.path}/stickers');
       if (!dir.existsSync()) dir.createSync(recursive: true);
-      final ext = image.path.contains('.')
-          ? image.path.split('.').last.toLowerCase()
+      final ext = source.path.contains('.')
+          ? source.path.split('.').last.toLowerCase()
           : 'png';
       final dest = '${dir.path}/sticker_$now.$ext';
-      await File(image.path).copy(dest);
+      await source.copy(dest);
       storedPath = dest;
     } catch (_) {
-      // 拷贝失败时退回原路径，保证仍可入库展示。
+      // Keep the chosen path when a provider cannot be copied.
     }
     await DBManager().insertSticker({
       'id': 'sticker_$now',
@@ -111,6 +118,21 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
       'created_at': now
     });
     _load();
+  }
+
+  Widget _stickerPreview(String path, {required BoxFit fit}) {
+    if (path.isEmpty || !File(path).existsSync()) {
+      return const Center(child: Icon(Icons.broken_image_outlined));
+    }
+    if (path.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.file(File(path), fit: fit);
+    }
+    return Image.file(
+      File(path),
+      fit: fit,
+      width: double.infinity,
+      height: double.infinity,
+    );
   }
 
   @override
@@ -151,14 +173,7 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
                           borderRadius: BorderRadius.circular(16),
                           child: Container(
                               color: theme.surfaceVariant,
-                              child: path.isNotEmpty && File(path).existsSync()
-                                  ? Image.file(File(path),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity)
-                                  : const Center(
-                                      child:
-                                          Icon(Icons.broken_image_outlined)))),
+                              child: _stickerPreview(path, fit: BoxFit.cover))),
                       Positioned(
                           left: 7,
                           bottom: 7,

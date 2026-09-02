@@ -59,6 +59,7 @@ flutter:
     - assets/icons/
     - assets/images/
     - assets/emoji/
+    - assets/emojitwo/
   fonts:
     - family: TideFont
       fonts:

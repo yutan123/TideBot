@@ -27,8 +27,12 @@ class TideTheme extends ChangeNotifier {
   // the renderer before the user can remove it.
   static const _globalBackgroundSafetyKey = 'global_background_safe_v3';
   double _globalBackgroundOpacity = 0.38;
-  int _backgroundRequest = 0;
+  Future<bool>? _backgroundPreparation;
+  String _backgroundPreparationPath = '';
+  Size _backgroundPreparationSize = Size.zero;
+  double _backgroundPreparationDpr = 0;
   final Map<_BackgroundRegion, bool> _backgroundLightness = {};
+
   Color get primary => _primary;
   Color get primaryLight => _primaryLight;
   String get name => _name;
@@ -41,10 +45,13 @@ class TideTheme extends ChangeNotifier {
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
 
   void _setGlobalBackgroundImage(String path) {
-    _backgroundRequest++;
     _configuredBackgroundPath = '';
     _configuredDevicePixelRatio = 0;
     _configuredSize = Size.zero;
+    _backgroundPreparation = null;
+    _backgroundPreparationPath = '';
+    _backgroundPreparationSize = Size.zero;
+    _backgroundPreparationDpr = 0;
     _backgroundLightness.clear();
     if (path.isEmpty) {
       _globalBackgroundImage = null;
@@ -52,7 +59,9 @@ class TideTheme extends ChangeNotifier {
       return;
     }
     _globalBackgroundImage = FileImage(File(path));
-    _globalBackgroundReady = false;
+    // The renderer can show a validated FileImage immediately. Preparation only
+    // warms the cache and samples contrast; it must never gate the background.
+    _globalBackgroundReady = true;
   }
 
   ImageConfiguration _imageConfiguration(BuildContext context) {
@@ -98,23 +107,54 @@ class TideTheme extends ChangeNotifier {
     await db.insertKV(_globalBackgroundSafetyKey, '');
   }
 
-  Future<bool> precacheGlobalBackground(BuildContext context) async {
-    final request = _backgroundRequest;
+  Future<bool> precacheGlobalBackground(BuildContext context) {
     final path = _globalBackground;
     final image = _globalBackgroundImage;
-    if (image == null) return false;
+    if (path.isEmpty || image == null) return Future.value(false);
+
     final media = MediaQuery.maybeOf(context);
     final size = media?.size ?? Size.zero;
     final dpr = media?.devicePixelRatio ?? View.of(context).devicePixelRatio;
-    if (_configuredBackgroundPath == _globalBackground &&
+    if (_configuredBackgroundPath == path &&
         _configuredDevicePixelRatio == dpr &&
-        _configuredSize == size &&
-        _globalBackgroundReady) {
-      return true;
+        _configuredSize == size) {
+      return Future.value(true);
     }
+    if (_backgroundPreparation != null &&
+        _backgroundPreparationPath == path &&
+        _backgroundPreparationSize == size &&
+        _backgroundPreparationDpr == dpr) {
+      return _backgroundPreparation!;
+    }
+
+    _backgroundPreparationPath = path;
+    _backgroundPreparationSize = size;
+    _backgroundPreparationDpr = dpr;
+    late final Future<bool> preparation;
+    preparation = _prepareGlobalBackground(
+      path: path,
+      image: image,
+      context: context,
+      size: size,
+      dpr: dpr,
+    );
+    _backgroundPreparation = preparation;
+    unawaited(preparation.whenComplete(() {
+      if (identical(_backgroundPreparation, preparation)) {
+        _backgroundPreparation = null;
+      }
+    }));
+    return preparation;
+  }
+
+  Future<bool> _prepareGlobalBackground({
+    required String path,
+    required ImageProvider<Object> image,
+    required BuildContext context,
+    required Size size,
+    required double dpr,
+  }) async {
     try {
-      _globalBackgroundReady = false;
-      notifyListeners();
       await precacheImage(image, context, size: size);
       final stream = image.resolve(_imageConfiguration(context));
       final ready = Completer<ui.Image>();
@@ -126,32 +166,22 @@ class TideTheme extends ChangeNotifier {
         },
         onError: (_, __) {
           stream.removeListener(listener);
-          if (!ready.isCompleted) ready.completeError(StateError('背景图片解码失败'));
+          if (!ready.isCompleted) {
+            ready.completeError(StateError('背景图片解码失败'));
+          }
         },
       );
       stream.addListener(listener);
       await _sampleBackgroundLightness(await ready.future);
-      if (request != _backgroundRequest || path != _globalBackground) {
-        return false;
-      }
+      if (path != _globalBackground) return false;
       _configuredBackgroundPath = path;
       _configuredDevicePixelRatio = dpr;
       _configuredSize = size;
       notifyListeners();
       return true;
     } catch (_) {
-      // A persisted image can become unreadable after an interrupted copy or a
-      // provider-side conversion. Disable it once instead of retrying the same
-      // decoder from every rebuilt screen.
-      _globalBackground = '';
-      _setGlobalBackgroundImage('');
-      _globalBackgroundReady = true;
-      _backgroundLightness.clear();
-      notifyListeners();
-      try {
-        await DBManager().insertKV('global_background_image', '');
-        await DBManager().insertKV(_globalBackgroundSafetyKey, '');
-      } catch (_) {}
+      // This is a cache warm-up failure, not a reason to mutate persistence.
+      // A new selection is already decoded before it becomes active.
       return false;
     }
   }
@@ -512,13 +542,10 @@ class TideTheme extends ChangeNotifier {
       );
       _globalBackgroundOpacity = nextOpacity;
       _globalBackground = path;
+      _setGlobalBackgroundImage(path);
       _globalBackgroundImage = candidate;
-      _globalBackgroundReady = false;
-      _configuredBackgroundPath = '';
-      _configuredDevicePixelRatio = 0;
-      _configuredSize = Size.zero;
       notifyListeners();
-      await precacheGlobalBackground(context);
+      unawaited(precacheGlobalBackground(context));
     } catch (_) {
       // Nothing has been persisted or made active until a candidate decodes.
       rethrow;

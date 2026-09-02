@@ -112,7 +112,15 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
                   onBack: () => Navigator.pop(context),
                   onSave: () => _save(theme),
                 ),
-                const Spacer(),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                    child: _BackgroundAppPreview(
+                      theme: theme,
+                      hasImage: hasImage,
+                    ),
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                   child: _ControlSurface(
@@ -132,6 +140,182 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       ),
     );
   }
+}
+
+class _BackgroundAppPreview extends StatelessWidget {
+  const _BackgroundAppPreview({required this.theme, required this.hasImage});
+
+  final TideTheme theme;
+  final bool hasImage;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = hasImage
+        ? (theme.isDark ? Colors.white : const Color(0xFF15171B))
+        : theme.textStrong;
+    final muted = hasImage
+        ? (theme.isDark ? Colors.white70 : const Color(0xFF4A4D53))
+        : theme.textWeak;
+    final card = hasImage
+        ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
+        : theme.surface.withValues(alpha: .92);
+    return AspectRatio(
+      aspectRatio: .72,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: .12),
+            border: Border.all(color: Colors.white.withValues(alpha: .38)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: theme.primary.withValues(alpha: .86),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.waves_rounded,
+                          size: 18, color: Colors.white),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('TideBot',
+                              style: TextStyle(
+                                  color: text,
+                                  fontWeight: FontWeight.w700,
+                                  fontFamily: 'TideFont')),
+                          Text('我的消息',
+                              style: TextStyle(
+                                  color: muted,
+                                  fontSize: 11,
+                                  fontFamily: 'TideFont')),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.more_horiz_rounded, color: text),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text('早上好',
+                    style: TextStyle(
+                        color: text,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 4),
+                Text('这是全局背景下的界面效果。',
+                    style: TextStyle(
+                        color: muted, fontSize: 12, fontFamily: 'TideFont')),
+                const SizedBox(height: 16),
+                _PreviewMessage(
+                  alignment: Alignment.centerLeft,
+                  color: card,
+                  textColor: text,
+                  message: '今天想聊些什么？',
+                ),
+                const SizedBox(height: 10),
+                _PreviewMessage(
+                  alignment: Alignment.centerRight,
+                  color: theme.primary.withValues(alpha: .88),
+                  textColor: Colors.white,
+                  message: '看看这个背景效果。',
+                ),
+                const Spacer(),
+                Container(
+                  height: 46,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: card,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: Colors.white
+                            .withValues(alpha: hasImage ? .34 : .0)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_rounded, color: muted),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text('发送消息',
+                            style: TextStyle(
+                                color: muted,
+                                fontSize: 12,
+                                fontFamily: 'TideFont')),
+                      ),
+                      Icon(Icons.arrow_upward_rounded, color: theme.primary),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: 42,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: card,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color:
+                          Colors.white.withValues(alpha: hasImage ? .34 : .0),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Icon(Icons.chat_bubble_outline_rounded, size: 19),
+                      Icon(Icons.grid_view_rounded, size: 19),
+                      Icon(Icons.explore_outlined, size: 19),
+                      Icon(Icons.person_outline_rounded, size: 19),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewMessage extends StatelessWidget {
+  const _PreviewMessage({
+    required this.alignment,
+    required this.color,
+    required this.textColor,
+    required this.message,
+  });
+
+  final Alignment alignment;
+  final Color color;
+  final Color textColor;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: alignment,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 190),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(message,
+              style: TextStyle(
+                  color: textColor, fontSize: 12, fontFamily: 'TideFont')),
+        ),
+      );
 }
 
 class _TopBar extends StatelessWidget {
