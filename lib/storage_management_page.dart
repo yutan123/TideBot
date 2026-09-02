@@ -19,9 +19,12 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   int _documents = 0,
       _temporary = 0,
       _database = 0,
+      _databaseSidecars = 0,
       _apk = 0,
       _appData = 0,
       _total = 0;
+  List<MapEntry<String, int>> _documentItems = const [];
+  Map<String, Object> _databaseInfo = const {};
   List<Map<String, dynamic>> _bots = [];
   final Map<String, int> _chatBytes = {};
   final Set<String> _selected = {};
@@ -39,6 +42,26 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
     return total;
   }
 
+  Future<int> _fileSize(File file) async {
+    if (!await file.exists()) return 0;
+    return file.length();
+  }
+
+  Future<List<MapEntry<String, int>>> _children(Directory dir) async {
+    if (!await dir.exists()) return const [];
+    final items = <MapEntry<String, int>>[];
+    await for (final item in dir.list(followLinks: false)) {
+      try {
+        final bytes =
+            item is File ? await item.length() : await _size(item as Directory);
+        final name = item.path.split(Platform.pathSeparator).last;
+        items.add(MapEntry(name, bytes));
+      } catch (_) {}
+    }
+    items.sort((a, b) => b.value.compareTo(a.value));
+    return items;
+  }
+
   String _format(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -52,11 +75,19 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
     final temp = await getTemporaryDirectory();
     final dbPath = await getDatabasesPath();
     final dbFile = File('$dbPath/tidebot.db');
+    final dbWal = File('$dbPath/tidebot.db-wal');
+    final dbShm = File('$dbPath/tidebot.db-shm');
     final native = await OpsManager().storageInfo();
     final values = await Future.wait<dynamic>([
       _size(docs),
       _size(temp),
-      dbFile.exists().then((yes) => yes ? dbFile.length() : 0),
+      _fileSize(dbFile),
+      Future.wait<int>([
+        _fileSize(dbWal),
+        _fileSize(dbShm),
+      ]).then((sizes) => sizes[0] + sizes[1]),
+      _children(docs),
+      DBManager().databaseDiagnostics(),
       DBManager().getAllBots(),
       DBManager().chatStorageByBot(),
     ]);
@@ -65,10 +96,13 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       _documents = values[0] as int;
       _temporary = values[1] as int;
       _database = values[2] as int;
-      _bots = values[3] as List<Map<String, dynamic>>;
+      _databaseSidecars = values[3] as int;
+      _documentItems = values[4] as List<MapEntry<String, int>>;
+      _databaseInfo = values[5] as Map<String, Object>;
+      _bots = values[6] as List<Map<String, dynamic>>;
       _chatBytes
         ..clear()
-        ..addAll(values[4] as Map<String, int>);
+        ..addAll(values[7] as Map<String, int>);
       _total = (native['total'] as num?)?.toInt() ?? 0;
       _apk = (native['apk'] as num?)?.toInt() ?? 0;
       _appData = (native['data'] as num?)?.toInt() ??
@@ -81,6 +115,31 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   void initState() {
     super.initState();
     _loadAsync();
+  }
+
+  Future<void> _showDatabaseDiagnostics() async {
+    final tables = _databaseInfo['tables'] as Map<String, int>? ?? const {};
+    final rows = tables.entries
+        .map(
+            (entry) => '${entry.key}: ${entry.value < 0 ? '不可读' : entry.value}')
+        .join('\n');
+    await TideDialogs.show<void>(
+      context: context,
+      builder: (dialogContext) => TideDialogSurface(
+        title: const Text('数据库诊断'),
+        content: SelectableText(
+          '路径\n${_databaseInfo['path'] ?? '不可用'}\n\n'
+          'SQLite 版本: ${_databaseInfo['userVersion'] ?? '不可用'}\n\n'
+          '记录数\n$rows',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _clearCache() async {
@@ -199,7 +258,11 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                   _row(Icons.install_mobile_rounded, '安装包', _format(_apk)),
                   _row(Icons.data_object_rounded, '应用数据', _format(_appData)),
                   _row(Icons.storage_rounded, '聊天数据库（已含于应用数据）',
-                      _format(_database)),
+                      _format(_database),
+                      action: '诊断', onTap: _showDatabaseDiagnostics),
+                  _row(Icons.sync_alt_rounded, '数据库日志（WAL/SHM）',
+                      _format(_databaseSidecars)),
+                  _row(Icons.folder_outlined, '应用文件', _format(_documents)),
                   _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
                       action: '清理', onTap: _clearCache)
                 ])),
@@ -225,6 +288,25 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: _restoreAll,
                   ),
+                ])),
+                const SizedBox(height: 12),
+                FrostCard(
+                    child: Column(children: [
+                  const ListTile(
+                    leading: Icon(Icons.folder_open_outlined),
+                    title: Text('应用文件明细',
+                        style: TextStyle(fontFamily: 'TideFont')),
+                    subtitle: Text('图片、录音、背景、表情包、导出和日志',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                  ),
+                  for (final item in _documentItems)
+                    _row(Icons.insert_drive_file_outlined, item.key,
+                        _format(item.value)),
+                  if (_documentItems.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('暂无应用文件', textAlign: TextAlign.start),
+                    ),
                 ])),
                 const SizedBox(height: 22),
                 Text('聊天记录管理',

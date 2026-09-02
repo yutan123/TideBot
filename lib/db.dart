@@ -63,6 +63,33 @@ class DBManager {
     }
   }
 
+  Future<Map<String, Object>> databaseDiagnostics() async {
+    final path = join(await getDatabasesPath(), 'tidebot.db');
+    final db = await database;
+    final tables = <String, int>{};
+    for (final table in const [
+      'bots',
+      'chat_history',
+      'posts',
+      'post_comments',
+      'feed_events',
+      'call_sessions',
+    ]) {
+      try {
+        final rows = await db.rawQuery('SELECT COUNT(*) AS count FROM $table');
+        tables[table] = (rows.first['count'] as num?)?.toInt() ?? 0;
+      } catch (_) {
+        tables[table] = -1;
+      }
+    }
+    final version = await db.rawQuery('PRAGMA user_version');
+    return {
+      'path': path,
+      'userVersion': (version.first.values.first as num?)?.toInt() ?? 0,
+      'tables': tables,
+    };
+  }
+
   Future<void> close() async {
     final current = _db;
     _db = null;
