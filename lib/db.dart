@@ -1038,11 +1038,21 @@ class DBManager {
   ///
   /// 返回「建议文件名 + 完整 JSON 导出内容」。真正的落盘由调用方决定，
   /// 例如通过系统的保存对话框写入公共 Download 目录（兼容 scoped storage）。
+  Future<List<Map<String, dynamic>>> _queryAllMessages(String botId) async {
+    final db = await database;
+    return db.query(
+      'chat_history',
+      where: 'bot_id = ?',
+      whereArgs: [botId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+
   Future<({String fileName, String content})> buildChatExport(
       String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
-    final messages = await queryMessages(botId);
+    final messages = await _queryAllMessages(botId);
     final safeName = (bot['name']?.toString() ?? 'bot')
         .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
     final fileName =
