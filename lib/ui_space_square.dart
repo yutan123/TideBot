@@ -369,6 +369,7 @@ class _SpacePageState extends State<SpacePage> {
                       SizedBox(
                         height: 380,
                         child: DiaryCalendarWidget(
+                          key: ValueKey('diary_$_botId'),
                           botId: _botId,
                           botName: _botName,
                         ),

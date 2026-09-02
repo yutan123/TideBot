@@ -133,7 +133,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) => Container(
-        color: TideTheme.of(context).bgColor,
+        color: TideTheme.of(context).hasGlobalBackground
+            ? Colors.transparent
+            : TideTheme.of(context).bgColor,
         child: SafeArea(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
@@ -213,23 +215,20 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
     final content = Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: theme.hasGlobalBackground ? 8 : 14,
-        vertical: theme.hasGlobalBackground ? 7 : 10,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
           Icon(
             s['icon'] as IconData,
-            size: theme.hasGlobalBackground ? 18 : 20,
+            size: 20,
             color: theme.primary,
           ),
-          SizedBox(width: theme.hasGlobalBackground ? 12 : 14),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               s['title'] ?? '',
               style: TextStyle(
-                fontSize: theme.hasGlobalBackground ? 14 : 15,
+                fontSize: 15,
                 fontFamily: 'TideFont',
                 color: theme.onBackgroundStrong,
               ),
@@ -245,8 +244,11 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (theme.hasGlobalBackground) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 2),
-        child: content,
+        padding: const EdgeInsets.only(bottom: 10),
+        child: FrostCard(
+          padding: EdgeInsets.zero,
+          child: content,
+        ),
       );
     }
     return FrostCard(

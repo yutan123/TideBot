@@ -703,6 +703,7 @@ class AIManager {
       Map<String, dynamic>? toolSticker;
       String? toolMood;
       var toolSilenced = false;
+      var toolRequestedVoice = false;
       Map usage = const {};
       String errorBody = '';
       int statusCode;
@@ -778,6 +779,7 @@ class AIManager {
               silenceSetter: () => toolSilenced = true,
               stickerSetter: (sticker) => toolSticker = sticker,
               moodSetter: (mood) => toolMood = mood,
+              voiceSetter: () => toolRequestedVoice = true,
               requiredToolNames: {
                 'set_emotion',
                 if (allowSticker) 'send_sticker',
@@ -807,6 +809,7 @@ class AIManager {
             silenceSetter: () => toolSilenced = true,
             stickerSetter: (sticker) => toolSticker = sticker,
             moodSetter: (mood) => toolMood = mood,
+            voiceSetter: () => toolRequestedVoice = true,
             requiredToolNames: {
               'set_emotion',
               if (allowSticker) 'send_sticker',
@@ -889,7 +892,8 @@ class AIManager {
                   .clamp(1, 100);
           final shouldVoice = voiceEnabled &&
               ttsModel.isNotEmpty &&
-              Random.secure().nextInt(100) < voiceChance;
+              (toolRequestedVoice ||
+                  Random.secure().nextInt(100) < voiceChance);
           if (shouldVoice) {
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
           }
@@ -2313,6 +2317,7 @@ $transcript''';
     required void Function() silenceSetter,
     required void Function(Map<String, dynamic>) stickerSetter,
     required void Function(String) moodSetter,
+    required void Function() voiceSetter,
     Set<String> requiredToolNames = const {},
     Set<String> allowedStickerTypes = const {},
     Map<int, String> inspectableImages = const {},
@@ -2331,6 +2336,8 @@ $transcript''';
         } else if (name == 'send_sticker') {
           final sticker = toolResult['sticker'];
           if (sticker is Map) stickerSetter(Map<String, dynamic>.from(sticker));
+        } else if (name == 'request_voice_reply') {
+          voiceSetter();
         }
         if (name == 'set_emotion' || name == 'send_sticker') {
           completedTools.add(name);
@@ -2629,6 +2636,13 @@ $transcript''';
     }
     tools.add(_memoryToolSchema());
     tools.add(_diaryToolSchema());
+    tools.add(_queryDiaryToolSchema());
+    if (await db.getKV('voice_reply_enabled') == 'true') {
+      final bot = await db.getBotById(botId);
+      if ((bot?['tts_model']?.toString().trim() ?? '').isNotEmpty) {
+        tools.add(_requestVoiceReplyToolSchema());
+      }
+    }
     tools.addAll(await _buildExternalTools(db));
     return tools;
   }
@@ -2732,6 +2746,40 @@ $transcript''';
           },
         },
       };
+  Map<String, dynamic> _queryDiaryToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'query_diary',
+          'description':
+              '仅在需要回顾自己某一天的日记且用户或当前对话已明确日期时调用。日记不会自动提供给你；只能查询自己的日记，date 必须为 YYYY-MM-DD。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'date': {
+                'type': 'string',
+                'description': '要查询的本地日期，格式 YYYY-MM-DD',
+              },
+            },
+            'required': ['date'],
+            'additionalProperties': false,
+          },
+        },
+      };
+
+  Map<String, dynamic> _requestVoiceReplyToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'request_voice_reply',
+          'description':
+              '当用户明确要求语音回复，或当前内容适合用语音自然表达时调用。调用后本轮最终回复会额外生成语音；不要在正文声称已发送语音，系统会处理。',
+          'parameters': {
+            'type': 'object',
+            'properties': {},
+            'additionalProperties': false,
+          },
+        },
+      };
+
   Map<String, dynamic> _imageToolSchema() => {
         'type': 'function',
         'function': {
@@ -3211,6 +3259,47 @@ $transcript''';
           'result': {'ok': false, 'error': '本地记忆写入失败：$error'},
         };
       }
+    }
+    if (name == 'query_diary') {
+      final date = args['date']?.toString().trim() ?? '';
+      if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(date) ||
+          DateTime.tryParse(date) == null) {
+        return {
+          'result': {'ok': false, 'error': 'date 必须是有效的 YYYY-MM-DD 日期'},
+        };
+      }
+      final diary = await db.getDiary(botId, date);
+      final displayDate =
+          '${date.substring(0, 4)}年${date.substring(5, 7)}月${date.substring(8, 10)}日';
+      await db.insertToolAudit(
+        source: 'native',
+        toolName: name,
+        inputSummary: _redactToolInput({'date': date}),
+        status: 'success',
+        durationMs: 0,
+      );
+      if (diary == null) {
+        return {
+          'result': {
+            'ok': true,
+            'found': false,
+            'message': '$displayDate没有可查询的日记。',
+          },
+        };
+      }
+      return {
+        'result': {
+          'ok': true,
+          'found': true,
+          'date': date,
+          'content': diary['content']?.toString() ?? '',
+        },
+      };
+    }
+    if (name == 'request_voice_reply') {
+      return {
+        'result': {'ok': true, 'message': '本轮最终文字回复将生成语音。'},
+      };
     }
     if (name == 'write_diary') {
       final entry = args['entry']?.toString().trim() ?? '';

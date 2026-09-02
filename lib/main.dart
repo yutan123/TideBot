@@ -993,43 +993,6 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _width;
   late Animation<double> _scale;
   int _previousIndex = 0;
-  bool _lifting = false;
-  double? _dragPosition;
-
-  double _positionForGlobalPosition(Offset globalPosition) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return widget.currentIndex.toDouble();
-    final local = box.globalToLocal(globalPosition);
-    final slotWidth = box.size.width / _icons.length;
-    return (local.dx / slotWidth - .5).clamp(0.0, _icons.length - 1.0);
-  }
-
-  void _startLift(LongPressStartDetails details) {
-    TideHaptics.tap();
-    setState(() {
-      _lifting = true;
-      _dragPosition = _positionForGlobalPosition(details.globalPosition);
-    });
-  }
-
-  void _updateLift(LongPressMoveUpdateDetails details) {
-    final position = _positionForGlobalPosition(details.globalPosition);
-    if (position != _dragPosition) setState(() => _dragPosition = position);
-  }
-
-  void _endLift(LongPressEndDetails details) {
-    final position = _dragPosition;
-    setState(() {
-      _lifting = false;
-      _dragPosition = null;
-    });
-    if (position != null) widget.onTap(position.round());
-  }
-
-  void _cancelLift() => setState(() {
-        _lifting = false;
-        _dragPosition = null;
-      });
 
   @override
   void initState() {
@@ -1126,20 +1089,16 @@ class _JellyDockState extends State<JellyDock>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
       child: SizedBox(
-        height: 92,
+        height: 56,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final slotWidth = constraints.maxWidth / _icons.length;
-            final position = _dragPosition ?? _position.value * _icons.length;
+            final position = _position.value * _icons.length;
             final activeIndex = position.round();
             return Stack(
               clipBehavior: Clip.none,
               children: [
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: 56,
+                Positioned.fill(
                   child: TideLiquidGlass.dock(
                     radius: 28,
                     clipExpansion: const EdgeInsets.fromLTRB(16, 28, 16, 18),
@@ -1170,10 +1129,6 @@ class _JellyDockState extends State<JellyDock>
                               behavior: HitTestBehavior.opaque,
                               onTapDown: (_) => TideHaptics.tap(),
                               onTap: () => widget.onTap(index),
-                              onLongPressStart: _startLift,
-                              onLongPressMoveUpdate: _updateLift,
-                              onLongPressEnd: _endLift,
-                              onLongPressCancel: _cancelLift,
                               child: Center(
                                 child: Stack(
                                   clipBehavior: Clip.none,
@@ -1216,9 +1171,9 @@ class _JellyDockState extends State<JellyDock>
                   animation: Listenable.merge([_position, _width, _scale]),
                   builder: (context, child) => Positioned(
                     left: position * slotWidth + (slotWidth - _width.value) / 2,
-                    bottom: _lifting ? 52 : 8,
+                    bottom: 8,
                     child: Transform.scale(
-                      scale: _scale.value * (_lifting ? 1.12 : 1),
+                      scale: _scale.value,
                       child: child,
                     ),
                   ),

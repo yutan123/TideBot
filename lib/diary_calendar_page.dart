@@ -50,6 +50,18 @@ class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {
     _loadDates();
   }
 
+  @override
+  void didUpdateWidget(covariant DiaryCalendarWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.botId == widget.botId) return;
+    setState(() {
+      _dates = <String>{};
+      _loading = true;
+      _month = DateTime(DateTime.now().year, DateTime.now().month);
+    });
+    _loadDates();
+  }
+
   Future<void> _loadDates() async {
     final rows = await DBManager().queryDiaryDates(widget.botId);
     if (!mounted) return;

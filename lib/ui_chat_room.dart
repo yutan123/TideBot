@@ -44,6 +44,52 @@ class _EmojiAsset {
   });
 }
 
+class _PendingExpression {
+  const _PendingExpression._({
+    required this.type,
+    required this.name,
+    required this.path,
+  });
+
+  factory _PendingExpression.emoji(_EmojiAsset emoji) => _PendingExpression._(
+        type: 'emoji',
+        name: emoji.name,
+        path: emoji.asset,
+      );
+
+  factory _PendingExpression.sticker(Map<String, dynamic> sticker) =>
+      _PendingExpression._(
+        type: 'sticker',
+        name: sticker['emotion']?.toString().trim().isNotEmpty == true
+            ? sticker['emotion'].toString().trim()
+            : '未分类',
+        path: sticker['file_path']?.toString() ?? '',
+      );
+
+  final String type;
+  final String name;
+  final String path;
+
+  bool get isEmoji => type == 'emoji';
+
+  String get modelContext =>
+      isEmoji ? '[用户随文字发送了 Emoji 表情：$name]' : '[用户随文字发送了一个表情包，类型：$name]';
+
+  Map<String, dynamic> toMessage({
+    required String botId,
+    required int timestamp,
+  }) =>
+      {
+        'id': '${type}_$timestamp',
+        'bot_id': botId,
+        'role': 'user',
+        'type': type,
+        'content': name,
+        'file_path': path,
+        'timestamp': timestamp,
+      };
+}
+
 final _emojiCategoryIcons = <String, (IconData, String)>{
   'people': (Icons.emoji_emotions_outlined, '表情和人物'),
   'nature': (Icons.pets_outlined, '动物和自然'),
@@ -103,6 +149,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   // Attachments are staged above the composer and sent together on confirmation.
   final List<String> _pendingImages = [];
   final List<String> _pendingDocuments = [];
+  _PendingExpression? _pendingExpression;
   String? _pendingMediaContext;
   final GlobalKey _composerKey = GlobalKey();
   double _composerReserve = 84;
@@ -120,6 +167,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   int _requestGen = 0;
   String _queuedText = '';
   bool _queued = false;
+
+  Future<void> _setTypingState(bool value) async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    if (mounted) setState(() => _typing = value);
+    await DBManager().setKV('chat_typing_$botId', value ? 'true' : 'false');
+  }
+
+  Future<void> _restoreTypingState() async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+    final active = await DBManager().getKV('chat_typing_$botId') == 'true';
+    if (mounted && active) setState(() => _typing = true);
+  }
 
   void _msgChanged() {
     if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty);
@@ -157,6 +218,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
     _chatEvents = ChatEventBus.instance.events.listen(_onChatEvent);
     _loadMsgs();
+    unawaited(_restoreTypingState());
     _loadBg();
     _loadChatPreferences();
     // Proactive replies are scheduled by the persistent background service.
@@ -580,8 +642,27 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _selectEmoji(_EmojiAsset emoji) {
+    if (_msgC.text.trim().isNotEmpty) {
+      setState(() {
+        _pendingExpression = _PendingExpression.emoji(emoji);
+        _showEmojiPanel = false;
+      });
+      return;
+    }
     setState(() => _showEmojiPanel = false);
     unawaited(_sendEmoji(emoji));
+  }
+
+  void _selectSticker(Map<String, dynamic> sticker) {
+    if (_msgC.text.trim().isNotEmpty) {
+      setState(() {
+        _pendingExpression = _PendingExpression.sticker(sticker);
+        _showEmojiPanel = false;
+      });
+      return;
+    }
+    setState(() => _showEmojiPanel = false);
+    unawaited(_sendSticker(sticker));
   }
 
   Widget _emojiPicker(TideTheme theme) {
@@ -596,6 +677,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           height: 286,
           child: Column(
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _EmojiPanelTab(
+                        selected: _emojiTab == 0,
+                        icon: Icons.emoji_emotions_outlined,
+                        label: 'Emoji',
+                        primary: theme.primary,
+                        muted: theme.iconMuted,
+                        onTap: () => setState(() => _emojiTab = 0),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _EmojiPanelTab(
+                        selected: _emojiTab == 1,
+                        icon: Icons.sticky_note_2_outlined,
+                        label: '我的表情',
+                        primary: theme.primary,
+                        muted: theme.iconMuted,
+                        onTap: () => setState(() => _emojiTab = 1),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '收起表情',
+                      onPressed: _toggleEmojiPanel,
+                      icon: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: theme.iconMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               Expanded(
                 child: _emojiTab == 0
                     ? _emojiCatalogLoading
@@ -603,7 +720,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                             child:
                                 CircularProgressIndicator(color: theme.primary))
                         : GridView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                             gridDelegate:
                                 const SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: 7,
@@ -638,7 +755,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         fontFamily: 'TideFont')))
                             : GridView.builder(
                                 padding:
-                                    const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                                    const EdgeInsets.fromLTRB(12, 8, 12, 8),
                                 gridDelegate:
                                     const SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: 5,
@@ -652,10 +769,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       sticker['file_path']?.toString() ?? '';
                                   return InkWell(
                                     borderRadius: BorderRadius.circular(6),
-                                    onTap: () {
-                                      setState(() => _showEmojiPanel = false);
-                                      unawaited(_sendSticker(sticker));
-                                    },
+                                    onTap: () => _selectSticker(sticker),
                                     child: ClipRRect(
                                       borderRadius: BorderRadius.circular(6),
                                       child: _localStickerPreview(
@@ -667,39 +781,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 },
                               ),
               ),
-              SizedBox(
-                height: 52,
-                child: Row(
-                  children: [
-                    ..._emojiCategoryIcons.entries.map((entry) => IconButton(
-                          tooltip: entry.value.$2,
-                          onPressed: () => setState(() {
-                            _emojiTab = 0;
-                            _emojiCategory = entry.key;
-                          }),
-                          icon: Icon(entry.value.$1,
-                              color:
-                                  _emojiTab == 0 && _emojiCategory == entry.key
-                                      ? theme.primary
-                                      : theme.iconMuted),
-                        )),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: '我的表情',
-                      onPressed: () => setState(() => _emojiTab = 1),
-                      icon: Icon(Icons.sticky_note_2_outlined,
-                          color:
-                              _emojiTab == 1 ? theme.primary : theme.iconMuted),
-                    ),
-                    IconButton(
-                      tooltip: '收起表情',
-                      onPressed: _toggleEmojiPanel,
-                      icon: Icon(Icons.keyboard_arrow_down_rounded,
-                          color: theme.iconMuted),
-                    ),
-                  ],
+              if (_emojiTab == 0)
+                SizedBox(
+                  height: 52,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    children: _emojiCategoryIcons.entries.map((entry) {
+                      final selected = _emojiCategory == entry.key;
+                      return IconButton(
+                        tooltip: entry.value.$2,
+                        onPressed: () => setState(
+                          () => _emojiCategory = entry.key,
+                        ),
+                        icon: Icon(
+                          entry.value.$1,
+                          color: selected ? theme.primary : theme.iconMuted,
+                        ),
+                      );
+                    }).toList(growable: false),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -711,6 +814,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     List<String>? images,
     List<String>? documents,
     String? mediaContext,
+    _PendingExpression? expression,
     bool forceSingleReply = false,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
     bool noUserBubble = false,
@@ -720,10 +824,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     images ??= List<String>.from(_pendingImages);
     documents ??= List<String>.from(_pendingDocuments);
     mediaContext ??= _pendingMediaContext;
+    expression ??= _pendingExpression;
     if (text.isEmpty &&
         images.isEmpty &&
         documents.isEmpty &&
-        mediaContext == null) {
+        mediaContext == null &&
+        expression == null) {
       if (mounted) setState(() => _hasText = false);
       return;
     }
@@ -736,6 +842,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       images: images,
       documents: documents,
     );
+    if (expression != null) {
+      userMessages.add(expression.toMessage(botId: botId, timestamp: now + 1));
+      final expressionContext = expression.modelContext;
+      mediaContext = mediaContext == null
+          ? expressionContext
+          : '$mediaContext\n$expressionContext';
+    }
 
     // 用户主动发言：清零主动回复未应答计数并重置计时。
     _onUserInteracted();
@@ -761,6 +874,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         setState(() {
           _msgs.addAll(queuedMessages);
           _msgC.clear();
+          _pendingImages.clear();
+          _pendingDocuments.clear();
+          _pendingExpression = null;
+          _pendingMediaContext = null;
           _hasText = false;
         });
         _scrollDown();
@@ -794,19 +911,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (!noUserBubble) {
       setState(() {
         _loading = true;
-        _typing = true;
         _msgsLoading = false;
         _msgs.addAll(userMessages);
         _msgC.clear();
         _pendingImages.clear();
         _pendingDocuments.clear();
+        _pendingExpression = null;
         _pendingMediaContext = null;
         _hasText = false;
       });
     } else if (mounted) {
       setState(() {
         _loading = true;
-        _typing = true;
         _msgsLoading = false;
         _msgC.clear();
         _hasText = false;
@@ -861,6 +977,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final db = DBManager();
       final streamEnabled =
           !forceSingleReply && (await db.getKV('streaming_output')) != 'false';
+      await _setTypingState(true);
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
       if (streamEnabled && mounted) {
@@ -1062,11 +1179,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
+      await _setTypingState(false);
       if (mounted) {
-        setState(() {
-          _loading = false;
-          _typing = false;
-        });
+        setState(() => _loading = false);
         _scrollDown();
       }
       _deferredPersistedMessageIds.clear();
@@ -1162,12 +1277,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final botId = _bot['id']?.toString() ?? '';
     if (botId.isEmpty || _loading) return;
     if (mounted) {
-      setState(() {
-        _loading = true;
-        _typing = true;
-      });
+      setState(() => _loading = true);
       _scrollDown();
     }
+    await _setTypingState(true);
 
     try {
       final transcript = await AIManager()
@@ -1197,7 +1310,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         forceSingleReply: true,
       );
     } finally {
-      if (mounted && !_loading) setState(() => _typing = false);
+      // _send owns the typing marker after the transcription handoff. If
+      // transcription fails before that handoff, clear the persisted state here.
+      if (_loading) {
+        await _setTypingState(false);
+        if (mounted) setState(() => _loading = false);
+      }
     }
   }
 
@@ -3430,6 +3548,43 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
+  Widget _pendingExpressionPreview(TideTheme theme) {
+    final expression = _pendingExpression!;
+    return SizedBox(
+      height: 62,
+      width: 62,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: expression.isEmoji
+                  ? Image.asset(expression.path, fit: BoxFit.cover)
+                  : _localStickerPreview(expression.path, fit: BoxFit.cover),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: Material(
+              color: Colors.black54,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => setState(() => _pendingExpression = null),
+                child: const Padding(
+                  padding: EdgeInsets.all(3),
+                  child:
+                      Icon(Icons.close_rounded, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _syncComposerReserve() {
     final height = _composerKey.currentContext?.size?.height;
     if (height == null || !height.isFinite) return;
@@ -3446,7 +3601,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         mainAxisSize: MainAxisSize.min,
         children: [
           _inputBar(),
-          if (_showEmojiPanel) _emojiPicker(TideTheme.of(context)),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            child: _showEmojiPanel
+                ? _emojiPicker(TideTheme.of(context))
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );
@@ -3454,8 +3615,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _inputBar() {
     final theme = TideTheme.of(context);
-    final hasSendContent =
-        _hasText || _pendingImages.isNotEmpty || _pendingDocuments.isNotEmpty;
+    final hasSendContent = _hasText ||
+        _pendingImages.isNotEmpty ||
+        _pendingDocuments.isNotEmpty ||
+        _pendingExpression != null;
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -3478,6 +3641,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 Padding(
                   padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
                   child: _attachmentPreview(theme),
+                ),
+              if (_pendingExpression != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                  child: _pendingExpressionPreview(theme),
                 ),
               Row(
                 children: [
@@ -3521,34 +3689,44 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       color: _showEmojiPanel ? theme.primary : theme.iconMuted,
                     ),
                   ),
-                  if (hasSendContent)
-                    SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: IconButton(
-                        tooltip: '发送',
-                        splashRadius: 22,
-                        onPressed: _send,
-                        icon: Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: theme.primary,
-                          ),
-                          child: const Icon(Icons.arrow_upward_rounded,
-                              size: 18, color: Colors.white),
-                        ),
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: ScaleTransition(scale: animation, child: child),
                       ),
-                    )
-                  else
-                    IconButton(
-                      tooltip: _isRecording ? '结束录音' : '录音',
-                      onPressed: _toggleRec,
-                      icon: Icon(Icons.mic_rounded,
-                          size: 22,
-                          color: _isRecording ? Colors.red : theme.iconMuted),
+                      child: hasSendContent
+                          ? IconButton(
+                              key: const ValueKey('send'),
+                              tooltip: '发送',
+                              splashRadius: 22,
+                              onPressed: _send,
+                              icon: Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: theme.primary,
+                                ),
+                                child: const Icon(Icons.arrow_upward_rounded,
+                                    size: 18, color: Colors.white),
+                              ),
+                            )
+                          : IconButton(
+                              key: const ValueKey('record'),
+                              tooltip: _isRecording ? '结束录音' : '录音',
+                              onPressed: _toggleRec,
+                              icon: Icon(Icons.mic_rounded,
+                                  size: 22,
+                                  color: _isRecording
+                                      ? Colors.red
+                                      : theme.iconMuted),
+                            ),
                     ),
+                  ),
                 ],
               ),
             ],
@@ -3597,6 +3775,53 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       ),
     );
   }
+}
+
+class _EmojiPanelTab extends StatelessWidget {
+  const _EmojiPanelTab({
+    required this.selected,
+    required this.icon,
+    required this.label,
+    required this.primary,
+    required this.muted,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final Color primary;
+  final Color muted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: selected ? primary.withValues(alpha: .14) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 40,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: selected ? primary : muted),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? primary : muted,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    fontFamily: 'TideFont',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 }
 
 class _SharedPostCard extends StatefulWidget {

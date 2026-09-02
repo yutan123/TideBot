@@ -94,15 +94,10 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
         fit: StackFit.expand,
         children: [
           ColoredBox(
-              color: theme.isDark
-                  ? const Color(0xFF101619)
-                  : const Color(0xFFF3F5FA)),
-          if (hasImage) Image.file(File(_path), fit: BoxFit.cover),
-          if (hasImage)
-            IgnorePointer(
-              child:
-                  ColoredBox(color: Colors.black.withValues(alpha: _opacity)),
-            ),
+            color: theme.isDark
+                ? const Color(0xFF101619)
+                : const Color(0xFFF3F5FA),
+          ),
           SafeArea(
             child: Column(
               children: [
@@ -118,6 +113,8 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
                     child: _BackgroundAppPreview(
                       theme: theme,
                       hasImage: hasImage,
+                      path: _path,
+                      opacity: _opacity,
                     ),
                   ),
                 ),
@@ -143,10 +140,17 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
 }
 
 class _BackgroundAppPreview extends StatelessWidget {
-  const _BackgroundAppPreview({required this.theme, required this.hasImage});
+  const _BackgroundAppPreview({
+    required this.theme,
+    required this.hasImage,
+    required this.path,
+    required this.opacity,
+  });
 
   final TideTheme theme;
   final bool hasImage;
+  final String path;
+  final double opacity;
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +163,7 @@ class _BackgroundAppPreview extends StatelessWidget {
     final card = hasImage
         ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
         : theme.surface.withValues(alpha: .92);
+
     return AspectRatio(
       aspectRatio: .72,
       child: ClipRRect(
@@ -168,119 +173,151 @@ class _BackgroundAppPreview extends StatelessWidget {
             color: Colors.black.withValues(alpha: .12),
             border: Border.all(color: Colors.white.withValues(alpha: .38)),
           ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (hasImage) Image.file(File(path), fit: BoxFit.cover),
+              if (hasImage)
+                ColoredBox(color: Colors.black.withValues(alpha: opacity)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: theme.primary.withValues(alpha: .86),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.waves_rounded,
-                          size: 18, color: Colors.white),
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('TideBot',
-                              style: TextStyle(
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: theme.primary.withValues(alpha: .86),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.waves_rounded,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'TideBot',
+                                style: TextStyle(
                                   color: text,
                                   fontWeight: FontWeight.w700,
-                                  fontFamily: 'TideFont')),
-                          Text('我的消息',
-                              style: TextStyle(
+                                  fontFamily: 'TideFont',
+                                ),
+                              ),
+                              Text(
+                                '我的消息',
+                                style: TextStyle(
                                   color: muted,
                                   fontSize: 11,
-                                  fontFamily: 'TideFont')),
-                        ],
-                      ),
+                                  fontFamily: 'TideFont',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.more_horiz_rounded, color: text),
+                      ],
                     ),
-                    Icon(Icons.more_horiz_rounded, color: text),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Text('早上好',
-                    style: TextStyle(
+                    const SizedBox(height: 18),
+                    Text(
+                      '早上好',
+                      style: TextStyle(
                         color: text,
                         fontWeight: FontWeight.w700,
                         fontSize: 18,
-                        fontFamily: 'TideFont')),
-                const SizedBox(height: 4),
-                Text('这是全局背景下的界面效果。',
-                    style: TextStyle(
-                        color: muted, fontSize: 12, fontFamily: 'TideFont')),
-                const SizedBox(height: 16),
-                _PreviewMessage(
-                  alignment: Alignment.centerLeft,
-                  color: card,
-                  textColor: text,
-                  message: '今天想聊些什么？',
-                ),
-                const SizedBox(height: 10),
-                _PreviewMessage(
-                  alignment: Alignment.centerRight,
-                  color: theme.primary.withValues(alpha: .88),
-                  textColor: Colors.white,
-                  message: '看看这个背景效果。',
-                ),
-                const Spacer(),
-                Container(
-                  height: 46,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: card,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                        color: Colors.white
-                            .withValues(alpha: hasImage ? .34 : .0)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.add_rounded, color: muted),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text('发送消息',
-                            style: TextStyle(
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '这是全局背景下的界面效果。',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 12,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _PreviewMessage(
+                      alignment: Alignment.centerLeft,
+                      color: card,
+                      textColor: text,
+                      message: '今天想聊些什么？',
+                    ),
+                    const SizedBox(height: 10),
+                    _PreviewMessage(
+                      alignment: Alignment.centerRight,
+                      color: theme.primary.withValues(alpha: .88),
+                      textColor: Colors.white,
+                      message: '看看这个背景效果。',
+                    ),
+                    const Spacer(),
+                    Container(
+                      height: 46,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: card,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white
+                              .withValues(alpha: hasImage ? .34 : .0),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.add_rounded, color: muted),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '发送消息',
+                              style: TextStyle(
                                 color: muted,
                                 fontSize: 12,
-                                fontFamily: 'TideFont')),
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            Icons.arrow_upward_rounded,
+                            color: theme.primary,
+                          ),
+                        ],
                       ),
-                      Icon(Icons.arrow_upward_rounded, color: theme.primary),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  height: 42,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: card,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color:
-                          Colors.white.withValues(alpha: hasImage ? .34 : .0),
                     ),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      Icon(Icons.chat_bubble_outline_rounded, size: 19),
-                      Icon(Icons.grid_view_rounded, size: 19),
-                      Icon(Icons.explore_outlined, size: 19),
-                      Icon(Icons.person_outline_rounded, size: 19),
-                    ],
-                  ),
+                    const SizedBox(height: 12),
+                    Container(
+                      height: 42,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: card,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.white
+                              .withValues(alpha: hasImage ? .34 : .0),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          Icon(Icons.chat_bubble_outline_rounded, size: 19),
+                          Icon(Icons.grid_view_rounded, size: 19),
+                          Icon(Icons.explore_outlined, size: 19),
+                          Icon(Icons.person_outline_rounded, size: 19),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
