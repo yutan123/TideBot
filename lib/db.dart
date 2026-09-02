@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
@@ -39,25 +40,42 @@ class DBManager {
   DBManager._internal();
 
   Database? _db;
+  Future<Database>? _openingDatabase;
 
   Future<Database> get database async {
-    if (_db != null) return _db!;
-    _db = await _initDB();
-    return _db!;
+    final current = _db;
+    if (current != null) return current;
+
+    // Concurrent startup callers must await one opening/upgrade operation.
+    // Without this guard, each caller can try to open and migrate the same
+    // SQLite file, which may leave a native database lock during launch.
+    final opening = _openingDatabase;
+    if (opening != null) return opening;
+
+    final future = _initDB();
+    _openingDatabase = future;
+    try {
+      final database = await future;
+      _db = database;
+      return database;
+    } finally {
+      _openingDatabase = null;
+    }
   }
 
   Future<void> close() async {
     final current = _db;
     _db = null;
+    _openingDatabase = null;
     if (current != null) await current.close();
   }
 
   // 严格落实 6 大核心表与外键级联约束
   Future<Database> _initDB() async {
-    String path = join(await getDatabasesPath(), 'tidebot.db');
-    return await openDatabase(
+    final path = join(await getDatabasesPath(), 'tidebot.db');
+    final database = await openDatabase(
       path,
-      version: 28,
+      version: 29,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -391,8 +409,7 @@ class DBManager {
             );
           } catch (_) {}
         }
-        if (oldVersion < 27) await _createCallTables(db);
-        if (oldVersion < 28) await _migrateLegacyCallSummaries(db);
+        if (oldVersion < 29) await _createCallTables(db);
         if (oldVersion < 15) {
           for (final column in [
             "frequency TEXT DEFAULT 'once'",
@@ -425,33 +442,52 @@ class DBManager {
         }
       },
     );
+    // Legacy summaries are optional cleanup. Schedule it after the database
+    // future completes so it cannot queue ahead of the caller's first query.
+    unawaited(
+      Future<void>.delayed(Duration.zero, () async {
+        await _migrateLegacyCallSummaries(database);
+      }).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          debugPrint('[db] call summary migration deferred: timed out');
+        },
+      ),
+    );
+    return database;
   }
 
   Future<void> _migrateLegacyCallSummaries(Database db) async {
-    final summaries = await db.query(
-      'chat_history',
-      where: "type = 'call_summary'",
-      orderBy: 'timestamp ASC',
-    );
-    if (summaries.isEmpty) return;
-
-    for (final summary in summaries) {
-      final id = summary['id']?.toString() ?? '';
-      final botId = summary['bot_id']?.toString() ?? '';
-      if (id.isEmpty || botId.isEmpty) continue;
-      await db.insert(
-        'call_sessions',
-        {
-          'id': 'legacy_$id',
-          'bot_id': botId,
-          'summary': summary['content']?.toString() ?? '',
-          'duration': (summary['duration'] as num?)?.toInt() ?? 0,
-          'status': 'completed',
-          'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
+    try {
+      final summaries = await db.query(
+        'chat_history',
+        where: "type = 'call_summary'",
+        orderBy: 'timestamp ASC',
       );
-      await db.delete('chat_history', where: 'id = ?', whereArgs: [id]);
+      if (summaries.isEmpty) return;
+
+      for (final summary in summaries) {
+        final id = summary['id']?.toString() ?? '';
+        final botId = summary['bot_id']?.toString() ?? '';
+        if (id.isEmpty || botId.isEmpty) continue;
+        await db.insert(
+          'call_sessions',
+          {
+            'id': 'legacy_$id',
+            'bot_id': botId,
+            'summary': summary['content']?.toString() ?? '',
+            'duration': (summary['duration'] as num?)?.toInt() ?? 0,
+            'status': 'completed',
+            'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        await db.delete('chat_history', where: 'id = ?', whereArgs: [id]);
+      }
+    } catch (error) {
+      // Preserve legacy rows if migration cannot complete. Database open must
+      // remain available; this idempotent cleanup will retry next open.
+      debugPrint('[db] call summary migration deferred: $error');
     }
   }
 
