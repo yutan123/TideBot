@@ -20,6 +20,10 @@ class TideTheme extends ChangeNotifier {
   double _configuredDevicePixelRatio = 0;
   Size _configuredSize = Size.zero;
   bool _globalBackgroundReady = false;
+  // Backgrounds saved before this marker predate the guarded image pipeline.
+  // They are discarded at the next launch so an old malformed file cannot crash
+  // the renderer before the user can remove it.
+  static const _globalBackgroundSafetyKey = 'global_background_safe_v2';
   double _globalBackgroundOpacity = 0.38;
   int _backgroundRequest = 0;
   final Map<_BackgroundRegion, bool> _backgroundLightness = {};
@@ -109,6 +113,7 @@ class TideTheme extends ChangeNotifier {
       notifyListeners();
       try {
         await DBManager().insertKV('global_background_image', '');
+        await DBManager().insertKV(_globalBackgroundSafetyKey, '');
       } catch (_) {}
       return false;
     }
@@ -333,19 +338,26 @@ class TideTheme extends ChangeNotifier {
           _manualMode = true;
         }
       }
-      // 读取全局背景图。它与每个机器人各自的聊天背景完全独立。
+      // A background becomes eligible only after the guarded save pipeline marks
+      // it safe. This also recovers installs that saved a bad image before that
+      // pipeline existed, without rendering it during startup.
       final globalBackground = await db
           .getKV('global_background_image')
           .timeout(const Duration(seconds: 5));
+      final backgroundIsSafe = await db
+          .getKV(_globalBackgroundSafetyKey)
+          .timeout(const Duration(seconds: 5));
       if (globalBackground != null &&
           globalBackground.isNotEmpty &&
+          backgroundIsSafe == 'true' &&
           File(globalBackground).existsSync()) {
         _globalBackground = globalBackground;
         _setGlobalBackgroundImage(globalBackground);
       } else if (globalBackground != null && globalBackground.isNotEmpty) {
-        await db
-            .insertKV('global_background_image', '')
-            .timeout(const Duration(seconds: 5));
+        _globalBackground = '';
+        _setGlobalBackgroundImage('');
+        await db.insertKV('global_background_image', '');
+        await db.insertKV(_globalBackgroundSafetyKey, '');
       }
       _globalBackgroundOpacity = (double.tryParse(
                 await db
@@ -417,6 +429,7 @@ class TideTheme extends ChangeNotifier {
 
     if (path.isEmpty) {
       await DBManager().insertKV('global_background_image', '');
+      await DBManager().insertKV(_globalBackgroundSafetyKey, '');
       await DBManager().insertKV(
         'global_background_opacity',
         nextOpacity.toStringAsFixed(2),
@@ -457,6 +470,7 @@ class TideTheme extends ChangeNotifier {
       await _sampleBackgroundLightness(image);
 
       await DBManager().insertKV('global_background_image', path);
+      await DBManager().insertKV(_globalBackgroundSafetyKey, 'true');
       await DBManager().insertKV(
         'global_background_opacity',
         nextOpacity.toStringAsFixed(2),
@@ -489,6 +503,7 @@ class TideTheme extends ChangeNotifier {
     await DBManager().insertKV('theme_color', _name);
     await DBManager().insertKV('theme_mode', 'system');
     await DBManager().insertKV('global_background_image', '');
+    await DBManager().insertKV(_globalBackgroundSafetyKey, '');
     await DBManager().insertKV('global_background_opacity', '0.38');
     notifyListeners();
   }

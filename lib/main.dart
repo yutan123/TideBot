@@ -990,6 +990,43 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _scale;
   int _prev = 0;
   bool _lifting = false;
+  int? _dragTarget;
+
+  int _targetForGlobalPosition(Offset globalPosition) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return widget.currentIndex;
+    final local = box.globalToLocal(globalPosition);
+    return (local.dx / (box.size.width / _icons.length))
+        .floor()
+        .clamp(0, _icons.length - 1);
+  }
+
+  void _startDrag(LongPressStartDetails details) {
+    TideHaptics.tap();
+    setState(() {
+      _lifting = true;
+      _dragTarget = _targetForGlobalPosition(details.globalPosition);
+    });
+  }
+
+  void _updateDrag(LongPressMoveUpdateDetails details) {
+    final target = _targetForGlobalPosition(details.globalPosition);
+    if (target != _dragTarget) setState(() => _dragTarget = target);
+  }
+
+  void _endDrag(LongPressEndDetails details) {
+    final target = _dragTarget;
+    setState(() {
+      _lifting = false;
+      _dragTarget = null;
+    });
+    if (target != null) widget.onTap(target);
+  }
+
+  void _cancelDrag() => setState(() {
+        _lifting = false;
+        _dragTarget = null;
+      });
 
   static const _icons = [
     Icons.chat_bubble_rounded,
@@ -1135,6 +1172,7 @@ class _JellyDockState extends State<JellyDock>
       ),
       child: LayoutBuilder(
         builder: (ctx, cs) {
+          final activeIndex = _dragTarget ?? widget.currentIndex;
           final totalW = cs.maxWidth;
           final slotW = totalW / 4;
           return Stack(
@@ -1143,7 +1181,9 @@ class _JellyDockState extends State<JellyDock>
               AnimatedBuilder(
                 animation: Listenable.merge([_pos, _w, _scale]),
                 builder: (c, child) {
-                  final pillX = _pos.value * totalW + (slotW - _w.value) / 2;
+                  final pillX =
+                      (_lifting ? activeIndex : _pos.value * 4) * slotW +
+                          (slotW - _w.value) / 2;
                   final pill = Container(
                     width: _w.value,
                     height: 40,
@@ -1190,9 +1230,9 @@ class _JellyDockState extends State<JellyDock>
                       : pill;
                   return Positioned(
                     left: pillX,
-                    top: isDark && _lifting ? 0 : 2,
+                    top: _lifting ? -12 : 2,
                     child: Transform.scale(
-                      scale: _scale.value * (isDark && _lifting ? 1.08 : 1.0),
+                      scale: _scale.value * (_lifting ? 1.26 : 1.0),
                       alignment: Alignment.center,
                       child: selectedPill,
                     ),
@@ -1201,20 +1241,15 @@ class _JellyDockState extends State<JellyDock>
               ),
               Row(
                 children: List.generate(4, (i) {
-                  final act = widget.currentIndex == i;
+                  final act = (_dragTarget ?? widget.currentIndex) == i;
                   return Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (_) => TideHaptics.tap(),
-                      onLongPressStart: isDark
-                          ? (_) => setState(() => _lifting = true)
-                          : null,
-                      onLongPressEnd: isDark
-                          ? (_) => setState(() => _lifting = false)
-                          : null,
-                      onLongPressCancel: isDark
-                          ? () => setState(() => _lifting = false)
-                          : null,
+                      onLongPressStart: _startDrag,
+                      onLongPressMoveUpdate: _updateDrag,
+                      onLongPressEnd: _endDrag,
+                      onLongPressCancel: _cancelDrag,
                       onTap: () => widget.onTap(i),
                       child: Center(
                         child: Stack(

@@ -2775,8 +2775,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             hasDocument ||
             replyId?.isNotEmpty == true ||
             sharedPost != null;
-        final showTimeHere =
-            _showMessageTime && !isStreamingPlaceholder && hasVisibleContent;
+        final showTimeHere = _showMessageTime &&
+            !isStreamingPlaceholder &&
+            !isEmoji &&
+            !isSticker &&
+            hasVisibleContent;
         final isRetrying =
             m['is_retrying'] == true || m['retry_status'] == 'retrying';
         final hasRetryFailure = m['retry_status'] == 'failed' ||
