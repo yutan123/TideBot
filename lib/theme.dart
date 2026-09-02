@@ -99,8 +99,17 @@ class TideTheme extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (_) {
-      _globalBackgroundReady = File(_globalBackground).existsSync();
+      // A persisted image can become unreadable after an interrupted copy or a
+      // provider-side conversion. Disable it once instead of retrying the same
+      // decoder from every rebuilt screen.
+      _globalBackground = '';
+      _setGlobalBackgroundImage('');
+      _globalBackgroundReady = true;
+      _backgroundLightness.clear();
       notifyListeners();
+      try {
+        await DBManager().insertKV('global_background_image', '');
+      } catch (_) {}
       return false;
     }
   }
@@ -403,12 +412,16 @@ class TideTheme extends ChangeNotifier {
     required BuildContext context,
     double? opacity,
   }) async {
-    if (opacity != null) _globalBackgroundOpacity = opacity.clamp(0.18, 0.70);
+    final nextOpacity =
+        opacity == null ? _globalBackgroundOpacity : opacity.clamp(0.18, 0.70);
 
     if (path.isEmpty) {
       await DBManager().insertKV('global_background_image', '');
-      await DBManager().insertKV('global_background_opacity',
-          _globalBackgroundOpacity.toStringAsFixed(2));
+      await DBManager().insertKV(
+        'global_background_opacity',
+        nextOpacity.toStringAsFixed(2),
+      );
+      _globalBackgroundOpacity = nextOpacity;
       _globalBackground = '';
       _setGlobalBackgroundImage('');
       notifyListeners();
@@ -419,19 +432,9 @@ class TideTheme extends ChangeNotifier {
     }
 
     final candidate = FileImage(File(path));
-    final oldPath = _globalBackground;
     try {
-      await DBManager().insertKV('global_background_image', path);
-      await DBManager().insertKV('global_background_opacity',
-          _globalBackgroundOpacity.toStringAsFixed(2));
-      _globalBackground = path;
-      _globalBackgroundImage = candidate;
-      _globalBackgroundReady = true;
-      _configuredBackgroundPath = '';
-      _configuredDevicePixelRatio = 0;
-      _configuredSize = Size.zero;
-      _backgroundLightness.clear();
-      notifyListeners();
+      // Decode before making the selection live. This keeps a bad image from
+      // causing every rebuilt screen to retry its decoder.
       await precacheImage(candidate, context,
           size: MediaQuery.maybeOf(context)?.size);
       final stream = candidate.resolve(_imageConfiguration(context));
@@ -444,25 +447,32 @@ class TideTheme extends ChangeNotifier {
         },
         onError: (_, __) {
           stream.removeListener(listener);
-          if (!ready.isCompleted) ready.completeError(StateError('背景图片解码失败'));
+          if (!ready.isCompleted) {
+            ready.completeError(StateError('背景图片解码失败'));
+          }
         },
       );
       stream.addListener(listener);
-      await _sampleBackgroundLightness(await ready.future);
+      final image = await ready.future.timeout(const Duration(seconds: 12));
+      await _sampleBackgroundLightness(image);
+
+      await DBManager().insertKV('global_background_image', path);
+      await DBManager().insertKV(
+        'global_background_opacity',
+        nextOpacity.toStringAsFixed(2),
+      );
+      _globalBackgroundOpacity = nextOpacity;
+      _globalBackground = path;
+      _globalBackgroundImage = candidate;
+      _globalBackgroundReady = true;
       _configuredBackgroundPath = path;
       _configuredDevicePixelRatio =
           MediaQuery.maybeOf(context)?.devicePixelRatio ??
               View.of(context).devicePixelRatio;
       _configuredSize = MediaQuery.maybeOf(context)?.size ?? Size.zero;
-      await DBManager().insertKV('global_background_image', path);
-      await DBManager().insertKV('global_background_opacity',
-          _globalBackgroundOpacity.toStringAsFixed(2));
       notifyListeners();
     } catch (_) {
-      _globalBackground = oldPath;
-      _setGlobalBackgroundImage(oldPath);
-      _globalBackgroundReady = true;
-      notifyListeners();
+      // Nothing has been persisted or made active until a candidate decodes.
       rethrow;
     }
   }

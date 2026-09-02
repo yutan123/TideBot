@@ -331,19 +331,26 @@ class _ChatSidebarState extends State<ChatSidebar> {
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
               '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
-              style: TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w700,
-                  color: theme.textStrong)),
+              style: const TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              )),
           Text(
-              '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
-              style: TextStyle(color: theme.textWeak)),
+            '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
+            style: const TextStyle(color: Color(0xDFFFFFFF)),
+          ),
           const SizedBox(height: 10),
-          Text('“$_quote”',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 13, height: 1.4, color: theme.textStrong)),
+          Text(
+            '“$_quote”',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: Colors.white,
+            ),
+          ),
         ]),
       );
 
@@ -428,16 +435,16 @@ class _ChatSidebarState extends State<ChatSidebar> {
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: theme.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: theme.isDark
-                ? const Color(0x73F2F4F8)
-                : const Color(0x4D1C1C1E),
-            width: 1,
+          color: theme.primary,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: DefaultTextStyle.merge(
+          style: const TextStyle(color: Colors.white),
+          child: IconTheme.merge(
+            data: const IconThemeData(color: Colors.white),
+            child: child,
           ),
         ),
-        child: child,
       );
 
   String _mood(Map<String, dynamic> bot) =>

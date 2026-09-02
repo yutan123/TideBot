@@ -80,12 +80,12 @@ class _CallPageState extends State<CallPage>
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
 
-  // A fixed dBFS threshold breaks across microphones and misses whispering.
-  // Speech must rise above the measured room floor for several samples.
+  // Keep the gate tolerant of Android devices whose amplitude reporting is
+  // conservative. A user can always finish the current turn explicitly.
   static const int _speechStartTicks = 2;
-  static const int _silentStopTicks = 12;
-  static const double _minimumVoiceLevel = -58;
-  static const double _speechOverNoise = 6;
+  static const int _silentStopTicks = 10;
+  static const double _minimumVoiceLevel = -68;
+  static const double _speechOverNoise = 3;
   static const Duration _minimumRecordingDuration = Duration(milliseconds: 600);
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
@@ -383,10 +383,15 @@ class _CallPageState extends State<CallPage>
     }
     try {
       final path = await _recorder.stop();
+      final recordingDuration = _recordingStartedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_recordingStartedAt!);
+      _recordingStartedAt = null;
       AppLogService.instance.add(
         'VOICE_CALL',
         path == null ? '录音未生成文件' : '录音已停止：$path，准备请求 STT',
       );
+      final speechDetected = _speechDetected;
       _vadActive = false;
       _speechDetected = false;
       if (path == null || path.isEmpty) {
@@ -400,9 +405,10 @@ class _CallPageState extends State<CallPage>
       }
       final recordingFile = File(path);
       final bytes = await recordingFile.length();
-      final recordingDuration = _recordingStartedAt == null
-          ? Duration.zero
-          : DateTime.now().difference(_recordingStartedAt!);
+      AppLogService.instance.add(
+        'VOICE_CALL',
+        '录音校验：${recordingDuration.inMilliseconds}ms，$bytes bytes，检测到语音=$speechDetected',
+      );
       if (recordingDuration < _minimumRecordingDuration) {
         if (mounted) {
           setState(() {

@@ -28,7 +28,6 @@ import 'media_preprocessor.dart';
 import 'emotion_state_service.dart';
 import 'chat_protocol.dart';
 import 'ui_call.dart';
-import 'ui_call_history.dart';
 import 'ui_space_square.dart';
 
 class ChatRoomPage extends StatefulWidget {
@@ -2544,16 +2543,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     onPressed: _openCallPreparation,
                   ),
                   IconButton(
-                    tooltip: '通话记录',
-                    icon: Icon(Icons.history_rounded,
-                        size: 20, color: theme.iconMuted),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => CallHistoryPage(bot: _bot),
-                      ),
-                    ),
-                  ),
-                  IconButton(
                     icon: Icon(Icons.delete_outline_rounded,
                         size: 20, color: theme.iconMuted),
                     onPressed: _showDeleteOptions,
@@ -3385,9 +3374,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               Row(
                 children: [
                   IconButton(
+                    tooltip: '图片和文件',
+                    onPressed: _pickMedia,
+                    icon: Icon(Icons.add_circle_outline_rounded,
+                        size: 23, color: theme.iconMuted),
+                  ),
+                  IconButton(
                     tooltip: '表情',
                     onPressed: _showEmojiPanel,
-                    onLongPress: _pickMedia,
                     icon: Icon(Icons.emoji_emotions_outlined,
                         size: 23, color: theme.iconMuted),
                   ),

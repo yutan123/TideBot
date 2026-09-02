@@ -20,42 +20,63 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
   bool _ready = false;
 
   Future<void> _pick() async {
-    if (!await AppPermissions.photos(context, feature: '设置全局背景图')) return;
-    final image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1800,
-      imageQuality: 90,
-    );
-    if (image == null) return;
-    final documents = await getApplicationDocumentsDirectory();
-    final directory = Directory('${documents.path}/global_backgrounds');
-    await directory.create(recursive: true);
-    final extension = image.path.split('.').last;
-    final file = File(
-      '${directory.path}/background_${DateTime.now().millisecondsSinceEpoch}.$extension',
-    );
-    await File(image.path).copy(file.path);
-    if (!mounted) return;
-    await precacheImage(FileImage(file), context);
-    if (mounted) setState(() => _path = file.path);
+    try {
+      if (!await AppPermissions.photos(context, feature: '设置全局背景图')) {
+        return;
+      }
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1440,
+        imageQuality: 82,
+      );
+      if (image == null) return;
+      final documents = await getApplicationDocumentsDirectory();
+      final directory = Directory('${documents.path}/global_backgrounds');
+      await directory.create(recursive: true);
+      // The picker may return a content URI without a useful extension.
+      final extension = image.path.split('.').last.toLowerCase();
+      final safeExtension =
+          RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension) ? extension : 'jpg';
+      final file = File(
+        '${directory.path}/background_${DateTime.now().millisecondsSinceEpoch}.$safeExtension',
+      );
+      await File(image.path).copy(file.path);
+      if (!mounted) return;
+      await precacheImage(FileImage(file), context);
+      if (mounted) setState(() => _path = file.path);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法选择背景图：$error')),
+        );
+      }
+    }
   }
 
   Future<void> _save(TideTheme theme) async {
-    final old = theme.globalBackground;
-    await theme.setGlobalBackground(
-      _path,
-      context: context,
-      opacity: _opacity,
-    );
-    // The candidate was precached before this page saves it; remove only the old
-    // image after the new path has become the active theme value.
-    if (old.isNotEmpty &&
-        old != _path &&
-        old.contains('/global_backgrounds/')) {
-      final file = File(old);
-      if (await file.exists()) await file.delete();
+    try {
+      final old = theme.globalBackground;
+      await theme.setGlobalBackground(
+        _path,
+        context: context,
+        opacity: _opacity,
+      );
+      // The candidate was precached before this page saves it; remove only the old
+      // image after the new path has become the active theme value.
+      if (old.isNotEmpty &&
+          old != _path &&
+          old.contains('/global_backgrounds/')) {
+        final file = File(old);
+        if (await file.exists()) await file.delete();
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存背景图失败：$error')),
+        );
+      }
     }
-    if (mounted) Navigator.pop(context);
   }
 
   @override
