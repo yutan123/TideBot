@@ -163,14 +163,14 @@ class _ProfilePageState extends State<ProfilePage> {
         BouncyTap(
           onTap: _pickAvatar,
           child: CircleAvatar(
-            radius: 32,
+            radius: 38,
             backgroundColor: theme.primary.withValues(alpha: 0.15),
             backgroundImage:
                 _avatarPath.isNotEmpty && File(_avatarPath).existsSync()
                     ? FileImage(File(_avatarPath))
                     : null,
             child: _avatarPath.isEmpty || !File(_avatarPath).existsSync()
-                ? Icon(Icons.person_rounded, size: 36, color: theme.primary)
+                ? Icon(Icons.person_rounded, size: 42, color: theme.primary)
                 : null,
           ),
         ),
@@ -183,7 +183,7 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 Text(_userName,
                     style: TextStyle(
-                        fontSize: 20,
+                        fontSize: 22,
                         fontWeight: FontWeight.w600,
                         fontFamily: 'TideFont',
                         color: theme.onBackgroundStrong)),
@@ -207,7 +207,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     }
     return FrostCard(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       child: content,
     );
   }
@@ -216,14 +216,14 @@ class _ProfilePageState extends State<ProfilePage> {
     final theme = TideTheme.of(context);
     final content = Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: theme.hasGlobalBackground ? 8 : 12,
-        vertical: theme.hasGlobalBackground ? 13 : 8,
+        horizontal: theme.hasGlobalBackground ? 10 : 16,
+        vertical: theme.hasGlobalBackground ? 16 : 13,
       ),
       child: Row(
         children: [
           Icon(
             s['icon'] as IconData,
-            size: theme.hasGlobalBackground ? 24 : 20,
+            size: theme.hasGlobalBackground ? 27 : 24,
             color: theme.primary,
           ),
           const SizedBox(width: 14),
@@ -231,7 +231,7 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Text(
               s['title'] ?? '',
               style: TextStyle(
-                fontSize: 15,
+                fontSize: 17,
                 fontFamily: 'TideFont',
                 color: theme.onBackgroundStrong,
               ),

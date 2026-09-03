@@ -34,12 +34,14 @@ class _EmojiAsset {
   final String asset;
   final String category;
   final String name;
+  final String glyph;
   final int order;
 
   const _EmojiAsset({
     required this.asset,
     required this.category,
     required this.name,
+    required this.glyph,
     required this.order,
   });
 }
@@ -50,12 +52,6 @@ class _PendingExpression {
     required this.name,
     required this.path,
   });
-
-  factory _PendingExpression.emoji(_EmojiAsset emoji) => _PendingExpression._(
-        type: 'emoji',
-        name: emoji.name,
-        path: emoji.asset,
-      );
 
   factory _PendingExpression.sticker(Map<String, dynamic> sticker) =>
       _PendingExpression._(
@@ -73,7 +69,7 @@ class _PendingExpression {
   bool get isEmoji => type == 'emoji';
 
   String get modelContext =>
-      isEmoji ? '[用户随文字发送了 Emoji 表情：$name]' : '[用户随文字发送了一个表情包，类型：$name]';
+      type == 'emoji' ? '[$name]' : '[用户发送了一个表情包，类型：$name]';
 
   Map<String, dynamic> toMessage({
     required String botId,
@@ -161,6 +157,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _emojiCatalogLoading = false;
   List<_EmojiAsset> _emojiCatalog = const <_EmojiAsset>[];
   List<Map<String, dynamic>> _stickers = const <Map<String, dynamic>>[];
+  final Map<String, String> _emojiNamesByGlyph = <String, String>{};
   bool _stickersLoaded = false;
 
   // ===== 防抖/合并：请求代次 + 待重发队列 =====
@@ -561,7 +558,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _scrollDown();
     try {
       await MessageDeliveryService.instance.insert(message);
-      await _send(noUserBubble: true, mediaContext: '[Emoji：${emoji.name}]');
+      await _send(noUserBubble: true, mediaContext: '[${emoji.name}]');
     } catch (error) {
       if (mounted) setState(() => _msgs.remove(message));
       GlobalNotice.show('发送表情失败：$error');
@@ -613,10 +610,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final category = entry['category']?.toString() ?? '';
         if (!_emojiCategoryIcons.containsKey(category)) return;
         final asset = 'assets/emojitwo/$code.png';
+        final codePoints =
+            (entry['code_points'] as Map?)?.cast<String, dynamic>();
+        final baseCode = codePoints?['base']?.toString() ?? code;
+        final glyph = String.fromCharCodes(
+          baseCode
+              .split('-')
+              .map((part) => int.tryParse(part, radix: 16) ?? 0)
+              .where((point) => point > 0),
+        );
+        final name = _emojiChineseName(entry['name']?.toString() ?? code);
+        if (glyph.isNotEmpty) _emojiNamesByGlyph[glyph] = name;
         catalog.add(_EmojiAsset(
           asset: asset,
           category: category,
-          name: entry['name']?.toString() ?? code,
+          name: name,
+          glyph: glyph,
           order: int.tryParse(entry['emoji_order']?.toString() ?? '') ?? 99999,
         ));
       });
@@ -670,11 +679,81 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return Image.file(File(path), fit: fit, cacheWidth: cacheWidth);
   }
 
+  String _emojiChineseName(String name) {
+    const exact = <String, String>{
+      'grinning face': '笑脸',
+      'grinning face with smiling eyes': '露齿笑脸',
+      'face with tears of joy': '笑哭',
+      'rolling on the floor laughing': '笑得打滚',
+      'smiling face with open mouth': '张嘴笑脸',
+      'smiling face with smiling eyes': '微笑脸',
+      'winking face': '眨眼',
+      'smiling face with heart-shaped eyes': '花痴脸',
+      'face throwing a kiss': '飞吻',
+      'smiling face with sunglasses': '墨镜笑脸',
+      'red heart': '红心',
+      'broken heart': '心碎',
+      'thumbs up': '点赞',
+      'thumbs down': '踩',
+      'clapping hands': '鼓掌',
+      'folded hands': '双手合十',
+      'fire': '火焰',
+      'sparkles': '闪耀',
+      'star': '星星',
+      'check mark': '对勾',
+      'cross mark': '叉号',
+    };
+    final normalized = name.trim().toLowerCase();
+    final translated = exact[normalized];
+    if (translated != null) return translated;
+    const replacements = <String, String>{
+      'face': '脸',
+      'smiling': '微笑',
+      'grinning': '咧嘴笑',
+      'with': '带',
+      'eyes': '眼睛',
+      'heart': '爱心',
+      'hands': '手',
+      'hand': '手',
+      'person': '人',
+      'people': '人们',
+      'cat': '猫',
+      'dog': '狗',
+      'red': '红色',
+      'blue': '蓝色',
+      'green': '绿色',
+      'yellow': '黄色',
+    };
+    var result = normalized;
+    for (final entry in replacements.entries) {
+      result = result.replaceAll(entry.key, entry.value);
+    }
+    return result == normalized ? name : result.replaceAll(' ', '');
+  }
+
+  String _emojiToModelText(String text) {
+    var result = text;
+    final entries = _emojiNamesByGlyph.entries.toList()
+      ..sort((a, b) => b.key.length.compareTo(a.key.length));
+    for (final entry in entries) {
+      result = result.replaceAll(entry.key, '[${entry.value}]');
+    }
+    return result;
+  }
+
   void _selectEmoji(_EmojiAsset emoji) {
-    if (_msgC.text.trim().isNotEmpty) {
-      setState(() {
-        _pendingExpression = _PendingExpression.emoji(emoji);
-      });
+    final text = _msgC.text;
+    if (text.isNotEmpty) {
+      final selection = _msgC.selection;
+      final offset = selection.isValid ? selection.start : text.length;
+      final end = selection.isValid ? selection.end : text.length;
+      final next = text.replaceRange(offset, end, emoji.glyph);
+      _msgC.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(
+          offset: offset + emoji.glyph.length,
+        ),
+      );
       _setEmojiPanel(false);
       return;
     }
@@ -768,9 +847,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(6),
                                   onTap: () => _selectEmoji(emoji),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(5),
-                                    child: Image.asset(emoji.asset),
+                                  child: Text(
+                                    emoji.glyph.isEmpty
+                                        ? emoji.name
+                                        : emoji.glyph,
+                                    style: const TextStyle(fontSize: 25),
                                   ),
                                 ),
                               );
@@ -1000,8 +1081,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           documentNotices.isEmpty ? null : documentNotices.join('\n\n');
       final preparedContext = mediaContext ?? attachmentNotice;
       final modelText = preparedContext == null
-          ? text
-          : (text.isEmpty ? preparedContext : '$text\n$preparedContext');
+          ? _emojiToModelText(text)
+          : (text.isEmpty
+              ? preparedContext
+              : '${_emojiToModelText(text)}\n$preparedContext');
 
       // AIManager reads persisted, role-typed chat_history itself. _msgs contains
       // stream placeholders and animation-only segments, so it must not be reused

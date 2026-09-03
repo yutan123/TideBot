@@ -960,9 +960,45 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _width;
   late Animation<double> _scale;
   int _previousIndex = 0;
-  double? _dragLeft;
-  double? _dragStartLeft;
-  bool _dragging = false;
+  bool _lifting = false;
+  int? _dragTarget;
+
+  int _targetForGlobalPosition(Offset globalPosition) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return widget.currentIndex;
+    final local = box.globalToLocal(globalPosition);
+    return (local.dx / (box.size.width / _icons.length))
+        .floor()
+        .clamp(0, _icons.length - 1);
+  }
+
+  void _startDrag(LongPressStartDetails details, double slotWidth) {
+    TideHaptics.tap();
+    final target = _targetForGlobalPosition(details.globalPosition);
+    setState(() {
+      _lifting = true;
+      _dragTarget = target;
+    });
+  }
+
+  void _updateDrag(LongPressMoveUpdateDetails details, double slotWidth) {
+    final target = _targetForGlobalPosition(details.globalPosition);
+    if (target != _dragTarget) setState(() => _dragTarget = target);
+  }
+
+  void _endDrag(LongPressEndDetails details, double slotWidth) {
+    final target = _dragTarget;
+    setState(() {
+      _lifting = false;
+      _dragTarget = null;
+    });
+    if (target != null) widget.onTap(target);
+  }
+
+  void _cancelDrag() => setState(() {
+        _lifting = false;
+        _dragTarget = null;
+      });
 
   @override
   void initState() {
@@ -1026,7 +1062,7 @@ class _JellyDockState extends State<JellyDock>
 
   Widget _selectedPill(TideTheme theme, bool isDark) {
     final pill = Container(
-      width: _dragging ? _growW : _width.value,
+      width: _lifting ? _growW : _width.value,
       height: 40,
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
@@ -1064,7 +1100,7 @@ class _JellyDockState extends State<JellyDock>
           builder: (context, constraints) {
             final slotWidth = constraints.maxWidth / _icons.length;
             final position = _position.value * _icons.length;
-            final activeIndex = position.round();
+            final activeIndex = _dragTarget ?? position.round();
             return Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1099,6 +1135,13 @@ class _JellyDockState extends State<JellyDock>
                               behavior: HitTestBehavior.opaque,
                               onTapDown: (_) => TideHaptics.tap(),
                               onTap: () => widget.onTap(index),
+                              onLongPressStart: (details) =>
+                                  _startDrag(details, slotWidth),
+                              onLongPressMoveUpdate: (details) =>
+                                  _updateDrag(details, slotWidth),
+                              onLongPressEnd: (details) =>
+                                  _endDrag(details, slotWidth),
+                              onLongPressCancel: _cancelDrag,
                               child: Center(
                                 child: Stack(
                                   clipBehavior: Clip.none,
@@ -1140,52 +1183,21 @@ class _JellyDockState extends State<JellyDock>
                 AnimatedBuilder(
                   animation: Listenable.merge([_position, _width, _scale]),
                   builder: (context, child) {
-                    final pillWidth = _dragging ? _growW : _width.value;
+                    final pillWidth = _lifting ? _growW : _width.value;
                     final restingLeft =
-                        position * slotWidth + (slotWidth - pillWidth) / 2;
-                    final left = _dragLeft ?? restingLeft;
+                        (_dragTarget ?? position.round()) * slotWidth +
+                            (slotWidth - pillWidth) / 2;
                     return AnimatedPositioned(
-                      duration: _dragging
+                      duration: _lifting
                           ? Duration.zero
                           : const Duration(milliseconds: 300),
                       curve: Curves.easeOutBack,
-                      left: left,
-                      bottom: _dragging ? 22 : 8,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onLongPressStart: (_) => setState(() {
-                          _dragging = true;
-                          _dragStartLeft = restingLeft;
-                          _dragLeft = restingLeft;
-                        }),
-                        onLongPressMoveUpdate: (details) => setState(() {
-                          _dragLeft =
-                              (_dragStartLeft! + details.offsetFromOrigin.dx)
-                                  .clamp(0.0, constraints.maxWidth - pillWidth);
-                        }),
-                        onLongPressEnd: (_) {
-                          final currentLeft = _dragLeft ?? restingLeft;
-                          final targetIndex =
-                              ((currentLeft + pillWidth / 2) / slotWidth)
-                                  .round()
-                                  .clamp(0, _icons.length - 1);
-                          final target = targetIndex * slotWidth +
-                              (slotWidth - pillWidth) / 2;
-                          setState(() {
-                            _dragging = false;
-                            _dragStartLeft = null;
-                            _dragLeft = target;
-                          });
-                          widget.onTap(targetIndex);
-                          Future<void>.delayed(
-                              const Duration(milliseconds: 310), () {
-                            if (mounted) setState(() => _dragLeft = null);
-                          });
-                        },
-                        child: Transform.scale(
-                          scale: _dragging ? 1.14 : _scale.value,
-                          child: _selectedPill(theme, isDark),
-                        ),
+                      left: restingLeft,
+                      top: _lifting ? -12 : 2,
+                      child: Transform.scale(
+                        scale: _scale.value * (_lifting ? 1.26 : 1.0),
+                        alignment: Alignment.center,
+                        child: _selectedPill(theme, isDark),
                       ),
                     );
                   },

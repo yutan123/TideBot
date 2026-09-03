@@ -315,7 +315,7 @@ class TideTheme extends ChangeNotifier {
       _onBackgroundFor(_BackgroundRegion.content, weak: true);
   Color get onBackgroundIcon => onBackgroundStrong;
   Color get backgroundScrim => backgroundOverlayColor.withValues(
-        alpha: backgroundScrimOpacity,
+        alpha: effectiveBackgroundOpacity,
       );
 
   bool get isDark {
@@ -332,12 +332,15 @@ class TideTheme extends ChangeNotifier {
       : (isDark ? const Color(0xFF171A20) : const Color(0xFFF3F5FA));
   Color get backgroundOverlayColor =>
       isDark ? const Color(0xFF06080C) : const Color(0xFF101216);
-  // The setting controls the image layer itself. A separate, fixed readability
-  // veil stays above it so lowering image opacity reveals the theme surface.
-  double get effectiveBackgroundOpacity =>
-      hasGlobalBackground ? _globalBackgroundOpacity : 0;
-  double get backgroundScrimOpacity =>
-      hasGlobalBackground ? (isDark ? .18 : .10) : 0;
+  double get effectiveBackgroundOpacity {
+    if (!hasGlobalBackground) return 0;
+    final readabilityFloor = isDark ? 0.24 : 0.18;
+    return _globalBackgroundOpacity < readabilityFloor
+        ? readabilityFloor
+        : _globalBackgroundOpacity;
+  }
+
+  double get backgroundScrimOpacity => 0;
 
   Color get surface =>
       isDark ? const Color(0xFF20242C) : const Color(0xFFFFFFFF);
