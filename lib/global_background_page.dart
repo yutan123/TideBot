@@ -93,11 +93,6 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          ColoredBox(
-            color: theme.isDark
-                ? const Color(0xFF101619)
-                : const Color(0xFFF3F5FA),
-          ),
           SafeArea(
             child: Column(
               children: [
@@ -154,12 +149,8 @@ class _BackgroundAppPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = hasImage
-        ? (theme.isDark ? Colors.white : const Color(0xFF15171B))
-        : theme.textStrong;
-    final muted = hasImage
-        ? (theme.isDark ? Colors.white70 : const Color(0xFF4A4D53))
-        : theme.textWeak;
+    final text = hasImage ? theme.onBackgroundStrong : theme.textStrong;
+    final muted = hasImage ? theme.onBackgroundWeak : theme.textWeak;
     final card = hasImage
         ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
         : theme.surface.withValues(alpha: .92);
@@ -176,9 +167,17 @@ class _BackgroundAppPreview extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (hasImage) Image.file(File(path), fit: BoxFit.cover),
+              ColoredBox(
+                color: theme.isDark
+                    ? const Color(0xFF151820)
+                    : const Color(0xFFF3F5FA),
+              ),
               if (hasImage)
-                ColoredBox(color: Colors.black.withValues(alpha: opacity)),
+                Opacity(
+                  opacity: opacity,
+                  child: Image.file(File(path), fit: BoxFit.cover),
+                ),
+              if (hasImage) ColoredBox(color: theme.backgroundScrim),
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
                 child: Column(

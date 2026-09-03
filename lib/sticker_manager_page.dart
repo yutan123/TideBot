@@ -139,7 +139,7 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
           title: const Text('表情包管理', style: TextStyle(fontFamily: 'TideFont')),
           actions: [

@@ -385,7 +385,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
         title: Text(_isSkill ? 'Skill 管理' : 'MCP 管理'),
         actions: [
           IconButton(

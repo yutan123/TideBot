@@ -139,7 +139,7 @@ class _ProfilePageState extends State<ProfilePage> {
         child: SafeArea(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
             child: Column(
               children: [
                 _buildProfileCard(),
@@ -207,7 +207,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     }
     return FrostCard(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
       child: content,
     );
   }
@@ -215,12 +215,15 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
     final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: theme.hasGlobalBackground ? 8 : 12,
+        vertical: theme.hasGlobalBackground ? 13 : 8,
+      ),
       child: Row(
         children: [
           Icon(
             s['icon'] as IconData,
-            size: 20,
+            size: theme.hasGlobalBackground ? 24 : 20,
             color: theme.primary,
           ),
           const SizedBox(width: 14),
@@ -234,25 +237,24 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
-          Icon(
-            Icons.arrow_forward_ios_rounded,
-            size: 14,
-            color: theme.onBackgroundWeak,
-          ),
+          if (!theme.hasGlobalBackground)
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 14,
+              color: theme.onBackgroundWeak,
+            ),
         ],
       ),
     );
     if (theme.hasGlobalBackground) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: FrostCard(
-          padding: EdgeInsets.zero,
-          child: content,
-        ),
+        padding: const EdgeInsets.only(bottom: 4),
+        child: content,
       );
     }
     return FrostCard(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: EdgeInsets.zero,
       child: content,
     );
   }
@@ -1470,7 +1472,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('普通设置', style: TextStyle(fontFamily: 'TideFont')),
         backgroundColor: Colors.transparent,
@@ -2006,7 +2008,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('通知管理', style: TextStyle(fontFamily: 'TideFont')),
         backgroundColor: Colors.transparent,
@@ -3456,7 +3458,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: TideTheme.of(context).bgColor,
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: const Text(
             'API 设置',

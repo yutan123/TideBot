@@ -575,8 +575,9 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
             ? const Color(0xFFF09B5D)
             : const Color(0xFF8B7CF6);
     return Scaffold(
-        backgroundColor: theme.bgColor,
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
+            backgroundColor: Colors.transparent,
             title: Text('${widget.botName} 的记忆',
                 style: const TextStyle(fontFamily: 'TideFont')),
             actions: [

@@ -123,8 +123,11 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
-      appBar: AppBar(title: const Text('聊天背景图')),
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: const Text('聊天背景图'),
+      ),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: theme.primary))
           : Column(

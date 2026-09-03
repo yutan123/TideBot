@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ui';
 import 'dart:math';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter/services.dart';
@@ -557,52 +556,20 @@ final FlowProvider flowProvider = FlowProvider();
 class FlowGlassBg extends StatelessWidget {
   final Widget child;
   final String? backgroundPath;
-  final double opacity;
+  final double? opacity;
   const FlowGlassBg({
     super.key,
     required this.child,
     this.backgroundPath,
-    this.opacity = 0.38,
+    this.opacity,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final theme = TideTheme.of(context);
-    final image = backgroundPath == null
-        ? theme.globalBackgroundImage
-        : FileImage(File(backgroundPath!));
-    final path = backgroundPath ?? theme.globalBackground;
-    final effectiveOpacity =
-        backgroundPath == null ? theme.effectiveBackgroundOpacity : opacity;
-    final hasImage = image != null &&
-        (backgroundPath != null || theme.isGlobalBackgroundReady) &&
-        (path.isEmpty || File(path).existsSync());
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (!hasImage)
-          ColoredBox(
-            color: theme.isDark
-                ? const Color(0xFF151820)
-                : const Color(0xFFF3F5FA),
-          ),
-        if (hasImage)
-          Image(
-            image: image,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, __, ___) => const SizedBox.expand(),
-          ),
-        if (hasImage)
-          IgnorePointer(
-            child: ColoredBox(
-              color: Colors.black.withValues(alpha: effectiveOpacity),
-            ),
-          ),
-        child,
-      ],
-    );
-  }
+  Widget build(BuildContext context) => TideBackground(
+        backgroundPath: backgroundPath,
+        opacity: opacity,
+        child: child,
+      );
 }
 
 class TideBotApp extends StatefulWidget {
@@ -993,6 +960,9 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _width;
   late Animation<double> _scale;
   int _previousIndex = 0;
+  double? _dragLeft;
+  double? _dragStartLeft;
+  bool _dragging = false;
 
   @override
   void initState() {
@@ -1056,7 +1026,7 @@ class _JellyDockState extends State<JellyDock>
 
   Widget _selectedPill(TideTheme theme, bool isDark) {
     final pill = Container(
-      width: _width.value,
+      width: _dragging ? _growW : _width.value,
       height: 40,
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
@@ -1169,15 +1139,56 @@ class _JellyDockState extends State<JellyDock>
                 ),
                 AnimatedBuilder(
                   animation: Listenable.merge([_position, _width, _scale]),
-                  builder: (context, child) => Positioned(
-                    left: position * slotWidth + (slotWidth - _width.value) / 2,
-                    bottom: 8,
-                    child: Transform.scale(
-                      scale: _scale.value,
-                      child: child,
-                    ),
-                  ),
-                  child: IgnorePointer(child: _selectedPill(theme, isDark)),
+                  builder: (context, child) {
+                    final pillWidth = _dragging ? _growW : _width.value;
+                    final restingLeft =
+                        position * slotWidth + (slotWidth - pillWidth) / 2;
+                    final left = _dragLeft ?? restingLeft;
+                    return AnimatedPositioned(
+                      duration: _dragging
+                          ? Duration.zero
+                          : const Duration(milliseconds: 300),
+                      curve: Curves.easeOutBack,
+                      left: left,
+                      bottom: _dragging ? 22 : 8,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onLongPressStart: (_) => setState(() {
+                          _dragging = true;
+                          _dragStartLeft = restingLeft;
+                          _dragLeft = restingLeft;
+                        }),
+                        onLongPressMoveUpdate: (details) => setState(() {
+                          _dragLeft =
+                              (_dragStartLeft! + details.offsetFromOrigin.dx)
+                                  .clamp(0.0, constraints.maxWidth - pillWidth);
+                        }),
+                        onLongPressEnd: (_) {
+                          final currentLeft = _dragLeft ?? restingLeft;
+                          final targetIndex =
+                              ((currentLeft + pillWidth / 2) / slotWidth)
+                                  .round()
+                                  .clamp(0, _icons.length - 1);
+                          final target = targetIndex * slotWidth +
+                              (slotWidth - pillWidth) / 2;
+                          setState(() {
+                            _dragging = false;
+                            _dragStartLeft = null;
+                            _dragLeft = target;
+                          });
+                          widget.onTap(targetIndex);
+                          Future<void>.delayed(
+                              const Duration(milliseconds: 310), () {
+                            if (mounted) setState(() => _dragLeft = null);
+                          });
+                        },
+                        child: Transform.scale(
+                          scale: _dragging ? 1.14 : _scale.value,
+                          child: _selectedPill(theme, isDark),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             );
@@ -1343,141 +1354,139 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final theme = TideTheme.of(context);
-    return FlowGlassBg(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        extendBody: true,
-        body: Stack(
-          children: [
-            IndexedStack(index: _idx, children: _pages),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBody: true,
+      body: Stack(
+        children: [
+          IndexedStack(index: _idx, children: _pages),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: bottomPadding + 24,
+            child: JellyDock(
+              currentIndex: _idx,
+              unreadCount: _unreadCount,
+              onTap: _onDockTap,
+            ),
+          ),
+          // 聊天列表创建机器人悬浮球
+          if (_idx == 0)
             Positioned(
-              left: 0,
-              right: 0,
-              bottom: bottomPadding + 24,
-              child: JellyDock(
-                currentIndex: _idx,
-                unreadCount: _unreadCount,
-                onTap: _onDockTap,
-              ),
-            ),
-            // 聊天列表创建机器人悬浮球
-            if (_idx == 0)
-              Positioned(
-                right: 20,
-                bottom: bottomPadding + 76,
-                child: BouncyTap(
-                  onTap: () async {
-                    final r = await Navigator.push(
-                      context,
-                      PageRouteBuilder(
-                        pageBuilder: (c, a, s) => const CreateBotPage(),
-                        transitionsBuilder: (c, a, s, child) => SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, 0.3),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: a,
-                              curve: Curves.easeOutCubic,
-                            ),
+              right: 20,
+              bottom: bottomPadding + 76,
+              child: BouncyTap(
+                onTap: () async {
+                  final r = await Navigator.push(
+                    context,
+                    PageRouteBuilder(
+                      pageBuilder: (c, a, s) => const CreateBotPage(),
+                      transitionsBuilder: (c, a, s, child) => SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.3),
+                          end: Offset.zero,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: a,
+                            curve: Curves.easeOutCubic,
                           ),
-                          child: FadeTransition(opacity: a, child: child),
                         ),
+                        child: FadeTransition(opacity: a, child: child),
                       ),
-                    );
-                    if (r == true) _chatListKey.currentState?.load();
-                  },
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [theme.primary, theme.primaryLight],
+                    ),
+                  );
+                  if (r == true) _chatListKey.currentState?.load();
+                },
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [theme.primary, theme.primaryLight],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: theme.primary.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.primary.withValues(alpha: 0.35),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 26,
-                    ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 26,
                   ),
                 ),
               ),
-            // 广场发布悬浮球
-            if (_idx == 2)
-              Positioned(
-                right: 20,
-                bottom: bottomPadding + 76,
-                child: BouncyTap(
-                  onTap: () => _squareKey.currentState?.publishFeed(),
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [theme.primary, theme.primaryLight],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.primary.withValues(alpha: 0.35),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ),
-              ),
-            ListenableBuilder(
-              listenable: _sidebar,
-              builder: (context, _) {
-                final bot = _sidebar.bot;
-                final progress = _sidebar.progress;
-                if (!_sidebar.isOpen || bot == null || progress == null) {
-                  return const SizedBox.shrink();
-                }
-                return Positioned.fill(
-                  child: ChatSidebar(
-                    bot: bot,
-                    progress: progress,
-                    onClose: () => unawaited(_sidebar.close()),
-                    onDragUpdate: (details) => _sidebar.updateDrag(
-                      details.delta.dx,
-                      MediaQuery.sizeOf(context).width * .86,
-                    ),
-                    onDragEnd: (details) =>
-                        _sidebar.endDrag(details.velocity.pixelsPerSecond.dx),
-                    onOpenManager: (kind) async {
-                      await _sidebar.close();
-                      if (!mounted) return;
-                      Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => ToolManagerPage(
-                          kind: kind == 'skill'
-                              ? ToolManagerKind.skill
-                              : ToolManagerKind.mcp,
-                        ),
-                      ));
-                    },
-                  ),
-                );
-              },
             ),
-          ],
-        ),
+          // 广场发布悬浮球
+          if (_idx == 2)
+            Positioned(
+              right: 20,
+              bottom: bottomPadding + 76,
+              child: BouncyTap(
+                onTap: () => _squareKey.currentState?.publishFeed(),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [theme.primary, theme.primaryLight],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: theme.primary.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+              ),
+            ),
+          ListenableBuilder(
+            listenable: _sidebar,
+            builder: (context, _) {
+              final bot = _sidebar.bot;
+              final progress = _sidebar.progress;
+              if (!_sidebar.isOpen || bot == null || progress == null) {
+                return const SizedBox.shrink();
+              }
+              return Positioned.fill(
+                child: ChatSidebar(
+                  bot: bot,
+                  progress: progress,
+                  onClose: () => unawaited(_sidebar.close()),
+                  onDragUpdate: (details) => _sidebar.updateDrag(
+                    details.delta.dx,
+                    MediaQuery.sizeOf(context).width * .86,
+                  ),
+                  onDragEnd: (details) =>
+                      _sidebar.endDrag(details.velocity.pixelsPerSecond.dx),
+                  onOpenManager: (kind) async {
+                    await _sidebar.close();
+                    if (!mounted) return;
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ToolManagerPage(
+                        kind: kind == 'skill'
+                            ? ToolManagerKind.skill
+                            : ToolManagerKind.mcp,
+                      ),
+                    ));
+                  },
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

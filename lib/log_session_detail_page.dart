@@ -9,7 +9,7 @@ class LogSessionDetailPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,

@@ -149,7 +149,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
           title: Text(_isEdit ? '编辑机器人' : '创建机器人',
               style: TextStyle(

@@ -838,7 +838,7 @@ class _CallPageState extends State<CallPage>
     final avatar = widget.bot['avatar']?.toString() ?? '';
 
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Stack(
           children: [

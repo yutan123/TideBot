@@ -289,7 +289,7 @@ class _SpacePageState extends State<SpacePage> {
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final dateStr = '${now.year}.${now.month}.${now.day}';
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: _loading
             ? Center(child: CircularProgressIndicator(color: theme.primary))
@@ -1601,14 +1601,14 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(
           '发布动态',
           style: TextStyle(
             fontWeight: FontWeight.w700,
             fontFamily: 'TideFont',
-            color: theme.textStrong,
+            color: theme.onBackgroundStrong,
           ),
         ),
         backgroundColor: Colors.transparent,
@@ -2182,19 +2182,19 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     final theme = TideTheme.of(context);
     final feed = widget.feed;
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(
           '动态详情',
           style: TextStyle(
             fontWeight: FontWeight.w700,
             fontFamily: 'TideFont',
-            color: theme.textStrong,
+            color: theme.onBackgroundStrong,
           ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: IconThemeData(color: theme.iconMuted),
+        iconTheme: IconThemeData(color: theme.onBackgroundWeak),
       ),
       body: Column(
         children: [

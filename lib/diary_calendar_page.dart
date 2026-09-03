@@ -27,10 +27,10 @@ class DiaryCalendarPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: TideTheme.of(context).bgColor,
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: Text('$botName的日记'),
-          backgroundColor: TideTheme.of(context).bgColor,
+          backgroundColor: Colors.transparent,
         ),
         body: DiaryCalendarWidget(botId: botId, botName: botName),
       );
@@ -209,10 +209,10 @@ class DiaryDetailPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text('$botName的日记'),
-        backgroundColor: theme.bgColor,
+        backgroundColor: Colors.transparent,
         actions: [
           IconButton(
             tooltip: '删除日记',

@@ -105,7 +105,7 @@ class _TicTacToePageState extends State<TicTacToePage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
           title: const Text('井字棋', style: TextStyle(fontFamily: 'TideFont')),
           backgroundColor: Colors.transparent,

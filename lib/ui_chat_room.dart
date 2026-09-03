@@ -145,14 +145,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   StreamSubscription<ChatEvent>? _chatEvents;
 
   late AnimationController _bottomBarCtrl;
+  late AnimationController _emojiPanelCtrl;
+  bool _emojiPanelMounted = false;
   bool _hasText = false;
   // Attachments are staged above the composer and sent together on confirmation.
   final List<String> _pendingImages = [];
   final List<String> _pendingDocuments = [];
   _PendingExpression? _pendingExpression;
   String? _pendingMediaContext;
-  final GlobalKey _composerKey = GlobalKey();
-  double _composerReserve = 84;
+  static const double _inputBarHeight = 76;
+  static const double _emojiPanelHeight = 286;
   bool _showEmojiPanel = false;
   int _emojiTab = 0;
   String _emojiCategory = 'people';
@@ -228,7 +230,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _bottomBarCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
-    ); // 减慢动画速度
+    );
+    _emojiPanelCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
     // 首帧后启动进场动画，否则 SlideTransition 会一直停在向下偏移 25% 的位置，
     // 这就是输入框一直偏下、"怎么调 padding 都不动"的根因。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -255,7 +261,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _audioStateSub?.cancel();
     _player.dispose();
     _recTimer?.cancel();
-    _bottomBarCtrl.dispose(); // 添加动画控制器释放
+    _bottomBarCtrl.dispose();
+    _emojiPanelCtrl.dispose();
     super.dispose();
   }
 
@@ -401,8 +408,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   void _handleInputFocus() {
     if (_inputFocus.hasFocus && _showEmojiPanel) {
-      setState(() => _showEmojiPanel = false);
+      _setEmojiPanel(false);
     }
+  }
+
+  void _setEmojiPanel(bool visible) {
+    if (visible) {
+      if (_showEmojiPanel) return;
+      _emojiPanelCtrl.stop();
+      setState(() {
+        _showEmojiPanel = true;
+        _emojiPanelMounted = true;
+      });
+      unawaited(_emojiPanelCtrl.forward(from: 0));
+    } else {
+      if (!_showEmojiPanel && !_emojiPanelMounted) return;
+      _emojiPanelCtrl.stop();
+      setState(() => _showEmojiPanel = false);
+      unawaited(_emojiPanelCtrl.reverse().whenComplete(() {
+        if (mounted && !_showEmojiPanel && _emojiPanelCtrl.isDismissed) {
+          setState(() => _emojiPanelMounted = false);
+        }
+      }));
+    }
+    _scrollDown(animated: false);
   }
 
   void _scrollDown({bool animated = true}) {
@@ -604,7 +633,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void _toggleEmojiPanel() {
     final opening = !_showEmojiPanel;
     if (opening) _inputFocus.unfocus();
-    setState(() => _showEmojiPanel = opening);
+    _setEmojiPanel(opening);
     if (!opening) return;
     unawaited(_loadEmojiCatalog());
     if (!_stickersLoaded) unawaited(_loadStickers());
@@ -645,11 +674,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (_msgC.text.trim().isNotEmpty) {
       setState(() {
         _pendingExpression = _PendingExpression.emoji(emoji);
-        _showEmojiPanel = false;
       });
+      _setEmojiPanel(false);
       return;
     }
-    setState(() => _showEmojiPanel = false);
+    _setEmojiPanel(false);
     unawaited(_sendEmoji(emoji));
   }
 
@@ -657,11 +686,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (_msgC.text.trim().isNotEmpty) {
       setState(() {
         _pendingExpression = _PendingExpression.sticker(sticker);
-        _showEmojiPanel = false;
       });
+      _setEmojiPanel(false);
       return;
     }
-    setState(() => _showEmojiPanel = false);
+    _setEmojiPanel(false);
     unawaited(_sendSticker(sticker));
   }
 
@@ -671,6 +700,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         .toList(growable: false);
     return Material(
       color: theme.surfaceVariant,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: SafeArea(
         top: false,
         child: SizedBox(
@@ -1645,7 +1678,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           height: 72,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(36),
-                            color: const Color(0xFFE8E8F0),
+                            color: TideTheme.of(ctx).surfaceVariant,
                           ),
                           child: avatar.isNotEmpty
                               ? ClipRRect(
@@ -1655,10 +1688,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     fit: BoxFit.cover,
                                   ),
                                 )
-                              : const Center(
+                              : Center(
                                   child: Icon(
                                     Icons.person_rounded,
-                                    color: Color(0xFF8E8E93),
+                                    color: TideTheme.of(ctx).iconMuted,
                                     size: 30,
                                   ),
                                 ),
@@ -1685,12 +1718,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Center(
+                Center(
                   child: Text(
                     '点按头像可更换',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Color(0xFF8E8E93),
+                      color: TideTheme.of(ctx).textWeak,
                       fontFamily: 'TideFont',
                     ),
                   ),
@@ -2413,7 +2446,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               : () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => Scaffold(
-                        appBar: AppBar(title: const Text('通话摘要')),
+                        backgroundColor: Colors.transparent,
+                        appBar: AppBar(
+                          backgroundColor: Colors.transparent,
+                          title: const Text('通话摘要'),
+                        ),
                         body: SingleChildScrollView(
                           padding: const EdgeInsets.all(20),
                           child: Column(
@@ -2678,7 +2715,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           Column(
             children: [
               _chatHeader(),
-              Expanded(child: _chatBody()),
+              Expanded(
+                child: AnimatedBuilder(
+                  animation: _emojiPanelCtrl,
+                  builder: (context, _) => _chatBody(),
+                ),
+              ),
             ],
           ),
           Positioned(left: 0, right: 0, bottom: 0, child: _composer()),
@@ -2926,7 +2968,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       // The composer already follows the keyboard. Reserve only the island
       // height plus a small gap so the last bubble sits just above it.
-      padding: EdgeInsets.fromLTRB(12, 8, 12, _composerReserve),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        8,
+        12,
+        _inputBarHeight + (_emojiPanelHeight * _emojiPanelCtrl.value) + 8,
+      ),
       itemCount: _msgs.length,
       itemBuilder: (ctx, i) {
         final m = _msgs[_msgs.length - 1 - i];
@@ -3585,31 +3632,38 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
-  void _syncComposerReserve() {
-    final height = _composerKey.currentContext?.size?.height;
-    if (height == null || !height.isFinite) return;
-    final next = height + 8;
-    if ((next - _composerReserve).abs() < 0.5) return;
-    setState(() => _composerReserve = next);
-  }
+  // The panel remains mounted during its reverse animation, then releases
+  // its reserved message space once it has fully left the screen.
 
   Widget _composer() {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncComposerReserve());
-    return Container(
-      key: _composerKey,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _inputBar(),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            child: _showEmojiPanel
-                ? _emojiPicker(TideTheme.of(context))
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _inputBar(),
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+          child: AnimatedBuilder(
+            animation: _emojiPanelCtrl,
+            builder: (context, child) => SizedBox(
+              height: _emojiPanelHeight * _emojiPanelCtrl.value,
+              child: child,
+            ),
+            child: _emojiPanelMounted
+                ? SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 1),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(
+                      parent: _emojiPanelCtrl,
+                      curve: Curves.easeOutCubic,
+                      reverseCurve: Curves.easeInCubic,
+                    )),
+                    child: _emojiPicker(TideTheme.of(context)),
+                  )
                 : const SizedBox.shrink(),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

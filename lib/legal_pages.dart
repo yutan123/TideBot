@@ -65,11 +65,11 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
     return PopScope(
       canPop: !widget.requiredAcceptance,
       child: Scaffold(
-        backgroundColor: theme.bgColor,
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
           automaticallyImplyLeading: !widget.requiredAcceptance,
           title: const Text('用户协议与免责声明'),
-          backgroundColor: theme.bgColor,
+          backgroundColor: Colors.transparent,
         ),
         body: SafeArea(
           child: Column(
@@ -132,10 +132,10 @@ class TideBotAboutPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('关于 TideBot'),
-        backgroundColor: theme.bgColor,
+        backgroundColor: Colors.transparent,
       ),
       body: SafeArea(
         child: Padding(

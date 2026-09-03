@@ -572,7 +572,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     final theme = TideTheme.of(context);
     final logs = AppLogService.instance.entries;
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -809,7 +809,7 @@ class LogHistoryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,

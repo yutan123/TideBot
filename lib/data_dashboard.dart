@@ -138,7 +138,7 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('数据大盘', style: TextStyle(fontFamily: 'TideFont')),
         backgroundColor: Colors.transparent,

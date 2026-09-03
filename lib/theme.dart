@@ -7,6 +7,62 @@ import 'db.dart';
 
 // ================= 全局主题系统 =================
 // 每个主题含日/夜两套主色，夜间更沉静、更护眼。
+class TideBackground extends StatelessWidget {
+  const TideBackground({
+    super.key,
+    required this.child,
+    this.backgroundPath,
+    this.opacity,
+  });
+
+  final Widget child;
+  final String? backgroundPath;
+  final double? opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    final path = backgroundPath ?? theme.globalBackground;
+    final image = backgroundPath == null
+        ? theme.globalBackgroundImage
+        : FileImage(File(backgroundPath!));
+    final hasImage = image != null &&
+        (backgroundPath != null || theme.isGlobalBackgroundReady) &&
+        (path.isEmpty || File(path).existsSync());
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColoredBox(
+          color:
+              theme.isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA),
+        ),
+        if (hasImage)
+          Opacity(
+            opacity: opacity ?? theme.effectiveBackgroundOpacity,
+            child: Image(
+              image: image,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, __, ___) => const SizedBox.expand(),
+            ),
+          ),
+        if (hasImage)
+          IgnorePointer(child: ColoredBox(color: theme.backgroundScrim)),
+        if (hasImage)
+          DefaultTextStyle.merge(
+            style: TextStyle(color: theme.onBackgroundStrong),
+            child: IconTheme.merge(
+              data: IconThemeData(color: theme.onBackgroundIcon),
+              child: child,
+            ),
+          )
+        else
+          child,
+      ],
+    );
+  }
+}
+
 class TideTheme extends ChangeNotifier {
   static const int _maxBackgroundBytes = 12 * 1024 * 1024;
   static const int _maxBackgroundPixels = 12 * 1000 * 1000;
@@ -244,7 +300,11 @@ class TideTheme extends ChangeNotifier {
       _backgroundLightness[region] ?? !isDark;
 
   Color _onBackgroundFor(_BackgroundRegion region, {bool weak = false}) {
-    if (!hasGlobalBackground) return weak ? textWeak : textStrong;
+    if (!hasGlobalBackground) {
+      return weak
+          ? (isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366))
+          : (isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E));
+    }
     final light = _isBackgroundLight(region);
     if (weak) return light ? const Color(0xFF30343A) : const Color(0xFFE2E6EA);
     return light ? const Color(0xFF101216) : const Color(0xFFF8F9FA);
@@ -255,7 +315,7 @@ class TideTheme extends ChangeNotifier {
       _onBackgroundFor(_BackgroundRegion.content, weak: true);
   Color get onBackgroundIcon => onBackgroundStrong;
   Color get backgroundScrim => backgroundOverlayColor.withValues(
-        alpha: effectiveBackgroundOpacity,
+        alpha: backgroundScrimOpacity,
       );
 
   bool get isDark {
@@ -272,13 +332,12 @@ class TideTheme extends ChangeNotifier {
       : (isDark ? const Color(0xFF171A20) : const Color(0xFFF3F5FA));
   Color get backgroundOverlayColor =>
       isDark ? const Color(0xFF06080C) : const Color(0xFF101216);
-  double get effectiveBackgroundOpacity {
-    if (!hasGlobalBackground) return 0;
-    final readabilityFloor = isDark ? 0.24 : 0.18;
-    return _globalBackgroundOpacity < readabilityFloor
-        ? readabilityFloor
-        : _globalBackgroundOpacity;
-  }
+  // The setting controls the image layer itself. A separate, fixed readability
+  // veil stays above it so lowering image opacity reveals the theme surface.
+  double get effectiveBackgroundOpacity =>
+      hasGlobalBackground ? _globalBackgroundOpacity : 0;
+  double get backgroundScrimOpacity =>
+      hasGlobalBackground ? (isDark ? .18 : .10) : 0;
 
   Color get surface =>
       isDark ? const Color(0xFF20242C) : const Color(0xFFFFFFFF);
@@ -289,10 +348,12 @@ class TideTheme extends ChangeNotifier {
   // Night surfaces stay neutral graphite so theme accents and image content remain distinct.
 
   // 文字主色
-  Color get textStrong =>
-      isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E);
-  Color get textWeak =>
-      isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366);
+  Color get textStrong => hasGlobalBackground
+      ? onBackgroundStrong
+      : (isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E));
+  Color get textWeak => hasGlobalBackground
+      ? onBackgroundWeak
+      : (isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366));
   // 更弱的文字/图标色
   Color get textFaint =>
       isDark ? const Color(0xFF5A5F68) : const Color(0xFFC7C7CC);
@@ -303,8 +364,9 @@ class TideTheme extends ChangeNotifier {
   Color get border =>
       isDark ? const Color(0x33FFFFFF) : const Color(0x1A000000);
   // 图标弱色
-  Color get iconMuted =>
-      isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93);
+  Color get iconMuted => hasGlobalBackground
+      ? onBackgroundWeak
+      : (isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93));
   // AI/次要气泡底色（日间浅白、夜间深灰）
   Color get bubbleAi =>
       isDark ? const Color(0xFF292E38) : const Color(0xFFFFFFFF);

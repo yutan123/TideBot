@@ -31,12 +31,13 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text('通话记录',
-            style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont')),
+            style: TextStyle(
+                color: theme.onBackgroundStrong, fontFamily: 'TideFont')),
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _sessions,
@@ -108,12 +109,13 @@ class CallHistoryDetailPage extends StatelessWidget {
     final sessionId = session['id'].toString();
     final summary = session['summary']?.toString().trim() ?? '';
     return Scaffold(
-      backgroundColor: theme.bgColor,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text('通话详情',
-            style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont')),
+            style: TextStyle(
+                color: theme.onBackgroundStrong, fontFamily: 'TideFont')),
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: DBManager().queryCallMessages(sessionId),
