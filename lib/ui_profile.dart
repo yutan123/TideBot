@@ -1445,353 +1445,314 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('普通设置', style: TextStyle(fontFamily: 'TideFont')),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_rounded),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
-        children: [
-          _sectionHeader(theme, '对话表现', Icons.forum_outlined),
-          FrostCard(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Column(
-              children: [
-                _settingSwitch(
-                  theme: theme,
-                  title: '显示消息发送时间',
-                  value: _showTime,
-                  onChanged: (v) {
-                    setState(() => _showTime = v);
-                    _save('show_message_time', '$v');
-                  },
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '聊天界面显示头像',
-                  value: _showAvatar,
-                  onChanged: (v) {
-                    setState(() => _showAvatar = v);
-                    _save('show_chat_avatar', '$v');
-                  },
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '现实时间感知',
-                  help: '发送请求时，在末尾附注现实时间；稳定人设提示保持不变，以提升缓存命中率。',
-                  value: _timeAwareness,
-                  onChanged: (v) {
-                    setState(() => _timeAwareness = v);
-                    _save('time_awareness', '$v');
-                  },
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '适时沉默',
-                  help: '默认开启。模型会在自然结束、明确无需回复等安全情境自行调用沉默工具；关闭后不会提供该工具。',
-                  value: _adaptiveSilence,
-                  onChanged: (v) {
-                    setState(() => _adaptiveSilence = v);
-                    _save('adaptive_silence_enabled', '$v');
-                  },
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '分段回复',
-                  help: '默认开启。模型回复会按自然句逐段呈现，让聊天节奏更接近真人。',
-                  value: _segmentedReply,
-                  onChanged: (v) {
-                    setState(() => _segmentedReply = v);
-                    _save('segmented_reply_enabled', '$v');
-                  },
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '随机延迟回复',
-                  help: '开启后，模型生成完成及每一段后续消息都会在下方秒数范围内随机等待。',
-                  value: _randomReplyDelay,
-                  onChanged: (v) {
-                    setState(() => _randomReplyDelay = v);
-                    _save('random_reply_delay_enabled', '$v');
-                  },
-                  child: _randomReplyDelay ? _replyDelayRange(theme) : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '流式输出',
-                  help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
-                  value: _streaming,
-                  onChanged: (v) {
-                    setState(() => _streaming = v);
-                    _save('streaming_output', '$v');
-                  },
-                  child: _streaming ? _compactSpeed(theme) : null,
-                ),
-              ],
-            ),
+        appBar: AppBar(
+          title: const Text('普通设置', style: TextStyle(fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_rounded),
+            onPressed: () => Navigator.pop(context),
           ),
-          _sectionHeader(theme, '主动与智能', Icons.auto_awesome_outlined),
-          FrostCard(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Column(
-              children: [
-                _settingSwitch(
-                  theme: theme,
-                  title: '主动回复',
-                  help: '应用保持运行时，机器人会在连续沉默达到下方随机区间后尝试自然开启话题。',
-                  value: _proactiveReply,
-                  onChanged: (v) {
-                    setState(() => _proactiveReply = v);
-                    _save('proactive_reply', '$v');
-                  },
-                  child: _proactiveReply ? _compactRange(theme) : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '联网搜索',
-                  help: '仅开启后机器人才能按需搜索实时信息。填写对应搜索服务商 API Key 后可用。',
-                  value: _webSearch,
-                  onChanged: (v) {
-                    setState(() => _webSearch = v);
-                    _save('web_search_enabled', '$v');
-                  },
-                  child: _webSearch
-                      ? Column(
-                          children: [
-                            _settingSwitch(
-                              theme: theme,
-                              title: '显示联网搜索消息来源',
-                              help:
-                                  '默认隐藏。开启后，仅在使用搜索的消息底部显示一个来源图标；点击图标会在浏览器打开最终使用的网页。',
-                              value: _showSearchSources,
-                              onChanged: (v) {
-                                setState(() => _showSearchSources = v);
-                                _save('show_web_search_sources', '$v');
-                              },
-                            ),
-                            _choiceField(
-                              theme: theme,
-                              label: '搜索服务商',
-                              value: _searchProvider,
-                              options: const [
-                                'Tavily',
-                                '博查 Bocha',
-                                'Serper',
-                                'Brave Search',
-                                'Bing Web Search',
-                              ],
-                              icon: Icon(
-                                Icons.travel_explore_rounded,
-                                color: theme.primary,
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
+          children: [
+            _sectionHeader(theme, '对话表现', Icons.forum_outlined),
+            FrostCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  _settingSwitch(
+                    theme: theme,
+                    title: '显示消息发送时间',
+                    value: _showTime,
+                    onChanged: (v) {
+                      setState(() => _showTime = v);
+                      _save('show_message_time', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '聊天界面显示头像',
+                    value: _showAvatar,
+                    onChanged: (v) {
+                      setState(() => _showAvatar = v);
+                      _save('show_chat_avatar', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '现实时间感知',
+                    help: '发送请求时，在末尾附注现实时间；稳定人设提示保持不变，以提升缓存命中率。',
+                    value: _timeAwareness,
+                    onChanged: (v) {
+                      setState(() => _timeAwareness = v);
+                      _save('time_awareness', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '适时沉默',
+                    help: '默认开启。模型会在自然结束、明确无需回复等安全情境自行调用沉默工具；关闭后不会提供该工具。',
+                    value: _adaptiveSilence,
+                    onChanged: (v) {
+                      setState(() => _adaptiveSilence = v);
+                      _save('adaptive_silence_enabled', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '分段回复',
+                    help: '默认开启。模型回复会按自然句逐段呈现，让聊天节奏更接近真人。',
+                    value: _segmentedReply,
+                    onChanged: (v) {
+                      setState(() => _segmentedReply = v);
+                      _save('segmented_reply_enabled', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '随机延迟回复',
+                    help: '开启后，模型生成完成及每一段后续消息都会在下方秒数范围内随机等待。',
+                    value: _randomReplyDelay,
+                    onChanged: (v) {
+                      setState(() => _randomReplyDelay = v);
+                      _save('random_reply_delay_enabled', '$v');
+                    },
+                    child: _randomReplyDelay ? _replyDelayRange(theme) : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '流式输出',
+                    help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
+                    value: _streaming,
+                    onChanged: (v) {
+                      setState(() => _streaming = v);
+                      _save('streaming_output', '$v');
+                    },
+                    child: _streaming ? _compactSpeed(theme) : null,
+                  ),
+                ],
+              ),
+            ),
+            _sectionHeader(theme, '主动与智能', Icons.auto_awesome_outlined),
+            FrostCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  _settingSwitch(
+                    theme: theme,
+                    title: '主动回复',
+                    help: '应用保持运行时，机器人会在连续沉默达到下方随机区间后尝试自然开启话题。',
+                    value: _proactiveReply,
+                    onChanged: (v) {
+                      setState(() => _proactiveReply = v);
+                      _save('proactive_reply', '$v');
+                    },
+                    child: _proactiveReply ? _compactRange(theme) : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '联网搜索',
+                    help: '仅开启后机器人才能按需搜索实时信息。填写对应搜索服务商 API Key 后可用。',
+                    value: _webSearch,
+                    onChanged: (v) {
+                      setState(() => _webSearch = v);
+                      _save('web_search_enabled', '$v');
+                    },
+                    child: _webSearch
+                        ? Column(
+                            children: [
+                              _settingSwitch(
+                                theme: theme,
+                                title: '显示联网搜索消息来源',
+                                help:
+                                    '默认隐藏。开启后，仅在使用搜索的消息底部显示一个来源图标；点击图标会在浏览器打开最终使用的网页。',
+                                value: _showSearchSources,
+                                onChanged: (v) {
+                                  setState(() => _showSearchSources = v);
+                                  _save('show_web_search_sources', '$v');
+                                },
                               ),
-                              onPick: (value) {
-                                setState(() => _searchProvider = value);
-                                _save('web_search_provider', value);
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _searchKeyController,
-                              obscureText: !_showSearchKey,
-                              style: TextStyle(
-                                color: theme.textStrong,
-                                fontFamily: 'TideFont',
-                              ),
-                              decoration: _roundInput(
-                                theme,
-                                label: _searchKeyLabel(theme),
+                              _choiceField(
+                                theme: theme,
+                                label: '搜索服务商',
+                                value: _searchProvider,
+                                options: const [
+                                  'Tavily',
+                                  '博查 Bocha',
+                                  'Serper',
+                                  'Brave Search',
+                                  'Bing Web Search',
+                                ],
                                 icon: Icon(
-                                  Icons.key_rounded,
+                                  Icons.travel_explore_rounded,
                                   color: theme.primary,
                                 ),
-                              ).copyWith(
-                                suffixIcon: IconButton(
-                                  tooltip: _showSearchKey
-                                      ? '隐藏 API Key'
-                                      : '显示 API Key',
-                                  onPressed: () => setState(
-                                    () => _showSearchKey = !_showSearchKey,
-                                  ),
+                                onPick: (value) {
+                                  setState(() => _searchProvider = value);
+                                  _save('web_search_provider', value);
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: _searchKeyController,
+                                obscureText: !_showSearchKey,
+                                style: TextStyle(
+                                  color: theme.textStrong,
+                                  fontFamily: 'TideFont',
+                                ),
+                                decoration: _roundInput(
+                                  theme,
+                                  label: _searchKeyLabel(theme),
                                   icon: Icon(
-                                    _showSearchKey
-                                        ? Icons.visibility_off_rounded
-                                        : Icons.visibility_rounded,
-                                    color: theme.textWeak,
+                                    Icons.key_rounded,
+                                    color: theme.primary,
+                                  ),
+                                ).copyWith(
+                                  suffixIcon: IconButton(
+                                    tooltip: _showSearchKey
+                                        ? '隐藏 API Key'
+                                        : '显示 API Key',
+                                    onPressed: () => setState(
+                                      () => _showSearchKey = !_showSearchKey,
+                                    ),
+                                    icon: Icon(
+                                      _showSearchKey
+                                          ? Icons.visibility_off_rounded
+                                          : Icons.visibility_rounded,
+                                      color: theme.textWeak,
+                                    ),
                                   ),
                                 ),
+                                onChanged: (value) =>
+                                    _save('web_search_api_key', value.trim()),
                               ),
-                              onChanged: (value) =>
-                                  _save('web_search_api_key', value.trim()),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _searchKeyHint,
-                              style: TextStyle(
-                                color: theme.textWeak,
-                                fontSize: 11,
-                                fontFamily: 'TideFont',
-                                height: 1.5,
+                              const SizedBox(height: 8),
+                              Text(
+                                _searchKeyHint,
+                                style: TextStyle(
+                                  color: theme.textWeak,
+                                  fontSize: 11,
+                                  fontFamily: 'TideFont',
+                                  height: 1.5,
+                                ),
                               ),
+                            ],
+                          )
+                        : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '机器人生图',
+                    help: '开启后机器人可在需要生成图片时使用生图能力，并遵循下方默认风格。关闭后机器人不会感知此工具存在。',
+                    value: _imageGeneration,
+                    onChanged: (v) {
+                      setState(() => _imageGeneration = v);
+                      _save('bot_image_generation_enabled', '$v');
+                    },
+                    child: _imageGeneration
+                        ? _choiceField(
+                            theme: theme,
+                            label: '默认生图风格',
+                            value: _imageStyle,
+                            options: const ['写实', '动漫', '科幻', '不选择', '自定义'],
+                            icon: Icon(
+                              Icons.palette_outlined,
+                              color: theme.primary,
                             ),
-                          ],
-                        )
-                      : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '机器人生图',
-                  help: '开启后机器人可在需要生成图片时使用生图能力，并遵循下方默认风格。关闭后机器人不会感知此工具存在。',
-                  value: _imageGeneration,
-                  onChanged: (v) {
-                    setState(() => _imageGeneration = v);
-                    _save('bot_image_generation_enabled', '$v');
-                  },
-                  child: _imageGeneration
-                      ? _choiceField(
-                          theme: theme,
-                          label: '默认生图风格',
-                          value: _imageStyle,
-                          options: const ['写实', '动漫', '科幻', '不选择', '自定义'],
-                          icon: Icon(
-                            Icons.palette_outlined,
-                            color: theme.primary,
-                          ),
-                          onPick: (value) async {
-                            if (value == '自定义') {
-                              final controller = TextEditingController(
-                                text: _imageStyle == '自定义' ? '' : _imageStyle,
-                              );
-                              final custom = await TideDialogs.show<String>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  backgroundColor: Colors.transparent,
-                                  contentPadding: EdgeInsets.zero,
-                                  content: TideDialogs.glassContent(
-                                    context: ctx,
-                                    children: [
-                                      const Text(
-                                        '自定义生图风格',
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700,
-                                          fontFamily: 'TideFont',
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      TextField(
-                                        controller: controller,
-                                        autofocus: true,
-                                        decoration: const InputDecoration(
-                                          hintText: '例如：水彩插画、赛博朋克、胶片摄影',
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: TideDialogs.glassButton(
-                                              '取消',
-                                              onTap: () => Navigator.pop(ctx),
-                                            ),
+                            onPick: (value) async {
+                              if (value == '自定义') {
+                                final controller = TextEditingController(
+                                  text: _imageStyle == '自定义' ? '' : _imageStyle,
+                                );
+                                final custom = await TideDialogs.show<String>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor: Colors.transparent,
+                                    contentPadding: EdgeInsets.zero,
+                                    content: TideDialogs.glassContent(
+                                      context: ctx,
+                                      children: [
+                                        const Text(
+                                          '自定义生图风格',
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w700,
+                                            fontFamily: 'TideFont',
                                           ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: TideDialogs.glassButton(
-                                              '保存',
-                                              onTap: () => Navigator.pop(
-                                                ctx,
-                                                controller.text.trim(),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextField(
+                                          controller: controller,
+                                          autofocus: true,
+                                          decoration: const InputDecoration(
+                                            hintText: '例如：水彩插画、赛博朋克、胶片摄影',
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: TideDialogs.glassButton(
+                                                '取消',
+                                                onTap: () => Navigator.pop(ctx),
                                               ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: TideDialogs.glassButton(
+                                                '保存',
+                                                onTap: () => Navigator.pop(
+                                                  ctx,
+                                                  controller.text.trim(),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              );
-                              controller.dispose();
-                              if (custom == null || custom.isEmpty) return;
-                              if (!mounted) return;
-                              setState(() => _imageStyle = custom);
-                              _save('bot_image_style', custom);
-                              return;
-                            }
-                            setState(() => _imageStyle = value);
-                            _save('bot_image_style', value);
-                          },
-                        )
-                      : null,
-                ),
-              ],
-            ),
-          ),
-          _sectionHeader(theme, '机器人互动', Icons.emoji_emotions_outlined),
-          FrostCard(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Column(
-              children: [
-                _settingSwitch(
-                  theme: theme,
-                  title: '语音回复',
-                  help: '默认关闭。命中概率时，机器人会尝试生成语音；失败时仍只显示原文本。',
-                  value: _voiceReply,
-                  onChanged: (v) {
-                    setState(() => _voiceReply = v);
-                    _save('voice_reply_enabled', '$v');
-                  },
-                  child: _voiceReply
-                      ? Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                          child: TextField(
-                            controller: _voiceReplyChanceController,
-                            keyboardType: TextInputType.number,
-                            style: TextStyle(
-                              color: theme.textStrong,
-                              fontFamily: 'TideFont',
-                            ),
-                            decoration: _roundInput(
-                              theme,
-                              label: '随机语音回复概率（1–100）',
-                              icon: Icon(
-                                Icons.record_voice_over_rounded,
-                                color: theme.primary,
-                              ),
-                            ),
-                            onChanged: (value) {
-                              final chance = int.tryParse(value);
-                              if (chance != null &&
-                                  chance >= 1 &&
-                                  chance <= 100) {
-                                _voiceReplyChance = chance;
-                                _save('voice_reply_chance', '$chance');
+                                );
+                                controller.dispose();
+                                if (custom == null || custom.isEmpty) return;
+                                if (!mounted) return;
+                                setState(() => _imageStyle = custom);
+                                _save('bot_image_style', custom);
+                                return;
                               }
+                              setState(() => _imageStyle = value);
+                              _save('bot_image_style', value);
                             },
-                          ),
-                        )
-                      : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '机器人发送表情包',
-                  help: '仅从你自己维护的素材池中选择。关闭后机器人不知道表情包功能存在。',
-                  value: _stickers,
-                  onChanged: (v) {
-                    setState(() => _stickers = v);
-                    _save('bot_stickers_enabled', '$v');
-                  },
-                  child: _stickers
-                      ? Column(
-                          children: [
-                            TextField(
-                              controller: _stickerChanceController,
+                          )
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+            _sectionHeader(theme, '机器人互动', Icons.emoji_emotions_outlined),
+            FrostCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  _settingSwitch(
+                    theme: theme,
+                    title: '语音回复',
+                    help: '默认关闭。命中概率时，机器人会尝试生成语音；失败时仍只显示原文本。',
+                    value: _voiceReply,
+                    onChanged: (v) {
+                      setState(() => _voiceReply = v);
+                      _save('voice_reply_enabled', '$v');
+                    },
+                    child: _voiceReply
+                        ? Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                            child: TextField(
+                              controller: _voiceReplyChanceController,
                               keyboardType: TextInputType.number,
                               style: TextStyle(
                                 color: theme.textStrong,
@@ -1799,9 +1760,9 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                               ),
                               decoration: _roundInput(
                                 theme,
-                                label: '发送概率（1–100）',
+                                label: '随机语音回复概率（1–100）',
                                 icon: Icon(
-                                  Icons.sentiment_satisfied_alt_rounded,
+                                  Icons.record_voice_over_rounded,
                                   color: theme.primary,
                                 ),
                               ),
@@ -1810,114 +1771,157 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                 if (chance != null &&
                                     chance >= 1 &&
                                     chance <= 100) {
-                                  _stickerChance = chance;
-                                  _save('bot_sticker_chance', '$chance');
+                                  _voiceReplyChance = chance;
+                                  _save('voice_reply_chance', '$chance');
                                 }
                               },
                             ),
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                icon: const Icon(
-                                  Icons.add_photo_alternate_outlined,
+                          )
+                        : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '机器人发送表情包',
+                    help: '仅从你自己维护的素材池中选择。关闭后机器人不知道表情包功能存在。',
+                    value: _stickers,
+                    onChanged: (v) {
+                      setState(() => _stickers = v);
+                      _save('bot_stickers_enabled', '$v');
+                    },
+                    child: _stickers
+                        ? Column(
+                            children: [
+                              TextField(
+                                controller: _stickerChanceController,
+                                keyboardType: TextInputType.number,
+                                style: TextStyle(
+                                  color: theme.textStrong,
+                                  fontFamily: 'TideFont',
                                 ),
-                                label: const Text(
-                                  '添加和管理表情包',
-                                  style: TextStyle(fontFamily: 'TideFont'),
+                                decoration: _roundInput(
+                                  theme,
+                                  label: '发送概率（1–100）',
+                                  icon: Icon(
+                                    Icons.sentiment_satisfied_alt_rounded,
+                                    color: theme.primary,
+                                  ),
                                 ),
-                                onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const StickerManagerPage(),
+                                onChanged: (value) {
+                                  final chance = int.tryParse(value);
+                                  if (chance != null &&
+                                      chance >= 1 &&
+                                      chance <= 100) {
+                                    _stickerChance = chance;
+                                    _save('bot_sticker_chance', '$chance');
+                                  }
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(
+                                    Icons.add_photo_alternate_outlined,
+                                  ),
+                                  label: const Text(
+                                    '添加和管理表情包',
+                                    style: TextStyle(fontFamily: 'TideFont'),
+                                  ),
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const StickerManagerPage(),
+                                    ),
                                   ),
                                 ),
                               ),
+                            ],
+                          )
+                        : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '拟人化日程',
+                    help:
+                        '默认开启。每位机器人会在当天首次打开应用时按各自模型生成生活状态；日程仅在聊天和生图时作为内部背景使用。',
+                    value: _lifeSchedule,
+                    onChanged: (v) {
+                      setState(() => _lifeSchedule = v);
+                      _save('life_schedule_enabled', '$v');
+                    },
+                    child: _lifeSchedule
+                        ? SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.tune_rounded),
+                              label: const Text(
+                                '管理日程池',
+                                style: TextStyle(fontFamily: 'TideFont'),
+                              ),
+                              onPressed: _manageLifePools,
                             ),
-                          ],
-                        )
-                      : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '拟人化日程',
-                  help: '默认开启。每位机器人会在当天首次打开应用时按各自模型生成生活状态；日程仅在聊天和生图时作为内部背景使用。',
-                  value: _lifeSchedule,
-                  onChanged: (v) {
-                    setState(() => _lifeSchedule = v);
-                    _save('life_schedule_enabled', '$v');
-                  },
-                  child: _lifeSchedule
-                      ? SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.tune_rounded),
-                            label: const Text(
-                              '管理日程池',
-                              style: TextStyle(fontFamily: 'TideFont'),
-                            ),
-                            onPressed: _manageLifePools,
-                          ),
-                        )
-                      : null,
-                ),
-                _settingSwitch(
-                  theme: theme,
-                  title: '机器人发布动态',
-                  help: '开启后，每位已配置聊天模型的机器人会在进入广场时按设置数量生成独立动态，并按日期去重。',
-                  value: _botPosts,
-                  onChanged: (v) {
-                    setState(() => _botPosts = v);
-                    _save('bot_posts_enabled', '$v');
-                  },
-                  child: _botPosts
-                      ? Column(
-                          children: [
-                            _compactPostsPerDay(theme),
-                            _settingSwitch(
-                              theme: theme,
-                              title: '随机发布带图动态',
-                              help: '默认关闭。命中概率后会使用已授权的生图模型；生成失败时照常发布纯文本。',
-                              value: _botPostsWithImages,
-                              onChanged: (v) {
-                                setState(() => _botPostsWithImages = v);
-                                _save('bot_posts_with_images', '$v');
-                              },
-                              child: _botPostsWithImages
-                                  ? TextField(
-                                      controller:
-                                          _botPostsImageChanceController,
-                                      keyboardType: TextInputType.number,
-                                      decoration: _roundInput(
-                                        theme,
-                                        label: '带图概率（1–100）',
-                                        icon: Icon(
-                                          Icons.image_rounded,
-                                          color: theme.primary,
+                          )
+                        : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '机器人发布动态',
+                    help: '开启后，每位已配置聊天模型的机器人会在进入广场时按设置数量生成独立动态，并按日期去重。',
+                    value: _botPosts,
+                    onChanged: (v) {
+                      setState(() => _botPosts = v);
+                      _save('bot_posts_enabled', '$v');
+                    },
+                    child: _botPosts
+                        ? Column(
+                            children: [
+                              _compactPostsPerDay(theme),
+                              _settingSwitch(
+                                theme: theme,
+                                title: '随机发布带图动态',
+                                help: '默认关闭。命中概率后会使用已授权的生图模型；生成失败时照常发布纯文本。',
+                                value: _botPostsWithImages,
+                                onChanged: (v) {
+                                  setState(() => _botPostsWithImages = v);
+                                  _save('bot_posts_with_images', '$v');
+                                },
+                                child: _botPostsWithImages
+                                    ? TextField(
+                                        controller:
+                                            _botPostsImageChanceController,
+                                        keyboardType: TextInputType.number,
+                                        decoration: _roundInput(
+                                          theme,
+                                          label: '带图概率（1–100）',
+                                          icon: Icon(
+                                            Icons.image_rounded,
+                                            color: theme.primary,
+                                          ),
                                         ),
-                                      ),
-                                      onChanged: (value) {
-                                        final chance = int.tryParse(value);
-                                        if (chance != null &&
-                                            chance >= 1 &&
-                                            chance <= 100) {
-                                          _save(
-                                            'bot_posts_image_chance',
-                                            '$chance',
-                                          );
-                                        }
-                                      },
-                                    )
-                                  : null,
-                            ),
-                          ],
-                        )
-                      : null,
-                ),
-              ],
+                                        onChanged: (value) {
+                                          final chance = int.tryParse(value);
+                                          if (chance != null &&
+                                              chance >= 1 &&
+                                              chance <= 100) {
+                                            _save(
+                                              'bot_posts_image_chance',
+                                              '$chance',
+                                            );
+                                          }
+                                        },
+                                      )
+                                    : null,
+                              ),
+                            ],
+                          )
+                        : null,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1981,103 +1985,111 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('通知管理', style: TextStyle(fontFamily: 'TideFont')),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
-        children: [
-          FrostCard(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  title: const Text(
-                    '机器人未读消息通知',
-                    style: TextStyle(fontFamily: 'TideFont'),
-                  ),
-                  subtitle: const Text(
-                    'APP 不在前台时提醒',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                  ),
-                  value: _unread,
-                  activeThumbColor: theme.primary,
-                  onChanged: (value) async {
-                    if (value && !await AppPermissions.notifications(context)) {
-                      return;
-                    }
-                    setState(() => _unread = value);
-                    await _setValue('unread_notifications', value);
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text(
-                    '下载进度通知',
-                    style: TextStyle(fontFamily: 'TideFont'),
-                  ),
-                  subtitle: const Text(
-                    '显示文件下载的实时进度',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                  ),
-                  value: _downloadProgress,
-                  activeThumbColor: theme.primary,
-                  onChanged: (value) async {
-                    if (value && !await AppPermissions.notifications(context))
-                      return;
-                    setState(() => _downloadProgress = value);
-                    await _setValue('download_progress_notifications', value);
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text(
-                    'TideBot 正在运行中',
-                    style: TextStyle(fontFamily: 'TideFont'),
-                  ),
-                  subtitle: const Text(
-                    '开启后显示持久化状态通知',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                  ),
-                  value: _keepRunning,
-                  activeThumbColor: theme.primary,
-                  onChanged: _switchingPersistentNotification
-                      ? null
-                      : (value) async {
-                          if (value &&
-                              !await AppPermissions.notifications(context)) {
-                            return;
-                          }
-                          if (!mounted) return;
-                          setState(
-                            () => _switchingPersistentNotification = true,
-                          );
-                          try {
-                            await PersistentServiceCoordinator.instance
-                                .setEnabled(value);
-                            if (!mounted) return;
-                            setState(() => _keepRunning = value);
-                          } catch (e) {
-                            if (!mounted) return;
-                            GlobalNotice.show(
-                              '无法切换运行通知：$e',
-                              color: Theme.of(context).colorScheme.error,
-                            );
-                          } finally {
-                            if (mounted) {
+        appBar: AppBar(
+          title: const Text('通知管理', style: TextStyle(fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
+            children: [
+              FrostCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      title: const Text(
+                        '机器人未读消息通知',
+                        style: TextStyle(fontFamily: 'TideFont'),
+                      ),
+                      subtitle: const Text(
+                        'APP 不在前台时提醒',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                      ),
+                      value: _unread,
+                      activeThumbColor: theme.primary,
+                      onChanged: (value) async {
+                        if (value &&
+                            !await AppPermissions.notifications(context)) {
+                          return;
+                        }
+                        setState(() => _unread = value);
+                        await _setValue('unread_notifications', value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text(
+                        '下载进度通知',
+                        style: TextStyle(fontFamily: 'TideFont'),
+                      ),
+                      subtitle: const Text(
+                        '显示文件下载的实时进度',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                      ),
+                      value: _downloadProgress,
+                      activeThumbColor: theme.primary,
+                      onChanged: (value) async {
+                        if (value &&
+                            !await AppPermissions.notifications(context))
+                          return;
+                        setState(() => _downloadProgress = value);
+                        await _setValue(
+                            'download_progress_notifications', value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text(
+                        'TideBot 正在运行中',
+                        style: TextStyle(fontFamily: 'TideFont'),
+                      ),
+                      subtitle: const Text(
+                        '开启后显示持久化状态通知',
+                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                      ),
+                      value: _keepRunning,
+                      activeThumbColor: theme.primary,
+                      onChanged: _switchingPersistentNotification
+                          ? null
+                          : (value) async {
+                              if (value &&
+                                  !await AppPermissions.notifications(
+                                      context)) {
+                                return;
+                              }
+                              if (!mounted) return;
                               setState(
-                                () => _switchingPersistentNotification = false,
+                                () => _switchingPersistentNotification = true,
                               );
-                            }
-                          }
-                        },
+                              try {
+                                await PersistentServiceCoordinator.instance
+                                    .setEnabled(value);
+                                if (!mounted) return;
+                                setState(() => _keepRunning = value);
+                              } catch (e) {
+                                if (!mounted) return;
+                                GlobalNotice.show(
+                                  '无法切换运行通知：$e',
+                                  color: Theme.of(context).colorScheme.error,
+                                );
+                              } finally {
+                                if (mounted) {
+                                  setState(
+                                    () => _switchingPersistentNotification =
+                                        false,
+                                  );
+                                }
+                              }
+                            },
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
