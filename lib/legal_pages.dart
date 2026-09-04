@@ -62,63 +62,66 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return PopScope(
-      canPop: !widget.requiredAcceptance,
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          automaticallyImplyLeading: !widget.requiredAcceptance,
-          title: const Text('用户协议与免责声明'),
+    return TideBackground(
+      child: PopScope(
+        canPop: !widget.requiredAcceptance,
+        child: Scaffold(
           backgroundColor: Colors.transparent,
-        ),
-        body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                  child: SelectableText(
-                    tideBotLegalText,
-                    style: TextStyle(
-                      fontFamily: 'TideFont',
-                      height: 1.65,
-                      color: theme.textStrong,
+          appBar: AppBar(
+            automaticallyImplyLeading: !widget.requiredAcceptance,
+            title: const Text('用户协议与免责声明'),
+            backgroundColor: Colors.transparent,
+          ),
+          body: SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                    child: SelectableText(
+                      tideBotLegalText,
+                      style: TextStyle(
+                        fontFamily: 'TideFont',
+                        height: 1.65,
+                        color: theme.textStrong,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              if (widget.requiredAcceptance)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                  child: Column(
-                    children: [
-                      CheckboxListTile(
-                        value: _agreed,
-                        onChanged: (v) => setState(() => _agreed = v ?? false),
-                        title: const Text(
-                          '我同意用户协议与免责声明',
-                          style: TextStyle(fontFamily: 'TideFont'),
+                if (widget.requiredAcceptance)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                    child: Column(
+                      children: [
+                        CheckboxListTile(
+                          value: _agreed,
+                          onChanged: (v) =>
+                              setState(() => _agreed = v ?? false),
+                          title: const Text(
+                            '我同意用户协议与免责声明',
+                            style: TextStyle(fontFamily: 'TideFont'),
+                          ),
                         ),
-                      ),
-                      CheckboxListTile(
-                        value: _adult,
-                        onChanged: (v) => setState(() => _adult = v ?? false),
-                        title: const Text(
-                          '我确认我已满18周岁',
-                          style: TextStyle(fontFamily: 'TideFont'),
+                        CheckboxListTile(
+                          value: _adult,
+                          onChanged: (v) => setState(() => _adult = v ?? false),
+                          title: const Text(
+                            '我确认我已满18周岁',
+                            style: TextStyle(fontFamily: 'TideFont'),
+                          ),
                         ),
-                      ),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: _agreed && _adult ? _confirm : null,
-                          child: const Text('确认并进入 TideBot'),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: _agreed && _adult ? _confirm : null,
+                            child: const Text('确认并进入 TideBot'),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -131,90 +134,93 @@ class TideBotAboutPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('关于 TideBot'),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  height: 112,
-                  fit: BoxFit.cover,
+        appBar: AppBar(
+          title: const Text('关于 TideBot'),
+          backgroundColor: Colors.transparent,
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    height: 112,
+                    fit: BoxFit.cover,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'TideBot',
-                style: TextStyle(
-                  fontFamily: 'TideFont',
-                  fontWeight: FontWeight.w800,
-                  fontSize: 28,
-                  color: theme.textStrong,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                '面向个人的本地优先 AI 伴侣与智能交互工具。',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontFamily: 'TideFont', color: theme.textWeak),
-              ),
-              const SizedBox(height: 28),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '功能特性',
+                const SizedBox(height: 16),
+                Text(
+                  'TideBot',
                   style: TextStyle(
                     fontFamily: 'TideFont',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 28,
                     color: theme.textStrong,
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                '多角色聊天与本地记录\n图片、语音、文件等多模态交互\n网络工具和外部访问服务\n设备端设置、记忆与日程管理',
-                style: TextStyle(fontFamily: 'TideFont', height: 1.8),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.primary,
-                    side: BorderSide(color: theme.primary),
-                  ),
-                  onPressed: () => OtaUpdate.checkNow(context),
-                  child: const Text('检测新版本'),
+                const SizedBox(height: 14),
+                Text(
+                  '面向个人的本地优先 AI 伴侣与智能交互工具。',
+                  textAlign: TextAlign.center,
+                  style:
+                      TextStyle(fontFamily: 'TideFont', color: theme.textWeak),
                 ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: theme.primary,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          const LegalAgreementPage(requiredAcceptance: false),
+                const SizedBox(height: 28),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '功能特性',
+                    style: TextStyle(
+                      fontFamily: 'TideFont',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
                     ),
                   ),
-                  child: const Text('查看用户协议与免责声明'),
                 ),
-              ),
-            ],
+                const SizedBox(height: 10),
+                const Text(
+                  '多角色聊天与本地记录\n图片、语音、文件等多模态交互\n网络工具和外部访问服务\n设备端设置、记忆与日程管理',
+                  style: TextStyle(fontFamily: 'TideFont', height: 1.8),
+                ),
+                const Spacer(),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.primary,
+                      side: BorderSide(color: theme.primary),
+                    ),
+                    onPressed: () => OtaUpdate.checkNow(context),
+                    child: const Text('检测新版本'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: theme.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            const LegalAgreementPage(requiredAcceptance: false),
+                      ),
+                    ),
+                    child: const Text('查看用户协议与免责声明'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -574,7 +574,8 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
         : _type == 'short'
             ? const Color(0xFFF09B5D)
             : const Color(0xFF8B7CF6);
-    return Scaffold(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
             backgroundColor: Colors.transparent,
@@ -706,6 +707,8 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               ),
                             );
                           }))
-        ]));
+        ]),
+      ),
+    );
   }
 }

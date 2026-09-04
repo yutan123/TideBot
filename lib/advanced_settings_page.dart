@@ -571,232 +571,242 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final logs = AppLogService.instance.entries;
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text('高级设置',
-            style: TextStyle(
-                fontFamily: 'TideFont',
-                color: theme.textStrong,
-                fontWeight: FontWeight.w700)),
-        iconTheme: IconThemeData(color: theme.iconMuted),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        children: [
-          FrostCard(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('触感反馈',
-                  style: TextStyle(
-                      fontFamily: 'TideFont',
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong)),
-              const SizedBox(height: 4),
-              Text('开启后，使用 TideBot 的按钮和卡片时会有轻微震动。',
-                  style: TextStyle(
-                      fontFamily: 'TideFont',
-                      color: theme.textWeak,
-                      fontSize: 13)),
-              Switch.adaptive(
-                value: _haptics,
-                activeThumbColor: theme.primary,
-                onChanged: (value) async {
-                  await TideHaptics.setEnabled(value);
-                  if (mounted) setState(() => _haptics = value);
-                  if (value) TideHaptics.tap();
-                },
-              ),
-            ]),
-          ),
-          const SizedBox(height: 12),
-          FrostCard(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('额外信息感知',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                subtitle: const Text('仅在你绑定机器人并授予所需权限后，按需提供设备状态。',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                value: _extraContext,
-                onChanged: (value) => _setProtectedToggle(
-                    key: 'extra_context_enabled',
-                    feature: DeviceCapabilityService.contextFeature,
-                    value: value,
-                    title: '授权额外信息感知',
-                    description: '启用后仍需逐项选择允许的信息；信息只在与当前问题有关时注入上下文。',
-                    defaultWhitelist: const {'battery', 'foreground_app'},
-                    update: (v) => _extraContext = v),
-              ),
-              _featureFooter(DeviceCapabilityService.contextFeature,
-                  const {'battery', 'foreground_app'}),
-              const Divider(),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('操作触发主动回复',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                subtitle: const Text('打开应用等操作可低概率触发已绑定机器人的主动消息。',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                value: _operationProactive,
-                onChanged: (value) => _setProtectedToggle(
-                    key: 'operation_proactive_enabled',
-                    feature: DeviceCapabilityService.proactiveFeature,
-                    value: value,
-                    title: '授权操作触发主动回复',
-                    description: '机器人只会收到你允许的触发类型。消息发送仍受主动回复设置、频率限制和绑定机器人约束。',
-                    defaultWhitelist: const {'app_opened'},
-                    update: (v) => _operationProactive = v),
-              ),
-              _featureFooter(DeviceCapabilityService.proactiveFeature,
-                  const {'app_opened'}),
-              // 机器人操控手机与悬浮窗功能已移除。
-            ]),
-          ),
-          const SizedBox(height: 12),
-          FrostCard(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('外部访问服务',
-                    style: TextStyle(fontFamily: 'TideFont')),
-                subtitle: const Text('将选定机器人作为本机 OpenAI 兼容 API 服务提供给同一局域网设备。',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                value: _externalApiEnabled,
-                activeThumbColor: theme.primary,
-                onChanged: _toggleExternalApi,
-              ),
-              if (_externalApiEnabled) ...[
-                const Divider(),
-                const Text('API Base URL',
-                    style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                const SizedBox(height: 4),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text(
-                    _externalApiUrl.isEmpty
-                        ? 'http://127.0.0.1:$_externalApiPort/v1'
-                        : _externalApiUrl,
-                    style: TextStyle(
-                        fontFamily: 'TideFont',
-                        fontSize: 13,
-                        color: theme.primary),
-                  ),
-                  trailing: const Icon(Icons.copy_rounded, size: 18),
-                  onTap: () {
-                    final url = _externalApiUrl.isEmpty
-                        ? 'http://127.0.0.1:$_externalApiPort/v1'
-                        : _externalApiUrl;
-                    Clipboard.setData(ClipboardData(text: url));
-                    GlobalNotice.show('API Base URL 已复制');
-                  },
-                ),
-                if (_externalApiUrls.length > 1)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _chooseExternalApiUrl,
-                      icon: const Icon(Icons.swap_horiz_rounded, size: 17),
-                      label: const Text('切换地址'),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: Text('高级设置',
+              style: TextStyle(
+                  fontFamily: 'TideFont',
+                  color: theme.textStrong,
+                  fontWeight: FontWeight.w700)),
+          iconTheme: IconThemeData(color: theme.iconMuted),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          children: [
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('触感反馈',
+                        style: TextStyle(
+                            fontFamily: 'TideFont',
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: theme.textStrong)),
+                    const SizedBox(height: 4),
+                    Text('开启后，使用 TideBot 的按钮和卡片时会有轻微震动。',
+                        style: TextStyle(
+                            fontFamily: 'TideFont',
+                            color: theme.textWeak,
+                            fontSize: 13)),
+                    Switch.adaptive(
+                      value: _haptics,
+                      activeThumbColor: theme.primary,
+                      onChanged: (value) async {
+                        await TideHaptics.setEnabled(value);
+                        if (mounted) setState(() => _haptics = value);
+                        if (value) TideHaptics.tap();
+                      },
                     ),
-                  ),
-                Text(
-                    '模型可留空；填写时使用机器人名称。API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
-                    style: TextStyle(
-                        fontFamily: 'TideFont',
-                        color: theme.textWeak,
-                        fontSize: 12)),
-                Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                        onPressed: _editExternalApi,
-                        icon: const Icon(Icons.settings_outlined, size: 17),
-                        label: const Text('配置'))),
-              ] else
-                TextButton.icon(
-                    onPressed: _editExternalApi,
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('配置端口、API Key 和机器人')),
-            ]),
-          ),
-          const SizedBox(height: 12),
-          FrostCard(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text('开发日志',
+                  ]),
+            ),
+            const SizedBox(height: 12),
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: [
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('额外信息感知',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('仅在你绑定机器人并授予所需权限后，按需提供设备状态。',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  value: _extraContext,
+                  onChanged: (value) => _setProtectedToggle(
+                      key: 'extra_context_enabled',
+                      feature: DeviceCapabilityService.contextFeature,
+                      value: value,
+                      title: '授权额外信息感知',
+                      description: '启用后仍需逐项选择允许的信息；信息只在与当前问题有关时注入上下文。',
+                      defaultWhitelist: const {'battery', 'foreground_app'},
+                      update: (v) => _extraContext = v),
+                ),
+                _featureFooter(DeviceCapabilityService.contextFeature,
+                    const {'battery', 'foreground_app'}),
+                const Divider(),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('操作触发主动回复',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  subtitle: const Text('打开应用等操作可低概率触发已绑定机器人的主动消息。',
+                      style: TextStyle(fontFamily: 'TideFont')),
+                  value: _operationProactive,
+                  onChanged: (value) => _setProtectedToggle(
+                      key: 'operation_proactive_enabled',
+                      feature: DeviceCapabilityService.proactiveFeature,
+                      value: value,
+                      title: '授权操作触发主动回复',
+                      description: '机器人只会收到你允许的触发类型。消息发送仍受主动回复设置、频率限制和绑定机器人约束。',
+                      defaultWhitelist: const {'app_opened'},
+                      update: (v) => _operationProactive = v),
+                ),
+                _featureFooter(DeviceCapabilityService.proactiveFeature,
+                    const {'app_opened'}),
+                // 机器人操控手机与悬浮窗功能已移除。
+              ]),
+            ),
+            const SizedBox(height: 12),
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('外部访问服务',
+                          style: TextStyle(fontFamily: 'TideFont')),
+                      subtitle: const Text(
+                          '将选定机器人作为本机 OpenAI 兼容 API 服务提供给同一局域网设备。',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      value: _externalApiEnabled,
+                      activeThumbColor: theme.primary,
+                      onChanged: _toggleExternalApi,
+                    ),
+                    if (_externalApiEnabled) ...[
+                      const Divider(),
+                      const Text('API Base URL',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      const SizedBox(height: 4),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(
+                          _externalApiUrl.isEmpty
+                              ? 'http://127.0.0.1:$_externalApiPort/v1'
+                              : _externalApiUrl,
                           style: TextStyle(
                               fontFamily: 'TideFont',
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: theme.textStrong)),
-                      const SizedBox(height: 4),
-                      Text('仅本次运行有效；退出或重启 App 后自动关闭。',
+                              fontSize: 13,
+                              color: theme.primary),
+                        ),
+                        trailing: const Icon(Icons.copy_rounded, size: 18),
+                        onTap: () {
+                          final url = _externalApiUrl.isEmpty
+                              ? 'http://127.0.0.1:$_externalApiPort/v1'
+                              : _externalApiUrl;
+                          Clipboard.setData(ClipboardData(text: url));
+                          GlobalNotice.show('API Base URL 已复制');
+                        },
+                      ),
+                      if (_externalApiUrls.length > 1)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: _chooseExternalApiUrl,
+                            icon:
+                                const Icon(Icons.swap_horiz_rounded, size: 17),
+                            label: const Text('切换地址'),
+                          ),
+                        ),
+                      Text(
+                          '模型可留空；填写时使用机器人名称。API Key：$_externalApiKey；机器人：${_bots.where((bot) => bot['id']?.toString() == _externalApiBotId).map((bot) => bot['name']?.toString()).firstOrNull ?? '未选择'}',
                           style: TextStyle(
                               fontFamily: 'TideFont',
                               color: theme.textWeak,
-                              fontSize: 13)),
-                    ])),
-                Switch.adaptive(
-                    value: _logging,
-                    activeThumbColor: theme.primary,
-                    onChanged: _toggleLog),
-              ]),
-              if (_logging) ...[
-                const SizedBox(height: 12),
-                Container(
-                  height: 220,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: theme.surfaceVariant,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: theme.border)),
-                  child: logs.isEmpty
-                      ? Center(
-                          child: Text('等待日志输出…',
-                              style: TextStyle(
-                                  fontFamily: 'TideFont',
-                                  color: theme.textFaint)))
-                      : ListView.builder(
-                          controller: _scroll,
-                          itemCount: logs.length,
-                          itemBuilder: (_, i) {
-                            final log = logs[i];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: SelectableText(
-                                  '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
-                                  style: TextStyle(
-                                      fontFamily: 'monospace',
-                                      fontSize: 11,
-                                      color: theme.textStrong)),
-                            );
-                          },
-                        ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TideDialogs.glassButton('查看历史日志',
-                  onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const LogHistoryPage())),
-                  color: theme.primary),
-            ]),
-          ),
-        ],
+                              fontSize: 12)),
+                      Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                              onPressed: _editExternalApi,
+                              icon:
+                                  const Icon(Icons.settings_outlined, size: 17),
+                              label: const Text('配置'))),
+                    ] else
+                      TextButton.icon(
+                          onPressed: _editExternalApi,
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('配置端口、API Key 和机器人')),
+                  ]),
+            ),
+            const SizedBox(height: 12),
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Text('开发日志',
+                                style: TextStyle(
+                                    fontFamily: 'TideFont',
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: theme.textStrong)),
+                            const SizedBox(height: 4),
+                            Text('仅本次运行有效；退出或重启 App 后自动关闭。',
+                                style: TextStyle(
+                                    fontFamily: 'TideFont',
+                                    color: theme.textWeak,
+                                    fontSize: 13)),
+                          ])),
+                      Switch.adaptive(
+                          value: _logging,
+                          activeThumbColor: theme.primary,
+                          onChanged: _toggleLog),
+                    ]),
+                    if (_logging) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        height: 220,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                            color: theme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: theme.border)),
+                        child: logs.isEmpty
+                            ? Center(
+                                child: Text('等待日志输出…',
+                                    style: TextStyle(
+                                        fontFamily: 'TideFont',
+                                        color: theme.textFaint)))
+                            : ListView.builder(
+                                controller: _scroll,
+                                itemCount: logs.length,
+                                itemBuilder: (_, i) {
+                                  final log = logs[i];
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: SelectableText(
+                                        '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
+                                        style: TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 11,
+                                            color: theme.textStrong)),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TideDialogs.glassButton('查看历史日志',
+                        onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const LogHistoryPage())),
+                        color: theme.primary),
+                  ]),
+            ),
+          ],
+        ),
       ),
     );
   }
