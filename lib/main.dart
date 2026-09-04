@@ -1076,34 +1076,6 @@ class _JellyDockState extends State<JellyDock>
     super.dispose();
   }
 
-  Widget _selectedPill(TideTheme theme, bool isDark) {
-    final pill = Container(
-      width: _lifting ? _growW : _width.value,
-      height: 40,
-      decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
-            ? (isDark ? const Color(0xCC23323A) : const Color(0xD9FFFFFF))
-            : theme.primary.withValues(alpha: isDark ? .34 : .24),
-        borderRadius: BorderRadius.circular(20),
-        border: theme.hasGlobalBackground
-            ? Border.all(color: Colors.white.withValues(alpha: .34))
-            : null,
-        boxShadow: theme.hasGlobalBackground
-            ? [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: .12),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ]
-            : null,
-      ),
-    );
-    return theme.hasGlobalBackground
-        ? TideLiquidGlass.accentCapsule(radius: 20, child: pill)
-        : pill;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -1115,14 +1087,27 @@ class _JellyDockState extends State<JellyDock>
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
             ? Colors.transparent
-            : (isDark ? const Color(0xE8172A31) : const Color(0xEAFBFCFE)),
+            : (isDark
+                ? const Color(0xB9172A31)
+                : Colors.white.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: .22)
-              : Colors.black.withValues(alpha: .12),
-          width: .5,
-        ),
+        border: theme.hasGlobalBackground
+            ? null
+            : Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.white.withValues(alpha: 0.25),
+                width: 0.5,
+              ),
+        boxShadow: theme.hasGlobalBackground
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
       child: LayoutBuilder(
         builder: (ctx, cs) {
@@ -1137,15 +1122,15 @@ class _JellyDockState extends State<JellyDock>
                   final pillX =
                       _position.value * totalW + (slotW - _width.value) / 2;
                   final pill = Container(
-                    width: _lifting ? _growW : _width.value,
+                    width: _width.value,
                     height: 40,
                     decoration: BoxDecoration(
                       color: theme.hasGlobalBackground
-                          ? (isDark
+                          ? (theme.isDark
                               ? const Color(0x261D2C33)
                               : const Color(0x24FFFFFF))
                           : theme.primary.withValues(
-                              alpha: isDark ? .34 : .24,
+                              alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
                             ),
                       borderRadius: BorderRadius.circular(20),
                       border: theme.hasGlobalBackground
@@ -1160,7 +1145,18 @@ class _JellyDockState extends State<JellyDock>
                                 offset: const Offset(0, 3),
                               ),
                             ]
-                          : null,
+                          : (isDark
+                              ? [
+                                  BoxShadow(
+                                    color: theme.primary.withValues(
+                                      alpha: _lifting ? 0.42 : 0.20,
+                                    ),
+                                    blurRadius: _lifting ? 18 : 10,
+                                    spreadRadius: _lifting ? 1 : 0,
+                                    offset: const Offset(0, -2),
+                                  ),
+                                ]
+                              : null),
                     ),
                   );
                   final selectedPill = theme.hasGlobalBackground
