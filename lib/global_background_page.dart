@@ -88,47 +88,50 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       _opacity = theme.globalBackgroundOpacity;
     }
     final hasImage = _path.isNotEmpty && File(_path).existsSync();
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          SafeArea(
-            child: Column(
-              children: [
-                _TopBar(
-                  title: '全局背景图',
-                  primary: theme.primary,
-                  onBack: () => Navigator.pop(context),
-                  onSave: () => _save(theme),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-                    child: _BackgroundAppPreview(
-                      theme: theme,
-                      hasImage: hasImage,
-                      path: _path,
-                      opacity: _opacity,
+    return TideBackground(
+      excludeGlobalBackground: true,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            SafeArea(
+              child: Column(
+                children: [
+                  _TopBar(
+                    title: '全局背景图',
+                    primary: theme.primary,
+                    onBack: () => Navigator.pop(context),
+                    onSave: () => _save(theme),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                      child: _BackgroundAppPreview(
+                        theme: theme,
+                        hasImage: hasImage,
+                        path: _path,
+                        opacity: _opacity,
+                      ),
                     ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                  child: _ControlSurface(
-                    theme: theme,
-                    hasImage: hasImage,
-                    opacity: _opacity,
-                    onPick: _pick,
-                    onClear: () => setState(() => _path = ''),
-                    onOpacityChanged: (value) =>
-                        setState(() => _opacity = value),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: _ControlSurface(
+                      theme: theme,
+                      hasImage: hasImage,
+                      opacity: _opacity,
+                      onPick: _pick,
+                      onClear: () => setState(() => _path = ''),
+                      onOpacityChanged: (value) =>
+                          setState(() => _opacity = value),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -177,7 +180,10 @@ class _BackgroundAppPreview extends StatelessWidget {
                   opacity: opacity,
                   child: Image.file(File(path), fit: BoxFit.cover),
                 ),
-              if (hasImage) ColoredBox(color: theme.backgroundScrim),
+              if (hasImage)
+                ColoredBox(
+                  color: Colors.black.withValues(alpha: opacity),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
                 child: Column(

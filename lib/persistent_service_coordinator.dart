@@ -45,10 +45,25 @@ class PersistentServiceCoordinator {
       'persistent_service_last_tick_finished_at',
       'persistent_service_last_error',
       'persistent_service_restart_count',
+      'persistent_service_task_proactive_replies_success_at',
+      'persistent_service_task_proactive_replies_duration_ms',
+      'proactive_last_run_at',
+      'proactive_last_result',
     ];
     final result = <String, String>{};
     for (final key in keys) {
       result[key] = await db.getKV(key) ?? '';
+    }
+    for (final bot in await db.getAllBots()) {
+      final id = bot['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      for (final suffix in const [
+        'proactive_due_at_',
+        'proactive_last_result_',
+        'proactive_unanswered_',
+      ]) {
+        result['$suffix$id'] = await db.getKV('$suffix$id') ?? '';
+      }
     }
     result['persistent_service_is_running'] =
         (await FlutterBackgroundService().isRunning()).toString();

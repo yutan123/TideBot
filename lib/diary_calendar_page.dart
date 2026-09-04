@@ -26,14 +26,18 @@ class DiaryCalendarPage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: Text('$botName的日记'),
           backgroundColor: Colors.transparent,
         ),
         body: DiaryCalendarWidget(botId: botId, botName: botName),
-      );
+      ),
+    );
+  }
 }
 
 class _DiaryCalendarWidgetState extends State<DiaryCalendarWidget> {

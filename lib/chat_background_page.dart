@@ -120,7 +120,11 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => TideBackground(
+        child: _buildContent(context),
+      );
+
+  Widget _buildContent(BuildContext context) {
     final theme = TideTheme.of(context);
     return Scaffold(
       backgroundColor: Colors.transparent,

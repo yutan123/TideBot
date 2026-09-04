@@ -183,10 +183,14 @@ void onStart(ServiceInstance service) {
     AppLogService.instance.add('SERVICE_ERROR', message);
   }
 
-  Future<void> runTask(String name, Future<void> Function() task) async {
+  Future<void> runTask(
+    String name,
+    Future<void> Function() task, {
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
     final started = DateTime.now().millisecondsSinceEpoch;
     try {
-      await task();
+      await task().timeout(timeout);
       await DBManager().setKV('persistent_service_task_${name}_success_at',
           '${DateTime.now().millisecondsSinceEpoch}');
     } catch (error, stack) {
@@ -240,7 +244,11 @@ void onStart(ServiceInstance service) {
           'mcp_auto_connect', McpConnectionService.instance.connectAuto);
       await runTask(
           'due_end_events', LifeScheduleService.instance.runDueEndEvents);
-      await runTask('proactive_replies', _runDueProactiveReplies);
+      await runTask(
+        'proactive_replies',
+        _runDueProactiveReplies,
+        timeout: const Duration(minutes: 6),
+      );
       if (!futureTasksRunning) {
         futureTasksRunning = true;
         unawaited(runTask('future_tasks', () async {
@@ -443,8 +451,13 @@ Future<void> _runDeviceEventTriggeredReply() async {
 
 Future<void> _runDueProactiveReplies() async {
   final db = DBManager();
-  if (await db.getKV('proactive_reply') == 'false') return;
   final now = DateTime.now().millisecondsSinceEpoch;
+  if (await db.getKV('proactive_reply') == 'false') {
+    await db.setKV('proactive_last_run_at', '$now');
+    await db.setKV('proactive_last_result', 'disabled');
+    return;
+  }
+  await db.setKV('proactive_last_run_at', '$now');
   final minMinutes =
       (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60).clamp(
     1,
@@ -458,6 +471,10 @@ Future<void> _runDueProactiveReplies() async {
   for (final bot in await db.getAllBots()) {
     final botId = bot['id']?.toString() ?? '';
     if (botId.isEmpty) continue;
+    if (isBotDisabled(bot['is_disabled'])) {
+      await db.setKV('proactive_last_result_$botId', 'bot_disabled');
+      continue;
+    }
     final dueKey = 'proactive_due_at_$botId';
     final dueAt = int.tryParse(await db.getKV(dueKey) ?? '') ?? 0;
     if (dueAt <= 0) {
@@ -466,12 +483,20 @@ Future<void> _runDueProactiveReplies() async {
         dueKey,
         '${now + Duration(minutes: delay).inMilliseconds}',
       );
+      await db.setKV('proactive_last_result_$botId', 'scheduled');
       continue;
     }
-    if (dueAt > now) continue;
+    if (dueAt > now) {
+      await db.setKV('proactive_last_result_$botId', 'waiting');
+      continue;
+    }
     final unanswered =
         int.tryParse(await db.getKV('proactive_unanswered_$botId') ?? '') ?? 0;
-    if (unanswered >= 3) continue;
+    if (unanswered >= 3) {
+      await db.setKV('proactive_last_result_$botId', 'unanswered_limit');
+      continue;
+    }
+    await db.setKV('proactive_last_result_$botId', 'sending');
     var resultWasSuccessful = false;
     try {
       final history = await db.getChatHistory(botId);
@@ -503,10 +528,20 @@ Future<void> _runDueProactiveReplies() async {
         final reply = result['reply']?.toString().trim() ?? '';
         if (reply.isNotEmpty) {
           await db.setKV('proactive_unanswered_$botId', '${unanswered + 1}');
+          await db.setKV('proactive_last_result_$botId', 'sent');
           resultWasSuccessful = true;
+        } else {
+          await db.setKV('proactive_last_result_$botId', 'empty_reply');
         }
+      } else {
+        await db.setKV(
+          'proactive_last_result_$botId',
+          result['silent'] == true ? 'model_silence' : 'request_failed',
+        );
       }
-    } catch (_) {}
+    } catch (error) {
+      await db.setKV('proactive_last_result_$botId', 'error: $error');
+    }
     if (resultWasSuccessful) {
       final delay = minMinutes + Random().nextInt(maxMinutes - minMinutes + 1);
       await db.setKV(
@@ -704,8 +739,8 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
           ),
-          builder: (context, child) => FlowGlassBg(
-            child: TideEdgeBackGesture(
+          builder: (context, child) {
+            final routeChild = TideEdgeBackGesture(
               child: Overlay(
                 key: globalNoticeOverlayKey,
                 initialEntries: [
@@ -714,8 +749,9 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-            ),
-          ),
+            );
+            return FlowGlassBg(child: routeChild);
+          },
           home: !_hasSeenOnboarding
               ? const OnboardingScreen()
               : !_hasAcceptedLegal
@@ -961,44 +997,18 @@ class _JellyDockState extends State<JellyDock>
   late Animation<double> _scale;
   int _previousIndex = 0;
   bool _lifting = false;
-  int? _dragTarget;
-
-  int _targetForGlobalPosition(Offset globalPosition) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return widget.currentIndex;
-    final local = box.globalToLocal(globalPosition);
-    return (local.dx / (box.size.width / _icons.length))
-        .floor()
-        .clamp(0, _icons.length - 1);
-  }
-
-  void _startDrag(LongPressStartDetails details, double slotWidth) {
+  void _startDrag(LongPressStartDetails details) {
     TideHaptics.tap();
-    final target = _targetForGlobalPosition(details.globalPosition);
-    setState(() {
-      _lifting = true;
-      _dragTarget = target;
-    });
+    setState(() => _lifting = true);
   }
 
-  void _updateDrag(LongPressMoveUpdateDetails details, double slotWidth) {
-    final target = _targetForGlobalPosition(details.globalPosition);
-    if (target != _dragTarget) setState(() => _dragTarget = target);
+  void _endDrag(LongPressEndDetails details) {
+    setState(() => _lifting = false);
   }
 
-  void _endDrag(LongPressEndDetails details, double slotWidth) {
-    final target = _dragTarget;
-    setState(() {
-      _lifting = false;
-      _dragTarget = null;
-    });
-    if (target != null) widget.onTap(target);
+  void _cancelDrag() {
+    if (mounted) setState(() => _lifting = false);
   }
-
-  void _cancelDrag() => setState(() {
-        _lifting = false;
-        _dragTarget = null;
-      });
 
   @override
   void initState() {
@@ -1066,8 +1076,8 @@ class _JellyDockState extends State<JellyDock>
       height: 40,
       decoration: BoxDecoration(
         color: theme.hasGlobalBackground
-            ? (theme.isDark ? const Color(0x3D1D2C33) : const Color(0x36FFFFFF))
-            : theme.primary.withValues(alpha: isDark ? .28 : .18),
+            ? (isDark ? const Color(0xCC23323A) : const Color(0xD9FFFFFF))
+            : theme.primary.withValues(alpha: isDark ? .34 : .24),
         borderRadius: BorderRadius.circular(20),
         border: theme.hasGlobalBackground
             ? Border.all(color: Colors.white.withValues(alpha: .34))
@@ -1100,7 +1110,7 @@ class _JellyDockState extends State<JellyDock>
           builder: (context, constraints) {
             final slotWidth = constraints.maxWidth / _icons.length;
             final position = _position.value * _icons.length;
-            final activeIndex = _dragTarget ?? position.round();
+            final activeIndex = position.round();
             return Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1113,19 +1123,19 @@ class _JellyDockState extends State<JellyDock>
                           horizontal: 6, vertical: 6),
                       decoration: BoxDecoration(
                         color: theme.hasGlobalBackground
-                            ? Colors.transparent
+                            ? (isDark
+                                ? const Color(0xD91B242B)
+                                : const Color(0xDDF7FAFC))
                             : (isDark
-                                ? const Color(0xB9172A31)
-                                : Colors.white.withValues(alpha: .35)),
+                                ? const Color(0xE8172A31)
+                                : const Color(0xEAFBFCFE)),
                         borderRadius: BorderRadius.circular(28),
-                        border: theme.hasGlobalBackground
-                            ? null
-                            : Border.all(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: .16)
-                                    : Colors.white.withValues(alpha: .25),
-                                width: .5,
-                              ),
+                        border: Border.all(
+                          color: isDark
+                              ? Colors.white.withValues(alpha: .22)
+                              : Colors.black.withValues(alpha: .12),
+                          width: .5,
+                        ),
                       ),
                       child: Row(
                         children: List.generate(_icons.length, (index) {
@@ -1135,12 +1145,8 @@ class _JellyDockState extends State<JellyDock>
                               behavior: HitTestBehavior.opaque,
                               onTapDown: (_) => TideHaptics.tap(),
                               onTap: () => widget.onTap(index),
-                              onLongPressStart: (details) =>
-                                  _startDrag(details, slotWidth),
-                              onLongPressMoveUpdate: (details) =>
-                                  _updateDrag(details, slotWidth),
-                              onLongPressEnd: (details) =>
-                                  _endDrag(details, slotWidth),
+                              onLongPressStart: _startDrag,
+                              onLongPressEnd: _endDrag,
                               onLongPressCancel: _cancelDrag,
                               child: Center(
                                 child: Stack(
@@ -1184,9 +1190,8 @@ class _JellyDockState extends State<JellyDock>
                   animation: Listenable.merge([_position, _width, _scale]),
                   builder: (context, child) {
                     final pillWidth = _lifting ? _growW : _width.value;
-                    final restingLeft =
-                        (_dragTarget ?? position.round()) * slotWidth +
-                            (slotWidth - pillWidth) / 2;
+                    final restingLeft = position.round() * slotWidth +
+                        (slotWidth - pillWidth) / 2;
                     return AnimatedPositioned(
                       duration: _lifting
                           ? Duration.zero

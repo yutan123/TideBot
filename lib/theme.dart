@@ -13,51 +13,44 @@ class TideBackground extends StatelessWidget {
     required this.child,
     this.backgroundPath,
     this.opacity,
+    this.excludeGlobalBackground = false,
   });
 
   final Widget child;
   final String? backgroundPath;
   final double? opacity;
+  final bool excludeGlobalBackground;
 
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final path = backgroundPath ?? theme.globalBackground;
-    final image = backgroundPath == null
-        ? theme.globalBackgroundImage
-        : FileImage(File(backgroundPath!));
+    final useGlobalBackground =
+        theme.hasGlobalBackground && !excludeGlobalBackground;
+    final path =
+        backgroundPath ?? (useGlobalBackground ? theme.globalBackground : '');
+    final image = backgroundPath != null
+        ? FileImage(File(backgroundPath!))
+        : useGlobalBackground
+            ? theme.globalBackgroundImage
+            : null;
     final hasImage = image != null &&
         (backgroundPath != null || theme.isGlobalBackgroundReady) &&
         (path.isEmpty || File(path).existsSync());
+    final scrimOpacity = opacity ?? theme.effectiveBackgroundOpacity;
+    final scrim = Colors.black.withValues(alpha: scrimOpacity);
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColoredBox(
-          color:
-              theme.isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA),
-        ),
+        ColoredBox(color: theme.pageBackground),
         if (hasImage)
-          Opacity(
-            opacity: opacity ?? theme.effectiveBackgroundOpacity,
-            child: Image(
-              image: image,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              errorBuilder: (_, __, ___) => const SizedBox.expand(),
-            ),
+          Image(
+            image: image,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
-        if (hasImage)
-          IgnorePointer(child: ColoredBox(color: theme.backgroundScrim)),
-        if (hasImage)
-          DefaultTextStyle.merge(
-            style: TextStyle(color: theme.onBackgroundStrong),
-            child: IconTheme.merge(
-              data: IconThemeData(color: theme.onBackgroundIcon),
-              child: child,
-            ),
-          )
-        else
-          child,
+        if (hasImage) IgnorePointer(child: ColoredBox(color: scrim)),
+        if (hasImage) child else child,
       ],
     );
   }
@@ -305,16 +298,18 @@ class TideTheme extends ChangeNotifier {
           ? (isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366))
           : (isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E));
     }
-    final light = _isBackgroundLight(region);
-    if (weak) return light ? const Color(0xFF30343A) : const Color(0xFFE2E6EA);
-    return light ? const Color(0xFF101216) : const Color(0xFFF8F9FA);
+    final onLightImage = _isBackgroundLight(region);
+    if (weak) {
+      return onLightImage ? const Color(0xDD14171C) : const Color(0xFFF3F5F7);
+    }
+    return onLightImage ? const Color(0xFF101216) : Colors.white;
   }
 
   Color get onBackgroundStrong => _onBackgroundFor(_BackgroundRegion.content);
   Color get onBackgroundWeak =>
       _onBackgroundFor(_BackgroundRegion.content, weak: true);
   Color get onBackgroundIcon => onBackgroundStrong;
-  Color get backgroundScrim => backgroundOverlayColor.withValues(
+  Color get backgroundScrim => Colors.black.withValues(
         alpha: effectiveBackgroundOpacity,
       );
 
@@ -327,9 +322,10 @@ class TideTheme extends ChangeNotifier {
 
   LinearGradient get primaryGradient =>
       LinearGradient(colors: [_primary, _primaryLight]);
-  Color get bgColor => hasGlobalBackground
-      ? Colors.transparent
-      : (isDark ? const Color(0xFF171A20) : const Color(0xFFF3F5FA));
+  Color get pageBackground =>
+      isDark ? const Color(0xFF151820) : const Color(0xFFF3F5FA);
+  Color get bgColor =>
+      hasGlobalBackground ? Colors.transparent : pageBackground;
   Color get backgroundOverlayColor =>
       isDark ? const Color(0xFF06080C) : const Color(0xFF101216);
   double get effectiveBackgroundOpacity {
@@ -340,7 +336,7 @@ class TideTheme extends ChangeNotifier {
         : _globalBackgroundOpacity;
   }
 
-  double get backgroundScrimOpacity => 0;
+  double get backgroundScrimOpacity => effectiveBackgroundOpacity;
 
   Color get surface =>
       isDark ? const Color(0xFF20242C) : const Color(0xFFFFFFFF);

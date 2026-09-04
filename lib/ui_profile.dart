@@ -132,10 +132,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-        color: TideTheme.of(context).hasGlobalBackground
-            ? Colors.transparent
-            : TideTheme.of(context).bgColor,
+  Widget build(BuildContext context) => TideBackground(
         child: SafeArea(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
@@ -200,30 +197,22 @@ class _ProfilePageState extends State<ProfilePage> {
         Icon(Icons.edit_rounded, size: 18, color: theme.onBackgroundWeak),
       ],
     );
-    if (theme.hasGlobalBackground) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: content,
-      );
-    }
     return FrostCard(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
       child: content,
     );
   }
 
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
-    final content = Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: theme.hasGlobalBackground ? 10 : 16,
-        vertical: theme.hasGlobalBackground ? 16 : 13,
-      ),
+    return FrostCard(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
       child: Row(
         children: [
           Icon(
             s['icon'] as IconData,
-            size: theme.hasGlobalBackground ? 27 : 24,
+            size: 24,
             color: theme.primary,
           ),
           const SizedBox(width: 14),
@@ -237,25 +226,10 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
-          if (!theme.hasGlobalBackground)
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 14,
-              color: theme.onBackgroundWeak,
-            ),
+          Icon(Icons.arrow_forward_ios_rounded,
+              size: 14, color: theme.onBackgroundWeak),
         ],
       ),
-    );
-    if (theme.hasGlobalBackground) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: content,
-      );
-    }
-    return FrostCard(
-      margin: const EdgeInsets.only(bottom: 7),
-      padding: EdgeInsets.zero,
-      child: content,
     );
   }
 
@@ -3457,420 +3431,426 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: const Text(
-            'API 设置',
-            style:
-                TextStyle(fontWeight: FontWeight.w600, fontFamily: 'TideFont'),
-          ),
+  Widget build(BuildContext context) => TideBackground(
+        child: Scaffold(
           backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
-            onPressed: () => Navigator.pop(context),
-          ),
-          actions: [
-            IconButton(
-              icon: Icon(
-                Icons.add_circle_outline_rounded,
-                color: TideTheme.of(context).primary,
-                size: 26,
-              ),
-              onPressed: _addProvider,
+          appBar: AppBar(
+            title: const Text(
+              'API 设置',
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, fontFamily: 'TideFont'),
             ),
-          ],
-        ),
-        body: _loading
-            ? Center(
-                child: CircularProgressIndicator(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+              onPressed: () => Navigator.pop(context),
+            ),
+            actions: [
+              IconButton(
+                icon: Icon(
+                  Icons.add_circle_outline_rounded,
                   color: TideTheme.of(context).primary,
+                  size: 26,
                 ),
-              )
-            : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_providers.isEmpty &&
-                        _sttProviders.isEmpty &&
-                        _ttsProviders.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 80),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.api_rounded,
-                                size: 60,
-                                color: Color(0xFFC7C7CC),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '还没有添加任何模型提供商',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: TideTheme.of(context).textWeak,
-                                  fontFamily: 'TideFont',
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '点击右上角 + 添加',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: TideTheme.of(context).textFaint,
-                                  fontFamily: 'TideFont',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_providers.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 8),
-                        child: Text(
-                          'AI 模型',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont',
-                            color: TideTheme.of(context).textStrong,
-                          ),
-                        ),
-                      ),
-                      ...List.generate(_providers.length, (i) {
-                        final p = _providers[i];
-                        return BouncyTap(
-                          onTap: () => _editProvider(p),
-                          child: FrostCard(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        p['name'] ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          fontFamily: 'TideFont',
-                                        ),
-                                      ),
-                                    ),
-                                    BouncyTap(
-                                      onTap: () => _testProvider(p),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                          color: TideTheme.of(
-                                            context,
-                                          ).primary.withValues(alpha: 0.15),
-                                        ),
-                                        child: Text(
-                                          '测试',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color:
-                                                TideTheme.of(context).primary,
-                                            fontFamily: 'TideFont',
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    BouncyTap(
-                                      onTap: () => _deleteProvider(i),
-                                      child: const Icon(
-                                        Icons.delete_outline_rounded,
-                                        size: 20,
-                                        color: Color(0xFFE74C3C),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  p['url'] ?? '',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textWeak,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if ((p['model'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Text(
-                                      '模型: ${p['model']}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                                if ((p['key'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                    if (_sttProviders.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 16, bottom: 8),
-                        child: Text(
-                          '语音识别 (STT)',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont',
-                            color: TideTheme.of(context).textStrong,
-                          ),
-                        ),
-                      ),
-                      ...List.generate(_sttProviders.length, (i) {
-                        final p = _sttProviders[i];
-                        return BouncyTap(
-                          onTap: () => _editProvider(p, isStt: true),
-                          child: FrostCard(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        p['name']?.toString() ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          fontFamily: 'TideFont',
-                                        ),
-                                      ),
-                                    ),
-                                    BouncyTap(
-                                      onTap: () => _testSttProvider(p),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                          color: TideTheme.of(
-                                            context,
-                                          ).primary.withValues(alpha: 0.15),
-                                        ),
-                                        child: Text(
-                                          '测试',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color:
-                                                TideTheme.of(context).primary,
-                                            fontFamily: 'TideFont',
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    BouncyTap(
-                                      onTap: () =>
-                                          _deleteProvider(i, isStt: true),
-                                      child: const Icon(
-                                        Icons.delete_outline_rounded,
-                                        size: 20,
-                                        color: Color(0xFFE74C3C),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  p['url']?.toString() ?? '',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textWeak,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                ),
-                                if ((p['model'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Text(
-                                      '模型: ${p['model']}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                                if ((p['key'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                    if (_ttsProviders.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 16, bottom: 8),
-                        child: Text(
-                          'TTS 语音',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont',
-                            color: TideTheme.of(context).textStrong,
-                          ),
-                        ),
-                      ),
-                      ...List.generate(_ttsProviders.length, (i) {
-                        final p = _ttsProviders[i];
-                        return BouncyTap(
-                          onTap: () => _editProvider(p),
-                          child: FrostCard(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        p['name'] ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          fontFamily: 'TideFont',
-                                        ),
-                                      ),
-                                    ),
-                                    BouncyTap(
-                                      onTap: () => _testTtsProvider(p),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                          color: TideTheme.of(
-                                            context,
-                                          ).primary.withValues(alpha: 0.15),
-                                        ),
-                                        child: Text(
-                                          '测试',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color:
-                                                TideTheme.of(context).primary,
-                                            fontFamily: 'TideFont',
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    BouncyTap(
-                                      onTap: () =>
-                                          _deleteProvider(i, isTts: true),
-                                      child: const Icon(
-                                        Icons.delete_outline_rounded,
-                                        size: 20,
-                                        color: Color(0xFFE74C3C),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  p['url'] ?? '',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: TideTheme.of(context).textWeak,
-                                    fontFamily: 'TideFont',
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if ((p['model'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Text(
-                                      '模型: ${p['model']}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                                if ((p['voice'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      '音色: ${p['voice']}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: TideTheme.of(context).textFaint,
-                                        fontFamily: 'TideFont',
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                  ],
-                ),
+                onPressed: _addProvider,
               ),
+            ],
+          ),
+          body: _loading
+              ? Center(
+                  child: CircularProgressIndicator(
+                    color: TideTheme.of(context).primary,
+                  ),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_providers.isEmpty &&
+                          _sttProviders.isEmpty &&
+                          _ttsProviders.isEmpty)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 80),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.api_rounded,
+                                  size: 60,
+                                  color: Color(0xFFC7C7CC),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  '还没有添加任何模型提供商',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: TideTheme.of(context).textWeak,
+                                    fontFamily: 'TideFont',
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '点击右上角 + 添加',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: TideTheme.of(context).textFaint,
+                                    fontFamily: 'TideFont',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (_providers.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 8),
+                          child: Text(
+                            'AI 模型',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont',
+                              color: TideTheme.of(context).textStrong,
+                            ),
+                          ),
+                        ),
+                        ...List.generate(_providers.length, (i) {
+                          final p = _providers[i];
+                          return BouncyTap(
+                            onTap: () => _editProvider(p),
+                            child: FrostCard(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          p['name'] ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
+                                      BouncyTap(
+                                        onTap: () => _testProvider(p),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            color: TideTheme.of(
+                                              context,
+                                            ).primary.withValues(alpha: 0.15),
+                                          ),
+                                          child: Text(
+                                            '测试',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  TideTheme.of(context).primary,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      BouncyTap(
+                                        onTap: () => _deleteProvider(i),
+                                        child: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 20,
+                                          color: Color(0xFFE74C3C),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    p['url'] ?? '',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: TideTheme.of(context).textWeak,
+                                      fontFamily: 'TideFont',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if ((p['model'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        '模型: ${p['model']}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                  if ((p['key'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                      if (_sttProviders.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text(
+                            '语音识别 (STT)',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont',
+                              color: TideTheme.of(context).textStrong,
+                            ),
+                          ),
+                        ),
+                        ...List.generate(_sttProviders.length, (i) {
+                          final p = _sttProviders[i];
+                          return BouncyTap(
+                            onTap: () => _editProvider(p, isStt: true),
+                            child: FrostCard(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          p['name']?.toString() ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
+                                      BouncyTap(
+                                        onTap: () => _testSttProvider(p),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            color: TideTheme.of(
+                                              context,
+                                            ).primary.withValues(alpha: 0.15),
+                                          ),
+                                          child: Text(
+                                            '测试',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  TideTheme.of(context).primary,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      BouncyTap(
+                                        onTap: () =>
+                                            _deleteProvider(i, isStt: true),
+                                        child: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 20,
+                                          color: Color(0xFFE74C3C),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    p['url']?.toString() ?? '',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: TideTheme.of(context).textWeak,
+                                      fontFamily: 'TideFont',
+                                    ),
+                                  ),
+                                  if ((p['model'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        '模型: ${p['model']}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                  if ((p['key'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        'Key: ${(p['key'] as String).length < 8 ? p['key'] : (p['key'] as String).substring(0, 8)}...',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                      if (_ttsProviders.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text(
+                            'TTS 语音',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont',
+                              color: TideTheme.of(context).textStrong,
+                            ),
+                          ),
+                        ),
+                        ...List.generate(_ttsProviders.length, (i) {
+                          final p = _ttsProviders[i];
+                          return BouncyTap(
+                            onTap: () => _editProvider(p),
+                            child: FrostCard(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          p['name'] ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            fontFamily: 'TideFont',
+                                          ),
+                                        ),
+                                      ),
+                                      BouncyTap(
+                                        onTap: () => _testTtsProvider(p),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            color: TideTheme.of(
+                                              context,
+                                            ).primary.withValues(alpha: 0.15),
+                                          ),
+                                          child: Text(
+                                            '测试',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  TideTheme.of(context).primary,
+                                              fontFamily: 'TideFont',
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      BouncyTap(
+                                        onTap: () =>
+                                            _deleteProvider(i, isTts: true),
+                                        child: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 20,
+                                          color: Color(0xFFE74C3C),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    p['url'] ?? '',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: TideTheme.of(context).textWeak,
+                                      fontFamily: 'TideFont',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if ((p['model'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        '模型: ${p['model']}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                  if ((p['voice'] ?? '').toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        '音色: ${p['voice']}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color:
+                                              TideTheme.of(context).textFaint,
+                                          fontFamily: 'TideFont',
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                ),
+        ),
       );
 }
-
-// Homepage entries intentionally use the theme's foreground semantics directly when a global background is active.
