@@ -384,97 +384,102 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        title: Text(_isSkill ? 'Skill 管理' : 'MCP 管理'),
-        actions: [
-          IconButton(
-            tooltip: '添加',
-            icon: const Icon(Icons.add_rounded),
-            onPressed: _isSkill ? _addSkill : _addMcp,
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
-              ? Center(child: Text(_isSkill ? '暂无 Skill' : '暂无 MCP 服务'))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final item = _items[index];
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: theme.surface.withValues(alpha: .62),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: theme.border),
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () => _showDetails(item),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(item['name']?.toString() ?? '',
-                                        maxLines: 1,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: Text(_isSkill ? 'Skill 管理' : 'MCP 管理'),
+          actions: [
+            IconButton(
+              tooltip: '添加',
+              icon: const Icon(Icons.add_rounded),
+              onPressed: _isSkill ? _addSkill : _addMcp,
+            ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _items.isEmpty
+                ? Center(child: Text(_isSkill ? '暂无 Skill' : '暂无 MCP 服务'))
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    itemCount: _items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final item = _items[index];
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: theme.surface.withValues(alpha: .62),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: theme.border),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => _showDetails(item),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(item['name']?.toString() ?? '',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _isSkill
+                                            ? 'v${item['version']} · ${item['status']}'
+                                            : '${item['url']} · ${item['status']}',
+                                        maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w700)),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _isSkill
-                                          ? 'v${item['version']} · ${item['status']}'
-                                          : '${item['url']} · ${item['status']}',
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: theme.textFaint, fontSize: 12),
-                                    ),
-                                  ],
+                                        style: TextStyle(
+                                            color: theme.textFaint,
+                                            fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Switch.adaptive(
-                                value: item['enabled'] == 1,
-                                onChanged: (enabled) async {
-                                  if (_isSkill) {
-                                    await _db.setSkillEnabled(
-                                        item['id'].toString(), enabled);
-                                  } else {
-                                    await _db.setMcpServerEnabled(
-                                        item['id'].toString(), enabled);
-                                    if (enabled) await _connectMcpItem(item);
-                                  }
-                                  await _reload();
-                                },
-                              ),
-                              IconButton(
-                                tooltip: '刷新连接',
-                                icon: const Icon(Icons.refresh_rounded),
-                                onPressed: _isSkill || item['enabled'] != 1
-                                    ? null
-                                    : () => _connectMcpItem(item),
-                              ),
-                              IconButton(
-                                tooltip: '删除',
-                                icon: const Icon(Icons.delete_outline_rounded),
-                                onPressed: () => _deleteItem(item),
-                              ),
-                            ],
+                                Switch.adaptive(
+                                  value: item['enabled'] == 1,
+                                  onChanged: (enabled) async {
+                                    if (_isSkill) {
+                                      await _db.setSkillEnabled(
+                                          item['id'].toString(), enabled);
+                                    } else {
+                                      await _db.setMcpServerEnabled(
+                                          item['id'].toString(), enabled);
+                                      if (enabled) await _connectMcpItem(item);
+                                    }
+                                    await _reload();
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: '刷新连接',
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  onPressed: _isSkill || item['enabled'] != 1
+                                      ? null
+                                      : () => _connectMcpItem(item),
+                                ),
+                                IconButton(
+                                  tooltip: '删除',
+                                  icon:
+                                      const Icon(Icons.delete_outline_rounded),
+                                  onPressed: () => _deleteItem(item),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
+      ),
     );
   }
 

@@ -837,181 +837,186 @@ class _CallPageState extends State<CallPage>
         : 'TideBot';
     final avatar = widget.bot['avatar']?.toString() ?? '';
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Positioned(
-              top: 12,
-              right: 12,
-              child: IconButton(
-                onPressed: _endCall,
-                icon: Icon(Icons.close_rounded, color: theme.iconMuted),
-                tooltip: '结束通话',
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Positioned(
+                top: 12,
+                right: 12,
+                child: IconButton(
+                  onPressed: _endCall,
+                  icon: Icon(Icons.close_rounded, color: theme.iconMuted),
+                  tooltip: '结束通话',
+                ),
               ),
-            ),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(28, 34, 28, 20),
-                child: Column(
-                  children: [
-                    AnimatedBuilder(
-                      animation: _wave,
-                      builder: (context, _) => SizedBox(
-                        width: 150,
-                        height: 150,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            if (_recording || _botSpeaking)
-                              Container(
-                                width: 124 + (_wave.value * 8),
-                                height: 124 + (_wave.value * 8),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: theme.primary.withValues(alpha: .22),
-                                    width: 2,
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(28, 34, 28, 20),
+                  child: Column(
+                    children: [
+                      AnimatedBuilder(
+                        animation: _wave,
+                        builder: (context, _) => SizedBox(
+                          width: 150,
+                          height: 150,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              if (_recording || _botSpeaking)
+                                Container(
+                                  width: 124 + (_wave.value * 8),
+                                  height: 124 + (_wave.value * 8),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color:
+                                          theme.primary.withValues(alpha: .22),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              TideBotAvatar(
+                                  name: name, path: avatar, size: 104),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(name,
+                          style: TextStyle(
+                              color: theme.textStrong,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'TideFont')),
+                      const SizedBox(height: 3),
+                      Text('${_callStateLabel()}  ·  ${_formatClock(_elapsed)}',
+                          style: TextStyle(
+                              color: ready ? theme.primary : theme.textWeak,
+                              fontSize: 14,
+                              fontFamily: 'TideFont')),
+                      const SizedBox(height: 8),
+                      Expanded(child: _messageList(theme)),
+                      if (_showTextComposer) ...[
+                        _textComposer(theme),
+                        const SizedBox(height: 8),
+                      ],
+                      if (!ready && widget.onOpenSettings != null) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                            onPressed: widget.onOpenSettings,
+                            icon: Icon(Icons.settings_rounded,
+                                color: theme.primary),
+                            label: Text('配置语音模型',
+                                style: TextStyle(
+                                    color: theme.primary,
+                                    fontFamily: 'TideFont'))),
+                      ],
+                      if (ready) ...[
+                        const SizedBox(height: 8),
+                        if (_flowState == CallFlowState.failed)
+                          OutlinedButton.icon(
+                            onPressed: _retryVoiceFlow,
+                            icon: Icon(Icons.refresh_rounded,
+                                color: theme.primary),
+                            label: Text(
+                              '重试',
+                              style: TextStyle(
+                                color: theme.primary,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          )
+                        else
+                          _callActionButton(theme),
+                      ],
+                      const SizedBox(height: 12),
+                      SafeArea(
+                        top: false,
+                        child: SizedBox(
+                          height: 64,
+                          child: Stack(
+                            alignment: Alignment.topCenter,
+                            children: [
+                              Align(
+                                  alignment: Alignment.topLeft,
+                                  child: _roundButton(
+                                      icon: _muted
+                                          ? Icons.mic_off_rounded
+                                          : Icons.mic_rounded,
+                                      label: _muted ? '已静音' : '静音',
+                                      color: theme.surfaceVariant,
+                                      iconColor: theme.textStrong,
+                                      onTap: () async {
+                                        TideHaptics.tap();
+                                        if (_muted) {
+                                          setState(() => _muted = false);
+                                          await _startListening();
+                                        } else {
+                                          _vadActive = false;
+                                          _autoStopTimer?.cancel();
+                                          _stopAmpMonitor();
+                                          _silentTicks = 0;
+                                          if (_recording)
+                                            await _recorder.stop();
+                                          _recordingStartedAt = null;
+                                          setState(() {
+                                            _muted = true;
+                                            _recording = false;
+                                            _flowState = CallFlowState.idle;
+                                            _caption = '已静音';
+                                          });
+                                        }
+                                      })),
+                              _roundButton(
+                                  icon: Icons.call_end_rounded,
+                                  label: '挂断',
+                                  color: const Color(0xFFE74C3C),
+                                  iconColor: Colors.white,
+                                  onTap: _endCall),
+                              Align(
+                                  alignment: Alignment.topRight,
+                                  child: _roundButton(
+                                      icon: _speakerMuted
+                                          ? Icons.volume_off_rounded
+                                          : Icons.volume_up_rounded,
+                                      label: _speakerMuted ? '声音关闭' : '声音开启',
+                                      color: theme.surfaceVariant,
+                                      iconColor: theme.textStrong,
+                                      onTap: () async {
+                                        TideHaptics.tap();
+                                        final next = !_speakerMuted;
+                                        setState(() => _speakerMuted = next);
+                                        await _player.setVolume(next ? 0 : 1);
+                                      })),
+                              Positioned(
+                                right: 72,
+                                top: 2,
+                                child: IconButton(
+                                  tooltip: '文字回复',
+                                  onPressed: _processing || _ending
+                                      ? null
+                                      : _openTextComposer,
+                                  icon: Icon(
+                                    _showTextComposer
+                                        ? Icons.edit_off_rounded
+                                        : Icons.edit_rounded,
+                                    color: theme.primary,
                                   ),
                                 ),
                               ),
-                            TideBotAvatar(name: name, path: avatar, size: 104),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(name,
-                        style: TextStyle(
-                            color: theme.textStrong,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 3),
-                    Text('${_callStateLabel()}  ·  ${_formatClock(_elapsed)}',
-                        style: TextStyle(
-                            color: ready ? theme.primary : theme.textWeak,
-                            fontSize: 14,
-                            fontFamily: 'TideFont')),
-                    const SizedBox(height: 8),
-                    Expanded(child: _messageList(theme)),
-                    if (_showTextComposer) ...[
-                      _textComposer(theme),
-                      const SizedBox(height: 8),
-                    ],
-                    if (!ready && widget.onOpenSettings != null) ...[
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                          onPressed: widget.onOpenSettings,
-                          icon: Icon(Icons.settings_rounded,
-                              color: theme.primary),
-                          label: Text('配置语音模型',
-                              style: TextStyle(
-                                  color: theme.primary,
-                                  fontFamily: 'TideFont'))),
-                    ],
-                    if (ready) ...[
-                      const SizedBox(height: 8),
-                      if (_flowState == CallFlowState.failed)
-                        OutlinedButton.icon(
-                          onPressed: _retryVoiceFlow,
-                          icon:
-                              Icon(Icons.refresh_rounded, color: theme.primary),
-                          label: Text(
-                            '重试',
-                            style: TextStyle(
-                              color: theme.primary,
-                              fontFamily: 'TideFont',
-                            ),
+                            ],
                           ),
-                        )
-                      else
-                        _callActionButton(theme),
-                    ],
-                    const SizedBox(height: 12),
-                    SafeArea(
-                      top: false,
-                      child: SizedBox(
-                        height: 64,
-                        child: Stack(
-                          alignment: Alignment.topCenter,
-                          children: [
-                            Align(
-                                alignment: Alignment.topLeft,
-                                child: _roundButton(
-                                    icon: _muted
-                                        ? Icons.mic_off_rounded
-                                        : Icons.mic_rounded,
-                                    label: _muted ? '已静音' : '静音',
-                                    color: theme.surfaceVariant,
-                                    iconColor: theme.textStrong,
-                                    onTap: () async {
-                                      TideHaptics.tap();
-                                      if (_muted) {
-                                        setState(() => _muted = false);
-                                        await _startListening();
-                                      } else {
-                                        _vadActive = false;
-                                        _autoStopTimer?.cancel();
-                                        _stopAmpMonitor();
-                                        _silentTicks = 0;
-                                        if (_recording) await _recorder.stop();
-                                        _recordingStartedAt = null;
-                                        setState(() {
-                                          _muted = true;
-                                          _recording = false;
-                                          _flowState = CallFlowState.idle;
-                                          _caption = '已静音';
-                                        });
-                                      }
-                                    })),
-                            _roundButton(
-                                icon: Icons.call_end_rounded,
-                                label: '挂断',
-                                color: const Color(0xFFE74C3C),
-                                iconColor: Colors.white,
-                                onTap: _endCall),
-                            Align(
-                                alignment: Alignment.topRight,
-                                child: _roundButton(
-                                    icon: _speakerMuted
-                                        ? Icons.volume_off_rounded
-                                        : Icons.volume_up_rounded,
-                                    label: _speakerMuted ? '声音关闭' : '声音开启',
-                                    color: theme.surfaceVariant,
-                                    iconColor: theme.textStrong,
-                                    onTap: () async {
-                                      TideHaptics.tap();
-                                      final next = !_speakerMuted;
-                                      setState(() => _speakerMuted = next);
-                                      await _player.setVolume(next ? 0 : 1);
-                                    })),
-                            Positioned(
-                              right: 72,
-                              top: 2,
-                              child: IconButton(
-                                tooltip: '文字回复',
-                                onPressed: _processing || _ending
-                                    ? null
-                                    : _openTextComposer,
-                                icon: Icon(
-                                  _showTextComposer
-                                      ? Icons.edit_off_rounded
-                                      : Icons.edit_rounded,
-                                  color: theme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
