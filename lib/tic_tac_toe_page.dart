@@ -104,68 +104,70 @@ class _TicTacToePageState extends State<TicTacToePage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-          title: const Text('井字棋', style: TextStyle(fontFamily: 'TideFont')),
-          backgroundColor: Colors.transparent,
-          actions: [
-            IconButton(
-                onPressed: _reset,
-                icon: const Icon(Icons.refresh_rounded),
-                tooltip: '重新开始')
-          ]),
-      body: SafeArea(
-          child: Center(
-              child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('你是 X · TideBot 是 O',
-                  style:
-                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
-              const SizedBox(height: 12),
-              Text(_status,
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const SizedBox(height: 28),
-              AspectRatio(
-                  aspectRatio: 1,
-                  child: GridView.builder(
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: 9,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              crossAxisSpacing: 8,
-                              mainAxisSpacing: 8),
-                      itemBuilder: (_, i) => InkWell(
-                          onTap: () => _move(i),
-                          borderRadius: BorderRadius.circular(18),
-                          child: Container(
-                              decoration: BoxDecoration(
-                                  color: theme.surfaceVariant,
-                                  borderRadius: BorderRadius.circular(18)),
-                              child: Center(
-                                  child: Text(_board[i],
-                                      style: TextStyle(
-                                          fontSize: 48,
-                                          fontWeight: FontWeight.w700,
-                                          color: _board[i] == 'X'
-                                              ? theme.primary
-                                              : theme.textStrong))))))),
-              const SizedBox(height: 24),
-              FilledButton.icon(
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+            title: const Text('井字棋', style: TextStyle(fontFamily: 'TideFont')),
+            backgroundColor: Colors.transparent,
+            actions: [
+              IconButton(
                   onPressed: _reset,
-                  icon: const Icon(Icons.replay_rounded),
-                  label: const Text('再来一局',
-                      style: TextStyle(fontFamily: 'TideFont'))),
-            ])),
-      ))),
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: '重新开始')
+            ]),
+        body: SafeArea(
+            child: Center(
+                child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430),
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('你是 X · TideBot 是 O',
+                    style: TextStyle(
+                        color: theme.textWeak, fontFamily: 'TideFont')),
+                const SizedBox(height: 12),
+                Text(_status,
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: theme.textStrong,
+                        fontFamily: 'TideFont')),
+                const SizedBox(height: 28),
+                AspectRatio(
+                    aspectRatio: 1,
+                    child: GridView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: 9,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8),
+                        itemBuilder: (_, i) => InkWell(
+                            onTap: () => _move(i),
+                            borderRadius: BorderRadius.circular(18),
+                            child: Container(
+                                decoration: BoxDecoration(
+                                    color: theme.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(18)),
+                                child: Center(
+                                    child: Text(_board[i],
+                                        style: TextStyle(
+                                            fontSize: 48,
+                                            fontWeight: FontWeight.w700,
+                                            color: _board[i] == 'X'
+                                                ? theme.primary
+                                                : theme.textStrong))))))),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                    onPressed: _reset,
+                    icon: const Icon(Icons.replay_rounded),
+                    label: const Text('再来一局',
+                        style: TextStyle(fontFamily: 'TideFont'))),
+              ])),
+        ))),
+      ),
     );
   }
 }

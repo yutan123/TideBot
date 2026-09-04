@@ -715,58 +715,62 @@ class _GameArenaPageState extends State<GameArenaPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        title: Text('${widget.game} · $_botName',
-            style: const TextStyle(fontFamily: 'TideFont')),
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _reset)
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(padding: const EdgeInsets.all(18), child: _gameBody(theme)),
-            const Divider(),
-            Expanded(
-              child: ListView.builder(
-                controller: _messageScrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _messages.length,
-                itemBuilder: (_, index) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(_messages[index],
-                      style: TextStyle(
-                          color: theme.textStrong, fontFamily: 'TideFont')),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: Text('${widget.game} · $_botName',
+              style: const TextStyle(fontFamily: 'TideFont')),
+          actions: [
+            IconButton(
+                icon: const Icon(Icons.refresh_rounded), onPressed: _reset)
+          ],
+        ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                  padding: const EdgeInsets.all(18), child: _gameBody(theme)),
+              const Divider(),
+              Expanded(
+                child: ListView.builder(
+                  controller: _messageScrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _messages.length,
+                  itemBuilder: (_, index) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(_messages[index],
+                        style: TextStyle(
+                            color: theme.textStrong, fontFamily: 'TideFont')),
+                  ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _chatController,
-                      onSubmitted: (_) => _talk(),
-                      decoration: InputDecoration(
-                        hintText: '和 $_botName 聊聊游戏…',
-                        filled: true,
-                        fillColor: theme.surfaceVariant,
-                        border: InputBorder.none,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _chatController,
+                        onSubmitted: (_) => _talk(),
+                        decoration: InputDecoration(
+                          hintText: '和 $_botName 聊聊游戏…',
+                          filled: true,
+                          fillColor: theme.surfaceVariant,
+                          border: InputBorder.none,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: _waitingForReply ? null : _talk,
-                    icon: Icon(Icons.send_rounded, color: theme.primary),
-                  ),
-                ],
+                    IconButton(
+                      onPressed: _waitingForReply ? null : _talk,
+                      icon: Icon(Icons.send_rounded, color: theme.primary),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
