@@ -522,6 +522,7 @@ Future<void> _runDueProactiveReplies() async {
                 '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：$minutesSinceLast 分钟。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发或系统指令。回复限 1-3 个短句、80 字内。最近对话：\n$recent',
             persistResponse: true,
             notifyResponse: true,
+            includeChatHistory: false,
           )
           .timeout(const Duration(minutes: 5));
       if (result['success'] == true && result['silent'] != true) {
@@ -549,7 +550,12 @@ Future<void> _runDueProactiveReplies() async {
         '${DateTime.now().millisecondsSinceEpoch + Duration(minutes: delay).inMilliseconds}',
       );
     } else {
-      await db.setKV(dueKey, '0');
+      // On failure or silence, retry after 5-10 minutes
+      final retryDelay = 5 + Random().nextInt(6);
+      await db.setKV(
+        dueKey,
+        '${DateTime.now().millisecondsSinceEpoch + Duration(minutes: retryDelay).inMilliseconds}',
+      );
     }
   }
 }
@@ -1024,8 +1030,8 @@ class _JellyDockState extends State<JellyDock>
 
   void _configureAnimations() {
     _position = Tween<double>(
-      begin: _previousIndex / _icons.length,
-      end: widget.currentIndex / _icons.length,
+      begin: _previousIndex * 0.25,
+      end: widget.currentIndex * 0.25,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
     _width = TweenSequence<double>([
       TweenSequenceItem(
@@ -1102,115 +1108,134 @@ class _JellyDockState extends State<JellyDock>
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: SizedBox(
-        height: 56,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final slotWidth = constraints.maxWidth / _icons.length;
-            final position = _position.value * _icons.length;
-            final activeIndex = position.round();
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned.fill(
-                  child: TideLiquidGlass.dock(
-                    radius: 28,
-                    clipExpansion: const EdgeInsets.fromLTRB(16, 28, 16, 18),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: theme.hasGlobalBackground
-                            ? (isDark
-                                ? const Color(0xD91B242B)
-                                : const Color(0xDDF7FAFC))
-                            : (isDark
-                                ? const Color(0xE8172A31)
-                                : const Color(0xEAFBFCFE)),
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: .22)
-                              : Colors.black.withValues(alpha: .12),
-                          width: .5,
-                        ),
-                      ),
-                      child: Row(
-                        children: List.generate(_icons.length, (index) {
-                          final active = activeIndex == index;
-                          return Expanded(
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTapDown: (_) => TideHaptics.tap(),
-                              onTap: () => widget.onTap(index),
-                              onLongPressStart: _startDrag,
-                              onLongPressEnd: _endDrag,
-                              onLongPressCancel: _cancelDrag,
-                              child: Center(
-                                child: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    Icon(
-                                      _icons[index],
-                                      color: active
-                                          ? theme.primary
-                                          : const Color(0xFFAEAEB2),
-                                      size: 22,
+    final dock = Container(
+      height: 56,
+      clipBehavior: Clip.none,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.hasGlobalBackground
+            ? Colors.transparent
+            : (isDark ? const Color(0xE8172A31) : const Color(0xEAFBFCFE)),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: .22)
+              : Colors.black.withValues(alpha: .12),
+          width: .5,
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (ctx, cs) {
+          final totalW = cs.maxWidth;
+          final slotW = totalW / _icons.length;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedBuilder(
+                animation: Listenable.merge([_position, _width, _scale]),
+                builder: (c, child) {
+                  final pillX =
+                      _position.value * totalW + (slotW - _width.value) / 2;
+                  final pill = Container(
+                    width: _lifting ? _growW : _width.value,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: theme.hasGlobalBackground
+                          ? (isDark
+                              ? const Color(0x261D2C33)
+                              : const Color(0x24FFFFFF))
+                          : theme.primary.withValues(
+                              alpha: isDark ? .34 : .24,
+                            ),
+                      borderRadius: BorderRadius.circular(20),
+                      border: theme.hasGlobalBackground
+                          ? Border.all(
+                              color: Colors.white.withValues(alpha: .34))
+                          : null,
+                      boxShadow: theme.hasGlobalBackground
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: .12),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : null,
+                    ),
+                  );
+                  final selectedPill = theme.hasGlobalBackground
+                      ? TideLiquidGlass.accentCapsule(
+                          radius: 20,
+                          child: pill,
+                        )
+                      : pill;
+                  return Positioned(
+                    left: pillX,
+                    top: isDark && _lifting ? 0 : 2,
+                    child: Transform.scale(
+                      scale: _scale.value * (isDark && _lifting ? 1.08 : 1.0),
+                      alignment: Alignment.center,
+                      child: selectedPill,
+                    ),
+                  );
+                },
+              ),
+              Row(
+                children: List.generate(_icons.length, (i) {
+                  final act = widget.currentIndex == i;
+                  return Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) => TideHaptics.tap(),
+                      onLongPressStart: isDark ? _startDrag : null,
+                      onLongPressEnd: isDark ? _endDrag : null,
+                      onLongPressCancel: isDark ? _cancelDrag : null,
+                      onTap: () => widget.onTap(i),
+                      child: Center(
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Icon(
+                              _icons[i],
+                              color:
+                                  act ? theme.primary : const Color(0xFFAEAEB2),
+                              size: 22,
+                            ),
+                            if (i == 0 && widget.unreadCount > 0)
+                              Positioned(
+                                right: -5,
+                                top: -5,
+                                child: Container(
+                                  width: 9,
+                                  height: 9,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFF3B30),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: theme.surface,
+                                      width: 1.5,
                                     ),
-                                    if (index == 0 && widget.unreadCount > 0)
-                                      Positioned(
-                                        right: -5,
-                                        top: -5,
-                                        child: Container(
-                                          width: 9,
-                                          height: 9,
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFFF3B30),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: theme.surface,
-                                              width: 1.5,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ),
-                AnimatedBuilder(
-                  animation: Listenable.merge([_position, _width, _scale]),
-                  builder: (context, child) {
-                    final pillWidth = _lifting ? _growW : _width.value;
-                    final restingLeft = position.round() * slotWidth +
-                        (slotWidth - pillWidth) / 2;
-                    return AnimatedPositioned(
-                      duration: _lifting
-                          ? Duration.zero
-                          : const Duration(milliseconds: 300),
-                      curve: Curves.easeOutBack,
-                      left: restingLeft,
-                      top: _lifting ? -12 : 2,
-                      child: Transform.scale(
-                        scale: _scale.value * (_lifting ? 1.26 : 1.0),
-                        alignment: Alignment.center,
-                        child: _selectedPill(theme, isDark),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        ),
+                  );
+                }),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(40, 12, 40, 0),
+      child: TideLiquidGlass.dock(
+        radius: 28,
+        clipExpansion: const EdgeInsets.fromLTRB(12, 16, 12, 18),
+        child: dock,
       ),
     );
   }

@@ -347,12 +347,10 @@ class TideTheme extends ChangeNotifier {
   // Night surfaces stay neutral graphite so theme accents and image content remain distinct.
 
   // 文字主色
-  Color get textStrong => hasGlobalBackground
-      ? onBackgroundStrong
-      : (isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E));
-  Color get textWeak => hasGlobalBackground
-      ? onBackgroundWeak
-      : (isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366));
+  Color get textStrong =>
+      isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E);
+  Color get textWeak =>
+      isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366);
   // 更弱的文字/图标色
   Color get textFaint =>
       isDark ? const Color(0xFF5A5F68) : const Color(0xFFC7C7CC);
@@ -363,9 +361,8 @@ class TideTheme extends ChangeNotifier {
   Color get border =>
       isDark ? const Color(0x33FFFFFF) : const Color(0x1A000000);
   // 图标弱色
-  Color get iconMuted => hasGlobalBackground
-      ? onBackgroundWeak
-      : (isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93));
+  Color get iconMuted =>
+      isDark ? const Color(0xFF9AA1A9) : const Color(0xFF8E8E93);
   // AI/次要气泡底色（日间浅白、夜间深灰）
   Color get bubbleAi =>
       isDark ? const Color(0xFF292E38) : const Color(0xFFFFFFFF);

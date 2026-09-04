@@ -175,11 +175,7 @@ class _BackgroundAppPreview extends StatelessWidget {
                     ? const Color(0xFF151820)
                     : const Color(0xFFF3F5FA),
               ),
-              if (hasImage)
-                Opacity(
-                  opacity: opacity,
-                  child: Image.file(File(path), fit: BoxFit.cover),
-                ),
+              if (hasImage) Image.file(File(path), fit: BoxFit.cover),
               if (hasImage)
                 ColoredBox(
                   color: Colors.black.withValues(alpha: opacity),
