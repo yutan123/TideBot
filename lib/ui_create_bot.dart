@@ -148,83 +148,86 @@ class _CreateBotPageState extends State<CreateBotPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-          title: Text(_isEdit ? '编辑机器人' : '创建机器人',
-              style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'TideFont',
-                  fontSize: 18,
-                  color: theme.textStrong)),
-          centerTitle: true,
-          leading: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Icon(Icons.arrow_back_ios_rounded,
-                  size: 20, color: theme.textStrong))),
-      body: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _label('名字'),
-            const SizedBox(height: 6),
-            _field(_nameC, '给机器人取个名字'),
-            const SizedBox(height: 20),
-            _label('人格设定'),
-            const SizedBox(height: 6),
-            _field(_promptC, '简要描述机器人的性格和背景', maxLines: 3),
-            const SizedBox(height: 20),
-            _label('说话方式'),
-            const SizedBox(height: 6),
-            _field(_styleC, '详细描述说话风格、用词习惯等', maxLines: 4),
-            const SizedBox(height: 20),
-            _label('头像（可选）'),
-            const SizedBox(height: 6),
-            GestureDetector(
-                onTap: _pickAvatar,
-                child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(36),
-                        color: theme.surfaceVariant,
-                        border: Border.all(color: theme.border)),
-                    child: _avatar.isNotEmpty
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(36),
-                            child: Image.file(File(_avatar), fit: BoxFit.cover))
-                        : Center(
-                            child: Icon(Icons.add_a_photo_rounded,
-                                color: theme.iconMuted, size: 26)))),
-            const SizedBox(height: 28),
-            BouncyTap(
-                onTap: _save,
-                child: SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: Container(
-                        decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(24),
-                            gradient: LinearGradient(colors: [
-                              TideTheme.of(context).primary,
-                              TideTheme.of(context).primaryLight
-                            ]),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: TideTheme.of(context)
-                                      .primary
-                                      .withValues(alpha: 0.3),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 5))
-                            ]),
-                        child: Center(
-                            child: Text(_isEdit ? '保存修改' : '创建',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    fontFamily: 'TideFont')))))),
-          ])),
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+            title: Text(_isEdit ? '编辑机器人' : '创建机器人',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont',
+                    fontSize: 18,
+                    color: theme.textStrong)),
+            centerTitle: true,
+            leading: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Icon(Icons.arrow_back_ios_rounded,
+                    size: 20, color: theme.textStrong))),
+        body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _label('名字'),
+              const SizedBox(height: 6),
+              _field(_nameC, '给机器人取个名字'),
+              const SizedBox(height: 20),
+              _label('人格设定'),
+              const SizedBox(height: 6),
+              _field(_promptC, '简要描述机器人的性格和背景', maxLines: 3),
+              const SizedBox(height: 20),
+              _label('说话方式'),
+              const SizedBox(height: 6),
+              _field(_styleC, '详细描述说话风格、用词习惯等', maxLines: 4),
+              const SizedBox(height: 20),
+              _label('头像（可选）'),
+              const SizedBox(height: 6),
+              GestureDetector(
+                  onTap: _pickAvatar,
+                  child: Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(36),
+                          color: theme.surfaceVariant,
+                          border: Border.all(color: theme.border)),
+                      child: _avatar.isNotEmpty
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(36),
+                              child:
+                                  Image.file(File(_avatar), fit: BoxFit.cover))
+                          : Center(
+                              child: Icon(Icons.add_a_photo_rounded,
+                                  color: theme.iconMuted, size: 26)))),
+              const SizedBox(height: 28),
+              BouncyTap(
+                  onTap: _save,
+                  child: SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: Container(
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(24),
+                              gradient: LinearGradient(colors: [
+                                TideTheme.of(context).primary,
+                                TideTheme.of(context).primaryLight
+                              ]),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: TideTheme.of(context)
+                                        .primary
+                                        .withValues(alpha: 0.3),
+                                    blurRadius: 14,
+                                    offset: const Offset(0, 5))
+                              ]),
+                          child: Center(
+                              child: Text(_isEdit ? '保存修改' : '创建',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: 'TideFont')))))),
+            ])),
+      ),
     );
   }
 
