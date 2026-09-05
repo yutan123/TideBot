@@ -93,95 +93,100 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       0,
       (total, id) => total + (_chatBytes[id] ?? 0),
     );
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text('聊天数据库', style: TextStyle(color: theme.onBackgroundStrong)),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-      ),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: theme.primary))
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-              children: [
-                FrostCard(
-                  child: Row(
-                    children: [
-                      Icon(Icons.storage_rounded, color: theme.primary),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '聊天数据库 ${_format(_database)}',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                            color: theme.textStrong,
-                            fontFamily: 'TideFont',
+        appBar: AppBar(
+          title:
+              Text('聊天数据库', style: TextStyle(color: theme.onBackgroundStrong)),
+          backgroundColor: Colors.transparent,
+        ),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: theme.primary))
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                children: [
+                  FrostCard(
+                    child: Row(
+                      children: [
+                        Icon(Icons.storage_rounded, color: theme.primary),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '聊天数据库 ${_format(_database)}',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: theme.textStrong,
+                              fontFamily: 'TideFont',
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  '选择要删除聊天记录的机器人',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: theme.onBackgroundStrong,
-                    fontFamily: 'TideFont',
+                  const SizedBox(height: 20),
+                  Text(
+                    '选择要删除聊天记录的机器人',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: theme.onBackgroundStrong,
+                      fontFamily: 'TideFont',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                FrostCard(
-                  padding: EdgeInsets.zero,
-                  child: _bots.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text('暂无机器人', textAlign: TextAlign.start),
-                        )
-                      : Column(
-                          children: _bots.map((bot) {
-                            final id = bot['id']?.toString() ?? '';
-                            return CheckboxListTile(
-                              value: _selected.contains(id),
-                              onChanged: (value) => setState(() {
-                                if (value == true) {
-                                  _selected.add(id);
-                                } else {
-                                  _selected.remove(id);
-                                }
-                              }),
-                              controlAffinity: ListTileControlAffinity.leading,
-                              title: Text(
-                                bot['name']?.toString() ?? '未命名机器人',
-                                style: const TextStyle(fontFamily: 'TideFont'),
-                              ),
-                              subtitle: Text(
-                                '聊天记录约 ${_format(_chatBytes[id] ?? 0)}',
-                                style: const TextStyle(
-                                  fontFamily: 'TideFont',
-                                  fontSize: 12,
+                  const SizedBox(height: 8),
+                  FrostCard(
+                    padding: EdgeInsets.zero,
+                    child: _bots.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text('暂无机器人', textAlign: TextAlign.start),
+                          )
+                        : Column(
+                            children: _bots.map((bot) {
+                              final id = bot['id']?.toString() ?? '';
+                              return CheckboxListTile(
+                                value: _selected.contains(id),
+                                onChanged: (value) => setState(() {
+                                  if (value == true) {
+                                    _selected.add(id);
+                                  } else {
+                                    _selected.remove(id);
+                                  }
+                                }),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                title: Text(
+                                  bot['name']?.toString() ?? '未命名机器人',
+                                  style:
+                                      const TextStyle(fontFamily: 'TideFont'),
                                 ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                ),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: _selected.isEmpty ? null : _deleteSelected,
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  label: Text(
-                    _selected.isEmpty
-                        ? '选择机器人后删除聊天记录'
-                        : '删除 ${_selected.length} 个机器人的聊天记录（${_format(selectedBytes)}）',
-                    style: const TextStyle(fontFamily: 'TideFont'),
+                                subtitle: Text(
+                                  '聊天记录约 ${_format(_chatBytes[id] ?? 0)}',
+                                  style: const TextStyle(
+                                    fontFamily: 'TideFont',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: _selected.isEmpty ? null : _deleteSelected,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: Text(
+                      _selected.isEmpty
+                          ? '选择机器人后删除聊天记录'
+                          : '删除 ${_selected.length} 个机器人的聊天记录（${_format(selectedBytes)}）',
+                      style: const TextStyle(fontFamily: 'TideFont'),
+                    ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }

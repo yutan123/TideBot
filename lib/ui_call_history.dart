@@ -30,69 +30,71 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text('通话记录',
-            style: TextStyle(
-                color: theme.onBackgroundStrong, fontFamily: 'TideFont')),
-      ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _sessions,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return Center(
-                child: CircularProgressIndicator(color: theme.primary));
-          }
-          final sessions = snapshot.data ?? const <Map<String, dynamic>>[];
-          if (sessions.isEmpty) {
-            return Center(
-              child: Text('暂无通话记录',
-                  style:
-                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
-            itemCount: sessions.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              final timestamp = (session['created_at'] as num?)?.toInt() ?? 0;
-              final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
-              final failed = session['status'] == 'failed';
-              return Material(
-                color: theme.surface,
-                borderRadius: BorderRadius.circular(8),
-                child: ListTile(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  leading: Icon(
-                    failed ? Icons.call_end_rounded : Icons.call_rounded,
-                    color: failed ? Colors.red.shade400 : theme.primary,
-                  ),
-                  title: Text(
-                    '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: Text('通话记录',
+              style: TextStyle(
+                  color: theme.onBackgroundStrong, fontFamily: 'TideFont')),
+        ),
+        body: FutureBuilder<List<Map<String, dynamic>>>(
+          future: _sessions,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return Center(
+                  child: CircularProgressIndicator(color: theme.primary));
+            }
+            final sessions = snapshot.data ?? const <Map<String, dynamic>>[];
+            if (sessions.isEmpty) {
+              return Center(
+                child: Text('暂无通话记录',
                     style: TextStyle(
-                        color: theme.textStrong, fontFamily: 'TideFont'),
-                  ),
-                  subtitle: Text(
-                    _duration((session['duration'] as num?)?.toInt() ?? 0),
-                    style: TextStyle(
-                        color: theme.textWeak, fontFamily: 'TideFont'),
-                  ),
-                  trailing:
-                      Icon(Icons.chevron_right_rounded, color: theme.iconMuted),
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => CallHistoryDetailPage(session: session),
-                  )),
-                ),
+                        color: theme.textWeak, fontFamily: 'TideFont')),
               );
-            },
-          );
-        },
+            }
+            return ListView.separated(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+              itemCount: sessions.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final session = sessions[index];
+                final timestamp = (session['created_at'] as num?)?.toInt() ?? 0;
+                final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
+                final failed = session['status'] == 'failed';
+                return Material(
+                  color: theme.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  child: ListTile(
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    leading: Icon(
+                      failed ? Icons.call_end_rounded : Icons.call_rounded,
+                      color: failed ? Colors.red.shade400 : theme.primary,
+                    ),
+                    title: Text(
+                      '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                      style: TextStyle(
+                          color: theme.textStrong, fontFamily: 'TideFont'),
+                    ),
+                    subtitle: Text(
+                      _duration((session['duration'] as num?)?.toInt() ?? 0),
+                      style: TextStyle(
+                          color: theme.textWeak, fontFamily: 'TideFont'),
+                    ),
+                    trailing: Icon(Icons.chevron_right_rounded,
+                        color: theme.iconMuted),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => CallHistoryDetailPage(session: session),
+                    )),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
