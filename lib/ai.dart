@@ -3072,8 +3072,12 @@ $transcript''';
         status: 'success',
         durationMs: DateTime.now().difference(started).inMilliseconds,
       );
+      // callTool 返回的 value 已包含 content 字段，直接提取避免嵌套
+      final content = value is Map && value.containsKey('content')
+          ? value['content']
+          : value;
       return {
-        'result': {'ok': true, 'content': value}
+        'result': {'ok': true, 'content': content}
       };
     } catch (error) {
       await db.insertToolAudit(

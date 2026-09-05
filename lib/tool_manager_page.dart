@@ -96,7 +96,16 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     final result = await FilePicker.platform.pickFiles(
       withData: true,
       type: FileType.custom,
-      allowedExtensions: ['json', 'zip', 'tideskill', 'md'],
+      allowedExtensions: [
+        'json',
+        'zip',
+        'tideskill',
+        'md',
+        'txt',
+        'yaml',
+        'yml',
+        'toml'
+      ],
     );
     if (result == null) return;
     try {
