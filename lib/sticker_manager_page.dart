@@ -138,63 +138,68 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-          title: const Text('表情包管理', style: TextStyle(fontFamily: 'TideFont')),
-          actions: [
-            IconButton(
-                onPressed: _add,
-                icon: const Icon(Icons.add_photo_alternate_rounded))
-          ]),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: theme.primary))
-          : _items.isEmpty
-              ? Center(
-                  child: Text('暂无素材\n可先添加“开心”“睡觉”等分类的图片',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: theme.textWeak,
-                          height: 1.6,
-                          fontFamily: 'TideFont')))
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: .78),
-                  itemCount: _items.length,
-                  itemBuilder: (_, index) {
-                    final item = _items[index];
-                    final path = item['file_path']?.toString() ?? '';
-                    return Stack(children: [
-                      ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                              color: theme.surfaceVariant,
-                              child: _stickerPreview(path, fit: BoxFit.cover))),
-                      Positioned(
-                          left: 7,
-                          bottom: 7,
-                          child: Text(item['emotion']?.toString() ?? '',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontFamily: 'TideFont',
-                                  shadows: [Shadow(blurRadius: 4)]))),
-                      Positioned(
-                          right: 0,
-                          top: 0,
-                          child: IconButton(
-                              icon: const Icon(Icons.close_rounded,
-                                  color: Colors.white),
-                              onPressed: () async {
-                                await DBManager()
-                                    .deleteSticker(item['id'].toString());
-                                _load();
-                              }))
-                    ]);
-                  }),
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+            title:
+                const Text('表情包管理', style: TextStyle(fontFamily: 'TideFont')),
+            actions: [
+              IconButton(
+                  onPressed: _add,
+                  icon: const Icon(Icons.add_photo_alternate_rounded))
+            ]),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: theme.primary))
+            : _items.isEmpty
+                ? Center(
+                    child: Text('暂无素材\n可先添加"开心""睡觉"等分类的图片',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: theme.textWeak,
+                            height: 1.6,
+                            fontFamily: 'TideFont')))
+                : GridView.builder(
+                    padding: const EdgeInsets.all(16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                            childAspectRatio: .78),
+                    itemCount: _items.length,
+                    itemBuilder: (_, index) {
+                      final item = _items[index];
+                      final path = item['file_path']?.toString() ?? '';
+                      return Stack(children: [
+                        ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                                color: theme.surfaceVariant,
+                                child:
+                                    _stickerPreview(path, fit: BoxFit.cover))),
+                        Positioned(
+                            left: 7,
+                            bottom: 7,
+                            child: Text(item['emotion']?.toString() ?? '',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontFamily: 'TideFont',
+                                    shadows: [Shadow(blurRadius: 4)]))),
+                        Positioned(
+                            right: 0,
+                            top: 0,
+                            child: IconButton(
+                                icon: const Icon(Icons.close_rounded,
+                                    color: Colors.white),
+                                onPressed: () async {
+                                  await DBManager()
+                                      .deleteSticker(item['id'].toString());
+                                  _load();
+                                }))
+                      ]);
+                    }),
+      ),
     );
   }
 }

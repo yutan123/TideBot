@@ -134,69 +134,73 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text('管理日程池', style: TextStyle(fontFamily: 'TideFont')),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        children: _labels.entries.map((entry) {
-          final values = _pools[entry.key] ?? const <String>[];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Expanded(
-                      child: Text(entry.value,
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: theme.textStrong,
-                              fontFamily: 'TideFont'))),
-                  IconButton(
-                    tooltip: '添加',
-                    onPressed: () => _add(entry.key),
-                    icon: Icon(Icons.add_rounded, color: theme.primary),
-                  ),
-                ]),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: values
-                      .map((value) => Container(
-                            padding: const EdgeInsets.only(
-                                left: 12, right: 5, top: 7, bottom: 7),
-                            decoration: BoxDecoration(
-                              color: theme.primary.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(99),
-                              border: Border.all(
-                                  color: theme.primary.withValues(alpha: 0.28)),
-                            ),
-                            child:
-                                Row(mainAxisSize: MainAxisSize.min, children: [
-                              Text(value,
-                                  style: TextStyle(
-                                      color: theme.textStrong,
-                                      fontFamily: 'TideFont')),
-                              const SizedBox(width: 5),
-                              GestureDetector(
-                                onTap: () => _remove(entry.key, value),
-                                child: Icon(Icons.close_rounded,
-                                    size: 16, color: theme.primary),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: const Text('管理日程池', style: TextStyle(fontFamily: 'TideFont')),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          children: _labels.entries.map((entry) {
+            final values = _pools[entry.key] ?? const <String>[];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Expanded(
+                        child: Text(entry.value,
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: theme.textStrong,
+                                fontFamily: 'TideFont'))),
+                    IconButton(
+                      tooltip: '添加',
+                      onPressed: () => _add(entry.key),
+                      icon: Icon(Icons.add_rounded, color: theme.primary),
+                    ),
+                  ]),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: values
+                        .map((value) => Container(
+                              padding: const EdgeInsets.only(
+                                  left: 12, right: 5, top: 7, bottom: 7),
+                              decoration: BoxDecoration(
+                                color: theme.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(99),
+                                border: Border.all(
+                                    color:
+                                        theme.primary.withValues(alpha: 0.28)),
                               ),
-                            ]),
-                          ))
-                      .toList(),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
+                              child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(value,
+                                        style: TextStyle(
+                                            color: theme.textStrong,
+                                            fontFamily: 'TideFont')),
+                                    const SizedBox(width: 5),
+                                    GestureDetector(
+                                      onTap: () => _remove(entry.key, value),
+                                      child: Icon(Icons.close_rounded,
+                                          size: 16, color: theme.primary),
+                                    ),
+                                  ]),
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
       ),
     );
   }
