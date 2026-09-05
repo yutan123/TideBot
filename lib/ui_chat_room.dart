@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'code_card.dart';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -3503,6 +3504,56 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   // 富文本解析：旁白括号灰化
   Widget _parseText(String text, bool isUser) {
+    final codeBlockRegex = RegExp(
+      r'```(\w*)\n([\s\S]*?)```',
+      multiLine: true,
+    );
+
+    final matches = codeBlockRegex.allMatches(text);
+    if (matches.isEmpty) {
+      return _renderPlainText(text, isUser);
+    }
+
+    final widgets = <Widget>[];
+    int lastEnd = 0;
+
+    for (final match in matches) {
+      if (match.start > lastEnd) {
+        final textPart = text.substring(lastEnd, match.start).trim();
+        if (textPart.isNotEmpty) {
+          widgets.add(_renderPlainText(textPart, isUser));
+        }
+      }
+
+      final language = match.group(1)?.trim();
+      final code = match.group(2)?.trim();
+
+      if (code != null && code.isNotEmpty) {
+        widgets.add(CodeCard(
+          code: code,
+          language: language?.isEmpty == true ? 'code' : language!,
+          isUser: isUser,
+        ));
+      }
+
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < text.length) {
+      final textPart = text.substring(lastEnd).trim();
+      if (textPart.isNotEmpty) {
+        widgets.add(_renderPlainText(textPart, isUser));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment:
+          isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
+
+  Widget _renderPlainText(String text, bool isUser) {
     final baseStyle = TextStyle(
       color: isUser ? Colors.white : TideTheme.of(context).textStrong,
       fontSize: 14,
