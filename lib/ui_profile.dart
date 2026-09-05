@@ -1992,103 +1992,103 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
           title: const Text('通知管理', style: TextStyle(fontFamily: 'TideFont')),
           backgroundColor: Colors.transparent,
           elevation: 0,
-          leading: IconButton(),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
-            children: [
-              FrostCard(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
-                  children: [
-                    SwitchListTile(
-                      title: const Text(
-                        '机器人未读消息通知',
-                        style: TextStyle(fontFamily: 'TideFont'),
-                      ),
-                      subtitle: const Text(
-                        'APP 不在前台时提醒',
-                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                      ),
-                      value: _unread,
-                      activeThumbColor: theme.primary,
-                      onChanged: (value) async {
-                        if (value &&
-                            !await AppPermissions.notifications(context)) {
-                          return;
-                        }
-                        setState(() => _unread = value);
-                        await _setValue('unread_notifications', value);
-                      },
-                    ),
-                    SwitchListTile(
-                      title: const Text(
-                        '下载进度通知',
-                        style: TextStyle(fontFamily: 'TideFont'),
-                      ),
-                      subtitle: const Text(
-                        '显示文件下载的实时进度',
-                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                      ),
-                      value: _downloadProgress,
-                      activeThumbColor: theme.primary,
-                      onChanged: (value) async {
-                        if (value &&
-                            !await AppPermissions.notifications(context))
-                          return;
-                        setState(() => _downloadProgress = value);
-                        await _setValue(
-                            'download_progress_notifications', value);
-                      },
-                    ),
-                    SwitchListTile(
-                      title: const Text(
-                        'TideBot 正在运行中',
-                        style: TextStyle(fontFamily: 'TideFont'),
-                      ),
-                      subtitle: const Text(
-                        '开启后显示持久化状态通知',
-                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                      ),
-                      value: _keepRunning,
-                      activeThumbColor: theme.primary,
-                      onChanged: _switchingPersistentNotification
-                          ? null
-                          : (value) async {
-                              if (value &&
-                                  !await AppPermissions.notifications(
-                                      context)) {
-                                return;
-                              }
-                              if (!mounted) return;
-                              setState(
-                                () => _switchingPersistentNotification = true,
-                              );
-                              try {
-                                await PersistentServiceCoordinator.instance
-                                    .setEnabled(value);
-                                if (!mounted) return;
-                                setState(() => _keepRunning = value);
-                              } catch (e) {
-                                if (!mounted) return;
-                                GlobalNotice.show(
-                                  '无法切换运行通知：$e',
-                                  color: Theme.of(context).colorScheme.error,
-                                );
-                              } finally {
-                                if (mounted) {
-                                  setState(
-                                    () => _switchingPersistentNotification =
-                                        false,
-                                  );
-                                }
-                              }
-                            },
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_rounded),
+            onPressed: () => Navigator.pop(context),
           ),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
+          children: [
+            FrostCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text(
+                      '机器人未读消息通知',
+                      style: TextStyle(fontFamily: 'TideFont'),
+                    ),
+                    subtitle: const Text(
+                      'APP 不在前台时提醒',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                    ),
+                    value: _unread,
+                    activeThumbColor: theme.primary,
+                    onChanged: (value) async {
+                      if (value &&
+                          !await AppPermissions.notifications(context)) {
+                        return;
+                      }
+                      setState(() => _unread = value);
+                      await _setValue('unread_notifications', value);
+                    },
+                  ),
+                  SwitchListTile(
+                    title: const Text(
+                      '下载进度通知',
+                      style: TextStyle(fontFamily: 'TideFont'),
+                    ),
+                    subtitle: const Text(
+                      '显示文件下载的实时进度',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                    ),
+                    value: _downloadProgress,
+                    activeThumbColor: theme.primary,
+                    onChanged: (value) async {
+                      if (value && !await AppPermissions.notifications(context))
+                        return;
+                      setState(() => _downloadProgress = value);
+                      await _setValue('download_progress_notifications', value);
+                    },
+                  ),
+                  SwitchListTile(
+                    title: const Text(
+                      'TideBot 正在运行中',
+                      style: TextStyle(fontFamily: 'TideFont'),
+                    ),
+                    subtitle: const Text(
+                      '开启后显示持久化状态通知',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+                    ),
+                    value: _keepRunning,
+                    activeThumbColor: theme.primary,
+                    onChanged: _switchingPersistentNotification
+                        ? null
+                        : (value) async {
+                            if (value &&
+                                !await AppPermissions.notifications(context)) {
+                              return;
+                            }
+                            if (!mounted) return;
+                            setState(
+                              () => _switchingPersistentNotification = true,
+                            );
+                            try {
+                              await PersistentServiceCoordinator.instance
+                                  .setEnabled(value);
+                              if (!mounted) return;
+                              setState(() => _keepRunning = value);
+                            } catch (e) {
+                              if (!mounted) return;
+                              GlobalNotice.show(
+                                '无法切换运行通知：$e',
+                                color: Theme.of(context).colorScheme.error,
+                              );
+                            } finally {
+                              if (mounted) {
+                                setState(
+                                  () =>
+                                      _switchingPersistentNotification = false,
+                                );
+                              }
+                            }
+                          },
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
