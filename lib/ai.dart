@@ -688,10 +688,8 @@ class AIManager {
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
-        // Replies are always collected in full before visible rendering. The chat
-        // room owns the typewriter animation after filtering and persistence.
-        // Keeping this transport non-streaming prevents raw protocol fragments
-        // from entering a bubble before _cleanVisibleReply() has run.
+        // 启用真实流式输出（通过 onDelta 回调传递增量）
+        if (onDelta != null) 'stream': true,
       };
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
         'url': '$baseUrl/chat/completions',
@@ -720,20 +718,48 @@ class AIManager {
         ..body = jsonEncode(payload);
       void cancelRequest() => client.close();
       token?.addOnCancel(cancelRequest);
-      http.Response response;
+      http.StreamedResponse streamedResponse;
       try {
-        response = await client
-            .send(request)
-            .then(http.Response.fromStream)
-            .timeout(const Duration(seconds: 40));
+        streamedResponse =
+            await client.send(request).timeout(const Duration(seconds: 40));
       } finally {
         token?.removeOnCancel(cancelRequest);
-        client.close();
       }
       token?.throwIfCancelled();
-      statusCode = response.statusCode;
-      errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
-      if (statusCode == 200) {
+      statusCode = streamedResponse.statusCode;
+
+      // 处理流式响应（SSE 格式）或非流式响应
+      if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
+        // 流式处理：逐行读取 SSE 格式
+        final lines = streamedResponse.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter());
+
+        await for (final line in lines) {
+          if (line.startsWith('data: ')) {
+            final data = line.substring(6).trim();
+            if (data == '[DONE]') break;
+            try {
+              final json = jsonDecode(data);
+              final delta =
+                  json['choices']?[0]?['delta']?['content']?.toString();
+              if (delta != null && delta.isNotEmpty) {
+                replyText += delta;
+                onDelta(delta);
+              }
+            } catch (_) {}
+          }
+        }
+        client.close();
+        errorBody = '';
+      } else {
+        // 非流式处理：一次性读取全部
+        final response = await http.Response.fromStream(streamedResponse);
+        client.close();
+        errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
+      }
+
+      if (statusCode == 200 && errorBody.isNotEmpty) {
         final json = jsonDecode(errorBody);
         final message = json['choices']?[0]?['message'];
         replyText = _extractChatContent(json);
@@ -3875,7 +3901,7 @@ $transcript''';
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、机器人身份、状态、情绪、日记素材和机器人记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以机器人第一人称记录，只写本机器人实际参与且已明确发生的内容。\n"
-        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。"
+        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n";
 

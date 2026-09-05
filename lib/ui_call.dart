@@ -80,13 +80,21 @@ class _CallPageState extends State<CallPage>
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
 
+  /// 本轮通话流式输出是否已失败（失败后降级到非流式）
+  bool _streamFailedThisCall = false;
+
+  /// STT/TTS 自动检测状态
+  bool _hasStt = false;
+  bool _hasTts = false;
+
   // Keep the gate tolerant of Android devices whose amplitude reporting is
   // conservative. A user can always finish the current turn explicitly.
   static const int _speechStartTicks = 2;
-  static const int _silentStopTicks = 10;
+  static const int _silentStopTicks = 6; // 降低到6（1.2秒静音即停止）
   static const double _minimumVoiceLevel = -68;
-  static const double _speechOverNoise = 3;
-  static const Duration _minimumRecordingDuration = Duration(milliseconds: 600);
+  static const double _speechOverNoise = 2; // 降低到2（更容易检测到语音）
+  static const Duration _minimumRecordingDuration =
+      Duration(milliseconds: 300); // 降低到300ms
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   int _silentTicks = 0;
@@ -161,6 +169,7 @@ class _CallPageState extends State<CallPage>
             forceSingleReply: true,
             cancellationToken: token,
             extraSystemPrompt: _callSystemPrompt,
+            includeChatHistory: true,
           )
           .timeout(const Duration(seconds: 45));
       if (_ending) return;
@@ -190,8 +199,10 @@ class _CallPageState extends State<CallPage>
       _transcript.add('机器人：$answer');
       if (mounted) setState(() => _caption = answer);
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
-      if (widget.hasTts && ttsId.isNotEmpty) {
+      if (_hasTts && ttsId.isNotEmpty) {
         await _synthesizeAndPlay(answer, ttsId);
+      } else if (!_hasTts) {
+        AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，仅显示文字');
       }
     } on AICancelledException {
       return;
@@ -444,12 +455,12 @@ class _CallPageState extends State<CallPage>
 
   Future<void> _runVoiceTurn() async {
     if (_processing || _recordingPath == null || _ending) return;
-    if (!widget.hasStt) {
-      AppLogService.instance.add('VOICE_CALL', 'STT 不可用，无法识别本次录音');
+    if (!_hasStt) {
+      AppLogService.instance.add('VOICE_CALL', 'STT 不可用，切换到手动输入');
       if (mounted) {
         setState(() {
           _flowState = CallFlowState.failed;
-          _caption = '未配置语音识别服务，可在设置中启用 STT';
+          _caption = '未配置语音识别，请使用文字输入';
         });
       }
       return;
@@ -494,6 +505,8 @@ class _CallPageState extends State<CallPage>
         });
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
+
+      String streamingReply = '';
       final reply = await AIManager()
           .sendMessage(
             botId: widget.bot['id'].toString(),
@@ -502,12 +515,30 @@ class _CallPageState extends State<CallPage>
             forceSingleReply: true,
             cancellationToken: token,
             extraSystemPrompt: _callSystemPrompt,
+            includeChatHistory: true,
+            onDelta: !_streamFailedThisCall
+                ? (delta) {
+                    if (mounted) {
+                      setState(() {
+                        streamingReply += delta;
+                        _caption = streamingReply;
+                      });
+                    }
+                  }
+                : null,
           )
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 60));
       if (_ending) return;
       if (reply['success'] != true) {
         final reason = _replyFailureReason(reply);
         AppLogService.instance.add('VOICE_CALL', 'AI 请求失败：$reason');
+        // 检测是否因流式失败，如果是则降级到非流式
+        if (reason.contains('stream') ||
+            reason.contains('流式') ||
+            reason.contains('SSE')) {
+          AppLogService.instance.add('VOICE_CALL', '流式输出失败，本轮通话降级到非流式');
+          _streamFailedThisCall = true;
+        }
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
@@ -806,7 +837,16 @@ class _CallPageState extends State<CallPage>
       if (mounted)
         setState(() => _elapsed = DateTime.now().difference(_startedAt));
     });
-    if (widget.hasStt) {
+
+    // 自动检测 STT/TTS 可用性
+    _hasStt = widget.bot['stt_model']?.toString().trim().isNotEmpty == true;
+    _hasTts = widget.bot['tts_model']?.toString().trim().isNotEmpty == true;
+    AppLogService.instance.add(
+      'VOICE_CALL',
+      '通话初始化：STT=${_hasStt ? '可用' : '不可用'}，TTS=${_hasTts ? '可用' : '不可用'}',
+    );
+
+    if (_hasStt) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _startListening();
       });
@@ -831,7 +871,7 @@ class _CallPageState extends State<CallPage>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final ready = widget.hasStt;
+    final ready = _hasStt;
     final name = widget.bot['name']?.toString().trim().isNotEmpty == true
         ? widget.bot['name'].toString()
         : 'TideBot';
