@@ -267,26 +267,28 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
 
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
-    return Container(
+    final card =
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(icon, color: accent, size: 25),
+      const Spacer(),
+      Text('$value',
+          style: TextStyle(
+              fontSize: 29,
+              fontWeight: FontWeight.w700,
+              color: theme.textStrong,
+              fontFamily: 'TideFont')),
+      const SizedBox(height: 3),
+      Text(label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+              fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
+    ]);
+    return FrostCard(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-      decoration: BoxDecoration(
-          color: theme.surfaceVariant, borderRadius: BorderRadius.circular(20)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(icon, color: accent, size: 25),
-        const Spacer(),
-        Text('$value',
-            style: TextStyle(
-                fontSize: 29,
-                fontWeight: FontWeight.w700,
-                color: theme.textStrong,
-                fontFamily: 'TideFont')),
-        const SizedBox(height: 3),
-        Text(label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
-      ]),
+      radius: 20,
+      liquid: true,
+      child: card,
     );
   }
 }
@@ -314,12 +316,10 @@ class _ChartCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Container(
+    return FrostCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.surfaceVariant,
-        borderRadius: BorderRadius.circular(18),
-      ),
+      radius: 18,
+      liquid: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

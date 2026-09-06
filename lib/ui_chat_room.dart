@@ -1144,7 +1144,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             imagePaths: images,
             persistResponse: persistThisReply,
             forceSingleReply: forceSingleReply,
-            onDelta: null,
+            onDelta: null, // 聊天室暂不启用真实流式（防止代码块拆分识别）
           )
           .timeout(requestTimeout);
 

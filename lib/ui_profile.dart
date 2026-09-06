@@ -197,6 +197,13 @@ class _ProfilePageState extends State<ProfilePage> {
         Icon(Icons.edit_rounded, size: 18, color: theme.onBackgroundWeak),
       ],
     );
+    // 全局背景图下不显示卡片，直接返回内容
+    if (theme.hasGlobalBackground) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+        child: content,
+      );
+    }
     return FrostCard(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
       child: content,
@@ -205,31 +212,40 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildSettingItem(Map<String, dynamic> s) {
     final theme = TideTheme.of(context);
+    final content = Row(
+      children: [
+        Icon(
+          s['icon'] as IconData,
+          size: 24,
+          color: theme.primary,
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Text(
+            s['title'] ?? '',
+            style: TextStyle(
+              fontSize: 17,
+              fontFamily: 'TideFont',
+              color: theme.onBackgroundStrong,
+            ),
+          ),
+        ),
+        Icon(Icons.arrow_forward_ios_rounded,
+            size: 14, color: theme.onBackgroundWeak),
+      ],
+    );
+    // 全局背景图下不显示卡片
+    if (theme.hasGlobalBackground) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15)
+            .copyWith(bottom: 10),
+        child: content,
+      );
+    }
     return FrostCard(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-      child: Row(
-        children: [
-          Icon(
-            s['icon'] as IconData,
-            size: 24,
-            color: theme.primary,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              s['title'] ?? '',
-              style: TextStyle(
-                fontSize: 17,
-                fontFamily: 'TideFont',
-                color: theme.onBackgroundStrong,
-              ),
-            ),
-          ),
-          Icon(Icons.arrow_forward_ios_rounded,
-              size: 14, color: theme.onBackgroundWeak),
-        ],
-      ),
+      child: content,
     );
   }
 

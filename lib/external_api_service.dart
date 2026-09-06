@@ -250,12 +250,14 @@ class ExternalApiService {
           });
         }
         AppLogService.instance.add('EXTERNAL_API',
-            '已桥接入站消息至 ${bot['name'] ?? botId}，同步记录=${sync ? '开启' : '关闭'}');
+            '已桥接入站消息至 ${bot['name'] ?? botId}，同步记录=${sync ? '开启' : '关闭'}，文本长度=${text.length}');
         final cancellationToken = AICancellationToken();
         // A closed response is the only lifecycle signal exposed by dart:io's
         // server response. It also protects long-running upstream work when the
         // handler is terminated before it can write the completion.
         unawaited(request.response.done.whenComplete(cancellationToken.cancel));
+        AppLogService.instance
+            .add('EXTERNAL_API', '开始调用 AIManager.sendMessage');
         final result = await AIManager().sendMessage(
           botId: botId,
           text: prompt,
@@ -264,6 +266,8 @@ class ExternalApiService {
           includeChatHistory: sync,
           cancellationToken: cancellationToken,
         );
+        AppLogService.instance.add('EXTERNAL_API',
+            'AIManager.sendMessage 返回：success=${result['success']}, reply长度=${(result['reply']?.toString() ?? '').length}');
         cancellationToken.throwIfCancelled();
         if (result['success'] != true) {
           return _error(
@@ -281,9 +285,10 @@ class ExternalApiService {
                     (rawUsage['total_tokens'] as num?)?.toInt() ?? 0,
               }
             : <String, int>{};
-        AppLogService.instance
-            .add('EXTERNAL_API', '桥接完成，已将 TideBot 回复返回调用方（${reply.length} 字）');
+        AppLogService.instance.add('EXTERNAL_API',
+            '准备返回给调用方：stream=$stream, 回复内容=${reply.length}字，usage=$usage');
         if (stream) {
+          AppLogService.instance.add('EXTERNAL_API', 'Stream 模式：开始发送 SSE 数据');
           final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
           final id = 'chatcmpl-tidebot-$created';
           await _writeSse(request, {
@@ -299,6 +304,7 @@ class ExternalApiService {
               }
             ],
           });
+          AppLogService.instance.add('EXTERNAL_API', 'SSE: 已发送 role chunk');
           if (reply.isNotEmpty) {
             await _writeSse(request, {
               'id': id,
@@ -313,6 +319,8 @@ class ExternalApiService {
                 }
               ],
             });
+            AppLogService.instance.add(
+                'EXTERNAL_API', 'SSE: 已发送 content chunk (${reply.length}字)');
           }
           await _writeSse(request, {
             'id': id,
@@ -324,8 +332,12 @@ class ExternalApiService {
             ],
             if (usage.isNotEmpty) 'usage': usage,
           });
+          AppLogService.instance
+              .add('EXTERNAL_API', 'SSE: 已发送 finish chunk，准备关闭连接');
           return _finishSse(request);
         }
+        AppLogService.instance
+            .add('EXTERNAL_API', 'Non-stream 模式：返回完整 JSON 响应');
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         return _json(request, 200, {
           'id': 'chatcmpl-tidebot-$now',
@@ -342,7 +354,7 @@ class ExternalApiService {
           if (usage.isNotEmpty) 'usage': usage,
         });
       }
-      _error(request, 404, 'Not found');
+      return _error(request, 404, 'Not found');
     } on AICancelledException {
       AppLogService.instance.add('EXTERNAL_API', '客户端已断开，已取消上游模型请求');
       return;
@@ -445,11 +457,16 @@ class ExternalApiService {
   Future<void> _writeSse(
       HttpRequest request, Map<String, dynamic> payload) async {
     final response = request.response;
-    response.headers.contentType =
-        ContentType('text', 'event-stream', charset: 'utf-8');
-    response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
-    response.headers.set(HttpHeaders.connectionHeader, 'keep-alive');
-    response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
+    if (response.statusCode == 200) {
+      // Headers already set
+    } else {
+      response.statusCode = 200;
+      response.headers.contentType =
+          ContentType('text', 'event-stream', charset: 'utf-8');
+      response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      response.headers.set(HttpHeaders.connectionHeader, 'keep-alive');
+      response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
+    }
     response.write('data: ${jsonEncode(payload)}\n\n');
     await response.flush();
   }

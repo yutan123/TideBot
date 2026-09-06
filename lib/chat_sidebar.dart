@@ -206,64 +206,67 @@ class _ChatSidebarState extends State<ChatSidebar> {
               offset: Offset(-width * (1 - progress), 0),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Material(
-                  color: theme.surface,
-                  child: SafeArea(
-                    right: false,
-                    child: SizedBox(
-                      width: width,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _header(theme),
-                          Expanded(
-                            child: ListView(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                              children: [
-                                _timeCard(theme),
-                                const SizedBox(height: 12),
-                                _statusCard(theme, bot),
-                                const SizedBox(height: 12),
-                                _postCard(theme, bot),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _managerButton(
-                                        theme,
-                                        Icons.extension_rounded,
-                                        'Skill',
-                                        'skill',
+                child: TideBackground(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: SafeArea(
+                      right: false,
+                      child: SizedBox(
+                        width: width,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _header(theme),
+                            Expanded(
+                              child: ListView(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                                children: [
+                                  _timeCard(theme),
+                                  const SizedBox(height: 12),
+                                  _statusCard(theme, bot),
+                                  const SizedBox(height: 12),
+                                  _postCard(theme, bot),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _managerButton(
+                                          theme,
+                                          Icons.extension_rounded,
+                                          'Skill',
+                                          'skill',
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: _managerButton(
-                                        theme,
-                                        Icons.hub_rounded,
-                                        'MCP',
-                                        'mcp',
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: _managerButton(
+                                          theme,
+                                          Icons.hub_rounded,
+                                          'MCP',
+                                          'mcp',
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          Align(
-                            alignment: Alignment.bottomLeft,
-                            child: IconButton(
-                              tooltip: theme.isDark ? '切换到日间模式' : '切换到夜间模式',
-                              onPressed: () => theme.cycleMode(),
-                              icon: Icon(
-                                theme.isDark
-                                    ? Icons.light_mode_rounded
-                                    : Icons.dark_mode_rounded,
-                                color: theme.primary,
+                                    ],
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                        ],
+                            Align(
+                              alignment: Alignment.bottomLeft,
+                              child: IconButton(
+                                tooltip: theme.isDark ? '切换到日间模式' : '切换到夜间模式',
+                                onPressed: () => theme.cycleMode(),
+                                icon: Icon(
+                                  theme.isDark
+                                      ? Icons.light_mode_rounded
+                                      : Icons.dark_mode_rounded,
+                                  color: theme.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

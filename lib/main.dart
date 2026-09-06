@@ -685,7 +685,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
           theme: ThemeData(
             fontFamily: 'TideFont',
             brightness: Brightness.light,
-            scaffoldBackgroundColor: tideTheme.bgColor,
+            scaffoldBackgroundColor: Colors.transparent,
             appBarTheme: const AppBarTheme(
               backgroundColor: Colors.transparent,
               elevation: 0,
@@ -698,7 +698,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
           darkTheme: ThemeData(
             fontFamily: 'TideFont',
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: tideTheme.bgColor,
+            scaffoldBackgroundColor: Colors.transparent,
             colorScheme: ColorScheme.dark(
               primary: tideTheme.primary,
               surface: tideTheme.surface,

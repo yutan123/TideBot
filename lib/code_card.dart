@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'theme.dart';
 import 'global_notice.dart';
 
@@ -185,20 +185,27 @@ class _CodeCardState extends State<CodeCard> {
   }
 
   Widget _buildHtmlPreview() {
-    // HTML 预览需要 webview_flutter 4.0+
-    // 这里简化实现，实际可以用 WebViewWidget
-    return Container(
-      color: Colors.white,
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            'HTML 预览功能需要完整实现 WebView',
-            style: TextStyle(color: Colors.black),
-          ),
-        ),
-      ),
+    return FutureBuilder(
+      future: _prepareWebViewController(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            snapshot.data == null) {
+          return Container(
+            color: Colors.white,
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        return WebViewWidget(controller: snapshot.data!);
+      },
     );
+  }
+
+  Future<WebViewController> _prepareWebViewController() async {
+    final controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFFFFFFFF));
+    await controller.loadHtmlString(widget.code);
+    return controller;
   }
 
   void _showFullscreenPreview() {
@@ -230,16 +237,18 @@ class _CodeCardState extends State<CodeCard> {
 
   Future<void> _saveFile() async {
     try {
-      final dir = await getExternalStorageDirectory();
-      if (dir == null) {
-        GlobalNotice.show('无法访问存储目录');
+      final downloadDir = Directory('/storage/emulated/0/Download');
+      if (!await downloadDir.exists()) {
+        GlobalNotice.show('无法访问下载目录');
         return;
       }
 
       final ext = _getFileExtension(widget.language);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final filename = 'code_$timestamp.$ext';
-      final file = File('${dir.path}/$filename');
+      final basename =
+          widget.language.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_');
+      final filename = '${basename}_$timestamp.$ext';
+      final file = File('${downloadDir.path}/$filename');
 
       await file.writeAsString(widget.code);
       GlobalNotice.show('已保存到 ${file.path}');

@@ -336,7 +336,6 @@ class AIManager {
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty) return {'error': '系统异常：生命体档案丢失'};
     if (isBotDisabled(bot['is_disabled'])) {
-      AppLogService.instance.add('AI', '机器人已禁用，跳过回复：$botId');
       return {'success': true, 'silent': true, 'reply': ''};
     }
 
@@ -1948,6 +1947,7 @@ $transcript''';
     final bots = await db.getAllBots();
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
     if (bot.isEmpty || bot['chat_model'] == null) return "今天也要开心度过哦。";
+    if (isBotDisabled(bot['is_disabled'])) return "今天也要开心度过哦。";
 
     // 暗中调用 AI 引擎生成，但不暴露在聊天历史中。
     // persistResponse=false 保证生成的回复不会写入聊天室，也不会被自动摘要捕获；

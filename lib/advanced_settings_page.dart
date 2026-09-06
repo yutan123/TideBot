@@ -818,82 +818,85 @@ class LogHistoryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          title: Text('历史日志',
-              style: TextStyle(
-                  fontFamily: 'TideFont',
-                  color: theme.textStrong,
-                  fontWeight: FontWeight.w700))),
-      body: FutureBuilder<List<AppLogSession>>(
-        future: AppLogService.instance.history(),
-        builder: (_, snapshot) {
-          final logs = snapshot.data ?? const <AppLogSession>[];
-          if (snapshot.connectionState != ConnectionState.done)
-            return Center(
-                child: CircularProgressIndicator(color: theme.primary));
-          if (logs.isEmpty)
-            return Center(
-                child: Text('暂无已保存日志',
-                    style: TextStyle(
-                        fontFamily: 'TideFont', color: theme.textFaint)));
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: logs.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (_, i) {
-              final session = logs[i];
-              return FrostCard(
-                padding: const EdgeInsets.all(14),
-                child: Row(children: [
-                  Expanded(
-                      child: InkWell(
-                    onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                LogSessionDetailPage(session: session))),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                              '${session.startedAt.toLocal()} · ${session.entries.length} 条${session.hasError ? ' · 含错误' : ''}',
-                              style: TextStyle(
-                                  fontFamily: 'TideFont',
-                                  color: session.hasError
-                                      ? Colors.redAccent
-                                      : theme.primary,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 6),
-                          Text(
-                              session.entries.isEmpty
-                                  ? '空日志'
-                                  : session.entries.first.message,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontFamily: 'TideFont',
-                                  color: theme.textStrong)),
-                        ]),
-                  )),
-                  IconButton(
-                      icon: const Icon(Icons.delete_outline_rounded),
-                      onPressed: () async {
-                        await AppLogService.instance.deleteSession(session.id);
-                        if (context.mounted)
-                          Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const LogHistoryPage()));
-                      }),
-                ]),
-              );
-            },
-          );
-        },
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            title: Text('历史日志',
+                style: TextStyle(
+                    fontFamily: 'TideFont',
+                    color: theme.textStrong,
+                    fontWeight: FontWeight.w700))),
+        body: FutureBuilder<List<AppLogSession>>(
+          future: AppLogService.instance.history(),
+          builder: (_, snapshot) {
+            final logs = snapshot.data ?? const <AppLogSession>[];
+            if (snapshot.connectionState != ConnectionState.done)
+              return Center(
+                  child: CircularProgressIndicator(color: theme.primary));
+            if (logs.isEmpty)
+              return Center(
+                  child: Text('暂无已保存日志',
+                      style: TextStyle(
+                          fontFamily: 'TideFont', color: theme.textFaint)));
+            return ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: logs.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final session = logs[i];
+                return FrostCard(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(children: [
+                    Expanded(
+                        child: InkWell(
+                      onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  LogSessionDetailPage(session: session))),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                '${session.startedAt.toLocal()} · ${session.entries.length} 条${session.hasError ? ' · 含错误' : ''}',
+                                style: TextStyle(
+                                    fontFamily: 'TideFont',
+                                    color: session.hasError
+                                        ? Colors.redAccent
+                                        : theme.primary,
+                                    fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 6),
+                            Text(
+                                session.entries.isEmpty
+                                    ? '空日志'
+                                    : session.entries.first.message,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontFamily: 'TideFont',
+                                    color: theme.textStrong)),
+                          ]),
+                    )),
+                    IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        onPressed: () async {
+                          await AppLogService.instance
+                              .deleteSession(session.id);
+                          if (context.mounted)
+                            Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const LogHistoryPage()));
+                        }),
+                  ]),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }

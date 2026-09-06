@@ -415,28 +415,48 @@ class _CallPageState extends State<CallPage>
         return;
       }
       final recordingFile = File(path);
+      if (!await recordingFile.exists()) {
+        AppLogService.instance.add('VOICE_CALL', '❌ 录音文件不存在：$path');
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.failed;
+            _caption = '录音文件生成失败，请检查麦克风权限';
+          });
+        }
+        return;
+      }
       final bytes = await recordingFile.length();
       AppLogService.instance.add(
         'VOICE_CALL',
         '录音校验：${recordingDuration.inMilliseconds}ms，$bytes bytes，检测到语音=$speechDetected',
       );
       if (recordingDuration < _minimumRecordingDuration) {
+        AppLogService.instance.add(
+          'VOICE_CALL',
+          '❌ 录音时长不足：${recordingDuration.inMilliseconds}ms < ${_minimumRecordingDuration.inMilliseconds}ms',
+        );
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
-            _caption = '录音时间过短，请至少说一句完整的话';
+            _caption =
+                '录音时间过短（${recordingDuration.inMilliseconds}ms），请至少说一句完整的话';
           });
         }
         return;
       }
       if (bytes < 512) {
+        AppLogService.instance.add('VOICE_CALL', '❌ 录音文件过小：$bytes bytes');
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
-            _caption = '录音内容过短，请至少说一句完整的话';
+            _caption = '录音文件过小（$bytes bytes），可能麦克风未授权或被占用';
           });
         }
         return;
+      }
+      AppLogService.instance.add('VOICE_CALL', '✅ 录音校验通过，准备 STT');
+      if (!speechDetected) {
+        AppLogService.instance.add('VOICE_CALL', '⚠️ 未检测到语音分贝，但文件存在，继续尝试 STT');
       }
       _recordingPath = path;
       await _runVoiceTurn();
@@ -475,6 +495,8 @@ class _CallPageState extends State<CallPage>
     AppLogService.instance.add('VOICE_CALL', 'STT 开始：${_recordingPath!}');
     try {
       final token = _beginTurn();
+      AppLogService.instance
+          .add('VOICE_CALL', '调用 AIManager.transcribeAudio，超时45秒');
       final text = await AIManager()
           .transcribeAudio(
             botId: widget.bot['id'].toString(),
@@ -483,12 +505,17 @@ class _CallPageState extends State<CallPage>
           )
           .timeout(const Duration(seconds: 45));
       if (_ending) return;
+      AppLogService.instance.add(
+          'VOICE_CALL',
+          'STT 返回：${text == null ? 'null' : text.isEmpty ? '空字符串' : '长度 ${text.trim().length}'}');
       if (text == null || text.trim().isEmpty) {
-        AppLogService.instance.add('VOICE_CALL', 'STT 返回空文本');
+        AppLogService.instance.add('VOICE_CALL',
+            '❌ STT 返回空文本，可能原因：\n  1. 录音文件损坏\n  2. STT 服务配置错误\n  3. 音频格式不支持\n  4. 网络请求失败');
         if (mounted) {
           setState(() {
             _flowState = CallFlowState.failed;
-            _caption = '没有识别到有效语音，请重新说一次';
+            _caption =
+                '没有识别到有效语音。请检查：\n1. STT 模型是否配置\n2. 麦克风是否正常工作\n3. 录音文件：${_recordingPath!}';
           });
         }
         return;
@@ -561,14 +588,16 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
       _transcript.add('机器人：$answer');
-      _appendMessage(answer, isUser: false);
-      if (mounted) setState(() => _caption = answer);
+      // 先不显示文字，等 TTS 生成后再同步显示和播放
       final ttsId = widget.bot['tts_model']?.toString() ?? '';
-      if (ttsId.isEmpty || !widget.hasTts) {
+      if (ttsId.isEmpty || !_hasTts) {
         AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，保留文字回复');
+        _appendMessage(answer, isUser: false);
+        if (mounted) setState(() => _caption = answer);
         return;
       }
       AppLogService.instance.add('VOICE_CALL', 'TTS 生成开始：$ttsId');
+      // TTS 生成成功后在 _synthesizeAndPlay 里显示文字
       await _synthesizeAndPlay(answer, ttsId);
     } on AICancelledException {
       return;
@@ -592,10 +621,12 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _synthesizeAndPlay(String answer, String ttsId) async {
+    // 立即显示回复文字（音画同步）
+    _appendMessage(answer, isUser: false);
     if (mounted) {
       setState(() {
         _flowState = CallFlowState.synthesizing;
-        _caption = '正在生成语音…';
+        _caption = answer; // 显示文字内容，而不是"正在生成语音"
       });
     }
     try {
@@ -753,12 +784,12 @@ class _CallPageState extends State<CallPage>
         final result = await AIManager().sendMessage(
           botId: botId,
           text:
-              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。如果需要记忆可以调用工具。只输出摘要正文。\n\n${transcript.join('\n')}',
           persistResponse: false,
           includeChatHistory: false,
           enableAutoSummary: false,
           skipLifeState: true,
-          allowTools: false,
+          allowTools: true, // 允许调用工具（如记忆）
           forceSingleReply: true,
         );
         final generated = result['reply']?.toString().trim() ?? '';
@@ -810,6 +841,15 @@ class _CallPageState extends State<CallPage>
         importance: 4,
         timestamp: now,
       );
+      // 插入通话摘要到聊天室
+      await DBManager().insertMessage({
+        'id': '${sessionId}_summary',
+        'bot_id': botId,
+        'role': 'assistant',
+        'content': summary,
+        'type': 'call_summary',
+        'timestamp': now,
+      });
     }
     AppLogService.instance
         .add('VOICE_CALL', '通话结束：$durationText，摘要${failed ? '失败' : '已保存'}');
