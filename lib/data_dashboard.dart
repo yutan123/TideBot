@@ -137,59 +137,57 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return TideBackground(
-      child: Scaffold(
+    return Scaffold(
+      backgroundColor: theme.bgColor,
+      appBar: AppBar(
+        title: const Text('数据大盘', style: TextStyle(fontFamily: 'TideFont')),
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: const Text('数据大盘', style: TextStyle(fontFamily: 'TideFont')),
-          backgroundColor: Colors.transparent,
-          actions: [
-            IconButton(
-              tooltip: '刷新',
-              onPressed: _load,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ],
-        ),
-        body: _loading
-            ? Center(child: CircularProgressIndicator(color: theme.primary))
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                children: [
-                  _buildRangeChips(theme),
-                  const SizedBox(height: 12),
-                  _ChartCard(
-                    title: '消耗 Token',
-                    subtitle: '近 $_rangeDays 天',
-                    color: theme.primary,
-                    series: _tokenSeries,
-                    days: _days,
-                    selectedIndex: _selectedIndex,
-                    onSelect: (index) => setState(() => _selectedIndex = index),
-                  ),
-                  const SizedBox(height: 14),
-                  _ChartCard(
-                    title: '机器人回复消息',
-                    subtitle: '近 $_rangeDays 天',
-                    color: const Color(0xFFB05E91),
-                    series: _replySeries,
-                    days: _days,
-                    selectedIndex: _selectedIndex,
-                    onSelect: (index) => setState(() => _selectedIndex = index),
-                  ),
-                  const SizedBox(height: 24),
-                  _summarySection(theme),
-                  const SizedBox(height: 12),
-                  Text(
-                    '统计来自 AI 调用账本；不返回 usage 的提供商按文本长度估算。',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: theme.textFaint,
-                        fontFamily: 'TideFont'),
-                  ),
-                ],
-              ),
+        actions: [
+          IconButton(
+            tooltip: '刷新',
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
       ),
+      body: _loading
+          ? Center(child: CircularProgressIndicator(color: theme.primary))
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              children: [
+                _buildRangeChips(theme),
+                const SizedBox(height: 12),
+                _ChartCard(
+                  title: '消耗 Token',
+                  subtitle: '近 $_rangeDays 天',
+                  color: theme.primary,
+                  series: _tokenSeries,
+                  days: _days,
+                  selectedIndex: _selectedIndex,
+                  onSelect: (index) => setState(() => _selectedIndex = index),
+                ),
+                const SizedBox(height: 14),
+                _ChartCard(
+                  title: '机器人回复消息',
+                  subtitle: '近 $_rangeDays 天',
+                  color: const Color(0xFFB05E91),
+                  series: _replySeries,
+                  days: _days,
+                  selectedIndex: _selectedIndex,
+                  onSelect: (index) => setState(() => _selectedIndex = index),
+                ),
+                const SizedBox(height: 24),
+                _summarySection(theme),
+                const SizedBox(height: 12),
+                Text(
+                  '统计来自 AI 调用账本；不返回 usage 的提供商按文本长度估算。',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: theme.textFaint,
+                      fontFamily: 'TideFont'),
+                ),
+              ],
+            ),
     );
   }
 
@@ -267,28 +265,26 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
 
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
-    final card =
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(icon, color: accent, size: 25),
-      const Spacer(),
-      Text('$value',
-          style: TextStyle(
-              fontSize: 29,
-              fontWeight: FontWeight.w700,
-              color: theme.textStrong,
-              fontFamily: 'TideFont')),
-      const SizedBox(height: 3),
-      Text(label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
-    ]);
-    return FrostCard(
+    return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-      radius: 20,
-      liquid: true,
-      child: card,
+      decoration: BoxDecoration(
+          color: theme.surfaceVariant, borderRadius: BorderRadius.circular(20)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: accent, size: 25),
+        const Spacer(),
+        Text('$value',
+            style: TextStyle(
+                fontSize: 29,
+                fontWeight: FontWeight.w700,
+                color: theme.textStrong,
+                fontFamily: 'TideFont')),
+        const SizedBox(height: 3),
+        Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
+      ]),
     );
   }
 }
@@ -316,10 +312,12 @@ class _ChartCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return FrostCard(
+    return Container(
       padding: const EdgeInsets.all(16),
-      radius: 18,
-      liquid: true,
+      decoration: BoxDecoration(
+        color: theme.surfaceVariant,
+        borderRadius: BorderRadius.circular(18),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

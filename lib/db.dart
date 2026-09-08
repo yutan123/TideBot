@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:archive/archive.dart';
 import 'chat_event_bus.dart';
 
 /// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
@@ -64,7 +66,7 @@ class DBManager {
   }
 
   Future<Map<String, Object>> databaseDiagnostics() async {
-    final path = join(await getDatabasesPath(), 'tidebot.db');
+    final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final file = File(path);
     final existedBeforeOpen = await file.exists();
     final bytesBeforeOpen = existedBeforeOpen ? await file.length() : 0;
@@ -350,7 +352,7 @@ class DBManager {
   }
 
   Future<Database> _initDB() async {
-    final path = join(await getDatabasesPath(), 'tidebot.db');
+    final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
       version: 30,
@@ -1362,10 +1364,6 @@ class DBManager {
 
   Future<List<Map<String, dynamic>>> exportableBots() async => queryBots();
 
-  /// 导出单个机器人的可移植 TideBot JSON，避免混入 API Key、设置与其他机器人数据。
-  ///
-  /// 返回「建议文件名 + 完整 JSON 导出内容」。真正的落盘由调用方决定，
-  /// 例如通过系统的保存对话框写入公共 Download 目录（兼容 scoped storage）。
   Future<List<Map<String, dynamic>>> _queryAllMessages(String botId) async {
     final db = await database;
     return db.query(
@@ -1376,18 +1374,35 @@ class DBManager {
     );
   }
 
-  Future<({String fileName, String content})> buildChatExport(
+  /// 导出单个机器人的可移植 TideBot ZIP，包含聊天记录 JSON 和所有图片/音频文件。
+  ///
+  /// 返回「建议文件名 + ZIP 字节数组」。真正的落盘由调用方决定。
+  Future<({String fileName, Uint8List bytes})> buildChatExport(
       String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
     final messages = await _queryAllMessages(botId);
     final safeName = (bot['name']?.toString() ?? 'bot')
         .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
-    final fileName =
-        'tidebot_chat_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json';
-    final content = jsonEncode({
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = 'tidebot_chat_${safeName}_$timestamp.zip';
+
+    // 收集所有图片和音频文件路径
+    final mediaFiles = <String>{};
+    for (final msg in messages) {
+      final type = msg['type']?.toString() ?? '';
+      final filePath = msg['file_path']?.toString() ?? '';
+      if (filePath.isNotEmpty && (type == 'image' || type == 'audio')) {
+        if (await File(filePath).exists()) {
+          mediaFiles.add(filePath);
+        }
+      }
+    }
+
+    // 创建 JSON 导出内容
+    final jsonContent = jsonEncode({
       'format': 'tidebot.chat',
-      'version': 1,
+      'version': 2, // 版本升级到 2，表示支持 ZIP 格式
       'exported_at': DateTime.now().toIso8601String(),
       'bot': {'id': botId, 'name': bot['name']?.toString() ?? ''},
       'messages': messages
@@ -1406,26 +1421,119 @@ class DBManager {
               })
           .toList(),
     });
-    return (fileName: fileName, content: content);
+
+    // 创建 ZIP 归档
+    final archive = Archive();
+
+    // 添加 JSON 文件
+    final jsonBytes = utf8.encode(jsonContent);
+    archive.addFile(ArchiveFile(
+      'chat_history.json',
+      jsonBytes.length,
+      jsonBytes,
+    ));
+
+    // 添加媒体文件到 media/ 目录
+    for (final filePath in mediaFiles) {
+      try {
+        final file = File(filePath);
+        final bytes = await file.readAsBytes();
+        final fileName = p.basename(filePath);
+        archive.addFile(ArchiveFile(
+          'media/$fileName',
+          bytes.length,
+          bytes,
+        ));
+      } catch (_) {
+        // 文件读取失败时跳过
+      }
+    }
+
+    // 编码为 ZIP
+    final zipBytes = ZipEncoder().encode(archive);
+    if (zipBytes.isEmpty) {
+      throw StateError('ZIP 编码失败');
+    }
+
+    return (fileName: fileName, bytes: Uint8List.fromList(zipBytes));
   }
 
-  /// 兼容旧调用：写入导出的 JSON 到应用内部目录并返回其绝对路径（兜底用）。
+  /// 兼容旧调用：写入导出的 ZIP 到应用内部目录并返回其绝对路径（兜底用）。
   Future<String> exportBotChat(String botId) async {
     final export = await buildChatExport(botId);
     final dir = await getApplicationDocumentsDirectory();
     final downloadDir = Directory('${dir.path}/TideBot/exports');
     await downloadDir.create(recursive: true);
     final file = File('${downloadDir.path}/${export.fileName}');
-    await file.writeAsString(export.content);
+    await file.writeAsBytes(export.bytes);
     return file.path;
   }
 
   Future<int> importBotChat(String botId, String sourcePath) async {
     final source = File(sourcePath);
-    final raw = jsonDecode(await source.readAsString());
-    if (raw is! Map || raw['format'] != 'tidebot.chat' || raw['version'] != 1) {
+    final bytes = await source.readAsBytes();
+
+    // 尝试解压 ZIP
+    Archive? archive;
+    try {
+      archive = ZipDecoder().decodeBytes(bytes);
+    } catch (_) {
+      // 不是 ZIP，尝试作为旧版 JSON 导入
+      final raw = jsonDecode(await source.readAsString());
+      return _importFromLegacyJson(botId, raw);
+    }
+
+    // ZIP 格式：提取 JSON 和媒体文件
+    final jsonFile = archive.findFile('chat_history.json');
+    if (jsonFile == null) {
+      throw const FormatException('ZIP 中未找到 chat_history.json');
+    }
+
+    final jsonContent = utf8.decode(jsonFile.content as List<int>);
+    final raw = jsonDecode(jsonContent);
+
+    if (raw is! Map || raw['format'] != 'tidebot.chat') {
       throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
     }
+
+    final version = raw['version'] as int? ?? 1;
+
+    // 提取媒体文件到临时目录
+    final tempDir = await getTemporaryDirectory();
+    final mediaDir = Directory(
+        '${tempDir.path}/tidebot_import_${DateTime.now().millisecondsSinceEpoch}');
+    await mediaDir.create(recursive: true);
+
+    final mediaPathMap = <String, String>{}; // 原文件名 -> 新路径
+
+    if (version >= 2) {
+      for (final file in archive.files) {
+        if (file.name.startsWith('media/') && !file.isFile) continue;
+        if (file.name.startsWith('media/')) {
+          final fileName = p.basename(file.name);
+          final newPath = '${mediaDir.path}/$fileName';
+          final newFile = File(newPath);
+          await newFile.writeAsBytes(file.content as List<int>);
+          mediaPathMap[fileName] = newPath;
+        }
+      }
+    }
+
+    return _importMessages(botId, raw, mediaPathMap);
+  }
+
+  Future<int> _importFromLegacyJson(String botId, Map raw) async {
+    if (raw['format'] != 'tidebot.chat' || raw['version'] != 1) {
+      throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
+    }
+    return _importMessages(botId, raw, {});
+  }
+
+  Future<int> _importMessages(
+    String botId,
+    Map raw,
+    Map<String, String> mediaPathMap,
+  ) async {
     final list = raw['messages'];
     if (list is! List) throw const FormatException('聊天记录内容无效');
     final items = list.whereType<Map>().toList();
@@ -1444,13 +1552,19 @@ class DBManager {
         final timestamp = (item['timestamp'] as num?)?.toInt() ??
             DateTime.now().millisecondsSinceEpoch + i;
         final oldReplyId = item['reply_to_id']?.toString() ?? '';
+        final oldFilePath = item['file_path']?.toString() ?? '';
+        // 映射媒体文件路径
+        final newFilePath = oldFilePath.isNotEmpty &&
+                mediaPathMap.containsKey(p.basename(oldFilePath))
+            ? mediaPathMap[p.basename(oldFilePath)]!
+            : oldFilePath;
         await txn.insert('chat_history', {
           'id': idMap[oldId] ?? 'import_${base}_$i',
           'bot_id': botId,
           'role': item['role']?.toString() ?? 'user',
           'type': item['type']?.toString() ?? 'text',
           'content': item['content']?.toString() ?? '',
-          'file_path': item['file_path']?.toString(),
+          'file_path': newFilePath,
           'mood': item['mood']?.toString(),
           'duration': item['duration'],
           'reply_to_id': idMap[oldReplyId],

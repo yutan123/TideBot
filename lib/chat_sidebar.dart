@@ -206,67 +206,64 @@ class _ChatSidebarState extends State<ChatSidebar> {
               offset: Offset(-width * (1 - progress), 0),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: TideBackground(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: SafeArea(
-                      right: false,
-                      child: SizedBox(
-                        width: width,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _header(theme),
-                            Expanded(
-                              child: ListView(
-                                padding:
-                                    const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                                children: [
-                                  _timeCard(theme),
-                                  const SizedBox(height: 12),
-                                  _statusCard(theme, bot),
-                                  const SizedBox(height: 12),
-                                  _postCard(theme, bot),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: _managerButton(
-                                          theme,
-                                          Icons.extension_rounded,
-                                          'Skill',
-                                          'skill',
-                                        ),
+                child: Material(
+                  color: theme.surface,
+                  child: SafeArea(
+                    right: false,
+                    child: SizedBox(
+                      width: width,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _header(theme),
+                          Expanded(
+                            child: ListView(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                              children: [
+                                _timeCard(theme),
+                                const SizedBox(height: 12),
+                                _statusCard(theme, bot),
+                                const SizedBox(height: 12),
+                                _postCard(theme, bot),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _managerButton(
+                                        theme,
+                                        Icons.extension_rounded,
+                                        'Skill',
+                                        'skill',
                                       ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: _managerButton(
-                                          theme,
-                                          Icons.hub_rounded,
-                                          'MCP',
-                                          'mcp',
-                                        ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: _managerButton(
+                                        theme,
+                                        Icons.hub_rounded,
+                                        'MCP',
+                                        'mcp',
                                       ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.bottomLeft,
-                              child: IconButton(
-                                tooltip: theme.isDark ? '切换到日间模式' : '切换到夜间模式',
-                                onPressed: () => theme.cycleMode(),
-                                icon: Icon(
-                                  theme.isDark
-                                      ? Icons.light_mode_rounded
-                                      : Icons.dark_mode_rounded,
-                                  color: theme.primary,
+                                    ),
+                                  ],
                                 ),
+                              ],
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.bottomLeft,
+                            child: IconButton(
+                              tooltip: theme.isDark ? '切换到日间模式' : '切换到夜间模式',
+                              onPressed: () => theme.cycleMode(),
+                              icon: Icon(
+                                theme.isDark
+                                    ? Icons.light_mode_rounded
+                                    : Icons.dark_mode_rounded,
+                                color: theme.primary,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -333,26 +330,25 @@ class _ChatSidebarState extends State<ChatSidebar> {
         theme,
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
-            '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
-            style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.w700,
-              color: theme.textStrong,
-            ),
-          ),
+              '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
+              style: const TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              )),
           Text(
             '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
-            style: TextStyle(color: theme.textWeak),
+            style: const TextStyle(color: Color(0xDFFFFFFF)),
           ),
           const SizedBox(height: 10),
           Text(
             '“$_quote”',
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13,
               height: 1.4,
-              color: theme.textStrong,
+              color: Colors.white,
             ),
           ),
         ]),
@@ -437,28 +433,15 @@ class _ChatSidebarState extends State<ChatSidebar> {
 
   Widget _panel(TideTheme theme, Widget child) => Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color:
-              theme.hasGlobalBackground ? theme.surface : theme.surfaceVariant,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: theme.hasGlobalBackground
-                ? Colors.white.withValues(alpha: theme.isDark ? .20 : .48)
-                : theme.primary.withValues(alpha: .16),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: theme.isDark ? .16 : .07),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
+          color: theme.primary,
+          borderRadius: BorderRadius.circular(8),
         ),
         child: DefaultTextStyle.merge(
-          style: TextStyle(color: theme.textStrong),
+          style: const TextStyle(color: Colors.white),
           child: IconTheme.merge(
-            data: IconThemeData(color: theme.iconMuted),
+            data: const IconThemeData(color: Colors.white),
             child: child,
           ),
         ),

@@ -1064,10 +1064,29 @@ class AIManager {
   }
 
   List<String> _replySegments(String content) {
+    // 先检测代码块，避免在代码块内分段
+    final codeBlockPattern = RegExp(r'```[\s\S]*?```', multiLine: true);
+    final codeBlocks = <MapEntry<int, int>>[];
+    for (final match in codeBlockPattern.allMatches(content)) {
+      codeBlocks.add(MapEntry(match.start, match.end));
+    }
+
+    bool isInsideCodeBlock(int position) {
+      for (final block in codeBlocks) {
+        if (position >= block.key && position < block.value) return true;
+      }
+      return false;
+    }
+
     final parts = RegExp(r'.*?[。！？!?…]+|.+$', multiLine: true)
         .allMatches(content)
-        .map((match) => match.group(0)?.trim() ?? '')
-        .where((part) => part.isNotEmpty)
+        .map((match) {
+          // 如果句子结束位置在代码块内，跳过分段
+          if (isInsideCodeBlock(match.end)) return null;
+          return match.group(0)?.trim() ?? '';
+        })
+        .where((part) => part != null && part.isNotEmpty)
+        .cast<String>()
         .toList();
     return parts.isEmpty ? <String>[content] : parts;
   }
@@ -1222,6 +1241,18 @@ class AIManager {
     if (imagePaths.isEmpty) return '[未提取到可用视频帧]';
     final prefs = await SharedPreferences.getInstance();
     final visionId = (prefs.getString('vision_model_$botId') ?? '').trim();
+
+    // 支持使用主模型识图
+    if (visionId == '__use_primary_vision__') {
+      final descriptions = <String>[];
+      for (var i = 0; i < imagePaths.length; i++) {
+        final path = imagePaths[i];
+        final detail = await MediaPreprocessor().imageFallbackText(path);
+        descriptions.add('第 ${i + 1} 帧：$detail');
+      }
+      return '[视频画面分析（主模型识图）]\n${descriptions.join('\n\n')}';
+    }
+
     final provider = visionId.isEmpty
         ? null
         : await DBManager().getChatProviderById(visionId);
@@ -1237,7 +1268,7 @@ class AIManager {
             );
       descriptions.add('第 ${i + 1} 帧：$detail');
     }
-    return '[视频画面分析]\\n${descriptions.join('\\n\\n')}';
+    return '[视频画面分析]\n${descriptions.join('\n\n')}';
   }
 
   Future<String> _describeImage({
@@ -1436,6 +1467,27 @@ $transcript''';
             bot?['stt_model']?.toString() ??
             '')
         .trim();
+
+    // 支持使用主模型识别
+    if (providerId == '__use_primary_stt__') {
+      final chatProviderId = bot?['chat_model']?.toString().trim() ?? '';
+      if (chatProviderId.isEmpty) {
+        AppLogService.instance.add('STT', '主模型未配置，无法使用主模型识别');
+        return null;
+      }
+      final chatProvider = await db.getChatProviderById(chatProviderId);
+      if (chatProvider == null) {
+        AppLogService.instance.add('STT', '主模型服务商不存在');
+        return null;
+      }
+      AppLogService.instance.add('STT', '使用主模型识别：${chatProvider['name']}');
+      return transcribeWithProvider(
+        chatProvider,
+        audioPath,
+        cancellationToken: cancellationToken,
+      );
+    }
+
     if (providerId.isEmpty) {
       AppLogService.instance.add('STT', '未为当前机器人选择 STT 服务');
       return null;
@@ -3527,6 +3579,7 @@ $transcript''';
   }) {
     final type = msg['type']?.toString() ?? 'text';
     final content = msg['content']?.toString() ?? '';
+    final role = msg['role']?.toString() ?? 'user';
     if (type == 'call_summary') return null;
     if (type == 'image') {
       final path = msg['file_path']?.toString() ?? '';
@@ -3536,6 +3589,9 @@ $transcript''';
     }
     if (type == 'sticker') {
       final emotion = content.trim();
+      if (role == 'assistant') {
+        return emotion.isEmpty ? '[机器人发送了一个表情包]' : '[机器人发送了一个表情包，类型：$emotion]';
+      }
       return emotion.isEmpty ? '[用户发送了一个表情包]' : '[用户发送了一个表情包，类型：$emotion]';
     }
     if (type == 'emoji') {

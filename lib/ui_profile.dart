@@ -301,10 +301,10 @@ class _ProfilePageState extends State<ProfilePage> {
         dialogTitle: '保存聊天记录到 Download',
         fileName: export.fileName,
         type: FileType.custom,
-        allowedExtensions: const ['json'],
+        allowedExtensions: const ['zip'],
         // Android/iOS 的 SAF 保存器要求调用方直接传入字节；它返回的路径
         // 可能只是 content URI，不能再使用 dart:io File(path) 写入。
-        bytes: utf8.encode(export.content),
+        bytes: export.bytes,
       );
       if (picked == null) {
         cancelled = true;

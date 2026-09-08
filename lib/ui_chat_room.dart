@@ -408,6 +408,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (_inputFocus.hasFocus && _showEmojiPanel) {
       _setEmojiPanel(false);
     }
+    // 输入框获得焦点时，若无内容则保持收起；有内容则展开
+    if (!_inputFocus.hasFocus && !_hasText && _showEmojiPanel) {
+      _setEmojiPanel(false);
+    }
   }
 
   void _setEmojiPanel(bool visible) {
@@ -642,11 +646,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   void _toggleEmojiPanel() {
     final opening = !_showEmojiPanel;
-    if (opening) _inputFocus.unfocus();
+    if (opening) {
+      _inputFocus.unfocus();
+      unawaited(_loadEmojiCatalog());
+      if (!_stickersLoaded) unawaited(_loadStickers());
+    }
     _setEmojiPanel(opening);
-    if (!opening) return;
-    unawaited(_loadEmojiCatalog());
-    if (!_stickersLoaded) unawaited(_loadStickers());
   }
 
   Future<void> _loadStickers() async {
@@ -1189,7 +1194,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (retryTarget != null) {
         await DBManager().clearMessageError(retryTarget['id'].toString());
         retryTarget.remove('is_retrying');
+        retryTarget.remove('error_log');
+        retryTarget.remove('error_code');
+        retryTarget.remove('error_text');
         retryTarget['retry_status'] = 'none';
+        if (mounted) setState(() {});
       }
       final persisted = (result['messages'] as List? ?? const [])
           .whereType<Map>()
@@ -1953,7 +1962,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         _modelPicker(ctx, sttProviders, curStt, (v) async {
                           curStt = v;
                           await pickModel('stt_model_$botId', v);
-                        }),
+                        }, includePrimaryStt: true),
                         _mLabel('TTS模型'),
                         _modelPicker(ctx, ttsProviders, curTts, (v) async {
                           curTts = v;
@@ -2136,11 +2145,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String cur,
     Function(String) onPick, {
     bool includePrimaryVision = false,
+    bool includePrimaryStt = false,
   }) {
     final sel = providers.firstWhereOrNull((p) => p['id'] == cur);
     final String disp;
     if (cur == '__use_primary_vision__') {
       disp = '使用主模型识图';
+    } else if (cur == '__use_primary_stt__') {
+      disp = '使用主模型识别';
     } else if (sel != null) {
       final name = sel['name']?.toString() ?? '未选择';
       final model = sel['model']?.toString().trim() ?? '';
@@ -2188,6 +2200,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       : null,
                   onTap: () {
                     onPick('__use_primary_vision__');
+                    Navigator.pop(ctx);
+                  },
+                ),
+              if (includePrimaryStt)
+                ListTile(
+                  leading: const Icon(Icons.mic_rounded),
+                  title: const Text('使用主模型识别（需要主模型支持语音）',
+                      style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+                  trailing: cur == '__use_primary_stt__'
+                      ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
+                      : null,
+                  onTap: () {
+                    onPick('__use_primary_stt__');
                     Navigator.pop(ctx);
                   },
                 ),
