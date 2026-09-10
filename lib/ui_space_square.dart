@@ -16,6 +16,7 @@ import 'memory_manager_page.dart';
 import 'emotion_state_service.dart';
 import 'daily_quote_service.dart';
 import 'diary_calendar_page.dart';
+import 'world_book_service.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -117,14 +118,16 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final shortMemories = await db.queryMemories(
+      final shortMemories =
+          await WorldBookService.instance.queryWorldBookMemories(
         _botId,
-        type: 'short',
+        typeFilter: 'short',
         limit: 50,
       );
-      final longMemories = await db.queryMemories(
+      final longMemories =
+          await WorldBookService.instance.queryWorldBookMemories(
         _botId,
-        type: 'long',
+        typeFilter: 'long',
         limit: 50,
       );
       final mem = [...shortMemories, ...longMemories];
@@ -332,12 +335,12 @@ class _SpacePageState extends State<SpacePage> {
                       const SizedBox(height: 16),
                       Row(
                         children: [
-                          Expanded(child: _buildSectionTitle('TA 的记忆')),
+                          Expanded(child: _buildSectionTitle('世界书')),
                           TextButton.icon(
                             onPressed: _openMemoryManager,
-                            icon: const Icon(Icons.tune_rounded, size: 16),
+                            icon: const Icon(Icons.menu_book_rounded, size: 16),
                             label: const Text(
-                              '管理',
+                              '查看全部',
                               style: TextStyle(fontFamily: 'TideFont'),
                             ),
                           ),
@@ -346,7 +349,7 @@ class _SpacePageState extends State<SpacePage> {
                       const SizedBox(height: 8),
                       if (_memories.isEmpty)
                         Text(
-                          'TA 还没有留下记忆',
+                          '还没有记录',
                           style: TextStyle(
                             color: theme.textFaint,
                             fontFamily: 'TideFont',

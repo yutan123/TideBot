@@ -410,19 +410,19 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _exportSelectedMemory() async {
-    final botId = await _pickDataBot('选择要导出底层记忆的机器人');
+    final botId = await _pickDataBot('选择要导出世界书的机器人');
     if (botId == null) return;
     try {
       final export = await DBManager().buildMemoryExport(botId);
       final path = await FilePicker.platform.saveFile(
-        dialogTitle: '保存底层记忆到 Download',
+        dialogTitle: '保存世界书到 Download',
         fileName: export.fileName,
         type: FileType.custom,
         allowedExtensions: const ['json'],
         bytes: utf8.encode(export.content),
       );
       if (!mounted || path == null) return;
-      GlobalNotice.show('底层记忆已导出');
+      GlobalNotice.show('世界书已导出');
       TideHaptics.confirm();
     } catch (e) {
       if (!mounted) return;
@@ -431,8 +431,57 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _importSelectedMemory() async {
-    final botId = await _pickDataBot('选择要导入底层记忆的机器人');
-    if (botId == null || !await _confirmDataOverwrite('底层记忆')) return;
+    final botId = await _pickDataBot('选择要导入世界书的机器人');
+    if (botId == null) return;
+
+    // 弹窗选择合并/覆盖
+    final mode = await showTideSheet<String>(
+      context: context,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '选择导入方式',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'TideFont',
+              ),
+            ),
+            const SizedBox(height: 20),
+            ListTile(
+              leading: const Icon(Icons.merge_rounded),
+              title: const Text('合并', style: TextStyle(fontFamily: 'TideFont')),
+              subtitle: const Text(
+                '保留现有世界书，按时间智能插入新内容',
+                style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(context, 'merge'),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.sync_rounded),
+              title: const Text('覆盖', style: TextStyle(fontFamily: 'TideFont')),
+              subtitle: const Text(
+                '删除现有世界书，完全替换为导入内容',
+                style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(context, 'overwrite'),
+            ),
+            const SizedBox(height: 12),
+            TideDialogs.glassButton(
+              '取消',
+              onTap: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (mode == null) return;
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['json'],
@@ -440,9 +489,14 @@ class _ProfilePageState extends State<ProfilePage> {
     final path = result?.files.single.path;
     if (path == null) return;
     try {
-      final count = await DBManager().importBotMemory(botId, path);
+      final count = await DBManager().importBotMemory(
+        botId,
+        path,
+        merge: mode == 'merge',
+      );
       if (!mounted) return;
-      GlobalNotice.show('已覆盖导入 $count 条底层记忆');
+      GlobalNotice.show(
+          mode == 'merge' ? '已合并导入 $count 条世界书' : '已覆盖导入 $count 条世界书');
       TideHaptics.confirm();
     } on FormatException catch (e) {
       if (!mounted) return;
@@ -522,7 +576,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     color: TideTheme.of(context).primary,
                   ),
                   title: const Text(
-                    '导出底层记忆',
+                    '导出世界书',
                     style: TextStyle(fontFamily: 'TideFont'),
                   ),
                   subtitle: const Text(
@@ -540,11 +594,11 @@ class _ProfilePageState extends State<ProfilePage> {
                     color: TideTheme.of(context).primary,
                   ),
                   title: const Text(
-                    '导入底层记忆',
+                    '导入世界书',
                     style: TextStyle(fontFamily: 'TideFont'),
                   ),
                   subtitle: const Text(
-                    '选择文件后将直接覆盖当前机器人',
+                    '选择文件后可选合并或覆盖',
                     style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
                   ),
                   onTap: () async {

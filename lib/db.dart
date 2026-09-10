@@ -148,6 +148,9 @@ class DBManager {
         id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
         content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
         expires_at INTEGER, timestamp INTEGER, updated_at INTEGER,
+        keys_json TEXT DEFAULT '[]', trigger_count INTEGER DEFAULT 0,
+        last_triggered_at INTEGER, auto_created INTEGER DEFAULT 0,
+        source_chat_id TEXT, is_deleted INTEGER DEFAULT 0,
         FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
       )
     ''');
@@ -300,6 +303,12 @@ class DBManager {
         'expires_at': 'INTEGER',
         'timestamp': 'INTEGER',
         'updated_at': 'INTEGER',
+        'keys_json': "TEXT DEFAULT '[]'",
+        'trigger_count': 'INTEGER DEFAULT 0',
+        'last_triggered_at': 'INTEGER',
+        'auto_created': 'INTEGER DEFAULT 0',
+        'source_chat_id': 'TEXT',
+        'is_deleted': 'INTEGER DEFAULT 0',
       });
       await _ensureColumns(db, 'schedule_tasks', const {
         'bot_id': 'TEXT',
@@ -355,7 +364,7 @@ class DBManager {
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 30,
+      version: 31,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -703,6 +712,26 @@ class DBManager {
           if (oldVersion < 29) await _createCallTables(db);
           if (oldVersion < 30) {
             print('[db] schema repair pass for version 30');
+          }
+          if (oldVersion < 31) {
+            // 世界书功能：扩展memories表
+            for (final sql in [
+              "ALTER TABLE memories ADD COLUMN keys_json TEXT DEFAULT '[]'",
+              'ALTER TABLE memories ADD COLUMN trigger_count INTEGER DEFAULT 0',
+              'ALTER TABLE memories ADD COLUMN last_triggered_at INTEGER',
+              'ALTER TABLE memories ADD COLUMN auto_created INTEGER DEFAULT 0',
+              'ALTER TABLE memories ADD COLUMN source_chat_id TEXT',
+              'ALTER TABLE memories ADD COLUMN is_deleted INTEGER DEFAULT 0',
+            ]) {
+              try {
+                await db.execute(sql);
+              } catch (_) {}
+            }
+            // 初始化已有记忆的keys_json（从content提取简单关键词）
+            try {
+              await db.execute(
+                  "UPDATE memories SET keys_json = '[]' WHERE keys_json IS NULL");
+            } catch (_) {}
           }
           if (oldVersion < 15) {
             for (final column in [
@@ -1613,34 +1642,47 @@ class DBManager {
     );
   }
 
-  Future<int> importBotMemory(String botId, String sourcePath) async {
+  Future<int> importBotMemory(String botId, String sourcePath,
+      {bool merge = false}) async {
     final raw = jsonDecode(await File(sourcePath).readAsString());
     if (raw is! Map ||
         raw['format'] != 'tidebot.memory' ||
         raw['version'] != 1) {
-      throw const FormatException('仅支持 TideBot 导出的底层记忆文件');
+      throw const FormatException('仅支持 TideBot 导出的世界书文件');
     }
     final memories = raw['memories'];
     final kvRows = raw['kv'];
     if (memories is! List || kvRows is! List) {
-      throw const FormatException('底层记忆内容无效');
+      throw const FormatException('世界书内容无效');
     }
     final sourceBotId =
         (raw['bot'] is Map ? raw['bot']['id'] : '')?.toString() ?? '';
     final db = await database;
     await db.transaction((txn) async {
-      await txn.delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
-      await txn.delete('kv_store',
-          where: 'key LIKE ? OR key LIKE ?',
-          whereArgs: ['%_$botId', '%_${botId}_%']);
+      if (!merge) {
+        // 覆盖模式：删除现有数据
+        await txn.delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
+        await txn.delete('kv_store',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: ['%_$botId', '%_${botId}_%']);
+      }
       for (var i = 0; i < memories.length; i++) {
         final item = memories[i];
         if (item is! Map) continue;
         final row = Map<String, dynamic>.from(item);
         row['bot_id'] = botId;
-        row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
-        await txn.insert('memories', row,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+
+        if (merge) {
+          // 合并模式：根据时间戳智能插入
+          row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
+          await txn.insert('memories', row,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        } else {
+          // 覆盖模式：直接替换
+          row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
+          await txn.insert('memories', row,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
       for (final item in kvRows) {
         if (item is! Map || item['key'] == null) continue;
@@ -1650,16 +1692,18 @@ class DBManager {
             'kv_store', {'key': key, 'value': item['value']?.toString()},
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
-      final botInfo = raw['bot'];
-      if (botInfo is Map) {
-        await txn.update(
-            'bots',
-            {
-              'created_at': botInfo['created_at'],
-              'daily_quote': botInfo['daily_quote'],
-            },
-            where: 'id = ?',
-            whereArgs: [botId]);
+      if (!merge) {
+        final botInfo = raw['bot'];
+        if (botInfo is Map) {
+          await txn.update(
+              'bots',
+              {
+                'created_at': botInfo['created_at'],
+                'daily_quote': botInfo['daily_quote'],
+              },
+              where: 'id = ?',
+              whereArgs: [botId]);
+        }
       }
     });
     return memories.whereType<Map>().length;
