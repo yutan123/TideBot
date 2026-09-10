@@ -166,8 +166,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
     final used = _apk + _appData;
     final pct =
         _total == 0 ? '—' : '${(used / _total * 100).toStringAsFixed(3)}%';
-    return Scaffold(
-        backgroundColor: theme.bgColor,
+    return TideBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
             title: const Text('存储空间', style: TextStyle(fontFamily: 'TideFont')),
             backgroundColor: Colors.transparent,
@@ -259,7 +260,9 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                     icon: const Icon(Icons.delete_outline),
                     label: Text('清理已选 ${_selected.length} 个机器人的聊天记录',
                         style: const TextStyle(fontFamily: 'TideFont'))),
-              ]));
+              ]),
+      ),
+    );
   }
 
   Widget _row(IconData icon, String title, String value,

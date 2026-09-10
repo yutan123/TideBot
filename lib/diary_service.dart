@@ -72,7 +72,7 @@ class DiaryService {
     final response = await AIManager().sendMessage(
       botId: botId,
       text:
-          '这是内部日记任务，不是与用户聊天。请以机器人第一人称写一篇简洁、真实、不可编造的日记。只根据事件时间范围内的对话提炼已经发生的事与感受；不要问候用户、不要解释任务、不要使用 Markdown。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n日记生成时间：${generatedAt.toIso8601String()}\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
+          '这是内部日记任务，不是与用户聊天。请以机器人第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼；不要问候用户、不要解释任务、不要使用 Markdown。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n日记生成时间：${generatedAt.toIso8601String()}\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,

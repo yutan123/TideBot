@@ -212,65 +212,67 @@ class DiaryDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text('$botName的日记'),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        actions: [
-          IconButton(
-            tooltip: '删除日记',
-            icon: const Icon(Icons.delete_outline_rounded),
-            onPressed: () async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('删除这篇日记？'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('取消'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('删除'),
-                    ),
-                  ],
+        appBar: AppBar(
+          title: Text('$botName的日记'),
+          backgroundColor: Colors.transparent,
+          actions: [
+            IconButton(
+              tooltip: '删除日记',
+              icon: const Icon(Icons.delete_outline_rounded),
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('删除这篇日记？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('取消'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('删除'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  await DBManager().deleteDiary(botId, dateKey);
+                  if (context.mounted) Navigator.pop(context, true);
+                }
+              },
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  dateKey,
+                  style: TextStyle(
+                    color: theme.primary,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'TideFont',
+                  ),
                 ),
-              );
-              if (confirmed == true) {
-                await DBManager().deleteDiary(botId, dateKey);
-                if (context.mounted) Navigator.pop(context, true);
-              }
-            },
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                dateKey,
-                style: TextStyle(
-                  color: theme.primary,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'TideFont',
+                const SizedBox(height: 20),
+                Text(
+                  content,
+                  style: TextStyle(
+                    color: theme.textStrong,
+                    fontSize: 17,
+                    height: 1.7,
+                    fontFamily: 'TideFont',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                content,
-                style: TextStyle(
-                  color: theme.textStrong,
-                  fontSize: 17,
-                  height: 1.7,
-                  fontFamily: 'TideFont',
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

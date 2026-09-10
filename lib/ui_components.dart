@@ -664,7 +664,19 @@ String fmtTime(dynamic ts) {
   return ts.toString();
 }
 
-String formatTime(dynamic ts) => fmtTime(ts);
+String formatTime(dynamic ts) {
+  if (ts == null) return '';
+  DateTime dt;
+  if (ts is String) {
+    dt = DateTime.tryParse(ts) ?? DateTime.now();
+  } else if (ts is int) {
+    dt = DateTime.fromMillisecondsSinceEpoch(ts);
+  } else {
+    return ts.toString();
+  }
+  return '${dt.month}月${dt.day}日 ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
 String fmtDate(dynamic ts) {
   if (ts == null) return '';
   if (ts is String) {

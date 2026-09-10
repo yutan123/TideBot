@@ -52,8 +52,16 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     }
     final lower = file.name.toLowerCase();
     if (lower.endsWith('.json')) return jsonDecode(utf8.decode(bytes));
+    // .md/.txt/.yaml/.yml/.toml 视为纯文本 manifest.json
+    if (lower.endsWith('.md') ||
+        lower.endsWith('.txt') ||
+        lower.endsWith('.yaml') ||
+        lower.endsWith('.yml') ||
+        lower.endsWith('.toml')) {
+      return jsonDecode(utf8.decode(bytes));
+    }
     if (!lower.endsWith('.zip') && !lower.endsWith('.tideskill')) {
-      throw const FormatException('仅支持 JSON、ZIP 或 TIDESKILL');
+      throw const FormatException('仅支持 JSON、ZIP、TIDESKILL、MD、TXT、YAML、TOML');
     }
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.length > 100) throw const FormatException('压缩包文件数量超过限制');
@@ -76,7 +84,12 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     await skillDir.create(recursive: true);
     final bytes = file.bytes!;
     final lower = file.name.toLowerCase();
-    if (lower.endsWith('.json')) {
+    if (lower.endsWith('.json') ||
+        lower.endsWith('.md') ||
+        lower.endsWith('.txt') ||
+        lower.endsWith('.yaml') ||
+        lower.endsWith('.yml') ||
+        lower.endsWith('.toml')) {
       await File('${skillDir.path}/manifest.json')
           .writeAsBytes(bytes, flush: true);
       return;

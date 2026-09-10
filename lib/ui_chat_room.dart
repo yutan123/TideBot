@@ -408,7 +408,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (_inputFocus.hasFocus && _showEmojiPanel) {
       _setEmojiPanel(false);
     }
-    // 输入框获得焦点时，若无内容则保持收起；有内容则展开
+    // Emoji 键盘逻辑：有内容时不自动收起，无内容时自动收起
     if (!_inputFocus.hasFocus && !_hasText && _showEmojiPanel) {
       _setEmojiPanel(false);
     }

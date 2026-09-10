@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'db.dart';
 import 'theme.dart';
@@ -137,57 +138,59 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: theme.bgColor,
-      appBar: AppBar(
-        title: const Text('数据大盘', style: TextStyle(fontFamily: 'TideFont')),
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: theme.primary))
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              children: [
-                _buildRangeChips(theme),
-                const SizedBox(height: 12),
-                _ChartCard(
-                  title: '消耗 Token',
-                  subtitle: '近 $_rangeDays 天',
-                  color: theme.primary,
-                  series: _tokenSeries,
-                  days: _days,
-                  selectedIndex: _selectedIndex,
-                  onSelect: (index) => setState(() => _selectedIndex = index),
-                ),
-                const SizedBox(height: 14),
-                _ChartCard(
-                  title: '机器人回复消息',
-                  subtitle: '近 $_rangeDays 天',
-                  color: const Color(0xFFB05E91),
-                  series: _replySeries,
-                  days: _days,
-                  selectedIndex: _selectedIndex,
-                  onSelect: (index) => setState(() => _selectedIndex = index),
-                ),
-                const SizedBox(height: 24),
-                _summarySection(theme),
-                const SizedBox(height: 12),
-                Text(
-                  '统计来自 AI 调用账本；不返回 usage 的提供商按文本长度估算。',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont'),
-                ),
-              ],
+        appBar: AppBar(
+          title: const Text('数据大盘', style: TextStyle(fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          actions: [
+            IconButton(
+              tooltip: '刷新',
+              onPressed: _load,
+              icon: const Icon(Icons.refresh_rounded),
             ),
+          ],
+        ),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: theme.primary))
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                children: [
+                  _buildRangeChips(theme),
+                  const SizedBox(height: 12),
+                  _ChartCard(
+                    title: '消耗 Token',
+                    subtitle: '近 $_rangeDays 天',
+                    color: theme.primary,
+                    series: _tokenSeries,
+                    days: _days,
+                    selectedIndex: _selectedIndex,
+                    onSelect: (index) => setState(() => _selectedIndex = index),
+                  ),
+                  const SizedBox(height: 14),
+                  _ChartCard(
+                    title: '机器人回复消息',
+                    subtitle: '近 $_rangeDays 天',
+                    color: const Color(0xFFB05E91),
+                    series: _replySeries,
+                    days: _days,
+                    selectedIndex: _selectedIndex,
+                    onSelect: (index) => setState(() => _selectedIndex = index),
+                  ),
+                  const SizedBox(height: 24),
+                  _summarySection(theme),
+                  const SizedBox(height: 12),
+                  Text(
+                    '统计来自 AI 调用账本；不返回 usage 的提供商按文本长度估算。',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: theme.textFaint,
+                        fontFamily: 'TideFont'),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -265,26 +268,53 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
 
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
+    final hasBackground = theme.globalBackground.isNotEmpty;
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
       decoration: BoxDecoration(
-          color: theme.surfaceVariant, borderRadius: BorderRadius.circular(20)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(icon, color: accent, size: 25),
-        const Spacer(),
-        Text('$value',
-            style: TextStyle(
-                fontSize: 29,
-                fontWeight: FontWeight.w700,
-                color: theme.textStrong,
-                fontFamily: 'TideFont')),
-        const SizedBox(height: 3),
-        Text(label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 12, color: theme.textWeak, fontFamily: 'TideFont')),
-      ]),
+        color: hasBackground
+            ? Colors.white.withValues(alpha: 0.15)
+            : theme.surfaceVariant,
+        borderRadius: BorderRadius.circular(20),
+        border: hasBackground
+            ? Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1.5)
+            : null,
+        boxShadow: hasBackground
+            ? [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4))
+              ]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: hasBackground
+              ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
+              : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, color: accent, size: 25),
+            const Spacer(),
+            Text('$value',
+                style: TextStyle(
+                    fontSize: 29,
+                    fontWeight: FontWeight.w700,
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont')),
+            const SizedBox(height: 3),
+            Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: theme.textWeak,
+                    fontFamily: 'TideFont')),
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -312,80 +342,102 @@ class _ChartCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
+    final hasBackground = theme.globalBackground.isNotEmpty;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: theme.surfaceVariant,
+        color: hasBackground
+            ? Colors.white.withValues(alpha: 0.15)
+            : theme.surfaceVariant,
         borderRadius: BorderRadius.circular(18),
+        border: hasBackground
+            ? Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1.5)
+            : null,
+        boxShadow: hasBackground
+            ? [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4))
+              ]
+            : null,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: BackdropFilter(
+          filter: hasBackground
+              ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
+              : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont')),
-              const Spacer(),
-              Text(subtitle,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont')),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 150,
-            child: TweenAnimationBuilder<double>(
-              key: ValueKey(
-                  '${subtitle}_${series.length}_${series.fold<int>(0, (a, b) => a + b)}'),
-              duration: const Duration(milliseconds: 420),
-              curve: Curves.easeOutCubic,
-              tween: Tween(begin: 0, end: 1),
-              builder: (_, progress, __) => GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: (details) {
-                  if (series.isEmpty) return;
-                  final box = context.findRenderObject() as RenderBox?;
-                  final chartWidth = box?.size.width ?? 1;
-                  final index = series.length == 1
-                      ? 0
-                      : ((details.localPosition.dx.clamp(0, chartWidth) /
-                                  chartWidth) *
-                              (series.length - 1))
-                          .round()
-                          .clamp(0, series.length - 1);
-                  onSelect(index);
-                },
-                child: CustomPaint(
-                  size: Size.infinite,
-                  painter: _LineChartPainter(
-                    color: color,
-                    series: series,
-                    gridColor: theme.divider,
-                    selectedIndex: selectedIndex,
-                    progress: progress,
+              Row(
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: theme.textStrong,
+                          fontFamily: 'TideFont')),
+                  const Spacer(),
+                  Text(subtitle,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: theme.textFaint,
+                          fontFamily: 'TideFont')),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 150,
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey(
+                      '${subtitle}_${series.length}_${series.fold<int>(0, (a, b) => a + b)}'),
+                  duration: const Duration(milliseconds: 420),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween(begin: 0, end: 1),
+                  builder: (_, progress, __) => GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (details) {
+                      if (series.isEmpty) return;
+                      final box = context.findRenderObject() as RenderBox?;
+                      final chartWidth = box?.size.width ?? 1;
+                      final index = series.length == 1
+                          ? 0
+                          : ((details.localPosition.dx.clamp(0, chartWidth) /
+                                      chartWidth) *
+                                  (series.length - 1))
+                              .round()
+                              .clamp(0, series.length - 1);
+                      onSelect(index);
+                    },
+                    child: CustomPaint(
+                      size: Size.infinite,
+                      painter: _LineChartPainter(
+                        color: color,
+                        series: series,
+                        gridColor: theme.divider,
+                        selectedIndex: selectedIndex,
+                        progress: progress,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              if (selectedIndex != null && selectedIndex! < days.length)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '${days[selectedIndex!].year}-${days[selectedIndex!].month.toString().padLeft(2, '0')}-${days[selectedIndex!].day.toString().padLeft(2, '0')}  ·  ${series[selectedIndex!]} $title',
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontSize: 12,
+                        color: theme.textWeak),
+                  ),
+                ),
+            ],
           ),
-          if (selectedIndex != null && selectedIndex! < days.length)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                '${days[selectedIndex!].year}-${days[selectedIndex!].month.toString().padLeft(2, '0')}-${days[selectedIndex!].day.toString().padLeft(2, '0')}  ·  ${series[selectedIndex!]} $title',
-                style: TextStyle(
-                    fontFamily: 'TideFont',
-                    fontSize: 12,
-                    color: theme.textWeak),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }

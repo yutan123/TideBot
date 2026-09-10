@@ -1066,27 +1066,17 @@ class AIManager {
   List<String> _replySegments(String content) {
     // 先检测代码块，避免在代码块内分段
     final codeBlockPattern = RegExp(r'```[\s\S]*?```', multiLine: true);
-    final codeBlocks = <MapEntry<int, int>>[];
-    for (final match in codeBlockPattern.allMatches(content)) {
-      codeBlocks.add(MapEntry(match.start, match.end));
-    }
+    final codeBlocks = codeBlockPattern.allMatches(content);
 
-    bool isInsideCodeBlock(int position) {
-      for (final block in codeBlocks) {
-        if (position >= block.key && position < block.value) return true;
-      }
-      return false;
+    // 如果整个内容包含代码块，不分段
+    if (codeBlocks.isNotEmpty) {
+      return <String>[content];
     }
 
     final parts = RegExp(r'.*?[。！？!?…]+|.+$', multiLine: true)
         .allMatches(content)
-        .map((match) {
-          // 如果句子结束位置在代码块内，跳过分段
-          if (isInsideCodeBlock(match.end)) return null;
-          return match.group(0)?.trim() ?? '';
-        })
-        .where((part) => part != null && part.isNotEmpty)
-        .cast<String>()
+        .map((match) => match.group(0)?.trim() ?? '')
+        .where((part) => part.isNotEmpty)
         .toList();
     return parts.isEmpty ? <String>[content] : parts;
   }

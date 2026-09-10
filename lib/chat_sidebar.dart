@@ -411,12 +411,10 @@ class _ChatSidebarState extends State<ChatSidebar> {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
             color: theme.surfaceVariant,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: theme.isDark
-                  ? const Color(0x66E8ECF2)
-                  : const Color(0x3D1C1C1E),
-              width: 1,
+              color: theme.primary,
+              width: 1.5,
             ),
           ),
           child: Row(children: [
@@ -436,7 +434,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: theme.primary,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: DefaultTextStyle.merge(
           style: const TextStyle(color: Colors.white),

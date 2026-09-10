@@ -80,6 +80,30 @@ class _CodeCardState extends State<CodeCard> {
                   ),
                 ),
                 const Spacer(),
+                // 全屏预览按钮（仅 HTML 显示）
+                if (_supportsPreview) ...[
+                  GestureDetector(
+                    onTap: () => _showFullscreenPreview(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: theme.primary.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        size: 16,
+                        color: theme.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 // 切换按钮（仅 HTML 显示）
                 if (_supportsPreview) ...[
                   GestureDetector(
@@ -204,7 +228,26 @@ class _CodeCardState extends State<CodeCard> {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFFFFFFFF));
-    await controller.loadHtmlString(widget.code);
+
+    // 注入 viewport meta 标签实现自适应
+    final htmlWithViewport = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <style>
+    body { margin: 0; padding: 8px; font-family: system-ui; }
+    * { max-width: 100%; }
+    img { height: auto; }
+  </style>
+</head>
+<body>
+${widget.code}
+</body>
+</html>
+''';
+    await controller.loadHtmlString(htmlWithViewport);
     return controller;
   }
 
