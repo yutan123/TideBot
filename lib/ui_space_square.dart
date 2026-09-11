@@ -16,7 +16,6 @@ import 'memory_manager_page.dart';
 import 'emotion_state_service.dart';
 import 'daily_quote_service.dart';
 import 'diary_calendar_page.dart';
-import 'world_book_service.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -118,16 +117,14 @@ class _SpacePageState extends State<SpacePage> {
       final today = DateTime(now.year, now.month, now.day);
       final metDate = DateTime(metAt.year, metAt.month, metAt.day);
       _daysSince = (today.difference(metDate).inDays + 1).clamp(1, 1 << 30);
-      final shortMemories =
-          await WorldBookService.instance.queryWorldBookMemories(
+      final shortMemories = await db.queryMemories(
         _botId,
-        typeFilter: 'short',
+        type: 'short',
         limit: 50,
       );
-      final longMemories =
-          await WorldBookService.instance.queryWorldBookMemories(
+      final longMemories = await db.queryMemories(
         _botId,
-        typeFilter: 'long',
+        type: 'long',
         limit: 50,
       );
       final mem = [...shortMemories, ...longMemories];

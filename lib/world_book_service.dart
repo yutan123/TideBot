@@ -1,244 +1,422 @@
-import 'dart:async';
 import 'dart:convert';
+
 import 'db.dart';
-import 'app_log_service.dart';
 
-/// 世界书服务：机器人的自主记忆管理系统
-///
-/// 功能：
-/// 1. 对话结束后AI自动判断是否需要记录/更新/删除记忆
-/// 2. 发送消息前自动激活相关记忆注入提示词
-/// 3. 支持关键词匹配、优先级排序、Token预算控制
+/// 世界书条目模型
+class WorldBookEntry {
+  final String id;
+  final String bookId;
+  final String? botId;
+  final String title;
+  final String content;
+  final String comment;
+  final List<String> keys;
+  final List<String> secondaryKeys;
+  final String keyMode; // 'any' | 'all'
+  final bool caseSensitive;
+  final bool matchWholeWords;
+  final bool useRegex;
+  final String
+      position; // 'before_char' | 'after_char' | 'depth_N' | 'author_note'
+  final int insertionOrder;
+  final int priority;
+  final bool enabled;
+  final int activationCount;
+  final int? lastActivatedAt;
+  final int createdAt;
+  final int updatedAt;
+
+  WorldBookEntry({
+    required this.id,
+    required this.bookId,
+    this.botId,
+    required this.title,
+    required this.content,
+    this.comment = '',
+    required this.keys,
+    this.secondaryKeys = const [],
+    this.keyMode = 'any',
+    this.caseSensitive = false,
+    this.matchWholeWords = false,
+    this.useRegex = false,
+    this.position = 'after_char',
+    this.insertionOrder = 100,
+    this.priority = 50,
+    this.enabled = true,
+    this.activationCount = 0,
+    this.lastActivatedAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory WorldBookEntry.fromMap(Map<String, dynamic> map) {
+    return WorldBookEntry(
+      id: map['id'] as String,
+      bookId: map['book_id'] as String,
+      botId: map['bot_id'] as String?,
+      title: map['title'] as String,
+      content: map['content'] as String,
+      comment: map['comment'] as String? ?? '',
+      keys: (jsonDecode(map['keys'] as String) as List).cast<String>(),
+      secondaryKeys:
+          (jsonDecode(map['secondary_keys'] as String? ?? '[]') as List)
+              .cast<String>(),
+      keyMode: map['key_mode'] as String? ?? 'any',
+      caseSensitive: (map['case_sensitive'] as int? ?? 0) == 1,
+      matchWholeWords: (map['match_whole_words'] as int? ?? 0) == 1,
+      useRegex: (map['use_regex'] as int? ?? 0) == 1,
+      position: map['position'] as String? ?? 'after_char',
+      insertionOrder: map['insertion_order'] as int? ?? 100,
+      priority: map['priority'] as int? ?? 50,
+      enabled: (map['enabled'] as int? ?? 1) == 1,
+      activationCount: map['activation_count'] as int? ?? 0,
+      lastActivatedAt: map['last_activated_at'] as int?,
+      createdAt: map['created_at'] as int,
+      updatedAt: map['updated_at'] as int,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'book_id': bookId,
+      'bot_id': botId,
+      'title': title,
+      'content': content,
+      'comment': comment,
+      'keys': jsonEncode(keys),
+      'secondary_keys': jsonEncode(secondaryKeys),
+      'key_mode': keyMode,
+      'case_sensitive': caseSensitive ? 1 : 0,
+      'match_whole_words': matchWholeWords ? 1 : 0,
+      'use_regex': useRegex ? 1 : 0,
+      'position': position,
+      'insertion_order': insertionOrder,
+      'priority': priority,
+      'enabled': enabled ? 1 : 0,
+      'activation_count': activationCount,
+      'last_activated_at': lastActivatedAt,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+    };
+  }
+}
+
+/// 世界书服务
 class WorldBookService {
+  static WorldBookService? _instance;
+  static WorldBookService get instance => _instance ??= WorldBookService._();
+
   WorldBookService._();
-  static final WorldBookService instance = WorldBookService._();
 
-  /// 对话计时器：用于检测5分钟无互动后触发AI记忆判断
-  final Map<String, Timer> _conversationTimers = {};
-  final Map<String, int> _lastUserMessageTime = {};
+  final DBManager db = DBManager();
 
-  /// 世界书Token预算配置（默认2000，用户可调）
-  Future<int> getWorldBookTokenBudget() async {
-    final db = DBManager();
-    final value = await db.getKV('world_book_token_budget');
-    return int.tryParse(value ?? '') ?? 2000;
-  }
-
-  Future<void> setWorldBookTokenBudget(int budget) async {
-    final db = DBManager();
-    await db.setKV('world_book_token_budget', budget.toString());
-  }
-
-  /// 对话结束判定时间（默认5分钟，可调）
-  Future<int> getConversationEndMinutes() async {
-    final db = DBManager();
-    final value = await db.getKV('conversation_end_minutes');
-    return int.tryParse(value ?? '') ?? 5;
-  }
-
-  Future<void> setConversationEndMinutes(int minutes) async {
-    final db = DBManager();
-    await db.setKV('conversation_end_minutes', minutes.toString());
-  }
-
-  /// 用户发送消息时调用：重置对话计时器
-  void onUserMessage(String botId) {
-    _lastUserMessageTime[botId] = DateTime.now().millisecondsSinceEpoch;
-    _resetConversationTimer(botId);
-  }
-
-  /// 重置对话计时器
-  void _resetConversationTimer(String botId) {
-    _conversationTimers[botId]?.cancel();
-    getConversationEndMinutes().then((minutes) {
-      _conversationTimers[botId] = Timer(
-        Duration(minutes: minutes),
-        () => _onConversationEnd(botId),
-      );
-    });
-  }
-
-  /// 对话结束回调：触发AI记忆判断
-  Future<void> _onConversationEnd(String botId) async {
-    _conversationTimers.remove(botId);
-    await triggerMemoryJudgment(botId);
-  }
-
-  /// 触发AI记忆判断（供外部调用，如检测到告别词时）
-  Future<void> triggerMemoryJudgment(String botId) async {
-    try {
-      AppLogService.instance.add('WORLDBOOK', '开始对话记忆判断：$botId');
-      // TODO: 调用AI判断是否需要新增/更新/删除记忆
-      // 这里需要在ai.dart中实现AI记忆判断逻辑
-      // 暂时先记录日志，后续实现完整逻辑
-    } catch (e) {
-      AppLogService.instance.add('WORLDBOOK', '记忆判断失败：$e');
-    }
-  }
-
-  /// 激活世界书：根据用户消息匹配关键词，返回应注入的记忆列表
-  Future<List<Map<String, dynamic>>> activateWorldBook({
+  /// 激活世界书条目（根据对话内容匹配）
+  Future<List<WorldBookEntry>> activateEntries({
     required String botId,
-    required String userMessage,
-    int scanDepth = 4,
+    required String conversationText,
+    int scanDepth = 10,
   }) async {
-    try {
-      final db = DBManager();
+    final database = await db.database;
 
-      // 1. 收集最近N条消息
-      final recentMessages = await db.queryMessages(
-        botId,
-        limit: scanDepth * 2,
-        descending: true,
+    // 1. 获取该机器人的所有启用条目（包括全局条目）
+    final rows = await database.query(
+      'world_book_entries',
+      where: '(bot_id = ? OR bot_id IS NULL) AND enabled = 1',
+      whereArgs: [botId],
+      orderBy: 'priority DESC, insertion_order ASC',
+    );
+
+    if (rows.isEmpty) return [];
+
+    final entries = rows.map((r) => WorldBookEntry.fromMap(r)).toList();
+    final activated = <WorldBookEntry>[];
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 2. 对每个条目进行匹配测试
+    for (final entry in entries) {
+      if (_matchEntry(entry, conversationText)) {
+        activated.add(entry);
+
+        // 3. 更新激活统计
+        await database.update(
+          'world_book_entries',
+          {
+            'activation_count': entry.activationCount + 1,
+            'last_activated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [entry.id],
+        );
+      }
+    }
+
+    return activated;
+  }
+
+  /// 匹配单个条目
+  static bool _matchEntry(WorldBookEntry entry, String text) {
+    // 主键匹配
+    final primaryMatched = _matchKeys(
+      entry.keys,
+      text,
+      entry.caseSensitive,
+      entry.matchWholeWords,
+      entry.useRegex,
+      entry.keyMode,
+    );
+
+    if (!primaryMatched) return false;
+
+    // 次要键匹配（如果存在）
+    if (entry.secondaryKeys.isNotEmpty) {
+      return _matchKeys(
+        entry.secondaryKeys,
+        text,
+        entry.caseSensitive,
+        entry.matchWholeWords,
+        entry.useRegex,
+        'any', // 次要键总是any模式
       );
+    }
 
-      // 2. 提取关键词（简单分词）
-      final keywords = _extractKeywords([
-        userMessage,
-        ...recentMessages
-            .take(scanDepth)
-            .map((m) => m['content']?.toString() ?? ''),
-      ]);
+    return true;
+  }
 
-      if (keywords.isEmpty) return [];
+  /// 匹配关键词列表
+  static bool _matchKeys(
+    List<String> keys,
+    String text,
+    bool caseSensitive,
+    bool matchWholeWords,
+    bool useRegex,
+    String mode,
+  ) {
+    if (keys.isEmpty) return false;
 
-      // 3. 查询所有未删除的记忆
-      final allMemories = await db.queryMemories(
-        botId,
-        includeExpired: false,
-      );
+    final testText = caseSensitive ? text : text.toLowerCase();
 
-      // 4. 匹配关键词并打分
-      final matched = <Map<String, dynamic>>[];
-      for (final memory in allMemories) {
-        if ((memory['is_deleted'] as int?) == 1) continue;
+    int matchedCount = 0;
+    for (final key in keys) {
+      final testKey = caseSensitive ? key : key.toLowerCase();
 
-        final keysJson = memory['keys_json']?.toString() ?? '[]';
-        List<String> memoryKeys = [];
+      bool matched = false;
+      if (useRegex) {
         try {
-          memoryKeys = (jsonDecode(keysJson) as List).cast<String>();
-        } catch (_) {}
-
-        if (memoryKeys.isEmpty) continue;
-
-        // 简单关键词匹配
-        var hitCount = 0;
-        for (final keyword in keywords) {
-          for (final memKey in memoryKeys) {
-            if (keyword.toLowerCase().contains(memKey.toLowerCase()) ||
-                memKey.toLowerCase().contains(keyword.toLowerCase())) {
-              hitCount++;
-              break;
-            }
-          }
+          final regex = RegExp(testKey, caseSensitive: caseSensitive);
+          matched = regex.hasMatch(text);
+        } catch (_) {
+          matched = testText.contains(testKey);
         }
-
-        if (hitCount > 0) {
-          final importance = (memory['importance'] as int?) ?? 3;
-          final score = hitCount * 100 + importance * 10;
-          matched.add({
-            ...memory,
-            '_score': score,
-          });
-        }
+      } else if (matchWholeWords) {
+        final pattern = RegExp(r'\b' + RegExp.escape(testKey) + r'\b',
+            caseSensitive: caseSensitive);
+        matched = pattern.hasMatch(text);
+      } else {
+        matched = testText.contains(testKey);
       }
 
-      // 5. 按分数排序
-      matched
-          .sort((a, b) => (b['_score'] as int).compareTo(a['_score'] as int));
-
-      // 6. 按Token预算裁剪
-      final budget = await getWorldBookTokenBudget();
-      final result = <Map<String, dynamic>>[];
-      var usedTokens = 0;
-
-      for (final memory in matched) {
-        final content = memory['content']?.toString() ?? '';
-        final tokens = estimateTokens(content);
-
-        if (usedTokens + tokens > budget) break;
-
-        result.add(memory);
-        usedTokens += tokens;
-
-        // 更新激活统计
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final memoryId = memory['id']?.toString() ?? '';
-        if (memoryId.isNotEmpty) {
-          await db.updateMemory(memoryId, {
-            'trigger_count': ((memory['trigger_count'] as int?) ?? 0) + 1,
-            'last_triggered_at': now,
-          });
-        }
+      if (matched) {
+        matchedCount++;
+        if (mode == 'any') return true; // any模式：任意匹配即返回
       }
-
-      AppLogService.instance.add(
-        'WORLDBOOK',
-        '激活${ result.length}条记忆，占用${usedTokens}tokens（预算$budget）',
-      );
-
-      return result;
-    } catch (e) {
-      AppLogService.instance.add('WORLDBOOK', '激活世界书失败：$e');
-      return [];
     }
+
+    return mode == 'all' && matchedCount == keys.length; // all模式：全部匹配
   }
 
-  /// 提取关键词（简单中英文分词）
-  Set<String> _extractKeywords(List<String> texts) {
-    final keywords = <String>{};
+  /// 格式化激活的条目为提示词注入文本
+  static String formatActivatedEntries(List<WorldBookEntry> entries) {
+    if (entries.isEmpty) return '';
 
-    for (final text in texts) {
-      // 分词
-      final words = text.split(RegExp(r'[,，。.!！?？;；、\s]+'));
-      for (final word in words) {
-        final trimmed = word.trim();
-        if (trimmed.length >= 2) {
-          keywords.add(trimmed);
-        }
-      }
+    final grouped = <String, List<WorldBookEntry>>{};
+    for (final entry in entries) {
+      grouped.putIfAbsent(entry.position, () => []).add(entry);
+    }
 
-      // 中文二元组
-      for (var i = 0; i < text.length - 1; i++) {
-        final pair = text.substring(i, i + 2);
-        if (pair.runes.every((r) => r >= 0x4E00 && r <= 0x9FFF)) {
-          keywords.add(pair);
+    // 按position分组排序并拼接
+    final buffer = StringBuffer();
+    for (final position in ['before_char', 'after_char', 'author_note']) {
+      final list = grouped[position];
+      if (list != null && list.isNotEmpty) {
+        // 按insertion_order排序
+        list.sort((a, b) => a.insertionOrder.compareTo(b.insertionOrder));
+        for (final entry in list) {
+          buffer.writeln(entry.content.trim());
+          buffer.writeln();
         }
       }
     }
 
-    return keywords;
+    return buffer.toString().trim();
   }
 
-  /// 查询世界书记忆（按最新更新时间排序，用于空间界面显示）
-  Future<List<Map<String, dynamic>>> queryWorldBookMemories(
-    String botId, {
-    String? typeFilter,
-    int? limit,
+  /// 创建条目
+  Future<String> createEntry({
+    required String bookId,
+    String? botId,
+    required String title,
+    required String content,
+    String comment = '',
+    required List<String> keys,
+    List<String> secondaryKeys = const [],
+    String keyMode = 'any',
+    bool caseSensitive = false,
+    bool matchWholeWords = false,
+    bool useRegex = false,
+    String position = 'after_char',
+    int insertionOrder = 100,
+    int priority = 50,
   }) async {
-    final db = DBManager();
-    final allMemories = await db.queryMemories(botId, type: typeFilter);
+    final database = await db.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final id = 'wb_${now}_${content.hashCode.abs()}';
 
-    // 过滤未删除的
-    final valid =
-        allMemories.where((m) => (m['is_deleted'] as int?) != 1).toList();
+    final entry = WorldBookEntry(
+      id: id,
+      bookId: bookId,
+      botId: botId,
+      title: title,
+      content: content,
+      comment: comment,
+      keys: keys,
+      secondaryKeys: secondaryKeys,
+      keyMode: keyMode,
+      caseSensitive: caseSensitive,
+      matchWholeWords: matchWholeWords,
+      useRegex: useRegex,
+      position: position,
+      insertionOrder: insertionOrder,
+      priority: priority,
+      createdAt: now,
+      updatedAt: now,
+    );
 
-    // 按updated_at降序排序
-    valid.sort((a, b) {
-      final aTime = (a['updated_at'] as int?) ?? (a['timestamp'] as int?) ?? 0;
-      final bTime = (b['updated_at'] as int?) ?? (b['timestamp'] as int?) ?? 0;
-      return bTime.compareTo(aTime);
+    await database.insert('world_book_entries', entry.toMap());
+    return id;
+  }
+
+  /// 更新条目
+  Future<void> updateEntry(String entryId, Map<String, dynamic> updates) async {
+    final database = await db.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final data = Map<String, dynamic>.from(updates);
+    data['updated_at'] = now;
+
+    // 处理List类型字段
+    if (data.containsKey('keys') && data['keys'] is List) {
+      data['keys'] = jsonEncode(data['keys']);
+    }
+    if (data.containsKey('secondaryKeys') && data['secondaryKeys'] is List) {
+      data['secondary_keys'] = jsonEncode(data['secondaryKeys']);
+      data.remove('secondaryKeys');
+    }
+
+    // 处理bool类型字段
+    for (final field in [
+      'caseSensitive',
+      'matchWholeWords',
+      'useRegex',
+      'enabled'
+    ]) {
+      if (data.containsKey(field) && data[field] is bool) {
+        final snakeCase = field.replaceAllMapped(
+          RegExp(r'[A-Z]'),
+          (m) => '_${m.group(0)!.toLowerCase()}',
+        );
+        data[snakeCase] = data[field] ? 1 : 0;
+        data.remove(field);
+      }
+    }
+
+    await database.update('world_book_entries', data,
+        where: 'id = ?', whereArgs: [entryId]);
+  }
+
+  /// 删除条目
+  Future<void> deleteEntry(String entryId) async {
+    final database = await db.database;
+    await database
+        .delete('world_book_entries', where: 'id = ?', whereArgs: [entryId]);
+  }
+
+  /// 获取条目列表
+  Future<List<WorldBookEntry>> getEntries(
+      {String? bookId, String? botId}) async {
+    final database = await db.database;
+
+    String? where;
+    List<dynamic>? whereArgs;
+
+    if (bookId != null && botId != null) {
+      where = 'book_id = ? AND (bot_id = ? OR bot_id IS NULL)';
+      whereArgs = [bookId, botId];
+    } else if (bookId != null) {
+      where = 'book_id = ?';
+      whereArgs = [bookId];
+    } else if (botId != null) {
+      where = 'bot_id = ? OR bot_id IS NULL';
+      whereArgs = [botId];
+    }
+
+    final rows = await database.query(
+      'world_book_entries',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'priority DESC, insertion_order ASC',
+    );
+
+    return rows.map((r) => WorldBookEntry.fromMap(r)).toList();
+  }
+
+  /// 创建世界书
+  Future<String> createBook({
+    required String name,
+    String description = '',
+    String? botId,
+    bool isGlobal = false,
+  }) async {
+    final database = await db.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final id = 'book_${now}_${name.hashCode.abs()}';
+
+    await database.insert('world_books', {
+      'id': id,
+      'name': name,
+      'description': description,
+      'bot_id': botId,
+      'is_global': isGlobal ? 1 : 0,
+      'created_at': now,
+      'updated_at': now,
     });
 
-    return limit != null ? valid.take(limit).toList() : valid;
+    return id;
   }
 
-  /// 清理资源
-  void dispose() {
-    for (final timer in _conversationTimers.values) {
-      timer.cancel();
+  /// 获取世界书列表
+  Future<List<Map<String, dynamic>>> getBooks({String? botId}) async {
+    final database = await db.database;
+
+    String? where;
+    List<dynamic>? whereArgs;
+
+    if (botId != null) {
+      where = 'bot_id = ? OR is_global = 1';
+      whereArgs = [botId];
     }
-    _conversationTimers.clear();
-    _lastUserMessageTime.clear();
+
+    return await database.query(
+      'world_books',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'updated_at DESC',
+    );
+  }
+
+  /// 删除世界书（级联删除所有条目）
+  Future<void> deleteBook(String bookId) async {
+    final database = await db.database;
+    await database.delete('world_books', where: 'id = ?', whereArgs: [bookId]);
   }
 }

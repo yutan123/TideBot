@@ -20,6 +20,7 @@ import 'device_capability_service.dart';
 import 'chat_content.dart';
 import 'chat_protocol.dart';
 import 'skill_runtime.dart';
+import 'world_book_service.dart';
 
 class AICancellationToken {
   bool _cancelled = false;
@@ -408,6 +409,17 @@ class AIManager {
     ].take(8).toList();
     final shortMemories =
         relevantMemories.where((m) => m['type'] == 'short').take(6).toList();
+
+    // 世界书激活：根据当前对话内容和历史触发相关条目
+    final worldBookEntries = activeGame == null
+        ? await WorldBookService.instance.activateEntries(
+            botId: botId,
+            conversationText:
+                '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}',
+            scanDepth: 10,
+          )
+        : <WorldBookEntry>[];
+
     String memoryLines(List<Map<String, dynamic>> items, int budget) {
       var used = 0;
       final lines = <String>[];
@@ -422,6 +434,8 @@ class AIManager {
 
     final longMemoryContext = memoryLines(longMemories, 1200);
     final shortMemoryContext = memoryLines(shortMemories, 600);
+    final worldBookContext =
+        WorldBookService.formatActivatedEntries(worldBookEntries);
     final stickerPlan = allowTools
         ? await _planStickerForTurn(db)
         : const _StickerPlan.disabled();
@@ -504,6 +518,7 @@ class AIManager {
         lifeContext +
         deviceContextPrompt +
         emotionContext +
+        (worldBookContext.isEmpty ? '' : '\n【世界书】\n$worldBookContext') +
         (longMemoryContext.isEmpty ? '' : '\n【长期记忆】\n$longMemoryContext') +
         toolContext +
         (shortMemoryContext.isEmpty ? '' : '\n【近期记忆】\n$shortMemoryContext');

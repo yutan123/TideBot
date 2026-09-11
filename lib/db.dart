@@ -364,7 +364,7 @@ class DBManager {
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 31,
+      version: 32,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -471,6 +471,50 @@ class DBManager {
             total_tokens INTEGER NOT NULL DEFAULT 0,
             reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
           )
+        ''');
+        await db.execute('''
+          CREATE TABLE world_books (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            bot_id TEXT,
+            is_global INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE world_book_entries (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            bot_id TEXT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            comment TEXT DEFAULT '',
+            keys TEXT NOT NULL,
+            secondary_keys TEXT DEFAULT '[]',
+            key_mode TEXT DEFAULT 'any',
+            case_sensitive INTEGER DEFAULT 0,
+            match_whole_words INTEGER DEFAULT 0,
+            use_regex INTEGER DEFAULT 0,
+            position TEXT DEFAULT 'after_char',
+            insertion_order INTEGER DEFAULT 100,
+            priority INTEGER DEFAULT 50,
+            enabled INTEGER DEFAULT 1,
+            activation_count INTEGER DEFAULT 0,
+            last_activated_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES world_books (id) ON DELETE CASCADE,
+            FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('''
+          CREATE INDEX idx_world_book_entries_book ON world_book_entries(book_id, enabled)
+        ''');
+        await db.execute('''
+          CREATE INDEX idx_world_book_entries_bot ON world_book_entries(bot_id, enabled)
         ''');
         await _createCallTables(db);
         await _createSkillTables(db);
@@ -731,6 +775,63 @@ class DBManager {
             try {
               await db.execute(
                   "UPDATE memories SET keys_json = '[]' WHERE keys_json IS NULL");
+            } catch (_) {}
+          }
+          if (oldVersion < 32) {
+            // 世界书独立表
+            try {
+              await db.execute('''
+                CREATE TABLE IF NOT EXISTS world_books (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  description TEXT DEFAULT '',
+                  bot_id TEXT,
+                  is_global INTEGER DEFAULT 0,
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER NOT NULL,
+                  FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+                )
+              ''');
+            } catch (_) {}
+            try {
+              await db.execute('''
+                CREATE TABLE IF NOT EXISTS world_book_entries (
+                  id TEXT PRIMARY KEY,
+                  book_id TEXT NOT NULL,
+                  bot_id TEXT,
+                  title TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  comment TEXT DEFAULT '',
+                  keys TEXT NOT NULL,
+                  secondary_keys TEXT DEFAULT '[]',
+                  key_mode TEXT DEFAULT 'any',
+                  case_sensitive INTEGER DEFAULT 0,
+                  match_whole_words INTEGER DEFAULT 0,
+                  use_regex INTEGER DEFAULT 0,
+                  position TEXT DEFAULT 'after_char',
+                  insertion_order INTEGER DEFAULT 100,
+                  priority INTEGER DEFAULT 50,
+                  enabled INTEGER DEFAULT 1,
+                  activation_count INTEGER DEFAULT 0,
+                  last_activated_at INTEGER,
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER NOT NULL,
+                  FOREIGN KEY (book_id) REFERENCES world_books (id) ON DELETE CASCADE,
+                  FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+                )
+              ''');
+            } catch (_) {}
+            try {
+              await db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_world_book_entries_book 
+                ON world_book_entries(book_id, enabled)
+              ''');
+            } catch (_) {}
+            try {
+              await db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_world_book_entries_bot 
+                ON world_book_entries(bot_id, enabled)
+              ''');
             } catch (_) {}
           }
           if (oldVersion < 15) {
