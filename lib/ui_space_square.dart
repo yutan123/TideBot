@@ -16,6 +16,7 @@ import 'memory_manager_page.dart';
 import 'emotion_state_service.dart';
 import 'daily_quote_service.dart';
 import 'diary_calendar_page.dart';
+import 'world_book_detail_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -334,10 +335,20 @@ class _SpacePageState extends State<SpacePage> {
                         children: [
                           Expanded(child: _buildSectionTitle('世界书')),
                           TextButton.icon(
-                            onPressed: _openMemoryManager,
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => WorldBookDetailPage(
+                                    botId: _botId,
+                                    botName: _botName,
+                                  ),
+                                ),
+                              );
+                            },
                             icon: const Icon(Icons.menu_book_rounded, size: 16),
                             label: const Text(
-                              '查看全部',
+                              '查看',
                               style: TextStyle(fontFamily: 'TideFont'),
                             ),
                           ),
