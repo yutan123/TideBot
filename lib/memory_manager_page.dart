@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'db.dart';
 import 'future_task_scheduler.dart';
@@ -265,6 +266,178 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
   */
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
+    // 世界书字段编辑
+    if (_type == 'long' || _type == 'short') {
+      final titleCtrl =
+          TextEditingController(text: item?['title']?.toString() ?? '');
+      final content =
+          TextEditingController(text: item?['content']?.toString() ?? '');
+      final keysStr = item?['keys']?.toString() ?? '';
+      List<String> keysList = [];
+      if (keysStr.isNotEmpty) {
+        try {
+          keysList = (jsonDecode(keysStr) as List).cast<String>();
+        } catch (_) {
+          keysList = keysStr
+              .split(',')
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
+      }
+      final keysCtrl = TextEditingController(text: keysList.join(', '));
+      var priority = item?['priority'] as int? ?? 50;
+
+      final ok = await TideDialogs.show<bool>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialog) {
+            final theme = TideTheme.of(ctx);
+            final decoration = InputDecoration(
+              filled: true,
+              fillColor: theme.surfaceVariant,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+            );
+            return Center(
+              child: Material(
+                type: MaterialType.transparency,
+                child: SingleChildScrollView(
+                  child: TideDialogs.glassContent(context: ctx, children: [
+                    Text(
+                      item == null ? '添加世界书记忆' : '编辑世界书记忆',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'TideFont',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: titleCtrl,
+                      decoration: decoration.copyWith(labelText: '标题'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: content,
+                      minLines: 4,
+                      maxLines: 7,
+                      decoration: decoration.copyWith(
+                        labelText: '记忆内容',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: keysCtrl,
+                      decoration: decoration.copyWith(
+                        labelText: '关键词（用逗号分隔）',
+                        hintText: '例如: 生日, 喜好, 重要事件',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Text(
+                          '优先级: ',
+                          style: TextStyle(
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: priority.toDouble(),
+                            min: 0,
+                            max: 100,
+                            divisions: 20,
+                            label: priority.toString(),
+                            onChanged: (v) =>
+                                setDialog(() => priority = v.toInt()),
+                          ),
+                        ),
+                        Text(
+                          priority.toString(),
+                          style: TextStyle(
+                            color: theme.primary,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(children: [
+                      Expanded(
+                        child: TideDialogs.glassButton(
+                          '取消',
+                          color: theme.buttonSecondary,
+                          textColor: theme.textStrong,
+                          onTap: () => Navigator.pop(ctx),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TideDialogs.glassButton(
+                          '保存',
+                          onTap: () => Navigator.pop(ctx, true),
+                        ),
+                      ),
+                    ]),
+                  ]),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+      if (ok == true && content.text.trim().isNotEmpty) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final parsedKeys = keysCtrl.text
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+
+        final values = {
+          'title': titleCtrl.text.trim(),
+          'type': _type,
+          'content': content.text.trim(),
+          'timestamp': now,
+          'keys': jsonEncode(parsedKeys),
+          'key_mode': 'plain',
+          'priority': priority,
+        };
+
+        if (item == null) {
+          await DBManager().insertMemory({
+            'id': 'mem_$now',
+            'bot_id': widget.botId,
+            ...values,
+          });
+        } else {
+          await DBManager().updateMemory(item['id'].toString(), values);
+        }
+        await _load();
+      }
+
+      titleCtrl.dispose();
+      content.dispose();
+      keysCtrl.dispose();
+      return;
+    }
+
     if (_type == 'future') {
       final title =
           TextEditingController(text: item?['title']?.toString() ?? '');
@@ -656,6 +829,25 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                           itemCount: _items.length,
                           itemBuilder: (_, i) {
                             final item = _items[i];
+
+                            // 解析关键词
+                            String keysDisplay = '';
+                            if (item['keys'] != null) {
+                              try {
+                                final keys =
+                                    (jsonDecode(item['keys'].toString())
+                                            as List)
+                                        .cast<String>();
+                                if (keys.isNotEmpty) {
+                                  keysDisplay = keys.take(3).join(', ');
+                                  if (keys.length > 3) keysDisplay += '...';
+                                }
+                              } catch (_) {}
+                            }
+
+                            final priority = item['priority'] as int? ?? 50;
+                            final title = item['title']?.toString() ?? '';
+
                             return InkWell(
                               borderRadius: BorderRadius.circular(12),
                               onTap: () => _edit(item),
@@ -670,6 +862,18 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
+                                          if (title.isNotEmpty) ...[
+                                            Text(
+                                              title,
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: theme.textStrong,
+                                                fontFamily: 'TideFont',
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                          ],
                                           Text(
                                             _type == 'future'
                                                 ? (item['title']?.toString() ??
@@ -679,18 +883,74 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                                             style: TextStyle(
                                               height: 1.55,
                                               fontSize: 15,
-                                              color: theme.textStrong,
+                                              color: title.isNotEmpty
+                                                  ? theme.textWeak
+                                                  : theme.textStrong,
                                               fontFamily: 'TideFont',
                                             ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          const SizedBox(height: 5),
-                                          Text(
-                                            _date(item['timestamp']),
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: theme.textFaint,
-                                              fontFamily: 'TideFont',
+                                          if (keysDisplay.isNotEmpty) ...[
+                                            const SizedBox(height: 6),
+                                            Row(
+                                              children: [
+                                                Icon(Icons.tag_rounded,
+                                                    size: 12,
+                                                    color: theme.textFaint),
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  child: Text(
+                                                    keysDisplay,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: theme.textFaint,
+                                                      fontFamily: 'TideFont',
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
+                                          ],
+                                          const SizedBox(height: 5),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                _date(item['timestamp']),
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: theme.textFaint,
+                                                  fontFamily: 'TideFont',
+                                                ),
+                                              ),
+                                              if (priority != 50) ...[
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: accent.withValues(
+                                                        alpha: 0.15),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            6),
+                                                  ),
+                                                  child: Text(
+                                                    '优先级 $priority',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: accent,
+                                                      fontFamily: 'TideFont',
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                         ],
                                       ),
