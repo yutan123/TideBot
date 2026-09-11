@@ -30,6 +30,7 @@ import 'emotion_state_service.dart';
 import 'chat_protocol.dart';
 import 'ui_call.dart';
 import 'ui_space_square.dart';
+import 'world_book_service.dart';
 
 class _EmojiAsset {
   final String asset;
@@ -973,6 +974,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     // 用户主动发言：清零主动回复未应答计数并重置计时。
     _onUserInteracted();
     unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
+
+    // 检测告别词，立即触发世界书判断；否则重置5分钟计时器
+    final farewellWords = ['再见', '拜拜', '晚安', '早点休息', 'bye', 'goodbye', '886'];
+    final isFarewell =
+        farewellWords.any((word) => text.toLowerCase().contains(word));
+    if (isFarewell) {
+      unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
+    } else {
+      WorldBookService.instance.resetConversationTimer(botId);
+    }
 
     // ===== 防抖/合并 =====
     // 上一条请求还在飞（机器人尚未回完）时再发消息：不再像旧实现那样直接丢弃，

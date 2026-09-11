@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'db.dart';
+import 'ai.dart';
 
 /// 世界书条目模型
 class WorldBookEntry {
@@ -110,6 +113,185 @@ class WorldBookService {
   WorldBookService._();
 
   final DBManager db = DBManager();
+
+  // 对话结束计时器管理（key: botId, value: Timer）
+  final Map<String, Timer> _conversationTimers = {};
+  final Map<String, bool> _pendingJudgments = {}; // 防止重复触发
+
+  /// 重置对话结束计时器（5分钟无互动后触发AI记忆判断）
+  void resetConversationTimer(String botId) {
+    // 取消现有计时器
+    _conversationTimers[botId]?.cancel();
+
+    // 启动新计时器：5分钟后触发
+    _conversationTimers[botId] = Timer(const Duration(minutes: 5), () {
+      triggerMemoryJudgment(botId);
+    });
+  }
+
+  /// 取消对话结束计时器
+  void cancelConversationTimer(String botId) {
+    _conversationTimers[botId]?.cancel();
+    _conversationTimers.remove(botId);
+  }
+
+  /// 触发AI记忆判断（对话结束时调用）
+  Future<void> triggerMemoryJudgment(String botId) async {
+    // 防止重复触发
+    if (_pendingJudgments[botId] == true) return;
+    _pendingJudgments[botId] = true;
+
+    try {
+      // 取消计时器
+      cancelConversationTimer(botId);
+
+      // 获取最近的对话历史（最多20条）
+      final messages = await db.queryMessages(botId, limit: 20);
+      if (messages.length < 2) {
+        debugPrint('[WorldBook] 对话太短，跳过记忆判断');
+        return;
+      }
+
+      // 构建对话摘要
+      final conversationSummary = messages
+          .map((m) => '${m['role'] == 'user' ? '用户' : '机器人'}: ${m['content']}')
+          .join('\n');
+
+      // 调用AI判断是否需要更新世界书
+      final prompt = '''
+请分析这段对话，判断是否需要更新世界书（机器人的记忆系统）。
+
+【对话内容】
+$conversationSummary
+
+【判断规则】
+值得记录的信息：
+- 重要的个人信息（姓名、生日、职业、爱好等）
+- 情感变化和重要事件
+- 约定、承诺、待办事项
+- 新学到的知识
+- 用户的喜好和习惯
+
+不值得记录的信息：
+- 日常寒暄
+- 重复的已知信息
+- 过于琐碎的细节
+
+【输出格式】
+请返回JSON格式，包含以下字段：
+{
+  "needUpdate": true/false,
+  "actions": [
+    {
+      "type": "create|update|delete",
+      "title": "记忆标题",
+      "content": "记忆内容",
+      "keys": ["关键词1", "关键词2"],
+      "priority": 50,
+      "comment": "为什么记录这条"
+    }
+  ]
+}
+
+如果不需要更新，返回 {"needUpdate": false, "actions": []}
+''';
+
+      debugPrint('[WorldBook] 开始AI记忆判断...');
+      final result = await AIManager().sendMessage(
+        botId: botId,
+        text: prompt,
+        persistResponse: false,
+        forceSingleReply: true,
+      );
+
+      if (result['success'] != true) {
+        debugPrint('[WorldBook] AI记忆判断失败: ${result['error']}');
+        return;
+      }
+
+      // 解析AI返回的JSON
+      final response = result['text']?.toString() ?? '';
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(response);
+      if (jsonMatch == null) {
+        debugPrint('[WorldBook] AI返回格式错误');
+        return;
+      }
+
+      final judgment = jsonDecode(jsonMatch.group(0)!);
+      if (judgment['needUpdate'] != true) {
+        debugPrint('[WorldBook] AI判断：无需更新世界书');
+        return;
+      }
+
+      // 执行更新操作
+      final actions =
+          (judgment['actions'] as List? ?? []).cast<Map<String, dynamic>>();
+      for (final action in actions) {
+        final type = action['type']?.toString() ?? 'create';
+        final title = action['title']?.toString() ?? '';
+        final content = action['content']?.toString() ?? '';
+        final keys = (action['keys'] as List? ?? []).cast<String>();
+        final priority = action['priority'] as int? ?? 50;
+
+        if (title.isEmpty || content.isEmpty || keys.isEmpty) continue;
+
+        if (type == 'create') {
+          // 创建新条目（存入memories表，兼容现有系统）
+          final now = DateTime.now().millisecondsSinceEpoch;
+          await (await db.database).insert('memories', {
+            'id': 'mem_${now}_${title.hashCode.abs()}',
+            'bot_id': botId,
+            'title': title,
+            'content': content,
+            'category': 'fact',
+            'keys': jsonEncode(keys),
+            'key_mode': 'plain',
+            'priority': priority,
+            'created_at': now,
+            'updated_at': now,
+          });
+          debugPrint('[WorldBook] 创建记忆: $title');
+        } else if (type == 'update') {
+          // 查找并更新现有条目
+          final existing = await (await db.database).query(
+            'memories',
+            where: 'bot_id = ? AND title = ?',
+            whereArgs: [botId, title],
+            limit: 1,
+          );
+          if (existing.isNotEmpty) {
+            await (await db.database).update(
+              'memories',
+              {
+                'content': content,
+                'keys': jsonEncode(keys),
+                'priority': priority,
+                'updated_at': DateTime.now().millisecondsSinceEpoch,
+              },
+              where: 'id = ?',
+              whereArgs: [existing.first['id']],
+            );
+            debugPrint('[WorldBook] 更新记忆: $title');
+          }
+        } else if (type == 'delete') {
+          // 删除条目
+          await (await db.database).delete(
+            'memories',
+            where: 'bot_id = ? AND title = ?',
+            whereArgs: [botId, title],
+          );
+          debugPrint('[WorldBook] 删除记忆: $title');
+        }
+      }
+
+      debugPrint('[WorldBook] 记忆判断完成，执行了 ${actions.length} 个操作');
+    } catch (e, st) {
+      debugPrint('[WorldBook] 记忆判断异常: $e');
+      debugPrint(st.toString());
+    } finally {
+      _pendingJudgments.remove(botId);
+    }
+  }
 
   /// 激活世界书条目（根据对话内容匹配）
   Future<List<WorldBookEntry>> activateEntries({
