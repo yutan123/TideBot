@@ -1,0 +1,11 @@
+   Woah! You appear to be trying to run flutter as root.
+   We strongly recommend running the flutter tool without superuser privileges.
+  /
+📎
+Flutter assets will be downloaded from https://storage.googleapis.com. Make sure you trust this source!
+Analyzing TideBot...                                            
+
+warning • The declaration '_persistModelMemories' isn't referenced. Try removing the declaration of '_persistModelMemories' • lib/ai.dart:3898:16 • unused_element
+   info • Can't use a relative path to import a library in 'lib'. Try fixing the relative path or changing the import to a 'package:' import • test/chat_context_window_test.dart:2:8 • avoid_relative_lib_imports
+
+2 issues found. (ran in 59.3s)

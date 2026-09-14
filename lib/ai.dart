@@ -1,3 +1,4 @@
+import 'chat_context_window.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -374,43 +375,26 @@ class AIManager {
     final history = includeChatHistory
         ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
         : <Map<String, dynamic>>[];
-    // A rollover is semantic, not deletion: once the cumulative transcript reaches
-    // the configured context size, ask the configured model to retain only durable
-    // events/facts and then keep the newest half as live conversation.
-    if (includeChatHistory && enableAutoSummary) {
-      await _rolloverContextMemory(
-        db: db,
-        botId: botId,
-        botName: bot['name']?.toString() ?? 'TideBot',
-        history: history,
-        maxContext: maxContext,
-        provider: provider,
-        modelName: modelName,
-      );
-    }
-
-    // Keep stable instructions first for provider prefix caches. Dynamic time is
-    // appended last, and history is packed newest-first within the user budget.
-    // 稳定记忆放在系统提示的固定位置，动态的中短期记忆限制条数和体积，
-    // 避免每轮请求无边界增长，同时尽可能保留服务商前缀缓存命中。
-    final stableLongMemories = activeGame == null
-        ? await db.queryMemories(botId, type: 'long', limit: 4)
+    // 世界书统一管理所有记忆：身份档案每轮固定注入，普通记忆由关键词匹配激活。
+    final profileMemories = activeGame == null
+        ? (await db.queryMemories(botId, limit: 200))
+            .where((m) {
+              final text =
+                  '${m['title'] ?? ''} ${m['category'] ?? ''}'.toLowerCase();
+              return text.contains('自我') ||
+                  text.contains('用户') ||
+                  text.contains('关系') ||
+                  text.contains('人格') ||
+                  text.contains('称呼');
+            })
+            .take(12)
+            .toList()
         : <Map<String, dynamic>>[];
-    final relevantMemories = activeGame == null
-        ? await db.queryMemoriesRelevant(botId, text, limit: 8)
-        : <Map<String, dynamic>>[];
-    final longMemories = <Map<String, dynamic>>[
-      ...stableLongMemories,
-      ...relevantMemories.where(
-        (m) =>
-            m['type'] == 'long' &&
-            !stableLongMemories.any((stable) => stable['id'] == m['id']),
-      ),
-    ].take(8).toList();
-    final shortMemories =
-        relevantMemories.where((m) => m['type'] == 'short').take(6).toList();
+    final profileContext = profileMemories.isEmpty
+        ? ''
+        : '\n【固定身份档案（每轮都有效）】\n${profileMemories.map((m) => '${m['title'] ?? '档案'}：${m['content'] ?? ''}').join('\n')}';
 
-    // 世界书激活：根据当前对话内容和历史触发相关条目
+    // 世界书激活：只有带关键词的普通条目参与正则/关键词匹配。
     final worldBookEntries = activeGame == null
         ? await WorldBookService.instance.activateEntries(
             botId: botId,
@@ -420,20 +404,6 @@ class AIManager {
           )
         : <WorldBookEntry>[];
 
-    String memoryLines(List<Map<String, dynamic>> items, int budget) {
-      var used = 0;
-      final lines = <String>[];
-      for (final item in items) {
-        final content = item['content']?.toString().trim() ?? '';
-        if (content.isEmpty || used + content.length > budget) continue;
-        lines.add('- $content');
-        used += content.length;
-      }
-      return lines.join('\n');
-    }
-
-    final longMemoryContext = memoryLines(longMemories, 1200);
-    final shortMemoryContext = memoryLines(shortMemories, 600);
     final worldBookContext =
         WorldBookService.formatActivatedEntries(worldBookEntries);
     final stickerPlan = allowTools
@@ -518,22 +488,20 @@ class AIManager {
         lifeContext +
         deviceContextPrompt +
         emotionContext +
-        (worldBookContext.isEmpty ? '' : '\n【世界书】\n$worldBookContext') +
-        (longMemoryContext.isEmpty ? '' : '\n【长期记忆】\n$longMemoryContext') +
-        toolContext +
-        (shortMemoryContext.isEmpty ? '' : '\n【近期记忆】\n$shortMemoryContext');
+        profileContext +
+        toolContext;
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
     ];
     final historyMessages = <Map<String, dynamic>>[];
-    var usedTokens = 0;
-    // 给系统提示、记忆、工具定义和本轮输出预留空间，历史不能无上限发送。
-    // Keep only the recent half after every context rollover. Older facts
-    // are represented by the memory store, avoiding repeated full transcripts.
-    final historyBudget = (maxContext / 2).floor().clamp(600, 64000);
-    for (final msg in history.reversed) {
+    final historyIds = <String>[];
+    final boundaryId = await db.getKV('chat_window_boundary_$botId');
+    final boundaryIndex =
+        history.indexWhere((m) => m['id']?.toString() == boundaryId);
+    final activeHistory = history.skip(boundaryIndex + 1);
+    for (final msg in activeHistory) {
       final type = msg['type']?.toString() ?? 'text';
       if (type != 'text' &&
           type != 'image' &&
@@ -557,51 +525,17 @@ class AIManager {
         sharedPostContexts: sharedPostContexts,
       );
       if (normalizedContent == null || normalizedContent.isEmpty) continue;
-      final tokens = estimateTokens(normalizedContent);
-      if (usedTokens + tokens > historyBudget) {
-        if (historyMessages.isEmpty) {
-          final keepChars = (historyBudget * 2.6).floor().clamp(
-                200,
-                normalizedContent.length,
-              );
-          historyMessages.add({
-            'role': normalizedRole,
-            'content': normalizedContent.substring(
-              normalizedContent.length - keepChars.toInt(),
-            ),
-          });
-        }
-        break;
-      }
       historyMessages.add({
         'role': normalizedRole,
         'content': normalizedContent,
       });
-      usedTokens += tokens;
+      historyIds.add(msg['id']?.toString() ?? '');
     }
-    messages.addAll(historyMessages.reversed);
-    final eligibleHistoryCount = history.where(
-      (msg) {
-        final type = msg['type']?.toString() ?? 'text';
-        return (type == 'text' ||
-                type == 'image' ||
-                type == 'sticker' ||
-                type == 'emoji' ||
-                type == 'shared_post') &&
-            msg['error_log']?.toString().isNotEmpty != true &&
-            msg['error_code']?.toString().isNotEmpty != true;
-      },
-    ).length;
-    final roleSequence =
-        historyMessages.reversed.map((message) => message['role']).join(',');
-    AppLogService.instance.add(
-      'CONTEXT',
-      '远程模型上下文：历史 ${historyMessages.length}/$eligibleHistoryCount 条，估算 $usedTokens/$historyBudget token，角色[$roleSequence]${historyMessages.length < eligibleHistoryCount ? '，已截断较早历史' : ''}',
-    );
+    messages.addAll(historyMessages);
     var lastIsCurrentUser = false;
     // 若最末一条上下文恰好就是本次发送的 user 文本或图片（内存补写导致），
     // 标记以免下方再次追加造成重复喂给模型
-    if (history.isNotEmpty) {
+    if (historyMessages.isNotEmpty && history.isNotEmpty) {
       final lastMsg = history.last;
       if (lastMsg['role']?.toString() == 'user') {
         final lastType = lastMsg['type']?.toString() ?? 'text';
@@ -634,6 +568,27 @@ class AIManager {
       } else {
         messages.add({'role': 'user', 'content': text});
       }
+    }
+    // Only conversation messages count; system prompts and tools are separate.
+    if (includeChatHistory) {
+      final chat = messages.skip(1).toList();
+      final window = rollChatWindow(chat, maxContext);
+      if (window.removed > 0) {
+        final removedHistory = window.removed.clamp(0, historyIds.length);
+        if (removedHistory > 0 && historyIds[removedHistory - 1].isNotEmpty) {
+          await db.setKV(
+              'chat_window_boundary_$botId', historyIds[removedHistory - 1]);
+        }
+        messages.removeRange(1, 1 + window.removed);
+      }
+      AppLogService.instance.add(
+          'CONTEXT',
+          '聊天上下文：${messages.length - 1} 条，估算 ${window.tokens}/$maxContext token'
+              '，本轮整条截断 ${window.removed} 条；系统提示、世界书与工具另计');
+    }
+    // 世界书注入：在聊天历史之后、当前用户消息之前插入，保持历史缓存稳定。
+    if (worldBookContext.isNotEmpty) {
+      messages.add({'role': 'system', 'content': '【世界书】\n$worldBookContext'});
     }
     if (timeAware) {
       final now = DateTime.now();
@@ -1340,98 +1295,6 @@ class AIManager {
       print('[vision] description failed: $e');
     }
     return await MediaPreprocessor().imageFallbackText(imagePath);
-  }
-
-  Future<void> _rolloverContextMemory({
-    required DBManager db,
-    required String botId,
-    required String botName,
-    required List<Map<String, dynamic>> history,
-    required int maxContext,
-    required Map<String, dynamic> provider,
-    required String modelName,
-  }) async {
-    try {
-      final boundary =
-          int.tryParse(await db.getKV('context_rollover_at_$botId') ?? '') ?? 0;
-      final pending = history
-          .where(
-            (m) =>
-                ((m['timestamp'] as num?)?.toInt() ?? 0) > boundary &&
-                m['type'] == 'text',
-          )
-          .toList();
-      final tokens = pending.fold<int>(
-        0,
-        (n, m) => n + estimateTokens(m['content']?.toString() ?? ''),
-      );
-      if (tokens < maxContext) return;
-      final keepBudget = (maxContext / 2).floor();
-      var used = 0;
-      final recent = <Map<String, dynamic>>[];
-      for (final message in pending.reversed) {
-        final size = estimateTokens(message['content']?.toString() ?? '');
-        if (used + size > keepBudget) break;
-        used += size;
-        recent.add(message);
-      }
-      final recentIds = recent.map((m) => m['id']?.toString()).toSet();
-      final archived = pending
-          .where((m) => !recentIds.contains(m['id']?.toString()))
-          .toList();
-      if (archived.isEmpty) return;
-      final transcript = archived
-          .map(
-            (m) => '${m['role'] == 'assistant' ? '机器人' : '用户'}：${m['content']}',
-          )
-          .join('\n');
-      final url = (provider['base_url']?.toString() ?? '').replaceFirst(
-        RegExp(r'/+$'),
-        '',
-      );
-      final key = provider['api_key']?.toString() ?? '';
-      if (url.isEmpty || key.isEmpty) return;
-      final prompt =
-          '''你是聊天记忆整理器。仅从以下已发生对话提炼未来有用的稳定事实或重要事件；不要猜测，不要复述普通闲聊。已有记忆可能会自动去重/修正。每项严格输出一行：[记忆:长期|事实] 或 [记忆:短期|事件]。没有值得记住的内容就输出 NONE。
-
-$transcript''';
-      final response = await http
-          .post(
-            Uri.parse('$url/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $key',
-            },
-            body: jsonEncode({
-              'model': modelName,
-              'messages': [
-                {'role': 'system', 'content': '准确、克制地整理记忆，不与用户对话。'},
-                {'role': 'user', 'content': prompt},
-              ],
-              'temperature': 0.1,
-              'max_tokens': 1200,
-            }),
-          )
-          .timeout(const Duration(seconds: 45));
-      if (response.statusCode < 200 || response.statusCode >= 300) return;
-      final raw = _extractChatContent(
-        jsonDecode(utf8.decode(response.bodyBytes)),
-      );
-      if (raw.isNotEmpty && raw != 'NONE')
-        await _persistModelMemories(db, botName, botId, raw);
-      final newestArchived = archived.last['timestamp'] as num?;
-      if (newestArchived != null)
-        await db.setKV(
-          'context_rollover_at_$botId',
-          '${newestArchived.toInt()}',
-        );
-      AppLogService.instance.add(
-        'MEMORY',
-        '上下文达到 $maxContext token，已整理 ${archived.length} 条历史并保留最近约 $keepBudget token',
-      );
-    } catch (e) {
-      AppLogService.instance.add('MEMORY', '上下文记忆整理跳过：$e');
-    }
   }
 
   /// Transcribe with the STT provider selected for this bot.
@@ -2818,11 +2681,14 @@ $transcript''';
         'function': {
           'name': 'write_diary',
           'description':
-              '只在本机器人亲自参与的本轮聊天中，出现已经实际发生且明确说出的重要事件、稳定事实或真实感受时调用。绝不编造、推测、移植其他机器人的经历或称呼；日记不会作为聊天正文发送。',
+              '在以下两种场景时调用：1）本轮聊天中出现明确的用户事件、稳定事实或真实感受；2）你自己今天的真实经历、想法、感受、做过的事、见到的人或场景。日记是你的私人记录，可以写用户的事，也可以写你自己的生活、心情或观察，但不能编造未发生的事。',
           'parameters': {
             'type': 'object',
             'properties': {
-              'entry': {'type': 'string', 'description': '第一人称、简洁具体的日记记录'},
+              'entry': {
+                'type': 'string',
+                'description': '第一人称日记正文，可以记录用户相关事件，也可以记录你自己今天的经历、心情或想法'
+              },
             },
             'required': ['entry'],
             'additionalProperties': false,
@@ -3995,6 +3861,9 @@ $transcript''';
   /// 以第一人称、无标题、逐条写入 memories 表。
   /// - [记忆:长期|...] -> type=long（用户画像、机器人身份、自我认识等稳定信息）
   /// - [记忆:...]      -> type=short（近期日记式事件）
+  ///
+  /// 注：当前世界书基于标准记忆，模型直接写入世界书功能暂未使用，保留为备用接口。
+  // ignore: unused_element
   Future<void> _persistModelMemories(
     DBManager db,
     String botName,

@@ -23,6 +23,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
   List<Map<String, dynamic>> filteredEntries = [];
   String searchQuery = '';
   String selectedCategory = '全部';
+
   final categories = ['全部', '自我认知', '用户认知', '关系', '记忆', '日程', '事件'];
 
   @override
@@ -35,9 +36,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
   Future<void> _loadWorldBook() async {
     final entries = await db.queryMemories(widget.botId);
     setState(() {
-      worldBookEntries = entries
-          .where((e) => e['keys'] != null && e['keys'].toString().isNotEmpty)
-          .toList();
+      worldBookEntries = entries;
       _applyFilters();
     });
   }

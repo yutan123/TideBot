@@ -1,0 +1,40 @@
+   Woah! You appear to be trying to run flutter as root.
+   We strongly recommend running the flutter tool without superuser privileges.
+  /
+📎
+Flutter assets will be downloaded from https://storage.googleapis.com. Make sure you trust this source!
+00:00 +0: loading /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_content_test.dart
+00:00 +0: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_content_test.dart: cleanChatContent keeps ordinary content
+00:00 +1: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_content_test.dart: cleanChatContent removes response prefixes only at the beginning
+00:00 +2: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_content_test.dart: cleanChatContent keeps tool payload and handles empty content
+00:00 +3: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: isBotDisabled accepts only explicit disabled values
+00:00 +4: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator accepts a constrained HTTP skill
+00:00 +5: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator rejects arbitrary executable definitions and duplicate tools
+00:01 +6: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator validates mcp proxy and prompt executor definitions
+00:01 +7: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator rejects unsupported Skill metadata and undeclared executor permissions
+00:01 +8: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator classifies MCP transport failures for connection diagnostics
+00:01 +9: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator parses JSON and SSE MCP responses
+00:01 +10: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator preserves MCP tool result structures and surfaces isError
+00:01 +11: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator rejects MCP error responses
+00:01 +12: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator runs a Streamable HTTP session with cursor pagination
+00:01 +13: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/tool_runtime_test.dart: TideSkillValidator cleans up a negotiated session when a tool call fails
+00:03 +14: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/message_delivery_test.dart: cancellation token invokes callbacks once and supports late listeners
+00:03 +15: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/message_delivery_test.dart: chat event bus delivers message identity and version
+00:04 +16: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/future_task_scheduler_test.dart: schedules native alarms with stable task fields
+00:04 +17: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/future_task_scheduler_test.dart: does not schedule invalid tasks
+00:04 +18: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/future_task_scheduler_test.dart: cancels a native alarm by task id
+00:05 +19: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: chatListPreview shared_post always shows a fixed preview
+00:05 +20: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: chatListPreview falls back to type labels when content is empty
+00:05 +21: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: chatListPreview uses trimmed text for ordinary messages
+00:05 +22: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: shared post copy uses deleted copy for both UI and model context
+00:05 +23: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: shared post copy keeps live post context when the original still exists
+00:05 +24: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: image placeholders formats numbered placeholders
+00:05 +25: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_protocol_test.dart: image placeholders parses image numbers from tags and raw values
+00:06 +26: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/ota_release_test.dart: OtaReleasePicker strips v prefixes and build metadata
+00:06 +27: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/ota_release_test.dart: OtaReleasePicker prefers TideBot.apk over other apk assets
+00:06 +28: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/ota_release_test.dart: OtaReleasePicker skips drafts, prereleases and releases without apk
+00:06 +29: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/ota_release_test.dart: OtaReleasePicker returns null when no published apk exists
+00:08 +30: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_context_window_test.dart: full budget then half, with growth between rollovers
+00:08 +31: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_context_window_test.dart: 20000 budget retains 10000 and has no turn cap
+00:08 +32: /data/user/0/com.ai.assistance.operit/files/workspace/TideBot/test/chat_context_window_test.dart: whole messages and oversized latest message are preserved
+00:08 +33: All tests passed!
