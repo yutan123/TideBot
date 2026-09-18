@@ -497,11 +497,8 @@ class AIManager {
     ];
     final historyMessages = <Map<String, dynamic>>[];
     final historyIds = <String>[];
-    final boundaryId = await db.getKV('chat_window_boundary_$botId');
-    final boundaryIndex =
-        history.indexWhere((m) => m['id']?.toString() == boundaryId);
-    final activeHistory = history.skip(boundaryIndex + 1);
-    for (final msg in activeHistory) {
+    // 总是从完整历史开始加载，由后续的 rollChatWindow 动态截断
+    for (final msg in history) {
       final type = msg['type']?.toString() ?? 'text';
       if (type != 'text' &&
           type != 'image' &&
@@ -574,11 +571,6 @@ class AIManager {
       final chat = messages.skip(1).toList();
       final window = rollChatWindow(chat, maxContext);
       if (window.removed > 0) {
-        final removedHistory = window.removed.clamp(0, historyIds.length);
-        if (removedHistory > 0 && historyIds[removedHistory - 1].isNotEmpty) {
-          await db.setKV(
-              'chat_window_boundary_$botId', historyIds[removedHistory - 1]);
-        }
         messages.removeRange(1, 1 + window.removed);
       }
       AppLogService.instance.add(
