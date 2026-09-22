@@ -132,8 +132,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
       _db.getKV('user_avatar'),
     ]);
     final now = DateTime.now();
-    final quote =
-        await DailyQuoteService.instance.get(bot['id']?.toString() ?? '');
+    final botId = bot['id']?.toString() ?? '';
     if (!mounted) return;
     setState(() {
       _latestPost = (results[0] as List<Map<String, dynamic>>).firstOrNull;
@@ -141,10 +140,13 @@ class _ChatSidebarState extends State<ChatSidebar> {
           ? results[1] as String
           : '用户';
       _userAvatar = results[2] as String? ?? '';
-      _quote = quote;
       _now = now;
     });
-    _checkOnline();
+    unawaited(_checkOnline());
+    unawaited(DailyQuoteService.instance.get(botId).then((quote) {
+      if (!mounted || quote.trim().isEmpty) return;
+      setState(() => _quote = quote);
+    }).catchError((_) {}));
   }
 
   Future<void> _checkOnline() async {

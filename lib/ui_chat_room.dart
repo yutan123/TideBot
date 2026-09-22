@@ -935,6 +935,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     List<String>? images,
     List<String>? documents,
     String? mediaContext,
+    String? audioPath,
     _PendingExpression? expression,
     bool forceSingleReply = false,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
@@ -1153,16 +1154,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 2);
+      final requestToken = AICancellationToken();
       final result = await AIManager()
           .sendMessage(
-            botId: botId,
-            text: modelText,
-            imagePaths: images,
-            persistResponse: persistThisReply,
-            forceSingleReply: forceSingleReply,
-            onDelta: null, // 聊天室暂不启用真实流式（防止代码块拆分识别）
-          )
-          .timeout(requestTimeout);
+        botId: botId,
+        text: modelText,
+        imagePaths: images,
+        audioPath: audioPath,
+        persistResponse: persistThisReply,
+        forceSingleReply: forceSingleReply,
+        cancellationToken: requestToken,
+        onDelta: null, // 聊天室暂不启用真实流式（防止代码块拆分识别）
+      )
+          .timeout(requestTimeout, onTimeout: () {
+        requestToken.cancel();
+        throw TimeoutException('模型请求超时，已停止本次请求');
+      });
 
       if (result['success'] != true) {
         _streamDisplayTimer?.cancel();
@@ -1420,6 +1427,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     await _setTypingState(true);
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final sttId = prefs.getString('stt_model_$botId')?.trim() ?? '';
+      if (sttId == '__use_primary_stt__') {
+        if (mounted) setState(() => _loading = false);
+        await _send(
+          mediaContext: '[用户发送了一段语音]',
+          audioPath: audioPath,
+          noUserBubble: true,
+          forceSingleReply: true,
+        );
+        return;
+      }
       final transcript = await AIManager()
           .transcribeAudio(botId: botId, audioPath: audioPath)
           .timeout(const Duration(seconds: 50), onTimeout: () => null);
@@ -3137,10 +3156,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         );
         // 只有气泡真正渲染出可见内容时才显示时间：图片/贴纸必须文件真实存在，
         // 文本必须非空，避免生成图片或分段等待时时间先出、内容后到。
+        final imageExists = hasImg && File(imagePath!).existsSync();
         final hasVisibleContent = hasSummary ||
             isUser ||
             txt.isNotEmpty ||
-            (hasImg && File(imagePath!).existsSync()) ||
+            hasImg ||
             hasAudio ||
             hasDocument ||
             replyId?.isNotEmpty == true ||
@@ -3383,7 +3403,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       ),
                                     ),
                                   ],
-                                  if (hasImg && File(imagePath!).existsSync())
+                                  if (hasImg && imageExists)
                                     GestureDetector(
                                       onTap: () => _previewImg(imagePath),
                                       child: ClipRRect(
@@ -3402,6 +3422,26 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                                   fit: BoxFit.cover,
                                                   cacheWidth: 288,
                                                 ),
+                                        ),
+                                      ),
+                                    )
+                                  else if (hasImg && !isSticker)
+                                    Container(
+                                      width: 144,
+                                      height: 72,
+                                      alignment: Alignment.center,
+                                      margin: const EdgeInsets.only(bottom: 4),
+                                      decoration: BoxDecoration(
+                                        color: TideTheme.of(context)
+                                            .buttonSecondary,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        '图片不可用',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: TideTheme.of(context).textWeak,
+                                          fontFamily: 'TideFont',
                                         ),
                                       ),
                                     ),

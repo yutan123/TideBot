@@ -143,12 +143,11 @@ class _SpacePageState extends State<SpacePage> {
       _memories = mem;
       if (_diaryVisibleStart >= _memories.length) _diaryVisibleStart = 0;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
-      // Generates once per calendar day and returns cached text on later opens.
-      try {
-        _dailyQuote = await DailyQuoteService.instance.get(_botId);
-      } catch (e) {
-        _dailyQuote = '今天也要认真照顾自己。';
-      }
+      final quoteBotId = _botId;
+      unawaited(DailyQuoteService.instance.get(quoteBotId).then((quote) {
+        if (!mounted || quoteBotId != _botId || quote.trim().isEmpty) return;
+        setState(() => _dailyQuote = quote);
+      }).catchError((_) {}));
       if (mounted) {
         setState(() {
           _loading = false;

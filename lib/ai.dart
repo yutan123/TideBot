@@ -63,6 +63,8 @@ class AIManager {
   static final AIManager _instance = AIManager._internal();
   factory AIManager() => _instance;
   AIManager._internal();
+  Future<void> _modelTurn = Future.value();
+  int _chatWaiters = 0;
 
   // 结构化聊天结果供聊天室展示完整错误日志；旧 chat 接口继续返回纯文本。
   Future<Map<String, dynamic>> chatResult({
@@ -117,11 +119,32 @@ class AIManager {
 
   /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
   /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
+  Future<T> _runModelTurn<T>(Future<T> Function() action,
+      {required bool priority}) {
+    final previous = _modelTurn;
+    final gate = Completer<void>();
+    _modelTurn = gate.future;
+    if (priority) _chatWaiters++;
+    return previous.then((_) async {
+      while (!priority && _chatWaiters > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      try {
+        return await action();
+      } finally {
+        if (priority) _chatWaiters--;
+        gate.complete();
+      }
+    });
+  }
+
   Future<Map<String, dynamic>> sendMessage({
     required String botId,
     required String text,
+    bool priority = true,
     String? imagePath,
     List<String>? imagePaths,
+    String? audioPath,
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
@@ -133,79 +156,83 @@ class AIManager {
     String extraSystemPrompt = '',
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
-  }) async {
-    cancellationToken?.throwIfCancelled();
-    final prefs = await SharedPreferences.getInstance();
-    const primaryLocal = '';
-    const backupLocal = '';
-    final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
-    final matchingBots = (await DBManager().getAllBots())
-        .where((bot) => bot['id']?.toString() == botId)
-        .toList();
-    final primaryRemote = matchingBots.isEmpty
-        ? ''
-        : (matchingBots.first['chat_model']?.toString().trim() ?? '');
-    // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
-    // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
-    final primary = {'local': primaryLocal, 'provider': primaryRemote};
-    final backup = {'local': backupLocal, 'provider': backupRemote};
-    bool configured(Map<String, String> candidate) =>
-        candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
-    // Never attempt an empty primary. A configured backup must be usable even
-    // when the bot has no primary model selected.
-    final attempts = <Map<String, String>>[
-      if (configured(primary)) primary,
-      if (configured(backup)) backup,
-      if (configured(primary) && !configured(backup)) primary,
-      if (configured(backup)) backup,
-      if (configured(primary) && !configured(backup)) primary,
-    ];
-    if (attempts.isEmpty) {
-      return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
-    }
-
-    Map<String, dynamic>? lastFailure;
-    for (var index = 0; index < attempts.length; index++) {
+  }) {
+    return _runModelTurn(() async {
       cancellationToken?.throwIfCancelled();
-      final candidate = attempts[index];
-      final selectedImagePaths = <String>[
-        if (imagePath?.isNotEmpty == true) imagePath!,
-        ...?imagePaths,
+      final prefs = await SharedPreferences.getInstance();
+      const primaryLocal = '';
+      const backupLocal = '';
+      final backupRemote =
+          (prefs.getString('backup_model_$botId') ?? '').trim();
+      final matchingBots = (await DBManager().getAllBots())
+          .where((bot) => bot['id']?.toString() == botId)
+          .toList();
+      final primaryRemote = matchingBots.isEmpty
+          ? ''
+          : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+      // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+      // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+      final primary = {'local': primaryLocal, 'provider': primaryRemote};
+      final backup = {'local': backupLocal, 'provider': backupRemote};
+      bool configured(Map<String, String> candidate) =>
+          candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
+      // Never attempt an empty primary. A configured backup must be usable even
+      // when the bot has no primary model selected.
+      final attempts = <Map<String, String>>[
+        if (configured(primary)) primary,
+        if (configured(backup)) backup,
+        if (configured(primary) && !configured(backup)) primary,
+        if (configured(backup)) backup,
+        if (configured(primary) && !configured(backup)) primary,
       ];
-      try {
-        final result = await _sendMessageOnce(
-          botId: botId,
-          text: text,
-          imagePath:
-              selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-          imagePaths: selectedImagePaths,
-          activeGame: activeGame,
-          persistResponse: persistResponse,
-          includeChatHistory: includeChatHistory,
-          enableAutoSummary: enableAutoSummary,
-          skipLifeState: skipLifeState,
-          allowTools: allowTools,
-          forceSingleReply: forceSingleReply,
-          notifyResponse: notifyResponse,
-          extraSystemPrompt: extraSystemPrompt,
-          cancellationToken: cancellationToken,
-          // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-          // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-          onDelta: onDelta,
-          forcedLocalId: candidate['local']!,
-          forcedProviderId: candidate['provider']!,
-        );
-        if (result['success'] == true) return result;
-        lastFailure = result;
-      } on AICancelledException {
-        rethrow;
+      if (attempts.isEmpty) {
+        return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
       }
-    }
-    return {
-      ...?lastFailure,
-      'error':
-          '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
-    };
+
+      Map<String, dynamic>? lastFailure;
+      for (var index = 0; index < attempts.length; index++) {
+        cancellationToken?.throwIfCancelled();
+        final candidate = attempts[index];
+        final selectedImagePaths = <String>[
+          if (imagePath?.isNotEmpty == true) imagePath!,
+          ...?imagePaths,
+        ];
+        try {
+          final result = await _sendMessageOnce(
+            botId: botId,
+            text: text,
+            imagePath:
+                selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+            imagePaths: selectedImagePaths,
+            audioPath: audioPath,
+            activeGame: activeGame,
+            persistResponse: persistResponse,
+            includeChatHistory: includeChatHistory,
+            enableAutoSummary: enableAutoSummary,
+            skipLifeState: skipLifeState,
+            allowTools: allowTools,
+            forceSingleReply: forceSingleReply,
+            notifyResponse: notifyResponse,
+            extraSystemPrompt: extraSystemPrompt,
+            cancellationToken: cancellationToken,
+            // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+            // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+            onDelta: onDelta,
+            forcedLocalId: candidate['local']!,
+            forcedProviderId: candidate['provider']!,
+          );
+          if (result['success'] == true) return result;
+          lastFailure = result;
+        } on AICancelledException {
+          rethrow;
+        }
+      }
+      return {
+        ...?lastFailure,
+        'error':
+            '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
+      };
+    }, priority: priority);
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -317,6 +344,7 @@ class AIManager {
     required String text,
     String? imagePath,
     List<String> imagePaths = const [],
+    String? audioPath,
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
@@ -436,16 +464,28 @@ class AIManager {
     }
     final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
     final currentImageDescriptions = <int, String>{};
-    if (effectiveImagePaths.isNotEmpty) {
+    // 主模型识图时直接把图片作为多模态内容发送；只有选择专用识图模型时，
+    // 才预先调用视觉模型生成文本描述。
+    final visionId = (await SharedPreferences.getInstance())
+            .getString('vision_model_$botId')
+            ?.trim() ??
+        '';
+    const primaryVisionModel = '__use_primary_vision__';
+    if (effectiveImagePaths.isNotEmpty &&
+        visionId.isNotEmpty &&
+        visionId != primaryVisionModel) {
       for (final path in effectiveImagePaths) {
         final number = imageNumberByPath[path];
         if (number == null) continue;
         try {
-          currentImageDescriptions[number] = await _inspectImageForBot(
-            botId: botId,
-            imagePath: path,
-            imageNumber: number,
-          );
+          final provider = await db.getChatProviderById(visionId);
+          currentImageDescriptions[number] = provider == null
+              ? await MediaPreprocessor().imageFallbackText(path)
+              : await _describeImage(
+                  provider: provider,
+                  imagePath: path,
+                  userText: '请转述 [图片#$number]。',
+                );
         } catch (error) {
           currentImageDescriptions[number] = '图片识别暂时失败：$error';
         }
@@ -477,13 +517,10 @@ class AIManager {
     final emotionContext = await EmotionStateService.instance.promptContext(
       botId,
     );
-    const conversationFocusContext =
-        '\n【当前话题规则】优先回应最新一条用户消息及其直接上下文。旧记忆、旧计划、曾经提过的学习或待办仅在用户本轮明确提及、询问进展或与当前请求直接相关时引用。用户已转向新话题或自然结束话题后，不得主动把旧话题重新带回、重复追问或将一次性提及擅自升级为未来任务。需要澄清时只围绕当前请求提出一个必要问题；同一非当前主题不要连续主动追问。';
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         (extraSystemPrompt.trim().isEmpty
             ? ''
             : '\n【当前会话约束】${extraSystemPrompt.trim()}') +
-        conversationFocusContext +
         _safetyContext(text) +
         lifeContext +
         deviceContextPrompt +
@@ -545,6 +582,30 @@ class AIManager {
       }
     }
     if (!lastIsCurrentUser) {
+      // 构建最近对话上下文摘要（提取最近 3 轮）
+      String recentContext = '';
+      if (historyMessages.length >= 4) {
+        final recentTurns = <String>[];
+        var turnCount = 0;
+        for (int i = historyMessages.length - 1; i >= 0 && turnCount < 3; i--) {
+          final msg = historyMessages[i];
+          final role = msg['role']?.toString() ?? '';
+          final content = msg['content']?.toString() ?? '';
+          if (role == 'user' || role == 'assistant') {
+            final preview = content.length > 50
+                ? '${content.substring(0, 50)}...'
+                : content;
+            final label =
+                role == 'user' ? '我' : bot['name']?.toString() ?? '助手';
+            recentTurns.insert(0, '$label：$preview');
+            if (role == 'user') turnCount++;
+          }
+        }
+        if (recentTurns.isNotEmpty) {
+          recentContext = '[最近对话]\n${recentTurns.join('\n')}\n\n';
+        }
+      }
+
       if (effectiveImagePaths.isNotEmpty) {
         final chunks = <String>[
           for (final path in effectiveImagePaths)
@@ -553,17 +614,70 @@ class AIManager {
         ];
         final caption = text.trim();
         final content = [
+          if (recentContext.isNotEmpty) recentContext,
+          '[当前请求]',
           ...chunks,
           if (caption.isNotEmpty) caption,
           for (final entry in currentImageDescriptions.entries)
             '【${formatImagePlaceholder(entry.key)} 识别结果】${entry.value}',
         ].join('\n');
-        messages.add({
-          'role': 'user',
-          'content': content.isEmpty ? text : content,
-        });
+        if (visionId == primaryVisionModel) {
+          final parts = <Map<String, dynamic>>[
+            {'type': 'text', 'text': content.isEmpty ? text : content},
+          ];
+          for (final path in effectiveImagePaths) {
+            final file = File(path);
+            if (!file.existsSync()) continue;
+            final bytes = await file.readAsBytes();
+            final lower = path.toLowerCase();
+            final mime = lower.endsWith('.png')
+                ? 'image/png'
+                : lower.endsWith('.webp')
+                    ? 'image/webp'
+                    : lower.endsWith('.gif')
+                        ? 'image/gif'
+                        : 'image/jpeg';
+            parts.add({
+              'type': 'image_url',
+              'image_url': {'url': 'data:$mime;base64,${base64Encode(bytes)}'},
+            });
+          }
+          messages.add({'role': 'user', 'content': parts});
+        } else {
+          messages.add({
+            'role': 'user',
+            'content': content.isEmpty ? text : content,
+          });
+        }
+      } else if (audioPath?.isNotEmpty == true) {
+        final enhancedText = recentContext.isEmpty
+            ? '[当前请求]\n$text'
+            : '$recentContext[当前请求]\n$text';
+        final file = File(audioPath!);
+        if (file.existsSync()) {
+          final bytes = await file.readAsBytes();
+          final extension = audioPath.split('.').last.toLowerCase();
+          messages.add({
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': enhancedText},
+              {
+                'type': 'input_audio',
+                'input_audio': {
+                  'data': base64Encode(bytes),
+                  'format': extension == 'wave' ? 'wav' : extension,
+                },
+              },
+            ],
+          });
+        } else {
+          messages.add({'role': 'user', 'content': enhancedText});
+        }
       } else {
-        messages.add({'role': 'user', 'content': text});
+        final enhancedText = recentContext.isEmpty
+            ? '[当前请求]\n$text'
+            : '$recentContext[当前请求]\n$text';
+        messages.add({'role': 'user', 'content': enhancedText});
       }
     }
     // Only conversation messages count; system prompts and tools are separate.
@@ -1328,19 +1442,12 @@ class AIManager {
             '')
         .trim();
 
-    // 支持使用主模型识别
+    // 聊天室的主模型识别会直接附带音频。语音通话仍需要文本，因此这里保留转写。
     if (providerId == '__use_primary_stt__') {
       final chatProviderId = bot?['chat_model']?.toString().trim() ?? '';
-      if (chatProviderId.isEmpty) {
-        AppLogService.instance.add('STT', '主模型未配置，无法使用主模型识别');
-        return null;
-      }
+      if (chatProviderId.isEmpty) return null;
       final chatProvider = await db.getChatProviderById(chatProviderId);
-      if (chatProvider == null) {
-        AppLogService.instance.add('STT', '主模型服务商不存在');
-        return null;
-      }
-      AppLogService.instance.add('STT', '使用主模型识别：${chatProvider['name']}');
+      if (chatProvider == null) return null;
       return transcribeWithProvider(
         chatProvider,
         audioPath,
@@ -1866,6 +1973,7 @@ class AIManager {
     // includeChatHistory=false 避免今日一言影响正式对话的上下文。
     final res = await sendMessage(
       botId: botId,
+      priority: false,
       text:
           '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
       persistResponse: false,
