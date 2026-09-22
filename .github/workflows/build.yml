@@ -38,15 +38,13 @@ jobs:
           channel: stable
           cache: true
 
-      # 显式配置 Android 命令行工具，避免 Runner 找不到 sdkmanager。
-      - name: 配置 Android 命令行工具
-        uses: android-actions/setup-android@v3
-
+      # Runner 已带命令行工具。setup-android@v3 会安装已下架的 tools 包并失败。
       - name: 安装 Android SDK 组件和 NDK
         run: |
-          sdkmanager --version
-          yes | sdkmanager --licenses
-          sdkmanager \
+          SDKMANAGER="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}" -path '*/cmdline-tools/*/bin/sdkmanager' -type f | sort | tail -n 1)"
+          test -x "$SDKMANAGER" || { echo "::error::未找到 sdkmanager"; exit 1; }
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
