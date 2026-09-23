@@ -1153,7 +1153,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         setState(() => _msgs.add(streamingMessage!));
       }
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
-      const requestTimeout = Duration(minutes: 2);
+      const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
       final result = await AIManager()
           .sendMessage(
@@ -1163,12 +1163,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         audioPath: audioPath,
         persistResponse: persistThisReply,
         forceSingleReply: forceSingleReply,
+        useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
         cancellationToken: requestToken,
         onDelta: null, // 聊天室暂不启用真实流式（防止代码块拆分识别）
       )
           .timeout(requestTimeout, onTimeout: () {
         requestToken.cancel();
-        throw TimeoutException('模型请求超时，已停止本次请求');
+        throw TimeoutException('请求超过5分钟，已停止');
       });
 
       if (result['success'] != true) {
@@ -1179,6 +1180,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
+        GlobalNotice.show('请求失败：$errorText',
+            color: const Color(0xFFE74C3C),
+            duration: const Duration(seconds: 6));
         if (!noUserBubble || retryTarget != null) {
           final failedMessage = retryTarget ?? msg;
           failedMessage['error_log'] = errorLog;
@@ -1300,8 +1304,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
-      final errorText = '请求处理失败：${e.toString()}';
+      final errorText =
+          e is TimeoutException ? '请求超过5分钟，已停止' : '网络连接失败，请检查网络或服务商地址';
       final errorLog = '${e.toString()}\n${st.toString()}';
+      GlobalNotice.show('请求失败：$errorText',
+          color: const Color(0xFFE74C3C), duration: const Duration(seconds: 6));
       if (!noUserBubble || retryTarget != null) {
         final failedMessage = retryTarget ?? msg;
         failedMessage['error_log'] = errorLog;
@@ -1905,6 +1912,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String curImageGen = prefs.getString('image_gen_model_$botId') ?? '';
     String curStt = prefs.getString('stt_model_$botId') ??
         ((_bot['stt_model'] as String?)?.trim() ?? '');
+    final jarvisOn = (await DBManager().getKV('jarvis_enabled')) == 'true';
+    String curJarvis = prefs.getString('jarvis_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ??
         ((_bot['tts_model'] as String?)?.isNotEmpty == true
             ? _bot['tts_model'] as String
@@ -1966,6 +1975,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           curChat = v;
                           await pickModel('chat_model_$botId', v);
                         }),
+                        if (jarvisOn) ...[
+                          _mLabel('AI军师辅助模型'),
+                          _modelPicker(ctx, providers,
+                              curJarvis.isEmpty ? curChat : curJarvis,
+                              (v) async {
+                            curJarvis = v;
+                            await pickModel('jarvis_model_$botId', v);
+                          }),
+                        ],
                         _mLabel('备用模型'),
                         _modelPicker(ctx, providers, curBak, (v) async {
                           curBak = v;

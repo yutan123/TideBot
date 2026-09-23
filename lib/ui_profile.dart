@@ -1030,6 +1030,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _webSearch = false;
   bool _showSearchSources = false;
   bool _stickers = false;
+  bool _jarvis = false;
   bool _voiceReply = false;
   String _imageStyle = '写实';
   String _searchProvider = 'Tavily';
@@ -1108,6 +1109,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final searchProvider = await db.getKV('web_search_provider');
     final searchKey = await db.getKV('web_search_api_key');
     final stickers = await db.getKV('bot_stickers_enabled');
+    final jarvis = await db.getKV('jarvis_enabled');
     final voiceReply = await db.getKV('voice_reply_enabled');
     final voiceReplyChance = int.tryParse(
       await db.getKV('voice_reply_chance') ?? '',
@@ -1153,6 +1155,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       );
       _searchKeyController.text = searchKey ?? '';
       _stickers = stickers == 'true';
+      _jarvis = jarvis == 'true';
       _voiceReply = voiceReply == 'true';
       _voiceReplyChance = (voiceReplyChance ?? 50).clamp(1, 100);
       _voiceReplyChanceController.text = _voiceReplyChance.toString();
@@ -1909,6 +1912,55 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                             ],
                           )
                         : null,
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: 'AI军师辅助',
+                    help: '开启后，每次聊天会先判断意图、风险和回复策略，再交给机器人按自己的人设回复。会额外消耗一次模型请求。',
+                    value: _jarvis,
+                    onChanged: (v) async {
+                      if (v) {
+                        final ok = await TideDialogs.show<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: Colors.transparent,
+                            contentPadding: EdgeInsets.zero,
+                            content: TideDialogs.glassContent(
+                              context: ctx,
+                              children: [
+                                Text('开启 AI军师辅助',
+                                    style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w700,
+                                        fontFamily: 'TideFont',
+                                        color: TideTheme.of(ctx).textStrong)),
+                                const SizedBox(height: 12),
+                                Text('本功能开启后会消耗更多的 token，确认开启吗',
+                                    style: TextStyle(
+                                        fontFamily: 'TideFont',
+                                        height: 1.5,
+                                        color: TideTheme.of(ctx).textStrong)),
+                                const SizedBox(height: 16),
+                                Row(children: [
+                                  Expanded(
+                                      child: TideDialogs.glassButton('取消',
+                                          onTap: () =>
+                                              Navigator.pop(ctx, false))),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                      child: TideDialogs.glassButton('继续',
+                                          onTap: () =>
+                                              Navigator.pop(ctx, true))),
+                                ]),
+                              ],
+                            ),
+                          ),
+                        );
+                        if (ok != true) return;
+                      }
+                      setState(() => _jarvis = v);
+                      await _save('jarvis_enabled', '$v');
+                    },
                   ),
                   _settingSwitch(
                     theme: theme,

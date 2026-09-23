@@ -15,6 +15,7 @@ import 'future_task_scheduler.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 import 'app_log_service.dart';
+import 'global_notice.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
@@ -154,6 +155,7 @@ class AIManager {
     bool forceSingleReply = false,
     bool notifyResponse = false,
     String extraSystemPrompt = '',
+    bool useJarvis = false,
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
   }) {
@@ -180,10 +182,8 @@ class AIManager {
       // when the bot has no primary model selected.
       final attempts = <Map<String, String>>[
         if (configured(primary)) primary,
-        if (configured(backup)) backup,
-        if (configured(primary) && !configured(backup)) primary,
-        if (configured(backup)) backup,
-        if (configured(primary) && !configured(backup)) primary,
+        if (configured(backup) && backup['provider'] != primary['provider'])
+          backup,
       ];
       if (attempts.isEmpty) {
         return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
@@ -214,6 +214,7 @@ class AIManager {
             forceSingleReply: forceSingleReply,
             notifyResponse: notifyResponse,
             extraSystemPrompt: extraSystemPrompt,
+            useJarvis: useJarvis,
             cancellationToken: cancellationToken,
             // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
             // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
@@ -223,6 +224,13 @@ class AIManager {
           );
           if (result['success'] == true) return result;
           lastFailure = result;
+          final code =
+              int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+          final retryable = result['error_code']?.toString() == 'network' ||
+              code == 429 ||
+              code >= 500;
+          if (!retryable || index == attempts.length - 1) break;
+          GlobalNotice.show('请求失败，正在进行第${index + 1}次重试');
         } on AICancelledException {
           rethrow;
         }
@@ -339,6 +347,111 @@ class AIManager {
     return fromValue(payload['output_text']);
   }
 
+  static const _jarvisPrompt = '''你是 TideBot 的对话军师，不是聊天对象。不要扮演机器人，不要直接回复用户。
+根据完整对话判断用户最新一条消息。优先看语气和上下文，不要只看字面。世界书和身份档案是已知背景，不是跑题内容；其中没有的事实禁止编造。
+机器人不是讨好工具。策略必须保留机器人自己的判断、边界和小脾气，不能要求它一味顺从、道歉或承诺。只有事实明确时才建议道歉或承诺。
+只输出 JSON，不要 Markdown：
+{"literal":false,"intent":"confirm_care|vent|request_action|seek_explanation|casual_chat|close_topic","risk":0,"reply_now":false,"action":"check_history|apologize|commit|explain|acknowledge|say_less|make_plan","need":"apology|action|explanation|care|nothing","resolved":false,"references":["候选一","候选二","候选三"],"avoid":[]}
+intent 只选一个：confirm_care 是试探是否记得或在意；vent 是想让情绪被接住；request_action 是要求行动或承诺；seek_explanation 是追问原因；casual_chat 是无冲突闲聊；close_topic 仅限真诚接受并结束。分手、拉黑、别联系属于 vent，不属于 close_topic。
+risk 为 0 到 9：0 轻松，4 冷淡或试探，6 明确责备，8 最后通牒，9 关系破裂。
+reply_now 仅当所需事实已在上下文中时为 true。用户要求回忆但上下文没有时必须为 false。
+真诚接受后 need 必须是 nothing，resolved 为 true。反话、冷淡和未撤回通牒不算解决。
+references 固定 3 条、每条不超过 40 字，策略必须不同。它们只是素材，机器人必须按自己的人设重写，可以拒绝、吐槽或坚持想法。''';
+
+  Future<String> _jarvisAdvice({
+    required Map bot,
+    required String botId,
+    required String text,
+    required List<Map<String, dynamic>> history,
+    required String profileContext,
+    required String worldBookContext,
+    AICancellationToken? cancellationToken,
+  }) async {
+    try {
+      cancellationToken?.throwIfCancelled();
+      final prefs = await SharedPreferences.getInstance();
+      final selected = (prefs.getString('jarvis_model_$botId') ?? '').trim();
+      final providerId = selected.isNotEmpty
+          ? selected
+          : (bot['chat_model']?.toString().trim() ?? '');
+      if (providerId.isEmpty) return '';
+      final provider = await DBManager().getChatProviderById(providerId);
+      if (provider == null) return '';
+      var modelName = (provider['model'] as String? ?? '').trim();
+      if (modelName.isEmpty) modelName = provider['name'].toString().trim();
+      if (modelName.contains(','))
+        modelName = modelName.split(',').first.trim();
+      final baseUrl = provider['base_url']
+              ?.toString()
+              .trim()
+              .replaceFirst(RegExp(r'/+$'), '') ??
+          '';
+      if (baseUrl.isEmpty || modelName.isEmpty) return '';
+      final recent = history.reversed.take(10).toList().reversed.map((item) {
+        final role = item['role']?.toString() == 'user' ? '用户' : '机器人';
+        return '$role：${item['content'] ?? ''}';
+      }).join('\n');
+      final payload = {
+        'model': modelName,
+        'temperature': 0.2,
+        'max_tokens': 700,
+        'messages': [
+          {'role': 'system', 'content': _jarvisPrompt},
+          {
+            'role': 'user',
+            'content':
+                '机器人：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n$profileContext\n$worldBookContext\n最近对话：\n$recent\n用户最新消息：\n$text'
+          },
+        ],
+      };
+      final client = http.Client();
+      final request =
+          http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
+            ..headers.addAll({
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}'
+            })
+            ..body = jsonEncode(payload);
+      void cancelRequest() => client.close();
+      cancellationToken?.addOnCancel(cancelRequest);
+      final streamed =
+          await client.send(request).timeout(const Duration(seconds: 30));
+      cancellationToken?.removeOnCancel(cancelRequest);
+      final response = await http.Response.fromStream(streamed);
+      client.close();
+      if (streamed.statusCode != 200) {
+        AppLogService.instance
+            .add('JARVIS', '军师请求失败：HTTP ${streamed.statusCode}');
+        return '';
+      }
+      final raw = _extractChatContent(
+              jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true)))
+          .trim();
+      final start = raw.indexOf('{');
+      final end = raw.lastIndexOf('}');
+      if (start < 0 || end <= start) return '';
+      final json = jsonDecode(raw.substring(start, end + 1));
+      if (json is! Map) return '';
+      AppLogService.instance
+          .addJson('JARVIS', 'AI军师判断', Map<String, dynamic>.from(json));
+      final references = (json['references'] as List?)
+              ?.map((e) => e.toString())
+              .where((e) => e.trim().isNotEmpty)
+              .take(3)
+              .join('；') ??
+          '';
+      final avoid = (json['avoid'] as List?)
+              ?.map((e) => e.toString())
+              .where((e) => e.trim().isNotEmpty)
+              .join('；') ??
+          '';
+      return '【AI军师·本轮内部策略，禁止复述】意图 ${json['intent']}，危险 ${json['risk']}/9，是否字面 ${json['literal']}，立即给实质内容 ${json['reply_now']}，动作 ${json['action']}，需求 ${json['need']}，紧张已解除 ${json['resolved']}。参考：$references。避免：$avoid。机器人必须保留自己的性格、判断和边界，可有小脾气，不得一味顺从；参考句只能改写，不能照抄。';
+    } catch (e) {
+      AppLogService.instance.add('JARVIS', '军师跳过：$e');
+      return '';
+    }
+  }
+
   Future<Map<String, dynamic>> _sendMessageOnce({
     required String botId,
     required String text,
@@ -354,6 +467,7 @@ class AIManager {
     bool forceSingleReply = false,
     bool notifyResponse = false,
     String extraSystemPrompt = '',
+    bool useJarvis = false,
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
     String forcedLocalId = '',
@@ -696,6 +810,20 @@ class AIManager {
     if (worldBookContext.isNotEmpty) {
       messages.add({'role': 'system', 'content': '【世界书】\n$worldBookContext'});
     }
+    if (useJarvis && includeChatHistory && activeGame == null) {
+      final advice = await _jarvisAdvice(
+        bot: bot,
+        botId: botId,
+        text: text,
+        history: history,
+        profileContext: profileContext,
+        worldBookContext: worldBookContext,
+        cancellationToken: cancellationToken,
+      );
+      if (advice.isNotEmpty) {
+        messages.add({'role': 'system', 'content': advice});
+      }
+    }
     if (timeAware) {
       final now = DateTime.now();
       DateTime? firstAt;
@@ -796,7 +924,7 @@ class AIManager {
       http.StreamedResponse streamedResponse;
       try {
         streamedResponse =
-            await client.send(request).timeout(const Duration(seconds: 40));
+            await client.send(request).timeout(const Duration(seconds: 45));
       } finally {
         token?.removeOnCancel(cancelRequest);
       }
@@ -1280,23 +1408,14 @@ class AIManager {
   }
 
   String _friendlyHttpError(int status, String detail) {
-    final suffix = detail.isEmpty ? '' : '（服务端信息：$detail）';
-    if (status == 402) {
-      return '服务余额不足：请充值或更换有余额的 API Key。$suffix';
-    }
-    if (status == 401 || status == 403) {
-      return '鉴权失败：请检查 API Key、权限和 Base URL。$suffix';
-    }
-    if (status == 404) {
-      return '接口或模型不存在：请检查 Base URL 与模型名称。$suffix';
-    }
-    if (status == 408 || status == 429) {
-      return '服务繁忙、超时或触发限流：请稍后重试。$suffix';
-    }
-    if (status >= 500) {
-      return '模型服务端异常：请稍后重试或更换服务商。$suffix';
-    }
-    return '模型请求失败（HTTP $status）。$suffix';
+    if (status == 402) return 'HTTP 402，请检查余额';
+    if (status == 401 || status == 403) return 'HTTP $status，请检查 API Key';
+    if (status == 404) return 'HTTP 404，请检查地址或模型名';
+    if (status == 408) return 'HTTP 408，服务商响应超时';
+    if (status == 413) return 'HTTP 413，请求内容过大';
+    if (status == 429) return 'HTTP 429，请求过于频繁';
+    if (status >= 500) return 'HTTP $status，服务商暂时故障';
+    return 'HTTP $status，请求失败';
   }
 
   Future<String> describeImagesForBot({

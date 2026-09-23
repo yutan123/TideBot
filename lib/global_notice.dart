@@ -94,8 +94,9 @@ class _GlobalNoticeView extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: SizedBox(
-                    height: 48,
+                  child: ConstrainedBox(
+                    constraints:
+                        const BoxConstraints(minHeight: 48, maxHeight: 96),
                     child: Stack(
                       children: [
                         Positioned.fill(
@@ -106,7 +107,7 @@ class _GlobalNoticeView extends StatelessWidget {
                               alignment: Alignment.centerLeft,
                               child: Text(
                                 message,
-                                maxLines: 1,
+                                maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: foreground,
