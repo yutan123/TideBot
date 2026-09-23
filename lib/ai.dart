@@ -15,7 +15,6 @@ import 'future_task_scheduler.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 import 'app_log_service.dart';
-import 'global_notice.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
 import 'device_capability_service.dart';
@@ -230,7 +229,6 @@ class AIManager {
               code == 429 ||
               code >= 500;
           if (!retryable || index == attempts.length - 1) break;
-          GlobalNotice.show('请求失败，正在进行第${index + 1}次重试');
         } on AICancelledException {
           rethrow;
         }
@@ -923,8 +921,9 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
       token?.addOnCancel(cancelRequest);
       http.StreamedResponse streamedResponse;
       try {
+        // 只限制建立连接。非流式接口要等整段生成完才返回响应头，45 秒会把正常慢回复判成超时。
         streamedResponse =
-            await client.send(request).timeout(const Duration(seconds: 45));
+            await client.send(request).timeout(const Duration(minutes: 4));
       } finally {
         token?.removeOnCancel(cancelRequest);
       }
@@ -938,23 +937,62 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             .transform(utf8.decoder)
             .transform(const LineSplitter());
 
+        List<Map<String, dynamic>>? streamedToolCalls;
         await for (final line in lines) {
           if (line.startsWith('data: ')) {
             final data = line.substring(6).trim();
             if (data == '[DONE]') break;
             try {
               final json = jsonDecode(data);
-              final delta =
-                  json['choices']?[0]?['delta']?['content']?.toString();
+              final choice = json['choices']?[0];
+              final delta = choice?['delta']?['content']?.toString();
               if (delta != null && delta.isNotEmpty) {
                 replyText += delta;
                 onDelta(delta);
+              }
+              final calls = choice?['delta']?['tool_calls'] ??
+                  choice?['message']?['tool_calls'];
+              if (calls is List && calls.isNotEmpty) {
+                streamedToolCalls = calls
+                    .whereType<Map>()
+                    .map((call) => Map<String, dynamic>.from(call))
+                    .toList();
               }
             } catch (_) {}
           }
         }
         client.close();
         errorBody = '';
+        if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
+          messages.add({
+            'role': 'assistant',
+            'content': replyText,
+            'tool_calls': streamedToolCalls,
+          });
+          await _runStreamedTools(
+            db: db,
+            botId: botId,
+            calls: streamedToolCalls,
+            messages: messages,
+            baseUrl: baseUrl,
+            modelName: modelName,
+            apiKey: provider['api_key']?.toString() ?? '',
+            maxTokens: bot['max_tokens'] ?? 10000,
+            onDelta: onDelta,
+            replyTextCallback: (t) => replyText = t,
+            usageCallback: (u) => usage = u,
+            searchSourcesSetter: (l) => searchSources = l,
+            generatedImageSetter: (p) => generatedImagePath = p,
+            pendingDeviceActionSetter: (_) {},
+            silenceSetter: () => toolSilenced = true,
+            stickerSetter: (sticker) => toolSticker = sticker,
+            moodSetter: (mood) => toolMood = mood,
+            voiceSetter: () => toolRequestedVoice = true,
+            requiredToolNames: const {},
+            allowedStickerTypes: stickerEmotions.toSet(),
+            inspectableImages: inspectableImages,
+          );
+        }
       } else {
         // 非流式处理：一次性读取全部
         final response = await http.Response.fromStream(streamedResponse);
@@ -1017,35 +1055,6 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
               inspectableImages: inspectableImages,
             );
           }
-        } else if (allowTools) {
-          // Providers occasionally ignore tool_choice=auto. Ask once more with
-          // the same request context so the mandatory native state is not lost.
-          await _runStreamedTools(
-            db: db,
-            botId: botId,
-            calls: const [],
-            messages: messages,
-            baseUrl: baseUrl,
-            modelName: modelName,
-            apiKey: provider['api_key']?.toString() ?? '',
-            maxTokens: bot['max_tokens'] ?? 10000,
-            onDelta: null,
-            replyTextCallback: (t) => replyText = t,
-            usageCallback: (u) => usage = u,
-            searchSourcesSetter: (l) => searchSources = l,
-            generatedImageSetter: (p) => generatedImagePath = p,
-            pendingDeviceActionSetter: (_) {},
-            silenceSetter: () => toolSilenced = true,
-            stickerSetter: (sticker) => toolSticker = sticker,
-            moodSetter: (mood) => toolMood = mood,
-            voiceSetter: () => toolRequestedVoice = true,
-            requiredToolNames: {
-              'set_emotion',
-              if (allowSticker) 'send_sticker',
-            },
-            allowedStickerTypes: stickerEmotions.toSet(),
-            inspectableImages: inspectableImages,
-          );
         }
       }
       if (toolSilenced) replyText = '';

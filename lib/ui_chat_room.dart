@@ -1044,6 +1044,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       setState(() {
         _loading = true;
         _msgsLoading = false;
+        for (final item in userMessages) {
+          item['send_status'] = 'sending';
+        }
         _msgs.addAll(userMessages);
         _msgC.clear();
         _pendingImages.clear();
@@ -1165,13 +1168,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         forceSingleReply: forceSingleReply,
         useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
         cancellationToken: requestToken,
-        onDelta: null, // 聊天室暂不启用真实流式（防止代码块拆分识别）
+        onDelta: streamEnabled
+            ? (delta) {
+                pendingDisplay += delta;
+              }
+            : null,
       )
           .timeout(requestTimeout, onTimeout: () {
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
       });
 
+      if (result['success'] == true) {
+        for (final item in userMessages) {
+          item['send_status'] = 'sent';
+        }
+      }
       if (result['success'] != true) {
         _streamDisplayTimer?.cancel();
         _streamDisplayTimer = null;
@@ -1180,14 +1192,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
-        GlobalNotice.show('请求失败：$errorText',
-            color: const Color(0xFFE74C3C),
-            duration: const Duration(seconds: 6));
         if (!noUserBubble || retryTarget != null) {
           final failedMessage = retryTarget ?? msg;
           failedMessage['error_log'] = errorLog;
           failedMessage['error_code'] = result['error_code']?.toString();
           failedMessage['error_text'] = errorText;
+          failedMessage['send_status'] = 'failed';
           failedMessage.remove('is_retrying');
         }
         if (mounted) setState(() {});
@@ -1219,6 +1229,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         retryTarget.remove('error_log');
         retryTarget.remove('error_code');
         retryTarget.remove('error_text');
+        retryTarget['send_status'] = 'sent';
         retryTarget['retry_status'] = 'none';
         if (mounted) setState(() {});
       }
@@ -1307,13 +1318,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final errorText =
           e is TimeoutException ? '请求超过5分钟，已停止' : '网络连接失败，请检查网络或服务商地址';
       final errorLog = '${e.toString()}\n${st.toString()}';
-      GlobalNotice.show('请求失败：$errorText',
-          color: const Color(0xFFE74C3C), duration: const Duration(seconds: 6));
       if (!noUserBubble || retryTarget != null) {
         final failedMessage = retryTarget ?? msg;
         failedMessage['error_log'] = errorLog;
         failedMessage['error_code'] = 'local';
         failedMessage['error_text'] = errorText;
+        failedMessage['send_status'] = 'failed';
         failedMessage.remove('is_retrying');
       }
       if (mounted) setState(() {});
@@ -3226,25 +3236,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (isUser && isRetrying)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 8, right: 6),
-                                child: SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                              )
-                            else if (isUser && hasRetryFailure)
+                            if (isUser && hasRetryFailure)
                               GestureDetector(
                                 onTap: () => _showErrorDetails(m),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.only(top: 8, right: 6),
+                                child: const Padding(
+                                  padding: EdgeInsets.only(top: 8, right: 6),
                                   child: Icon(
                                     Icons.error_outline_rounded,
-                                    color: Colors.red.shade400,
+                                    color: Color(0xFFE74C3C),
                                     size: 22,
                                   ),
                                 ),
@@ -3491,17 +3490,42 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       !hasSummary &&
                                       txt.isNotEmpty)
                                     _parseText(txt, isUser),
-                                  if (showTimeHere)
+                                  if (isUser &&
+                                      (m['send_status'] == 'sending' ||
+                                          isRetrying ||
+                                          showTimeHere))
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
-                                      child: Text(
-                                        fmtTime(ts),
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color:
-                                              TideTheme.of(context).textFaint,
-                                          fontFamily: 'TideFont',
-                                        ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (m['send_status'] == 'sending' ||
+                                              isRetrying)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                  right: 4),
+                                              child: SizedBox(
+                                                width: 10,
+                                                height: 10,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 1.4,
+                                                  color: TideTheme.of(context)
+                                                      .textFaint,
+                                                ),
+                                              ),
+                                            ),
+                                          if (showTimeHere)
+                                            Text(
+                                              fmtTime(ts),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: TideTheme.of(context)
+                                                    .textFaint,
+                                                fontFamily: 'TideFont',
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                   if (isUser && isRetrying)
