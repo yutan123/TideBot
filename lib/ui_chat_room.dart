@@ -1752,10 +1752,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: theme.cardColor.withOpacity(0.5),
+          color: theme.surfaceVariant.withOpacity(0.5),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: theme.dividerColor.withOpacity(0.3),
+            color: theme.divider.withOpacity(0.5),
             width: 1,
           ),
         ),
