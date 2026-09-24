@@ -3181,6 +3181,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       itemBuilder: (ctx, i) {
         final m = _msgs[_msgs.length - 1 - i];
         final isUser = m['role'] == 'user';
+        final type = m['type']?.toString() ?? 'text';
+
+        // 内心独白单独处理
+        if (type == 'inner_thought') {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildInnerThoughtBubble(theme, m),
+              ],
+            ),
+          );
+        }
+
         // 内存消息使用 image/audio；数据库历史使用 type/file_path，统一兼容两种来源。
         final filePath = m['file_path']?.toString();
         final imagePath = m['image']?.toString() ??

@@ -1019,6 +1019,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _showAvatar = false;
   bool _streaming = true;
   bool _adaptiveSilence = true;
+  bool _innerThought = true;
   bool _segmentedReply = true;
   bool _randomReplyDelay = false;
   bool _timeAwareness = true;
@@ -1566,6 +1567,16 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                     onChanged: (v) {
                       setState(() => _timeAwareness = v);
                       _save('time_awareness', '$v');
+                    },
+                  ),
+                  _settingSwitch(
+                    theme: theme,
+                    title: '内心独白',
+                    help: '默认开启。机器人回复时会先显示一个可折叠的内心独白气泡，展现真实的思考过程和情感状态。',
+                    value: _innerThought,
+                    onChanged: (v) {
+                      setState(() => _innerThought = v);
+                      _save('inner_thought_enabled', '$v');
                     },
                   ),
                   _settingSwitch(
