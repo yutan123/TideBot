@@ -447,6 +447,9 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     String forcedProviderId = '',
   }) async {
     final db = DBManager();
+    // 声明 innerThought 为函数级变量，用于存储提取的内心独白
+    String? innerThought;
+
     cancellationToken?.throwIfCancelled();
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
 
@@ -608,9 +611,10 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     final emotionContext = await EmotionStateService.instance.promptContext(
       botId,
     );
-    
+
     // 内心独白功能：读取最近三轮 assistant 的 inner_thought
-    final innerThoughtEnabled = await db.getKV('inner_thought_enabled') == 'true';
+    final innerThoughtEnabled =
+        await db.getKV('inner_thought_enabled') == 'true';
     String recentThoughtsContext = '';
     if (innerThoughtEnabled && history.isNotEmpty) {
       final recentThoughts = <String>[];
@@ -626,10 +630,11 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         }
       }
       if (recentThoughts.isNotEmpty) {
-        recentThoughtsContext = '\n【你最近三轮的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
+        recentThoughtsContext =
+            '\n【你最近三轮的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
       }
     }
-    
+
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         worldBookContext +
         (extraSystemPrompt.trim().isEmpty
@@ -641,7 +646,9 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         emotionContext +
         profileContext +
         recentThoughtsContext +
-        (innerThoughtEnabled ? '\n【内心独白】每次回复前，请先写一段内心独白，用 <think>内心独白内容</think> 包裹。内心独白要求：1) 用第一人称写，但不必刻意带"我"字；2) 不能用第二人称；3) 称呼用户时优先使用你知道的用户称呼/名字，所有称呼都不知道时才说"用户"，一旦知道就立即停止叫"用户"；4) 可以写对用户话语的多重解读、回忆过往、情绪波动、自我对话等，展现真实的思考过程；5) 你可以选择不写内心独白，不写时不输出 <think> 标签。写完内心独白后再输出正常的聊天回复。' : '') +
+        (innerThoughtEnabled
+            ? '\n【内心独白】每次回复前，请先写一段内心独白，用 <think>内心独白内容</think> 包裹。内心独白要求：1) 用第一人称写，但不必刻意带"我"字；2) 不能用第二人称；3) 称呼用户时优先使用你知道的用户称呼/名字，所有称呼都不知道时才说"用户"，一旦知道就立即停止叫"用户"；4) 可以写对用户话语的多重解读、回忆过往、情绪波动、自我对话等，展现真实的思考过程；5) 你可以选择不写内心独白，不写时不输出 <think> 标签。写完内心独白后再输出正常的聊天回复。'
+            : '') +
         toolContext;
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
     var searchSources = <Map<String, String>>[];
@@ -1017,20 +1024,23 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         final json = jsonDecode(errorBody);
         final message = json['choices']?[0]?['message'];
         replyText = _extractChatContent(json);
-        
+
         // 提取内心独白
-        final rawContent = message is Map ? message['content']?.toString() : null;
+        final rawContent =
+            message is Map ? message['content']?.toString() : null;
         if (rawContent != null && rawContent.contains('<think>')) {
           final thinkStart = rawContent.indexOf('<think>');
           final thinkEnd = rawContent.indexOf('</think>');
           if (thinkStart >= 0 && thinkEnd > thinkStart) {
-            innerThought = rawContent.substring(thinkStart + 7, thinkEnd).trim();
+            innerThought =
+                rawContent.substring(thinkStart + 7, thinkEnd).trim();
             // 从回复文本中移除内心独白标签
-            replyText = (rawContent.substring(0, thinkStart) + 
-                        rawContent.substring(thinkEnd + 8)).trim();
+            replyText = (rawContent.substring(0, thinkStart) +
+                    rawContent.substring(thinkEnd + 8))
+                .trim();
           }
         }
-        
+
         usage = json['usage'] is Map ? json['usage'] as Map : const {};
         AppLogService.instance.addJson('RESPONSE_DEBUG', 'HTTP 200 解析诊断', {
           'keys':
@@ -1176,11 +1186,12 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             segmented ? _replySegments(replyText) : <String>[replyText];
         final replyGroupId = 'reply_$ts';
         final persistedMessages = <Map<String, dynamic>>[];
-        
+
         // 是否需要插入内心独白气泡
-        final innerThoughtEnabled = await db.getKV('inner_thought_enabled') == 'true';
+        final innerThoughtEnabled =
+            await db.getKV('inner_thought_enabled') == 'true';
         final hasInnerThought = innerThought != null && innerThought.isNotEmpty;
-        
+
         if (persistResponse) {
           // 先插入内心独白气泡（如果有）
           if (innerThoughtEnabled && hasInnerThought) {
@@ -1200,7 +1211,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             );
             persistedMessages.add(thoughtRow);
           }
-          
+
           if (audioPath != null && audioPath.isNotEmpty) {
             final row = <String, dynamic>{
               'id': msgId,
@@ -1229,16 +1240,19 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
                 'role': 'assistant',
                 'type': 'text',
                 'content': segments[index],
-              'file_path': null,
-              'mood': mood,
-              'reply_group_id': replyGroupId,
-              'sources_json':
-                  index == segments.length - 1 && searchSources.isNotEmpty
-                      ? jsonEncode(searchSources)
-                      : null,
-              'timestamp': ts + 1 + index,
-              'inner_thought': (index == 0 && innerThoughtEnabled && hasInnerThought) ? innerThought : null,
-            };
+                'file_path': null,
+                'mood': mood,
+                'reply_group_id': replyGroupId,
+                'sources_json':
+                    index == segments.length - 1 && searchSources.isNotEmpty
+                        ? jsonEncode(searchSources)
+                        : null,
+                'timestamp': ts + 1 + index,
+                'inner_thought':
+                    (index == 0 && innerThoughtEnabled && hasInnerThought)
+                        ? innerThought
+                        : null,
+              };
               await MessageDeliveryService.instance.insert(
                 row,
                 notify: notifyResponse && index == 0,
@@ -4131,7 +4145,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           "\n【系统级游戏劫持】：你当前正在和用户玩双人扑克牌。规则极度严格：牌组仅限 3~10，共32张，没有大小王。每人随机发16张牌。正常的算力对战（单张、对子、三带一、顺子、炸弹）。绝对不可向用户透露你手中的底牌！你需要在每次闲聊中推进游戏局势并描述你出的牌。";
     } else if (activeGame == '20q') {
       p +=
-          "\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的"是"或"否"推断出答案；如果你是出题人，你只能回答"是"或"否"。在 20 问内未能猜出则判定输。";
+          '\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的是或否推断出答案；如果你是出题人，你只能回答是或否。在 20 问内未能猜出则判定输。';
     } else if (activeGame == 'gomoku') {
       p +=
           "\n【游戏规则】你正与用户真实进行 9×9 五子棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-9），再简短聊天。";
