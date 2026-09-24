@@ -554,20 +554,22 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
     final currentImageDescriptions = <int, String>{};
     // 本轮图片不进入历史图片工具。使用主模型识图时直接附着图片；选择
-    // 专用识图模型时，先由该模型识别，再把文本结果转述给聊天模型。
+    // 专用识图模型时，先由该模型识别,再把文本结果转述给聊天模型。
     final visionId = (await SharedPreferences.getInstance())
             .getString('vision_model_$botId')
             ?.trim() ??
         '';
     const primaryVisionModel = '__use_primary_vision__';
+    // 未配置识图模型时默认使用主模型识图，而不是只发送文本占位符
+    final effectiveVisionId = visionId.isEmpty ? primaryVisionModel : visionId;
     if (effectiveImagePaths.isNotEmpty &&
-        visionId.isNotEmpty &&
-        visionId != primaryVisionModel) {
+        effectiveVisionId.isNotEmpty &&
+        effectiveVisionId != primaryVisionModel) {
       for (var index = 0; index < effectiveImagePaths.length; index++) {
         final path = effectiveImagePaths[index];
         final number = index + 1;
         try {
-          final provider = await db.getChatProviderById(visionId);
+          final provider = await db.getChatProviderById(effectiveVisionId);
           currentImageDescriptions[number] = provider == null
               ? '图片识别失败：所选识图模型不存在或已被删除。'
               : await _describeImage(
@@ -656,18 +658,18 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     }
     messages.addAll(historyMessages);
     var lastIsCurrentUser = false;
-    // 若最末一条上下文恰好就是本次发送的 user 文本或图片（内存补写导致），
-    // 标记以免下方再次追加造成重复喂给模型
+    // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
+    // 标记以免下方再次追加造成重复喂给模型。
+    // 注意：图片消息虽然可能已在历史中，但图片内容本身（base64 或识别结果）
+    // 尚未添加到模型请求，因此图片不能被视为"已处理"而跳过。
     if (historyMessages.isNotEmpty && history.isNotEmpty) {
       final lastMsg = history.last;
       if (lastMsg['role']?.toString() == 'user') {
         final lastType = lastMsg['type']?.toString() ?? 'text';
-        final lastPath = lastMsg['file_path']?.toString() ?? '';
-        lastIsCurrentUser = lastMsg['content']?.toString() == text ||
-            (lastType == 'image' &&
-                lastPath.isNotEmpty &&
-                effectiveImagePaths.contains(lastPath)) ||
-            lastType == 'shared_post';
+        // 只有纯文本或分享帖才可能真正重复；图片/语音需要额外处理，不能跳过
+        lastIsCurrentUser =
+            (lastType == 'text' && lastMsg['content']?.toString() == text) ||
+                lastType == 'shared_post';
       }
     }
     if (!lastIsCurrentUser) {
@@ -709,7 +711,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           for (final entry in currentImageDescriptions.entries)
             '【本轮第 ${entry.key} 张图片的视觉模型识别结果】${entry.value}',
         ].join('\n');
-        if (visionId == primaryVisionModel) {
+        if (effectiveVisionId == primaryVisionModel) {
           final parts = <Map<String, dynamic>>[
             {'type': 'text', 'text': content.isEmpty ? text : content},
           ];
