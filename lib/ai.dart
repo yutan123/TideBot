@@ -63,8 +63,6 @@ class AIManager {
   static final AIManager _instance = AIManager._internal();
   factory AIManager() => _instance;
   AIManager._internal();
-  Future<void> _modelTurn = Future.value();
-  int _chatWaiters = 0;
 
   // 结构化聊天结果供聊天室展示完整错误日志；旧 chat 接口继续返回纯文本。
   Future<Map<String, dynamic>> chatResult({
@@ -119,30 +117,6 @@ class AIManager {
 
   /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
   /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
-  Future<T> _runModelTurn<T>(
-    Future<T> Function() action, {
-    required bool priority,
-    AICancellationToken? cancellationToken,
-  }) {
-    final previous = _modelTurn;
-    final gate = Completer<void>();
-    _modelTurn = gate.future;
-    if (priority) _chatWaiters++;
-    return previous.then((_) async {
-      try {
-        while (!priority && _chatWaiters > 0) {
-          cancellationToken?.throwIfCancelled();
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        cancellationToken?.throwIfCancelled();
-        return await action();
-      } finally {
-        if (priority) _chatWaiters--;
-        if (!gate.isCompleted) gate.complete();
-      }
-    });
-  }
-
   Future<Map<String, dynamic>> sendMessage({
     required String botId,
     required String text,
@@ -162,88 +136,84 @@ class AIManager {
     bool useJarvis = false,
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
-  }) {
-    return _runModelTurn(() async {
-      cancellationToken?.throwIfCancelled();
-      final prefs = await SharedPreferences.getInstance();
-      const primaryLocal = '';
-      const backupLocal = '';
-      final backupRemote =
-          (prefs.getString('backup_model_$botId') ?? '').trim();
-      final matchingBots = (await DBManager().getAllBots())
-          .where((bot) => bot['id']?.toString() == botId)
-          .toList();
-      final primaryRemote = matchingBots.isEmpty
-          ? ''
-          : (matchingBots.first['chat_model']?.toString().trim() ?? '');
-      // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
-      // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
-      final primary = {'local': primaryLocal, 'provider': primaryRemote};
-      final backup = {'local': backupLocal, 'provider': backupRemote};
-      bool configured(Map<String, String> candidate) =>
-          candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
-      // Never attempt an empty primary. A configured backup must be usable even
-      // when the bot has no primary model selected.
-      final attempts = <Map<String, String>>[
-        if (configured(primary)) primary,
-        if (configured(backup) && backup['provider'] != primary['provider'])
-          backup,
-      ];
-      if (attempts.isEmpty) {
-        return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
-      }
+  }) async {
+    cancellationToken?.throwIfCancelled();
+    final prefs = await SharedPreferences.getInstance();
+    const primaryLocal = '';
+    const backupLocal = '';
+    final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
+    final matchingBots = (await DBManager().getAllBots())
+        .where((bot) => bot['id']?.toString() == botId)
+        .toList();
+    final primaryRemote = matchingBots.isEmpty
+        ? ''
+        : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+    // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+    // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+    final primary = {'local': primaryLocal, 'provider': primaryRemote};
+    final backup = {'local': backupLocal, 'provider': backupRemote};
+    bool configured(Map<String, String> candidate) =>
+        candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
+    // Never attempt an empty primary. A configured backup must be usable even
+    // when the bot has no primary model selected.
+    final attempts = <Map<String, String>>[
+      if (configured(primary)) primary,
+      if (configured(backup) && backup['provider'] != primary['provider'])
+        backup,
+    ];
+    if (attempts.isEmpty) {
+      return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
+    }
 
-      Map<String, dynamic>? lastFailure;
-      for (var index = 0; index < attempts.length; index++) {
-        cancellationToken?.throwIfCancelled();
-        final candidate = attempts[index];
-        final selectedImagePaths = <String>[
-          if (imagePath?.isNotEmpty == true) imagePath!,
-          ...?imagePaths,
-        ];
-        try {
-          final result = await _sendMessageOnce(
-            botId: botId,
-            text: text,
-            imagePath:
-                selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-            imagePaths: selectedImagePaths,
-            audioPath: audioPath,
-            activeGame: activeGame,
-            persistResponse: persistResponse,
-            includeChatHistory: includeChatHistory,
-            enableAutoSummary: enableAutoSummary,
-            skipLifeState: skipLifeState,
-            allowTools: allowTools,
-            forceSingleReply: forceSingleReply,
-            notifyResponse: notifyResponse,
-            extraSystemPrompt: extraSystemPrompt,
-            useJarvis: useJarvis,
-            cancellationToken: cancellationToken,
-            // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-            // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-            onDelta: onDelta,
-            forcedLocalId: candidate['local']!,
-            forcedProviderId: candidate['provider']!,
-          );
-          if (result['success'] == true) return result;
-          lastFailure = result;
-          final code =
-              int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
-          final retryable = result['error_code']?.toString() == 'network' ||
-              code == 429 ||
-              code >= 500;
-          if (!retryable || index == attempts.length - 1) break;
-        } on AICancelledException {
-          rethrow;
-        }
+    Map<String, dynamic>? lastFailure;
+    for (var index = 0; index < attempts.length; index++) {
+      cancellationToken?.throwIfCancelled();
+      final candidate = attempts[index];
+      final selectedImagePaths = <String>[
+        if (imagePath?.isNotEmpty == true) imagePath!,
+        ...?imagePaths,
+      ];
+      try {
+        final result = await _sendMessageOnce(
+          botId: botId,
+          text: text,
+          imagePath:
+              selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+          imagePaths: selectedImagePaths,
+          audioPath: audioPath,
+          activeGame: activeGame,
+          persistResponse: persistResponse,
+          includeChatHistory: includeChatHistory,
+          enableAutoSummary: enableAutoSummary,
+          skipLifeState: skipLifeState,
+          allowTools: allowTools,
+          forceSingleReply: forceSingleReply,
+          notifyResponse: notifyResponse,
+          extraSystemPrompt: extraSystemPrompt,
+          useJarvis: useJarvis,
+          cancellationToken: cancellationToken,
+          // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+          // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+          onDelta: onDelta,
+          forcedLocalId: candidate['local']!,
+          forcedProviderId: candidate['provider']!,
+        );
+        if (result['success'] == true) return result;
+        lastFailure = result;
+        final code = int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+        final retryable = result['error_code']?.toString() == 'network' ||
+            code == 429 ||
+            code >= 500;
+        if (!retryable || index == attempts.length - 1) break;
+      } on AICancelledException {
+        rethrow;
       }
-      return {
-        ...?lastFailure,
-        'error':
-            '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
-      };
-    }, priority: priority, cancellationToken: cancellationToken);
+    }
+    return {
+      ...?lastFailure,
+      'error':
+          '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
+    };
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -947,6 +917,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
 
         List<Map<String, dynamic>>? streamedToolCalls;
         await for (final line in lines) {
+          token?.throwIfCancelled();
           if (line.startsWith('data:')) {
             final data = line.substring(5).trim();
             if (data == '[DONE]') break;
@@ -1004,14 +975,16 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           );
         }
       } else {
-        // 非流式处理：一次性读取全部
+        token?.throwIfCancelled();
         final response = await http.Response.fromStream(streamedResponse);
+        token?.throwIfCancelled();
         client.close();
         errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
         AppLogService.instance.add('AI_TRACE',
             '非流式响应体结束 bytes=${response.bodyBytes.length} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
       }
 
+      token?.throwIfCancelled();
       if (statusCode == 200 && errorBody.isNotEmpty) {
         final json = jsonDecode(errorBody);
         final message = json['choices']?[0]?['message'];
@@ -1108,6 +1081,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           AppLogService.instance.add('SILENCE', '机器人通过工具选择本轮不回复');
           return {'success': true, 'silent': true, 'reply': ''};
         }
+        token?.throwIfCancelled();
         // Emotion and sticker state are native tool results. Legacy markers are
         // stripped only for historical/provider compatibility and are never used
         // to drive new state transitions.
@@ -1133,6 +1107,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         // 工具调用可能已返回图片路径，先初始化供下方落库使用.
         // 语音模态处理：TTS 生成改为后台执行，绝不阻塞文本回复，
         // 否则 TTS 请求最长 20 秒会卡死整个发送链路，导致"发送没反应/无气泡"。
+        token?.throwIfCancelled();
         final ts = DateTime.now().millisecondsSinceEpoch;
         final msgId = 'msg_a_${ts + 1}';
         final persistedSticker = toolSticker;
@@ -1181,6 +1156,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             persistedMessages.add(row);
           } else {
             for (var index = 0; index < segments.length; index++) {
+              token?.throwIfCancelled();
               final row = <String, dynamic>{
                 'id': index == 0 ? msgId : '${msgId}_segment_$index',
                 'bot_id': botId,
@@ -1240,6 +1216,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             }
           }
         }
+        token?.throwIfCancelled();
         if (persistResponse &&
             searchSources.isNotEmpty &&
             persistedMessages.isNotEmpty) {
@@ -1251,6 +1228,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             searchSources,
           );
         }
+        token?.throwIfCancelled();
         AppLogService.instance.add(
           'AI_TRACE',
           'AI 请求成功准备返回 messages=${persistedMessages.length}',

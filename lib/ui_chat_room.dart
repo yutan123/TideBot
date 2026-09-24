@@ -1244,7 +1244,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           .where((id) => id.isNotEmpty)
           .toSet();
       _deferredPersistedMessageIds.addAll(persistedIds);
-      if (myGen != _requestGen) {
+      if (myGen != _requestGen || requestToken.isCancelled) {
         _deferredPersistedMessageIds.removeAll(persistedIds);
         if (streamingMessage != null && mounted) {
           setState(() => _msgs.remove(streamingMessage));
@@ -3198,6 +3198,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             !isEmoji &&
             !isSticker &&
             hasVisibleContent;
+        final showTimeForAssistant = showTimeHere && !isUser;
         final isRetrying =
             m['is_retrying'] == true || m['retry_status'] == 'retrying';
         final hasRetryFailure = m['retry_status'] == 'failed' ||
@@ -3490,10 +3491,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                       !hasSummary &&
                                       txt.isNotEmpty)
                                     _parseText(txt, isUser),
-                                  if (isUser &&
-                                      (m['send_status'] == 'sending' ||
-                                          isRetrying ||
-                                          showTimeHere))
+                                  if ((isUser &&
+                                          (m['send_status'] == 'sending' ||
+                                              isRetrying ||
+                                              showTimeHere)) ||
+                                      (!isUser && showTimeForAssistant))
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
                                       child: Row(
