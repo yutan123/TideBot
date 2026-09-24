@@ -6,10 +6,10 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'global_notice.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'global_notice.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1158,6 +1158,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
+      final requestDeadline = Timer(requestTimeout, requestToken.cancel);
       final result = await AIManager()
           .sendMessage(
         botId: botId,
@@ -1178,6 +1179,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
       });
+      requestDeadline.cancel();
 
       if (result['success'] == true) {
         for (final item in userMessages) {

@@ -119,21 +119,26 @@ class AIManager {
 
   /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
   /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
-  Future<T> _runModelTurn<T>(Future<T> Function() action,
-      {required bool priority}) {
+  Future<T> _runModelTurn<T>(
+    Future<T> Function() action, {
+    required bool priority,
+    AICancellationToken? cancellationToken,
+  }) {
     final previous = _modelTurn;
     final gate = Completer<void>();
     _modelTurn = gate.future;
     if (priority) _chatWaiters++;
     return previous.then((_) async {
-      while (!priority && _chatWaiters > 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
       try {
+        while (!priority && _chatWaiters > 0) {
+          cancellationToken?.throwIfCancelled();
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        cancellationToken?.throwIfCancelled();
         return await action();
       } finally {
         if (priority) _chatWaiters--;
-        gate.complete();
+        if (!gate.isCompleted) gate.complete();
       }
     });
   }
@@ -238,7 +243,7 @@ class AIManager {
         'error':
             '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
       };
-    }, priority: priority);
+    }, priority: priority, cancellationToken: cancellationToken);
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -921,9 +926,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
       token?.addOnCancel(cancelRequest);
       http.StreamedResponse streamedResponse;
       try {
-        // 只限制建立连接。非流式接口要等整段生成完才返回响应头，45 秒会把正常慢回复判成超时。
-        streamedResponse =
-            await client.send(request).timeout(const Duration(minutes: 4));
+        streamedResponse = await client.send(request);
       } finally {
         token?.removeOnCancel(cancelRequest);
       }

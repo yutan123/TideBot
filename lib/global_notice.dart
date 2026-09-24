@@ -95,7 +95,8 @@ class _GlobalNoticeView extends StatelessWidget {
                     ],
                   ),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48),
+                    constraints:
+                        const BoxConstraints(minHeight: 48, maxHeight: 48),
                     child: Stack(
                       children: [
                         Positioned.fill(
