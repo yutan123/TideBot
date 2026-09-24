@@ -84,14 +84,14 @@ Map<String, dynamic> inspectImageToolSchema({
     'function': {
       'name': name,
       'description':
-          '查看用户发送的图片。图片在上下文中以 [图片#n] 表示，可用编号：$available。默认不会自动看图；只有需要理解画面时才调用。不要编造未提供的编号，不要要求或输出文件路径。',
+          '查看当前对话中用户先前消息发送的历史图片。仅当你需要回看历史消息里的图片内容时调用。用户本轮发送的图片会自动附着到当前请求：选择主模型识图时你可直接查看，选择专用识图模型时会自动提供识别结果；不得为本轮图片调用此工具。历史图片在上下文中以 [图片#n] 表示，可用编号：$available。image_number 必须来自上下文明确提供的历史图片编号，不得猜测或编造，也不要要求或输出文件路径。',
       'parameters': {
         'type': 'object',
         'properties': {
           'image_number': {
             'type': 'integer',
             'minimum': 1,
-            'description': '图片编号，例如 1 表示 [图片#1]',
+            'description': '上下文中明确标注的历史图片编号，例如 1 表示 [图片#1]；不得填写本轮图片或猜测编号',
           },
         },
         'required': ['image_number'],

@@ -3,8 +3,121 @@ import 'dart:math';
 
 import 'ai.dart';
 import 'app_log_service.dart';
+import 'chat_content.dart';
 import 'db.dart';
 import 'bot_state.dart';
+
+Map<String, dynamic>? parseLifeSchedulePayload(String raw) {
+  var source = cleanChatContent(raw).trim();
+  if (source.isEmpty) return null;
+  for (var pass = 0; pass < 3; pass++) {
+    final direct = _decodeLifeScheduleMap(source);
+    if (direct != null) return direct;
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(source);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    if (decoded is! String || decoded.trim() == source) return null;
+    source = cleanChatContent(decoded).trim();
+  }
+  return null;
+}
+
+Map<String, dynamic>? _decodeLifeScheduleMap(String source) {
+  var quoted = false;
+  var escaped = false;
+  var depth = 0;
+  var start = -1;
+  for (var index = 0; index < source.length; index++) {
+    final char = source[index];
+    if (quoted) {
+      if (escaped) {
+        escaped = false;
+      } else if (char == r'\') {
+        escaped = true;
+      } else if (char == '"') {
+        quoted = false;
+      }
+      continue;
+    }
+    if (char == '"') {
+      quoted = true;
+    } else if (char == '{') {
+      if (depth++ == 0) start = index;
+    } else if (char == '}' && depth > 0 && --depth == 0 && start >= 0) {
+      try {
+        final decoded = jsonDecode(source.substring(start, index + 1));
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+      start = -1;
+    }
+  }
+  return null;
+}
+
+bool isLifeScheduleClockTime(String value) =>
+    RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(value);
+
+String compactLifeScheduleContext(
+  Map<String, dynamic> row, {
+  DateTime? at,
+}) {
+  final timeline = decodeLifeScheduleTimeline(row);
+  final now = at ?? DateTime.now();
+  final nowText =
+      '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  Map<String, dynamic>? current;
+  for (final item in timeline) {
+    final start = item['time']?.toString() ?? '';
+    final end = item['end_time']?.toString() ?? '';
+    final overnight = end.startsWith('次日');
+    if (start.isEmpty || end.isEmpty) continue;
+    if (overnight) {
+      if (nowText.compareTo(start) >= 0 || nowText.compareTo('09:00') < 0) {
+        current = item;
+        break;
+      }
+    } else if (nowText.compareTo(start) >= 0 && nowText.compareTo(end) < 0) {
+      current = item;
+      break;
+    }
+  }
+  final currentText = current == null
+      ? '当前没有安排'
+      : '${current['time']}-${current['end_time']} ${current['activity']}';
+  final rigid = timeline
+      .where((e) => e['rigid'] == true)
+      .map((e) => '${e['time']} ${e['activity']}')
+      .join('；');
+  final fullTimeline = timeline.map((e) {
+    final end = e['end_time']?.toString() ?? '';
+    final weather = e['weather']?.toString().trim() ?? '';
+    final rigidMark = e['rigid'] == true ? '（刚性）' : '';
+    return '${e['time']}-${end.isEmpty ? '?' : end} ${e['activity']}${weather.isEmpty ? '' : '，$weather'}$rigidMark';
+  }).join('；');
+  return '【今日生活状态与完整日程】主题：${row['theme'] ?? ''}；心情：${row['mood'] ?? ''}；'
+      '穿搭风格：${row['outfit_style'] ?? ''}；完整穿搭：${row['outfit'] ?? ''}；当前安排：$currentText。'
+      '全天日程：$fullTimeline。'
+      '${rigid.isEmpty ? '' : '刚性事项：$rigid。'}'
+      '今天的活动仅是角色生活状态，不得虚构成已经与用户共同经历；用户询问今天做了什么时，可基于日程自然说明。需要变更日程或穿搭时必须调用生活状态工具，不得仅在正文声称已修改，也不得删除或改写刚性事项。';
+}
+
+List<Map<String, dynamic>> decodeLifeScheduleTimeline(
+    Map<String, dynamic> row) {
+  try {
+    final raw = jsonDecode(row['timeline_json']?.toString() ?? '[]');
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+  } catch (_) {}
+  return [];
+}
 
 class LifeScheduleService {
   LifeScheduleService._();
@@ -197,14 +310,23 @@ class LifeScheduleService {
       skipLifeState: true,
       allowTools: false,
     );
-    if (result['success'] != true) return old;
+    if (result['success'] != true) {
+      AppLogService.instance.add(
+        'SCHEDULE',
+        '生成 $key 日程失败：${result['error'] ?? '模型请求失败'}',
+      );
+      return old;
+    }
     final text = result['reply']?.toString() ?? '';
-    final start = text.indexOf('{');
-    final end = text.lastIndexOf('}');
-    if (start < 0 || end <= start) return old;
+    final payload = parseLifeSchedulePayload(text);
+    if (payload == null || payload['timeline'] is! List) {
+      AppLogService.instance.add(
+        'SCHEDULE',
+        '生成 $key 日程的响应无法解析，未覆盖现有日程',
+      );
+      return old;
+    }
     try {
-      final payload = jsonDecode(text.substring(start, end + 1));
-      if (payload is! Map || payload['timeline'] is! List) return old;
       final timeline = (payload['timeline'] as List)
           .whereType<Map>()
           .map<Map<String, dynamic>>((e) => <String, dynamic>{
@@ -220,7 +342,13 @@ class LifeScheduleService {
           .toList();
       _normalizeTimeline(timeline, all['weather'] ?? const <String>[]);
       final outfit = payload['outfit']?.toString().trim() ?? '';
-      if (timeline.length < 2 || outfit.isEmpty) return old;
+      if (timeline.length < 2 || outfit.isEmpty) {
+        AppLogService.instance.add(
+          'SCHEDULE',
+          '生成 $key 日程校验失败：有效时间线不足或穿搭为空，未覆盖现有日程',
+        );
+        return old;
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       final row = <String, dynamic>{
         'id': old?['id'] ?? 'life_${botId}_$key',
@@ -278,15 +406,10 @@ class LifeScheduleService {
       previousWeather = item['weather'].toString();
       previousEnd = end;
     }
-    if (previousEnd.compareTo('23:00') < 0) {
-      timeline.add({
-        'time': previousEnd,
-        'end_time': '23:00',
-        'activity': '放松、整理并准备休息',
-        'weather': previousWeather,
-        'rigid': false,
-      });
-    }
+    timeline.removeWhere((item) =>
+        (item['end_time']?.toString() ?? '')
+            .compareTo(item['time']?.toString() ?? '') <=
+        0);
     timeline.add({
       'time': '23:00',
       'end_time': '次日09:00',
@@ -296,8 +419,7 @@ class LifeScheduleService {
     });
   }
 
-  bool _isTime(String value) =>
-      RegExp(r'^([01]\\d|2[0-3]):[0-5]\\d$').hasMatch(value);
+  bool _isTime(String value) => isLifeScheduleClockTime(value);
 
   String _plusMinutes(String value, int minutes) {
     final parts = value.split(':').map(int.parse).toList();
@@ -357,49 +479,11 @@ class LifeScheduleService {
     }
   }
 
-  String compactContext(Map<String, dynamic> row) {
-    final timeline = _timeline(row);
-    final now = DateTime.now();
-    final nowText =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    Map<String, dynamic>? current;
-    for (final item in timeline) {
-      if ((item['time']?.toString() ?? '').compareTo(nowText) <= 0) {
-        current = item;
-      }
-    }
-    final currentText = current == null
-        ? '暂未开始安排'
-        : '${current['time']} ${current['activity']}';
-    final rigid = timeline
-        .where((e) => e['rigid'] == true)
-        .map((e) => '${e['time']} ${e['activity']}')
-        .join('；');
-    final fullTimeline = timeline.map((e) {
-      final end = e['end_time']?.toString() ?? '';
-      final weather = e['weather']?.toString().trim() ?? '';
-      final rigidMark = e['rigid'] == true ? '（刚性）' : '';
-      return '${e['time']}-${end.isEmpty ? '?' : end} ${e['activity']}${weather.isEmpty ? '' : '，$weather'}$rigidMark';
-    }).join('；');
-    return '【今日生活状态与完整日程】主题：${row['theme'] ?? ''}；心情：${row['mood'] ?? ''}；'
-        '穿搭风格：${row['outfit_style'] ?? ''}；完整穿搭：${row['outfit'] ?? ''}；当前安排：$currentText。'
-        '全天日程：$fullTimeline。'
-        '${rigid.isEmpty ? '' : '刚性事项：$rigid。'}'
-        '今天的活动仅是角色生活状态，不得虚构成已经与用户共同经历；用户询问今天做了什么时，可基于日程自然说明。需要变更日程或穿搭时必须调用生活状态工具，不得仅在正文声称已修改，也不得删除或改写刚性事项。';
-  }
+  String compactContext(Map<String, dynamic> row) =>
+      compactLifeScheduleContext(row);
 
-  List<Map<String, dynamic>> _timeline(Map<String, dynamic> row) {
-    try {
-      final raw = jsonDecode(row['timeline_json']?.toString() ?? '[]');
-      if (raw is List) {
-        return raw
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-    } catch (_) {}
-    return [];
-  }
+  List<Map<String, dynamic>> _timeline(Map<String, dynamic> row) =>
+      decodeLifeScheduleTimeline(row);
 
   Future<Map<String, dynamic>?> updateFromTool(
       String botId, Map<String, dynamic> args) async {

@@ -57,12 +57,27 @@ void main() {
       expect(formatImagePlaceholder(1), '[图片#1]');
       expect(formatImagePlaceholder(2, caption: 'cat'), '[图片#2]\ncat');
     });
-
     test('parses image numbers from tags and raw values', () {
       expect(parseImageNumber(3), 3);
       expect(parseImageNumber('图片#4'), 4);
       expect(parseImageNumber('0'), isNull);
       expect(parseImageNumber(''), isNull);
+    });
+
+    test('describes inspection as historical-image-only', () {
+      final schema = inspectImageToolSchema(numbers: [2, 5]);
+      final function = schema['function'] as Map<String, dynamic>;
+      final description = function['description'].toString();
+      final parameters = function['parameters'] as Map<String, dynamic>;
+      final properties = parameters['properties'] as Map<String, dynamic>;
+      final imageNumber = properties['image_number'] as Map<String, dynamic>;
+
+      expect(description, contains('历史图片'));
+      expect(description, contains('本轮发送的图片会自动附着'));
+      expect(description, contains('不得为本轮图片调用'));
+      expect(description, contains('#2、#5'));
+      expect(imageNumber['description'], contains('不得填写本轮图片'));
+      expect(parameters['additionalProperties'], isFalse);
     });
   });
 }

@@ -14,6 +14,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -955,6 +956,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (mounted) setState(() => _hasText = false);
       return;
     }
+    if (!noUserBubble && images.isNotEmpty) {
+      try {
+        images = await _persistChatImages(images);
+      } catch (error) {
+        if (mounted) GlobalNotice.show('图片保存失败：$error');
+        return;
+      }
+    }
     final botId = _bot['id']?.toString() ?? '';
     final now = DateTime.now().millisecondsSinceEpoch;
     final userMessages = _buildAttachmentMessages(
@@ -1687,6 +1696,33 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
       }
     }
+  }
+
+  Future<List<String>> _persistChatImages(List<String> paths) async {
+    final documents = await getApplicationDocumentsDirectory();
+    final directory = Directory('${documents.path}/chat_media/images');
+    await directory.create(recursive: true);
+    final stored = <String>[];
+    for (var index = 0; index < paths.length; index++) {
+      final source = File(paths[index]);
+      if (!await source.exists()) {
+        throw FileSystemException('所选图片不可访问', source.path);
+      }
+      if (p.isWithin(directory.path, source.path)) {
+        stored.add(source.path);
+        continue;
+      }
+      final rawExtension = p.extension(source.path).toLowerCase();
+      final extension = RegExp(r'^\.[a-z0-9]{2,5}$').hasMatch(rawExtension)
+          ? rawExtension
+          : '.jpg';
+      final fileName =
+          'chat_${DateTime.now().microsecondsSinceEpoch}_${index + 1}$extension';
+      final destination = File(p.join(directory.path, fileName));
+      await source.copy(destination.path);
+      stored.add(destination.path);
+    }
+    return stored;
   }
 
   Future<String> _fixHeic(String path) async {

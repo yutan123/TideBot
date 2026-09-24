@@ -532,7 +532,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
     final inspectableImages = <int, String>{};
     final imageNumberByPath = <String, int>{};
-    void registerImage(String path) {
+    void registerHistoricalImage(String path) {
       final normalized = path.trim();
       if (normalized.isEmpty || imageNumberByPath.containsKey(normalized)) {
         return;
@@ -543,16 +543,18 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     }
 
     for (final msg in history) {
-      if (msg['type']?.toString() != 'image') continue;
-      registerImage(msg['file_path']?.toString() ?? '');
-    }
-    for (final path in effectiveImagePaths) {
-      registerImage(path);
+      if (msg['type']?.toString() != 'image' ||
+          msg['role']?.toString() != 'user') {
+        continue;
+      }
+      final path = msg['file_path']?.toString().trim() ?? '';
+      if (path.isEmpty || effectiveImagePaths.contains(path)) continue;
+      registerHistoricalImage(path);
     }
     final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
     final currentImageDescriptions = <int, String>{};
-    // 主模型识图时直接把图片作为多模态内容发送；只有选择专用识图模型时，
-    // 才预先调用视觉模型生成文本描述。
+    // 本轮图片不进入历史图片工具。使用主模型识图时直接附着图片；选择
+    // 专用识图模型时，先由该模型识别，再把文本结果转述给聊天模型。
     final visionId = (await SharedPreferences.getInstance())
             .getString('vision_model_$botId')
             ?.trim() ??
@@ -561,17 +563,17 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     if (effectiveImagePaths.isNotEmpty &&
         visionId.isNotEmpty &&
         visionId != primaryVisionModel) {
-      for (final path in effectiveImagePaths) {
-        final number = imageNumberByPath[path];
-        if (number == null) continue;
+      for (var index = 0; index < effectiveImagePaths.length; index++) {
+        final path = effectiveImagePaths[index];
+        final number = index + 1;
         try {
           final provider = await db.getChatProviderById(visionId);
           currentImageDescriptions[number] = provider == null
-              ? await MediaPreprocessor().imageFallbackText(path)
+              ? '图片识别失败：所选识图模型不存在或已被删除。'
               : await _describeImage(
                   provider: provider,
                   imagePath: path,
-                  userText: '请转述 [图片#$number]。',
+                  userText: '请准确描述用户本轮发送的第 $number 张图片，供聊天模型理解。',
                 );
         } catch (error) {
           currentImageDescriptions[number] = '图片识别暂时失败：$error';
@@ -695,9 +697,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
 
       if (effectiveImagePaths.isNotEmpty) {
         final chunks = <String>[
-          for (final path in effectiveImagePaths)
-            if (imageNumberByPath[path] != null)
-              formatImagePlaceholder(imageNumberByPath[path]!),
+          for (var index = 0; index < effectiveImagePaths.length; index++)
+            '[本轮图片${effectiveImagePaths.length > 1 ? ' ${index + 1}' : ''}]',
         ];
         final caption = text.trim();
         final content = [
@@ -706,7 +707,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           ...chunks,
           if (caption.isNotEmpty) caption,
           for (final entry in currentImageDescriptions.entries)
-            '【${formatImagePlaceholder(entry.key)} 识别结果】${entry.value}',
+            '【本轮第 ${entry.key} 张图片的视觉模型识别结果】${entry.value}',
         ].join('\n');
         if (visionId == primaryVisionModel) {
           final parts = <Map<String, dynamic>>[
@@ -3658,7 +3659,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
     }
     if (inspectableImageNumbers.isNotEmpty) {
       parts.add(
-        '【按需识图】用户图片在上下文中以 [图片#n] 表示，当前可用编号：${inspectableImageNumbers.map((n) => '#$n').join('、')}。默认不要自动看图；只有需要理解画面时才调用 inspect_image 或 look_at_image，并传入 image_number。不要编造未提供的编号。',
+        '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看上下文中用户先前消息发送的历史图片，当前可用历史编号：${inspectableImageNumbers.map((n) => '#$n').join('、')}。用户本轮发送的图片会自动处理：使用主模型识图时直接附着，使用专用识图模型时自动提供识别结果；不得为本轮图片调用历史图片工具。只有确实需要知道某张历史图片的画面内容时才调用，并且只能使用上下文明确提供的 image_number，不得猜测或编造编号。',
       );
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
