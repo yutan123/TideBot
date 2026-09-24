@@ -1158,7 +1158,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
-      final requestDeadline = Timer(requestTimeout, requestToken.cancel);
       final result = await AIManager()
           .sendMessage(
         botId: botId,
@@ -1179,7 +1178,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
       });
-      requestDeadline.cancel();
 
       if (result['success'] == true) {
         for (final item in userMessages) {

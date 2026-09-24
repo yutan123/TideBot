@@ -924,6 +924,9 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         ..body = jsonEncode(payload);
       void cancelRequest() => client.close();
       token?.addOnCancel(cancelRequest);
+      AppLogService.instance.add('AI_TRACE',
+          'HTTP 请求开始 model=$modelName url=$baseUrl/chat/completions stream=${onDelta != null}');
+      final httpStarted = DateTime.now();
       http.StreamedResponse streamedResponse;
       try {
         streamedResponse = await client.send(request);
@@ -932,6 +935,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
       }
       token?.throwIfCancelled();
       statusCode = streamedResponse.statusCode;
+      AppLogService.instance.add('AI_TRACE',
+          'HTTP 响应头 status=$statusCode elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
       // 处理流式响应（SSE 格式）或非流式响应
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
@@ -942,8 +947,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
 
         List<Map<String, dynamic>>? streamedToolCalls;
         await for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
+          if (line.startsWith('data:')) {
+            final data = line.substring(5).trim();
             if (data == '[DONE]') break;
             try {
               final json = jsonDecode(data);
@@ -966,6 +971,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         }
         client.close();
         errorBody = '';
+        AppLogService.instance.add('AI_TRACE',
+            'SSE 响应体结束 replyLength=${replyText.length} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
         if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
           messages.add({
             'role': 'assistant',
@@ -1001,6 +1008,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         final response = await http.Response.fromStream(streamedResponse);
         client.close();
         errorBody = utf8.decode(response.bodyBytes, allowMalformed: true);
+        AppLogService.instance.add('AI_TRACE',
+            '非流式响应体结束 bytes=${response.bodyBytes.length} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
       }
 
       if (statusCode == 200 && errorBody.isNotEmpty) {
@@ -1060,6 +1069,8 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           }
         }
       }
+      AppLogService.instance.add('AI_TRACE',
+          '响应解析完成 replyLength=${replyText.length} toolCalls=${toolSticker != null || toolMood != null}');
       if (toolSilenced) replyText = '';
       print('[ai] response status=$statusCode');
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
@@ -1080,6 +1091,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
                 estimateTokens(replyText);
         final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
             promptTokens + completionTokens;
+        AppLogService.instance.add('AI_TRACE', '开始写入 usage');
         await db.recordAiUsage(
           botId: botId,
           eventType: 'chat',
@@ -1087,6 +1099,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           completionTokens: completionTokens,
           totalTokens: totalTokens,
         );
+        AppLogService.instance.add('AI_TRACE', 'usage 写入完成');
         // 日记仅能由模型明确调用 write_diary 工具写入；不再后台猜测或自动归档聊天。
 
         // 适时沉默是模型主动调用的原生工具，不是文本标记过滤。
@@ -1238,6 +1251,10 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
             searchSources,
           );
         }
+        AppLogService.instance.add(
+          'AI_TRACE',
+          'AI 请求成功准备返回 messages=${persistedMessages.length}',
+        );
         return {
           'success': true,
           'reply': replyText,
@@ -1269,6 +1286,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
       rethrow;
     } catch (e) {
       cancellationToken?.throwIfCancelled();
+      AppLogService.instance.add('AI_TRACE', 'AI 主流程异常 $e');
       print('[ai] request failed: $e');
       AppLogService.instance.add('ERROR', '模型请求异常：$e');
       return {
