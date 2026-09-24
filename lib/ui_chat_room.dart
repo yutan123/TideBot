@@ -1736,6 +1736,71 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return path;
   }
 
+  Widget _buildInnerThoughtBubble(TideTheme theme, Map<String, dynamic> msg) {
+    final content = msg['content']?.toString() ?? '';
+    final isExpanded = msg['_thought_expanded'] == true;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          msg['_thought_expanded'] = !isExpanded;
+        });
+      },
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.cardColor.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: theme.dividerColor.withOpacity(0.3),
+            width: 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '内心独白',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.textWeak,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  isExpanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: theme.textWeak,
+                ),
+              ],
+            ),
+            if (isExpanded) ...[
+              const SizedBox(height: 6),
+              Text(
+                content,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.textWeak.withOpacity(0.8),
+                  height: 1.4,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   // ========== 图片预览 ==========
   Future<void> _saveImageToGallery(String path) async {
     try {
