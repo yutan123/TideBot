@@ -1089,6 +1089,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final stream =
         await db.getKV('streaming_output') ?? await db.getKV('streaming_input');
     final segmentedReply = await db.getKV('segmented_reply_enabled');
+    final innerThought = await db.getKV('inner_thought_enabled');
     final adaptiveSilence = await db.getKV('adaptive_silence_enabled');
     final randomReplyDelay = await db.getKV('random_reply_delay_enabled');
     final replyDelayMin = await db.getKV('random_reply_delay_min_seconds');
@@ -1102,6 +1103,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     );
     final lifeSchedule = await db.getKV('life_schedule_enabled');
     if (mounted) setState(() => _adaptiveSilence = adaptiveSilence != 'false');
+    if (mounted) setState(() => _innerThought = innerThought == 'true');
     final imageGeneration = await db.getKV('bot_image_generation_enabled');
     final imageStyle = await db.getKV('bot_image_style');
     final webSearch = await db.getKV('web_search_enabled');

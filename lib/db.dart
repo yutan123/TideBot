@@ -282,6 +282,7 @@ class DBManager {
         'reply_group_id': 'TEXT',
         'sources_json': 'TEXT',
         'timestamp': 'INTEGER',
+        'inner_thought': 'TEXT',
       });
       await _ensureColumns(db, 'posts', const {
         'author_id': 'TEXT',
