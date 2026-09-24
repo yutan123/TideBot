@@ -3182,6 +3182,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final m = _msgs[_msgs.length - 1 - i];
         final isUser = m['role'] == 'user';
         final type = m['type']?.toString() ?? 'text';
+        final theme = TideTheme.of(context);
 
         // 内心独白单独处理
         if (type == 'inner_thought') {

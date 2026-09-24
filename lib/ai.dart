@@ -1019,7 +1019,6 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         replyText = _extractChatContent(json);
         
         // 提取内心独白
-        String? innerThought;
         final rawContent = message is Map ? message['content']?.toString() : null;
         if (rawContent != null && rawContent.contains('<think>')) {
           final thinkStart = rawContent.indexOf('<think>');
