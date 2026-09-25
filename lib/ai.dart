@@ -1101,6 +1101,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'HTTP 响应头 status=$statusCode elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
       // 处理流式响应（SSE 格式）或非流式响应
+      String? innerThought; // 提取的内心独白内容
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
         // 流式处理：逐行读取 SSE 格式
         final lines = streamedResponse.stream
@@ -1136,6 +1137,22 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         errorBody = '';
         AppLogService.instance.add('AI_TRACE',
             'SSE 响应体结束 replyLength=${replyText.length} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
+
+        // 流式响应结束后，从完整文本中提取内心独白
+        if (replyText.contains('<inner_thought>')) {
+          final startTag = replyText.indexOf('<inner_thought>');
+          final endTag = replyText.indexOf('</inner_thought>');
+          if (startTag >= 0 && endTag > startTag) {
+            innerThought = replyText
+                .substring(startTag + '<inner_thought>'.length, endTag)
+                .trim();
+            // 从回复文本中移除内心独白标签和内容
+            replyText = (replyText.substring(0, startTag) +
+                    replyText.substring(endTag + '</inner_thought>'.length))
+                .trim();
+          }
+        }
+
         if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
           messages.add({
             'role': 'assistant',
@@ -1182,19 +1199,36 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final message = json['choices']?[0]?['message'];
         replyText = _extractChatContent(json);
 
-        // 提取内心独白
+        // 提取内心独白（支持 <inner_thought> 和旧的 <think> 标签）
         final rawContent =
             message is Map ? message['content']?.toString() : null;
-        if (rawContent != null && rawContent.contains('<think>')) {
-          final thinkStart = rawContent.indexOf('<think>');
-          final thinkEnd = rawContent.indexOf('</think>');
-          if (thinkStart >= 0 && thinkEnd > thinkStart) {
-            innerThought =
-                rawContent.substring(thinkStart + 7, thinkEnd).trim();
-            // 从回复文本中移除内心独白标签
-            replyText = (rawContent.substring(0, thinkStart) +
-                    rawContent.substring(thinkEnd + 8))
-                .trim();
+        if (rawContent != null) {
+          // 优先检测新格式 <inner_thought>
+          if (rawContent.contains('<inner_thought>')) {
+            final startTag = rawContent.indexOf('<inner_thought>');
+            final endTag = rawContent.indexOf('</inner_thought>');
+            if (startTag >= 0 && endTag > startTag) {
+              innerThought = rawContent
+                  .substring(startTag + '<inner_thought>'.length, endTag)
+                  .trim();
+              // 从回复文本中移除内心独白标签
+              replyText = (rawContent.substring(0, startTag) +
+                      rawContent.substring(endTag + '</inner_thought>'.length))
+                  .trim();
+            }
+          }
+          // 兼容旧格式 <think>
+          else if (rawContent.contains('<think>')) {
+            final thinkStart = rawContent.indexOf('<think>');
+            final thinkEnd = rawContent.indexOf('</think>');
+            if (thinkStart >= 0 && thinkEnd > thinkStart) {
+              innerThought =
+                  rawContent.substring(thinkStart + 7, thinkEnd).trim();
+              // 从回复文本中移除内心独白标签
+              replyText = (rawContent.substring(0, thinkStart) +
+                      rawContent.substring(thinkEnd + 8))
+                  .trim();
+            }
           }
         }
 
