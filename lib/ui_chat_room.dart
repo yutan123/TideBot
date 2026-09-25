@@ -1125,10 +1125,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           !forceSingleReply && (await db.getKV('streaming_output')) != 'false';
       await _setTypingState(true);
       Map<String, dynamic>? streamingMessage;
-      var pendingDisplay = '';
-      var insideInnerThought = false; // 是否正在内心独白中
-      var streamStarted = false; // 是否已开始显示流式内容
-      var streamComplete = false; // 流式是否已完成
+
+      // 使用 List<String> 作为可变缓冲区，解决闭包内字符串不可变问题
+      final pendingBuffer = <String>[];
+      final streamState = <String, dynamic>{
+        'insideInnerThought': false,
+        'streamStarted': false,
+        'streamComplete': false,
+      };
+
       if (streamEnabled && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
@@ -1156,15 +1161,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         _streamDisplayTimer = Timer.periodic(interval, (_) {
           if (!mounted) return;
 
+          // 获取缓冲区内容
+          final pendingDisplay = pendingBuffer.join();
+
           // 初始缓冲：积累足够内容后再开始显示
-          if (!streamStarted && pendingDisplay.length < initialBufferSize) {
+          if (!streamState['streamStarted'] &&
+              pendingDisplay.length < initialBufferSize) {
             return;
           }
 
           // 持续缓冲：显示过程中如果缓冲不足且流式未完成，暂停等待
-          if (streamStarted &&
+          if (streamState['streamStarted'] &&
               pendingDisplay.length < minBufferSize &&
-              !streamComplete) {
+              !streamState['streamComplete']) {
             return;
           }
 
@@ -1172,22 +1181,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           if (pendingDisplay.isEmpty) return;
 
           // 标记已开始显示
-          if (!streamStarted) streamStarted = true;
+          if (!streamState['streamStarted'])
+            streamState['streamStarted'] = true;
+
           final take =
               pendingDisplay.length < batch ? pendingDisplay.length : batch;
           final chunk = pendingDisplay.substring(0, take);
-          pendingDisplay = pendingDisplay.substring(take);
+
+          // 更新缓冲区：移除已取出的内容
+          final remaining = pendingDisplay.substring(take);
+          pendingBuffer.clear();
+          if (remaining.isNotEmpty) pendingBuffer.add(remaining);
 
           // 处理内心独白标签：检测开头和结尾标签，动态切换消息类型
           var processedChunk = chunk;
 
-          if (!insideInnerThought) {
+          if (!streamState['insideInnerThought']) {
             // 检测是否进入内心独白
             final startTagIndex = (displayMessage['content'].toString() + chunk)
                 .indexOf('<inner_thought>');
             if (startTagIndex >= 0) {
               // 找到开头标签，切换为内心独白类型
-              insideInnerThought = true;
+              streamState['insideInnerThought'] = true;
               displayMessage['type'] = 'inner_thought';
               // 移除开头标签
               final currentContent = displayMessage['content'].toString();
@@ -1199,7 +1214,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             }
           }
 
-          if (insideInnerThought) {
+          if (streamState['insideInnerThought']) {
             // 检测是否结束内心独白
             final currentPlusChunk =
                 displayMessage['content'].toString() + processedChunk;
@@ -1214,10 +1229,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               // 完成内心独白消息
               displayMessage['content'] = innerThoughtContent;
               displayMessage.remove('is_streaming');
-              insideInnerThought = false;
+              streamState['insideInnerThought'] = false;
 
               // 创建新的文本消息用于后续内容
-              if (afterEndTag.isNotEmpty || pendingDisplay.isNotEmpty) {
+              final hasMoreContent =
+                  afterEndTag.isNotEmpty || pendingBuffer.isNotEmpty;
+              if (hasMoreContent) {
                 final newTextMessage = <String, dynamic>{
                   'id': 'stream_text_${DateTime.now().millisecondsSinceEpoch}',
                   'bot_id': botId,
@@ -1247,7 +1264,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
           // Do not animate on every streamed chunk: repeated animateTo calls
           // cause layout churn, dropped frames and heat during long replies.
-          if (pendingDisplay.isEmpty ||
+          if (pendingBuffer.isEmpty ||
               displayMessage['content'].toString().length % 80 < batch) {
             _scrollDown(animated: false);
           }
@@ -1269,7 +1286,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         cancellationToken: requestToken,
         onDelta: streamEnabled
             ? (delta) {
-                pendingDisplay += delta;
+                pendingBuffer.add(delta);
               }
             : null,
       )
@@ -1280,7 +1297,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       // 标记流式完成，让缓冲区能够完全清空
       if (streamEnabled) {
-        streamComplete = true;
+        streamState['streamComplete'] = true;
       }
 
       if (result['success'] == true) {
