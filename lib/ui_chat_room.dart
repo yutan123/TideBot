@@ -1375,55 +1375,44 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       Future<void> reveal(Map<String, dynamic> row) async {
         if (!mounted || myGen != _requestGen) return;
+        // 流式输出时不使用 reveal 动画，直接添加持久化消息
         if (!animate || row['type'] != 'text') {
           setState(() => _msgs.add(row));
           _scrollDown();
           return;
         }
-        final bubble = Map<String, dynamic>.from(row)..['content'] = '';
-        bubble['is_streaming'] = true;
-        setState(() => _msgs.add(bubble));
-        final complete = row['content']?.toString() ?? '';
-        var offset = 0;
-        final speed =
-            (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50).clamp(
-          1,
-          100,
-        );
-        final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
-        final batch = speed >= 85 ? 2 : 1;
-        final done = Completer<void>();
-        _streamDisplayTimer?.cancel();
-        _streamDisplayTimer = Timer.periodic(interval, (timer) {
-          if (!mounted || myGen != _requestGen) {
-            timer.cancel();
-            if (!done.isCompleted) done.complete();
-            return;
-          }
-          if (offset >= complete.length) {
-            timer.cancel();
-            bubble.remove('is_streaming');
-            if (!done.isCompleted) done.complete();
-            return;
-          }
-          final end = (offset + batch).clamp(0, complete.length);
-          setState(() => bubble['content'] = complete.substring(0, end));
-          offset = end;
-          if (offset % 80 < batch || offset == complete.length) {
-            _scrollDown(animated: false);
-          }
-        });
-        await done.future;
+        // 非流式输出时才使用 reveal 动画
+        setState(() => _msgs.add(row));
+        _scrollDown();
       }
 
       if (streamingMessage != null && mounted) {
-        setState(() => _msgs.remove(streamingMessage));
+        // 流式输出完成后，移除临时流式消息
+        final streamId = streamingMessage['id'];
+        setState(() {
+          _msgs.removeWhere((m) => m['id'] == streamId);
+        });
+
+        // 停止流式显示定时器
+        _streamDisplayTimer?.cancel();
+        _streamDisplayTimer = null;
       }
+
+      // 流式输出时直接添加持久化消息（不使用reveal动画），非流式时使用reveal
       for (var index = 0; index < persisted.length; index++) {
         if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
         }
-        await reveal(persisted[index]);
+        if (streamEnabled) {
+          // 流式模式：直接添加持久化消息，不使用动画
+          if (mounted && myGen == _requestGen) {
+            setState(() => _msgs.add(persisted[index]));
+            _scrollDown();
+          }
+        } else {
+          // 非流式模式：使用reveal函数
+          await reveal(persisted[index]);
+        }
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
       await _syncLatestMessages();

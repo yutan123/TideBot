@@ -605,8 +605,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String forcedProviderId = '',
   }) async {
     final db = DBManager();
-    // 声明 innerThought 为函数级变量，用于存储提取的内心独白
-    String? innerThought;
 
     cancellationToken?.throwIfCancelled();
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
@@ -1101,7 +1099,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'HTTP 响应头 status=$statusCode elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
       // 处理流式响应（SSE 格式）或非流式响应
-      String? innerThought; // 提取的内心独白内容
+      String? innerThought;
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
         // 流式处理：逐行读取 SSE 格式
         final lines = streamedResponse.stream
@@ -1135,10 +1133,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
         client.close();
         errorBody = '';
-        AppLogService.instance.add('AI_TRACE',
-            'SSE 响应体结束 replyLength=${replyText.length} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
-        // 流式响应结束后，从完整文本中提取内心独白
+        // 流式完成后提取内心独白
         if (replyText.contains('<inner_thought>')) {
           final startTag = replyText.indexOf('<inner_thought>');
           final endTag = replyText.indexOf('</inner_thought>');
@@ -1146,12 +1142,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             innerThought = replyText
                 .substring(startTag + '<inner_thought>'.length, endTag)
                 .trim();
-            // 从回复文本中移除内心独白标签和内容
             replyText = (replyText.substring(0, startTag) +
                     replyText.substring(endTag + '</inner_thought>'.length))
                 .trim();
           }
         }
+
+        AppLogService.instance.add('AI_TRACE',
+            'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
         if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
           messages.add({
@@ -1372,6 +1370,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
         final segmented = !forceSingleReply &&
             audioPath == null &&
+            onDelta == null && // 流式输出时不分段
             (await db.getKV('segmented_reply_enabled')) != 'false';
         final segments =
             segmented ? _replySegments(replyText) : <String>[replyText];
