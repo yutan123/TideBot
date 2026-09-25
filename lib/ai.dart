@@ -162,7 +162,7 @@ class AIManager {
         backup,
     ];
     if (attempts.isEmpty) {
-      return {'error': '未配置聊天模型，请先在机器人设置中选择聊天或备用模型'};
+      return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
     }
 
     Map<String, dynamic>? lastFailure;
@@ -320,9 +320,9 @@ class AIManager {
     return fromValue(payload['output_text']);
   }
 
-  static const _jarvisPrompt = '''你是 TideBot 对话军师，分析用户消息为机器人提供策略。只输出JSON（无代码块）。
+  static const _jarvisPrompt = '''你是 TideBot 对话军师，分析用户消息为角色提供策略。只输出JSON（无代码块）。
 
-原则：保留机器人判断/边界/小脾气；不一味顺从道歉；低风险可调侃分享，高风险需慎重；可主动分享自己的事。
+原则：保留角色判断/边界/小脾气；不一味顺从道歉；低风险可调侃分享，高风险需慎重；可主动分享自己的事。
 
 {
   "user_analysis": {
@@ -348,7 +348,7 @@ class AIManager {
     "reference_directions": ["方向一15-30字","方向二15-30字","方向三15-30字"],
     "reference_examples": ["例句一10-40字","例句二10-40字","例句三10-40字"]
   },
-  "inner_thought_seed": "机器人此刻想法一句话"
+  "inner_thought_seed": "角色此刻想法一句话"
 }
 
 intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪；request_action要求行动承诺；seek_explanation追问原因；casual_chat无压力日常；close_topic真诚翻篇；share_experience主动分享；seek_opinion征求看法。subtext如"随便"="希望你主动提建议"。risk_level：0-2轻松，3-4试探，5-6不满，7-8紧张，9破裂边缘。should_share_own：低风险轻松对话时true。reference_directions描述要传达什么不是怎么说。reference_examples供参考不能照抄。''';
@@ -360,6 +360,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required List<Map<String, dynamic>> history,
     required String profileContext,
     required String worldBookContext,
+    List<String> imagePaths = const <String>[],
     AICancellationToken? cancellationToken,
   }) async {
     try {
@@ -385,7 +386,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 提取最近10轮消息（含角色和类型）
       final recent = history.reversed.take(10).toList().reversed.map((item) {
-        final role = item['role']?.toString() == 'user' ? '用户' : '机器人';
+        final role = item['role']?.toString() == 'user' ? '用户' : '角色';
         final type = item['type']?.toString() ?? 'text';
         final content = item['content'] ?? '';
         if (type == 'inner_thought') {
@@ -394,7 +395,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         return '$role：$content';
       }).join('\n');
 
-      // 提取机器人上一轮的内心独白
+      // 提取角色上一轮的内心独白
       String? lastInnerThought;
       for (final item in history.reversed) {
         if (item['role']?.toString() == 'assistant' &&
@@ -404,7 +405,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
       }
       final innerThoughtContext =
-          lastInnerThought != null ? '\n机器人上一轮内心独白：$lastInnerThought' : '';
+          lastInnerThought != null ? '\n角色上一轮内心独白：$lastInnerThought' : '';
 
       // 获取时间上下文（当前时间、日程、节假日）
       final now = DateTime.now();
@@ -432,7 +433,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           {
             'role': 'user',
             'content':
-                '# 机器人信息\n机器人：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n\n# 时间与日程\n当前时间：$timeStr$lifeScheduleContext\n\n# 背景知识\n$profileContext\n$worldBookContext\n\n# 最近对话（最近10轮）\n$recent$innerThoughtContext\n\n# 用户最新消息\n$text'
+                '# 角色信息\n角色：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n\n# 时间与日程\n当前时间：$timeStr$lifeScheduleContext\n\n# 背景知识\n$profileContext\n$worldBookContext\n\n# 最近对话（最近10轮）\n$recent$innerThoughtContext\n\n# 用户最新消息${imagePaths.isNotEmpty ? '（含${imagePaths.length}张图片）' : ''}\n$text${imagePaths.isNotEmpty ? '\n\n图片内容识别结果见上方' : ''}'
           },
         ],
       };
@@ -445,8 +446,28 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'recent_messages': recent,
         'user_latest': text,
       });
-      // 记录完整请求 payload
-      AppLogService.instance.addJson('JARVIS', 'AI军师完整请求payload', payload);
+      // 记录完整请求 payload（过滤图片base64）
+      final logPayload = Map<String, dynamic>.from(payload);
+      if (logPayload['messages'] is List) {
+        logPayload['messages'] = (logPayload['messages'] as List).map((msg) {
+          if (msg is Map && msg['content'] is List) {
+            return {
+              ...msg,
+              'content': (msg['content'] as List).map((part) {
+                if (part is Map && part['type'] == 'image_url') {
+                  return {
+                    ...part,
+                    'image_url': {'url': '[图片]'}
+                  };
+                }
+                return part;
+              }).toList(),
+            };
+          }
+          return msg;
+        }).toList();
+      }
+      AppLogService.instance.addJson('JARVIS', 'AI军师完整请求payload', logPayload);
       final client = http.Client();
       final request =
           http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
@@ -860,29 +881,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
     }
     if (!lastIsCurrentUser) {
-      // 构建最近对话上下文摘要（提取最近 3 轮）
-      String recentContext = '';
-      if (historyMessages.length >= 4) {
-        final recentTurns = <String>[];
-        var turnCount = 0;
-        for (int i = historyMessages.length - 1; i >= 0 && turnCount < 3; i--) {
-          final msg = historyMessages[i];
-          final role = msg['role']?.toString() ?? '';
-          final content = msg['content']?.toString() ?? '';
-          if (role == 'user' || role == 'assistant') {
-            final preview = content.length > 50
-                ? '${content.substring(0, 50)}...'
-                : content;
-            final label =
-                role == 'user' ? '我' : bot['name']?.toString() ?? '助手';
-            recentTurns.insert(0, '$label：$preview');
-            if (role == 'user') turnCount++;
-          }
-        }
-        if (recentTurns.isNotEmpty) {
-          recentContext = '[最近对话]\n${recentTurns.join('\n')}\n\n';
-        }
-      }
+      // 注意：不要在这里添加"最近对话上下文摘要"，因为 AI 军师已经提供了最近 10 轮对话的分析，
+      // 再次添加会导致重复的上下文。historyMessages 已经包含完整的历史对话。
 
       if (effectiveImagePaths.isNotEmpty) {
         final chunks = <String>[
@@ -891,7 +891,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         ];
         final caption = text.trim();
         final content = [
-          if (recentContext.isNotEmpty) recentContext,
           '[当前请求]',
           ...chunks,
           if (caption.isNotEmpty) caption,
@@ -927,9 +926,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           });
         }
       } else if (audioPath?.isNotEmpty == true) {
-        final enhancedText = recentContext.isEmpty
-            ? '[当前请求]\n$text'
-            : '$recentContext[当前请求]\n$text';
+        final enhancedText = '[当前请求]\n$text';
         final file = File(audioPath!);
         if (file.existsSync()) {
           final bytes = await file.readAsBytes();
@@ -948,13 +945,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ],
           });
         } else {
-          messages.add({'role': 'user', 'content': enhancedText});
+          messages.add({'role': 'user', 'content': '[当前请求]\n$text'});
         }
       } else {
-        final enhancedText = recentContext.isEmpty
-            ? '[当前请求]\n$text'
-            : '$recentContext[当前请求]\n$text';
-        messages.add({'role': 'user', 'content': enhancedText});
+        messages.add({'role': 'user', 'content': '[当前请求]\n$text'});
       }
     }
     // Only conversation messages count; system prompts and tools are separate.
@@ -981,6 +975,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         history: history,
         profileContext: profileContext,
         worldBookContext: worldBookContext,
+        imagePaths: effectiveImagePaths,
         cancellationToken: cancellationToken,
       );
       if (advice.isNotEmpty) {
@@ -1057,10 +1052,35 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         // 启用真实流式输出（通过 onDelta 回调传递增量）
         if (onDelta != null) 'stream': true,
       };
+      // 过滤payload中的base64图片，避免日志过长
+      final filteredPayload = Map<String, dynamic>.from(payload);
+      if (filteredPayload['messages'] is List) {
+        filteredPayload['messages'] =
+            (filteredPayload['messages'] as List).map((msg) {
+          if (msg is! Map) return msg;
+          final msgCopy = Map<String, dynamic>.from(msg);
+          if (msgCopy['content'] is List) {
+            msgCopy['content'] = (msgCopy['content'] as List).map((part) {
+              if (part is! Map) return part;
+              final partCopy = Map<String, dynamic>.from(part);
+              if (partCopy['type'] == 'image_url' &&
+                  partCopy['image_url'] is Map &&
+                  (partCopy['image_url'] as Map)['url']
+                          ?.toString()
+                          .contains('base64') ==
+                      true) {
+                partCopy['image_url'] = {'url': '[图片]'};
+              }
+              return partCopy;
+            }).toList();
+          }
+          return msgCopy;
+        }).toList();
+      }
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
         'url': '$baseUrl/chat/completions',
         'requested_at': DateTime.now().toIso8601String(),
-        'payload': payload,
+        'payload': filteredPayload,
       });
       String replyText = '';
       String? generatedImagePath;
@@ -1368,9 +1388,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
           }
         }
+        final hasInnerThought = innerThought != null && innerThought.isNotEmpty;
         final segmented = !forceSingleReply &&
             audioPath == null &&
             onDelta == null && // 流式输出时不分段
+            !hasInnerThought && // 有内心独白时不分段，保持内心独白与回复的完整性
             (await db.getKV('segmented_reply_enabled')) != 'false';
         final segments =
             segmented ? _replySegments(replyText) : <String>[replyText];
@@ -1380,7 +1402,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         // 是否需要插入内心独白气泡
         final innerThoughtEnabled =
             await db.getKV('inner_thought_enabled') == 'true';
-        final hasInnerThought = innerThought != null && innerThought.isNotEmpty;
 
         if (persistResponse) {
           // 先插入内心独白气泡（如果有）
@@ -4332,7 +4353,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、机器人身份、状态、情绪、日记素材和机器人记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以机器人第一人称记录，只写本机器人实际参与且已明确发生的内容。\n"
+        "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
         "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n";

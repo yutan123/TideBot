@@ -269,11 +269,16 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
     final hasBackground = theme.globalBackground.isNotEmpty;
+    // 根据数值大小动态调整字体大小，避免换行
+    final valueStr = '$value';
+    final fontSize =
+        valueStr.length > 7 ? 22.0 : (valueStr.length > 6 ? 25.0 : 29.0);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: BackdropFilter(
         filter: hasBackground
-            ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
+            ? ImageFilter.blur(sigmaX: 0, sigmaY: 0)
             : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
         child: Container(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
@@ -299,9 +304,11 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(icon, color: accent, size: 25),
             const Spacer(),
-            Text('$value',
+            Text(valueStr,
+                maxLines: 1,
+                overflow: TextOverflow.visible,
                 style: TextStyle(
-                    fontSize: 29,
+                    fontSize: fontSize,
                     fontWeight: FontWeight.w700,
                     color: theme.textStrong,
                     fontFamily: 'TideFont')),
@@ -345,7 +352,6 @@ class _ChartCard extends StatelessWidget {
     final theme = TideTheme.of(context);
     final hasBackground = theme.globalBackground.isNotEmpty;
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: hasBackground
             ? Colors.white.withValues(alpha: 0.15)
@@ -367,76 +373,79 @@ class _ChartCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: BackdropFilter(
           filter: hasBackground
-              ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
+              ? ImageFilter.blur(sigmaX: 0, sigmaY: 0)
               : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: theme.textStrong,
-                          fontFamily: 'TideFont')),
-                  const Spacer(),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: theme.textFaint,
-                          fontFamily: 'TideFont')),
-                ],
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 150,
-                child: TweenAnimationBuilder<double>(
-                  key: ValueKey(
-                      '${subtitle}_${series.length}_${series.fold<int>(0, (a, b) => a + b)}'),
-                  duration: const Duration(milliseconds: 420),
-                  curve: Curves.easeOutCubic,
-                  tween: Tween(begin: 0, end: 1),
-                  builder: (_, progress, __) => GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (details) {
-                      if (series.isEmpty) return;
-                      final box = context.findRenderObject() as RenderBox?;
-                      final chartWidth = box?.size.width ?? 1;
-                      final index = series.length == 1
-                          ? 0
-                          : ((details.localPosition.dx.clamp(0, chartWidth) /
-                                      chartWidth) *
-                                  (series.length - 1))
-                              .round()
-                              .clamp(0, series.length - 1);
-                      onSelect(index);
-                    },
-                    child: CustomPaint(
-                      size: Size.infinite,
-                      painter: _LineChartPainter(
-                        color: color,
-                        series: series,
-                        gridColor: theme.divider,
-                        selectedIndex: selectedIndex,
-                        progress: progress,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(title,
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont')),
+                    const Spacer(),
+                    Text(subtitle,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.textFaint,
+                            fontFamily: 'TideFont')),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 150,
+                  child: TweenAnimationBuilder<double>(
+                    key: ValueKey(
+                        '${subtitle}_${series.length}_${series.fold<int>(0, (a, b) => a + b)}'),
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeOutCubic,
+                    tween: Tween(begin: 0, end: 1),
+                    builder: (_, progress, __) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: (details) {
+                        if (series.isEmpty) return;
+                        final box = context.findRenderObject() as RenderBox?;
+                        final chartWidth = box?.size.width ?? 1;
+                        final index = series.length == 1
+                            ? 0
+                            : ((details.localPosition.dx.clamp(0, chartWidth) /
+                                        chartWidth) *
+                                    (series.length - 1))
+                                .round()
+                                .clamp(0, series.length - 1);
+                        onSelect(index);
+                      },
+                      child: CustomPaint(
+                        size: Size.infinite,
+                        painter: _LineChartPainter(
+                          color: color,
+                          series: series,
+                          gridColor: theme.divider,
+                          selectedIndex: selectedIndex,
+                          progress: progress,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              if (selectedIndex != null && selectedIndex! < days.length)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    '${days[selectedIndex!].year}-${days[selectedIndex!].month.toString().padLeft(2, '0')}-${days[selectedIndex!].day.toString().padLeft(2, '0')}  ·  ${series[selectedIndex!]} $title',
-                    style: TextStyle(
-                        fontFamily: 'TideFont',
-                        fontSize: 12,
-                        color: theme.textWeak),
+                if (selectedIndex != null && selectedIndex! < days.length)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '${days[selectedIndex!].year}-${days[selectedIndex!].month.toString().padLeft(2, '0')}-${days[selectedIndex!].day.toString().padLeft(2, '0')}  ·  ${series[selectedIndex!]} $title',
+                      style: TextStyle(
+                          fontFamily: 'TideFont',
+                          fontSize: 12,
+                          color: theme.textWeak),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

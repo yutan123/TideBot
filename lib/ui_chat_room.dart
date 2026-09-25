@@ -1177,13 +1177,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             return;
           }
 
-          // 缓冲区为空时停止
-          if (pendingDisplay.isEmpty) return;
+          // 缓冲区为空时停止Timer
+          if (pendingDisplay.isEmpty) {
+            if (streamState['streamComplete']) {
+              _streamDisplayTimer?.cancel();
+              _streamDisplayTimer = null;
+            }
+            return;
+          }
 
           // 标记已开始显示
           if (!streamState['streamStarted'])
             streamState['streamStarted'] = true;
 
+          // 严格按照batch大小取出，保持匀速
           final take =
               pendingDisplay.length < batch ? pendingDisplay.length : batch;
           final chunk = pendingDisplay.substring(0, take);
@@ -1193,20 +1200,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           pendingBuffer.clear();
           if (remaining.isNotEmpty) pendingBuffer.add(remaining);
 
-          // 处理内心独白标签：检测开头和结尾标签，动态切换消息类型
+          // 处理内心独白标签：实时过滤，避免用户看到标签
           var processedChunk = chunk;
+          final currentContent = displayMessage['content'].toString();
+          final combined = currentContent + chunk;
 
+          // 检测并移除开始标签
           if (!streamState['insideInnerThought']) {
-            // 检测是否进入内心独白
-            final startTagIndex = (displayMessage['content'].toString() + chunk)
-                .indexOf('<inner_thought>');
+            final startTagIndex = combined.indexOf('<inner_thought>');
             if (startTagIndex >= 0) {
               // 找到开头标签，切换为内心独白类型
               streamState['insideInnerThought'] = true;
               displayMessage['type'] = 'inner_thought';
-              // 移除开头标签
-              final currentContent = displayMessage['content'].toString();
-              final combined = currentContent + chunk;
+              // 移除标签前的所有内容和标签本身
               final afterTag =
                   combined.substring(startTagIndex + '<inner_thought>'.length);
               displayMessage['content'] = '';
@@ -1232,9 +1238,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               streamState['insideInnerThought'] = false;
 
               // 创建新的文本消息用于后续内容
-              final hasMoreContent =
-                  afterEndTag.isNotEmpty || pendingBuffer.isNotEmpty;
-              if (hasMoreContent) {
+              if (afterEndTag.trim().isNotEmpty || pendingBuffer.isNotEmpty) {
                 final newTextMessage = <String, dynamic>{
                   'id': 'stream_text_${DateTime.now().millisecondsSinceEpoch}',
                   'bot_id': botId,
@@ -1255,11 +1259,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               setState(() => displayMessage['content'] = currentPlusChunk);
             }
           } else {
-            // 普通文本，正常追加
-            setState(
-              () => displayMessage['content'] =
-                  '${displayMessage['content']}$processedChunk',
-            );
+            // 普通文本，正常追加（但要过滤掉可能的标签片段）
+            // 如果chunk中包含'<'且缓冲区中有'inner_thought'相关字符，等待下一批
+            if (!combined.contains('<inner_thought>')) {
+              setState(() => displayMessage['content'] = combined);
+            } else {
+              // 标签在边界，等待完整标签
+              return;
+            }
           }
 
           // Do not animate on every streamed chunk: repeated animateTo calls
@@ -1387,10 +1394,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       if (streamingMessage != null && mounted) {
-        // 流式输出完成后，移除临时流式消息
+        // 流式输出完成后，只移除流式文本消息，保留已创建的内心独白消息
         final streamId = streamingMessage['id'];
         setState(() {
-          _msgs.removeWhere((m) => m['id'] == streamId);
+          _msgs.removeWhere((m) =>
+              m['id'] == streamId ||
+              (m['id']?.toString().startsWith('stream_text_') == true &&
+                  m['is_streaming'] == true));
         });
 
         // 停止流式显示定时器
@@ -1399,13 +1409,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       // 流式输出时直接添加持久化消息（不使用reveal动画），非流式时使用reveal
+      // 注意：流式模式下，内心独白已经在Timer中创建，这里要跳过
       for (var index = 0; index < persisted.length; index++) {
         if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
         }
         if (streamEnabled) {
-          // 流式模式：直接添加持久化消息，不使用动画
-          if (mounted && myGen == _requestGen) {
+          // 流式模式：跳过内心独白（已在流式中创建），只添加文本消息
+          if (persisted[index]['type'] == 'inner_thought') {
+            // 更新已存在的内心独白消息为持久化版本
+            final existingIndex = _msgs.indexWhere((m) =>
+                m['type'] == 'inner_thought' &&
+                m['role'] == 'assistant' &&
+                m['content'] == persisted[index]['content']);
+            if (existingIndex >= 0 && mounted && myGen == _requestGen) {
+              setState(() {
+                _msgs[existingIndex] = persisted[index];
+              });
+            }
+          } else if (mounted && myGen == _requestGen) {
             setState(() => _msgs.add(persisted[index]));
             _scrollDown();
           }
@@ -1853,12 +1875,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: theme.surfaceVariant.withOpacity(0.5),
+          color: theme.bubbleAi,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: theme.divider.withOpacity(0.5),
-            width: 1,
-          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3641,24 +3659,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                     ),
                                   ],
                                   if (hasImg && imageExists)
-                                    GestureDetector(
-                                      onTap: () => _previewImg(imagePath),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: SizedBox(
-                                          width: isSticker ? 112 : 144,
-                                          height: isSticker ? 112 : 144,
-                                          child: isSticker
-                                              ? _localStickerPreview(
-                                                  imagePath,
-                                                  fit: BoxFit.cover,
-                                                  cacheWidth: 224,
-                                                )
-                                              : Image.file(
-                                                  File(imagePath),
-                                                  fit: BoxFit.cover,
-                                                  cacheWidth: 288,
-                                                ),
+                                    Padding(
+                                      padding: txt.isNotEmpty
+                                          ? const EdgeInsets.only(bottom: 8)
+                                          : EdgeInsets.zero,
+                                      child: GestureDetector(
+                                        onTap: () => _previewImg(imagePath),
+                                        child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          child: SizedBox(
+                                            width: isSticker ? 112 : 144,
+                                            height: isSticker ? 112 : 144,
+                                            child: isSticker
+                                                ? _localStickerPreview(
+                                                    imagePath,
+                                                    fit: BoxFit.cover,
+                                                    cacheWidth: 224,
+                                                  )
+                                                : Image.file(
+                                                    File(imagePath),
+                                                    fit: BoxFit.cover,
+                                                    cacheWidth: 288,
+                                                  ),
+                                          ),
                                         ),
                                       ),
                                     )
