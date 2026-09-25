@@ -269,31 +269,32 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
     final hasBackground = theme.globalBackground.isNotEmpty;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-      decoration: BoxDecoration(
-        color: hasBackground
-            ? Colors.white.withValues(alpha: 0.15)
-            : theme.surfaceVariant,
-        borderRadius: BorderRadius.circular(20),
-        border: hasBackground
-            ? Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1.5)
-            : null,
-        boxShadow: hasBackground
-            ? [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4))
-              ]
-            : null,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: hasBackground
-              ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
-              : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: hasBackground
+            ? ImageFilter.blur(sigmaX: 10, sigmaY: 10)
+            : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          decoration: BoxDecoration(
+            color: hasBackground
+                ? Colors.white.withValues(alpha: 0.15)
+                : theme.surfaceVariant,
+            borderRadius: BorderRadius.circular(20),
+            border: hasBackground
+                ? Border.all(
+                    color: Colors.white.withValues(alpha: 0.2), width: 1.5)
+                : null,
+            boxShadow: hasBackground
+                ? [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4))
+                  ]
+                : null,
+          ),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(icon, color: accent, size: 25),

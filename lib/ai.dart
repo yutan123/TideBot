@@ -386,6 +386,8 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
         'recent_messages': recent,
         'user_latest': text,
       });
+      // 记录完整请求 payload
+      AppLogService.instance.addJson('JARVIS', 'AI军师完整请求payload', payload);
       final client = http.Client();
       final request =
           http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
@@ -631,7 +633,7 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
       for (int i = history.length - 1; i >= 0 && count < 3; i--) {
         final msg = history[i];
         if (msg['role']?.toString() == 'assistant') {
-          final thought = msg['inner_thought']?.toString()?.trim() ?? '';
+          final thought = msg['inner_thought']?.toString().trim() ?? '';
           if (thought.isNotEmpty) {
             recentThoughts.insert(0, thought);
             count++;
@@ -643,7 +645,6 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
             '\n【你最近三轮的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
       }
     }
-
     final systemPrompt = _buildSystemPrompt(bot, activeGame) +
         worldBookContext +
         (extraSystemPrompt.trim().isEmpty
@@ -2188,11 +2189,18 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
     // 暗中调用 AI 引擎生成，但不暴露在聊天历史中。
     // persistResponse=false 保证生成的回复不会写入聊天室，也不会被自动摘要捕获；
     // includeChatHistory=false 避免今日一言影响正式对话的上下文。
+    final recentQuotes = (await Future.wait(List.generate(
+            3,
+            (i) async => await db.getKV(
+                'quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}'))))
+        .whereType<String>()
+        .where((e) => e.isNotEmpty)
+        .join('｜');
     final res = await sendMessage(
       botId: botId,
       priority: false,
       text:
-          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何“正好X个字”等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。近三天已用文案：${(await Future.wait(List.generate(3, (i) async => await db.getKV('quote_text_${botId}_${DateTime.now().subtract(Duration(days: i + 1)).year}-${DateTime.now().subtract(Duration(days: i + 1)).month}-${DateTime.now().subtract(Duration(days: i + 1)).day}')))).whereType<String>().where((e) => e.isNotEmpty).join('｜')}。不得重复或高度近似。',
+          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何"正好X个字"等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。\n\n【近三天已用文案】\n$recentQuotes\n\n【去重要求】\n1. 不能与近三天文案重复、高度近似或仅替换个别词语\n2. 主题内容不要和近三天一样：如果近三天都在写某个具体话题（如看番、游戏、阅读、运动、天气、心情等），今天就换个不同的角度和内容\n3. 可以写各种主题，但要有变化和新鲜感，避免连续多天围绕同一个话题\n4. 保持你的人设特点（说话方式、性格、态度），但每天的内容要有所不同',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
