@@ -324,12 +324,12 @@ class AIManager {
 根据完整对话判断用户最新一条消息。优先看语气和上下文，不要只看字面。世界书和身份档案是已知背景，不是跑题内容；其中没有的事实禁止编造。
 机器人不是讨好工具。策略必须保留机器人自己的判断、边界和小脾气，不能要求它一味顺从、道歉或承诺。只有事实明确时才建议道歉或承诺。
 只输出 JSON，不要 Markdown：
-{"literal":false,"intent":"confirm_care|vent|request_action|seek_explanation|casual_chat|close_topic","risk":0,"reply_now":false,"action":"check_history|apologize|commit|explain|acknowledge|say_less|make_plan","need":"apology|action|explanation|care|nothing","resolved":false,"references":["候选一","候选二","候选三"],"avoid":[]}
+{"literal":false,"intent":"confirm_care|vent|request_action|seek_explanation|casual_chat|close_topic","risk":0,"reply_now":false,"action":"check_history|apologize|commit|explain|acknowledge|say_less|make_plan","need":"apology|action|explanation|care|nothing","resolved":false,"references":["方向提示一","方向提示二","方向提示三"],"avoid":[]}
 intent 只选一个：confirm_care 是试探是否记得或在意；vent 是想让情绪被接住；request_action 是要求行动或承诺；seek_explanation 是追问原因；casual_chat 是无冲突闲聊；close_topic 仅限真诚接受并结束。分手、拉黑、别联系属于 vent，不属于 close_topic。
 risk 为 0 到 9：0 轻松，4 冷淡或试探，6 明确责备，8 最后通牒，9 关系破裂。
 reply_now 仅当所需事实已在上下文中时为 true。用户要求回忆但上下文没有时必须为 false。
 真诚接受后 need 必须是 nothing，resolved 为 true。反话、冷淡和未撤回通牒不算解决。
-references 固定 3 条、每条不超过 40 字，策略必须不同。它们只是素材，机器人必须按自己的人设重写，可以拒绝、吐槽或坚持想法。''';
+references 固定 3 条、每条不超过 15 字，只给回复方向和情绪基调，不要给具体句子。机器人会根据自己的人设和说话方式自行组织语言，绝不会照抄。例如：表达关心但保持距离、轻松调侃化解尴尬、认真解释但带点小脾气。''';
 
   Future<String> _jarvisAdvice({
     required Map bot,
@@ -377,6 +377,15 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
           },
         ],
       };
+      // 记录军师请求上下文到日志
+      AppLogService.instance.addJson('JARVIS', 'AI军师请求上下文', {
+        'bot_name': bot['name'],
+        'bot_prompt': bot['prompt'],
+        'profile_context_length': profileContext.length,
+        'worldbook_context_length': worldBookContext.length,
+        'recent_messages': recent,
+        'user_latest': text,
+      });
       final client = http.Client();
       final request =
           http.Request('POST', Uri.parse('$baseUrl/chat/completions'))
@@ -418,7 +427,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
               .where((e) => e.trim().isNotEmpty)
               .join('；') ??
           '';
-      return '【AI军师·本轮内部策略，禁止复述】意图 ${json['intent']}，危险 ${json['risk']}/9，是否字面 ${json['literal']}，立即给实质内容 ${json['reply_now']}，动作 ${json['action']}，需求 ${json['need']}，紧张已解除 ${json['resolved']}。参考：$references。避免：$avoid。机器人必须保留自己的性格、判断和边界，可有小脾气，不得一味顺从；参考句只能改写，不能照抄。';
+      return '【AI军师·本轮内部策略，禁止复述】意图 ${json['intent']}，危险 ${json['risk']}/9，是否字面 ${json['literal']}，立即给实质内容 ${json['reply_now']}，动作 ${json['action']}，需求 ${json['need']}，紧张已解除 ${json['resolved']}。回复方向提示：$references。避免：$avoid。重要：这些只是方向提示，不是具体回复句子。你必须用自己的人设、说话方式和当前上下文重新组织语言，绝对不能照抄或拼接这些提示。保留自己的性格、判断和边界，可有小脾气。';
     } catch (e) {
       AppLogService.instance.add('JARVIS', '军师跳过：$e');
       return '';
@@ -647,7 +656,7 @@ references 固定 3 条、每条不超过 40 字，策略必须不同。它们�
         profileContext +
         recentThoughtsContext +
         (innerThoughtEnabled
-            ? '\n【内心独白】每次回复前，请先写一段内心独白，用 <think>内心独白内容</think> 包裹。内心独白要求：1) 用第一人称写，但不必刻意带"我"字；2) 不能用第二人称；3) 称呼用户时优先使用你知道的用户称呼/名字，所有称呼都不知道时才说"用户"，一旦知道就立即停止叫"用户"；4) 可以写对用户话语的多重解读、回忆过往、情绪波动、自我对话等，展现真实的思考过程；5) 你可以选择不写内心独白，不写时不输出 <think> 标签。写完内心独白后再输出正常的聊天回复。'
+            ? '\n\n【内心独白机制】\n你可以在每次回复前写一段内心独白，展现真实的思考过程。用 <inner_thought>独白内容</inner_thought> 包裹。\n\n写作规则：\n1. 用第一人称，但不必刻意带"我"字，自然口语化即可\n2. 绝对不能用第二人称（不要说"你"），这会打破第四堵墙\n3. 称呼用户时：优先使用已知的昵称/名字；所有称呼都不知道时才说"用户"；一旦知道名字就立即停止叫"用户"\n4. 内容可以包括：对用户话语的多重解读、回忆过往对话、情绪波动、自我对话、犹豫纠结等，展现思考深度和情感真实性\n5. 这是可选的。你可以选择不写，不写时不输出任何 <inner_thought> 标签\n6. 内心独白建议长度 20-60 字，过短显得敷衍，过长显得刻意\n\n写完内心独白（如果写）后，再输出正常的聊天回复。'
             : '') +
         toolContext;
     // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
