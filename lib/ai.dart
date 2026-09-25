@@ -320,16 +320,102 @@ class AIManager {
     return fromValue(payload['output_text']);
   }
 
-  static const _jarvisPrompt = '''你是 TideBot 的对话军师，不是聊天对象。不要扮演机器人，不要直接回复用户。
-根据完整对话判断用户最新一条消息。优先看语气和上下文，不要只看字面。世界书和身份档案是已知背景，不是跑题内容；其中没有的事实禁止编造。
-机器人不是讨好工具。策略必须保留机器人自己的判断、边界和小脾气，不能要求它一味顺从、道歉或承诺。只有事实明确时才建议道歉或承诺。
-只输出 JSON，不要 Markdown：
-{"literal":false,"intent":"confirm_care|vent|request_action|seek_explanation|casual_chat|close_topic","risk":0,"reply_now":false,"action":"check_history|apologize|commit|explain|acknowledge|say_less|make_plan","need":"apology|action|explanation|care|nothing","resolved":false,"references":["方向提示一","方向提示二","方向提示三"],"avoid":[]}
-intent 只选一个：confirm_care 是试探是否记得或在意；vent 是想让情绪被接住；request_action 是要求行动或承诺；seek_explanation 是追问原因；casual_chat 是无冲突闲聊；close_topic 仅限真诚接受并结束。分手、拉黑、别联系属于 vent，不属于 close_topic。
-risk 为 0 到 9：0 轻松，4 冷淡或试探，6 明确责备，8 最后通牒，9 关系破裂。
-reply_now 仅当所需事实已在上下文中时为 true。用户要求回忆但上下文没有时必须为 false。
-真诚接受后 need 必须是 nothing，resolved 为 true。反话、冷淡和未撤回通牒不算解决。
-references 固定 3 条、每条不超过 15 字，只给回复方向和情绪基调，不要给具体句子。机器人会根据自己的人设和说话方式自行组织语言，绝不会照抄。例如：表达关心但保持距离、轻松调侃化解尴尬、认真解释但带点小脾气。''';
+  static const _jarvisPrompt = '''你是 TideBot 的对话军师 Jarvis，负责分析用户消息并为机器人提供策略指导。
+
+# 核心职责
+1. 深度分析用户的意图、情绪、话外音
+2. 判断当前对话的风险和紧急程度
+3. 为机器人提供「方向性指导」和「具体参考句子」
+
+# 关键原则
+- 机器人不是讨好工具，策略必须保留机器人的判断、边界和小脾气
+- 不能要求机器人一味顺从、道歉或承诺
+- 只有事实明确时才建议道歉或承诺
+- 考虑机器人上一轮的内心独白，保持思路连续性
+- 根据风险等级匹配策略：低风险可放松调侃主动分享，高风险需慎重认真
+- 机器人可以主动分享自己的事情，不只是被动回应用户
+
+# 输出格式（只输出 JSON，不要 Markdown 代码块）
+{
+  "user_analysis": {
+    "intent": "confirm_care|vent|request_action|seek_explanation|casual_chat|close_topic|share_experience|seek_opinion",
+    "emotion": "开心|郁闷|生气|焦虑|期待|失望|平静|兴奋|...",
+    "subtext": "用户的话外音/真实想法",
+    "risk_level": 0,
+    "urgency": "immediate|moderate|low",
+    "topic_shift": false
+  },
+  "context_signals": {
+    "previous_unresolved": "遗留的未解决问题",
+    "mood_continuity": "情绪连续性判断",
+    "relationship_status": "warming|stable|cooling|tense"
+  },
+  "bot_guidance": {
+    "recommended_tone": "轻松调侃|认真解释|温暖关心|保持距离|开玩笑化解|真诚道歉|坚持立场|...",
+    "core_message": "核心要传达的信息（一句话概括）",
+    "emotional_stance": "情感立场（机器人应站在什么情感位置）",
+    "should_share_own": false,
+    "share_suggestion": "如果机器人可以主动分享自己的事，写什么主题（如：今天的经历、最近的想法、有趣的发现）；不需要时为null",
+    "boundaries": ["不要做的事一", "不要做的事二"],
+    "reference_directions": [
+      "方向一：要传达什么（15-30字描述方向和意图）",
+      "方向二：要传达什么（15-30字描述方向和意图）",
+      "方向三：要传达什么（15-30字描述方向和意图）"
+    ],
+    "reference_examples": [
+      "参考句子一（具体表达，机器人可参考但不能照抄）",
+      "参考句子二（具体表达，机器人可参考但不能照抄）",
+      "参考句子三（具体表达，机器人可参考但不能照抄）"
+    ]
+  },
+  "inner_thought_seed": "机器人此刻应该在想什么（一句话，用于生成内心独白）"
+}
+
+# 字段说明
+## user_analysis.intent
+- confirm_care：试探机器人是否记得/在意
+- vent：需要倾听和情绪被接住
+- request_action：要求机器人做某事或承诺
+- seek_explanation：追问原因或细节
+- casual_chat：无压力的日常对话
+- close_topic：真诚接受并准备翻篇（分手、拉黑、别联系属于 vent）
+- share_experience：主动分享自己的事
+- seek_opinion：征求机器人的看法
+
+## user_analysis.subtext
+用户表面说的是什么，内心真正想表达/想得到的是什么
+- 例如：说"随便"可能是"希望你主动提建议"
+- 例如：说"没事"可能是"其实有事但不想说"
+
+## user_analysis.risk_level（0-9）
+- 0-2：轻松愉快，无压力
+- 3-4：有轻微试探或冷淡
+- 5-6：明确的不满或责备
+- 7-8：关系紧张，最后通牒
+- 9：关系破裂边缘
+
+## bot_guidance.should_share_own
+机器人是否应该主动分享自己的事情
+- true：适合主动分享（低风险、轻松对话、用户友好）
+- false：不适合分享（高风险、用户情绪不佳、话题严肃）
+
+## bot_guidance.reference_directions
+3条方向提示，每条 15-30 字，描述「要传达什么」而不是「怎么说」
+- 例如："承认疏忽但不过度自责，说明当时的考虑"
+- 例如："表达愿意改进的态度，但不做超出能力的承诺"
+- 例如："用轻松的语气化解尴尬，顺便岔开话题"
+
+## bot_guidance.reference_examples
+3条具体参考句子，机器人可以参考但绝对不能照抄
+- 这些句子是「参考示例」，机器人会用自己的人设和说话方式重新组织语言
+- 参考句子应该符合推荐的语气基调
+- 每条 10-40 字
+
+## inner_thought_seed
+机器人此刻应该在想什么，用于生成内心独白的种子思路
+- 例如："用户这话听着有点生气，我是不是说错了什么"
+- 例如："唉，又来问这个，我上次不是解释过了吗...算了再说一遍"
+- 例如："哇，用户居然主动分享这个，看来心情不错啊"''';
 
   Future<String> _jarvisAdvice({
     required Map bot,
@@ -360,20 +446,57 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
               .replaceFirst(RegExp(r'/+$'), '') ??
           '';
       if (baseUrl.isEmpty || modelName.isEmpty) return '';
+
+      // 提取最近10轮消息（含角色和类型）
       final recent = history.reversed.take(10).toList().reversed.map((item) {
         final role = item['role']?.toString() == 'user' ? '用户' : '机器人';
-        return '$role：${item['content'] ?? ''}';
+        final type = item['type']?.toString() ?? 'text';
+        final content = item['content'] ?? '';
+        if (type == 'inner_thought') {
+          return '$role（内心独白）：$content';
+        }
+        return '$role：$content';
       }).join('\n');
+
+      // 提取机器人上一轮的内心独白
+      String? lastInnerThought;
+      for (final item in history.reversed) {
+        if (item['role']?.toString() == 'assistant' &&
+            item['type']?.toString() == 'inner_thought') {
+          lastInnerThought = item['content']?.toString();
+          break;
+        }
+      }
+      final innerThoughtContext =
+          lastInnerThought != null ? '\n机器人上一轮内心独白：$lastInnerThought' : '';
+
+      // 获取时间上下文（当前时间、日程、节假日）
+      final now = DateTime.now();
+      final weekday =
+          ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][now.weekday - 1];
+      final timeStr =
+          '${now.year}年${now.month}月${now.day}日 $weekday ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+      // 获取生活日程上下文
+      String lifeScheduleContext = '';
+      if (await LifeScheduleService.instance.enabled()) {
+        final lifeRow = await LifeScheduleService.instance.ensureToday(botId);
+        if (lifeRow != null) {
+          lifeScheduleContext =
+              '\n${LifeScheduleService.instance.compactContext(lifeRow)}';
+        }
+      }
+
       final payload = {
         'model': modelName,
         'temperature': 0.2,
-        'max_tokens': 700,
+        'max_tokens': 1200,
         'messages': [
           {'role': 'system', 'content': _jarvisPrompt},
           {
             'role': 'user',
             'content':
-                '机器人：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n$profileContext\n$worldBookContext\n最近对话：\n$recent\n用户最新消息：\n$text'
+                '# 机器人信息\n机器人：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n\n# 时间与日程\n当前时间：$timeStr$lifeScheduleContext\n\n# 背景知识\n$profileContext\n$worldBookContext\n\n# 最近对话（最近10轮）\n$recent$innerThoughtContext\n\n# 用户最新消息\n$text'
           },
         ],
       };
@@ -418,18 +541,106 @@ references 固定 3 条、每条不超过 15 字，只给回复方向和情绪�
       if (json is! Map) return '';
       AppLogService.instance
           .addJson('JARVIS', 'AI军师判断', Map<String, dynamic>.from(json));
-      final references = (json['references'] as List?)
+
+      // 提取结构化的军师建议
+      final userAnalysis = json['user_analysis'] as Map?;
+      final contextSignals = json['context_signals'] as Map?;
+      final botGuidance = json['bot_guidance'] as Map?;
+      final innerThoughtSeed = json['inner_thought_seed']?.toString() ?? '';
+
+      if (userAnalysis == null || botGuidance == null) {
+        AppLogService.instance.add('JARVIS', '军师返回格式不完整，跳过');
+        return '';
+      }
+
+      // 提取用户分析
+      final intent = userAnalysis['intent']?.toString() ?? '';
+      final emotion = userAnalysis['emotion']?.toString() ?? '';
+      final subtext = userAnalysis['subtext']?.toString() ?? '';
+      final riskLevel = userAnalysis['risk_level'] ?? 0;
+      final urgency = userAnalysis['urgency']?.toString() ?? 'moderate';
+
+      // 提取上下文信号
+      final previousUnresolved =
+          contextSignals?['previous_unresolved']?.toString() ?? '';
+      final relationshipStatus =
+          contextSignals?['relationship_status']?.toString() ?? '';
+
+      // 提取机器人指导
+      final recommendedTone = botGuidance['recommended_tone']?.toString() ?? '';
+      final coreMessage = botGuidance['core_message']?.toString() ?? '';
+      final emotionalStance = botGuidance['emotional_stance']?.toString() ?? '';
+      final shouldShareOwn = botGuidance['should_share_own'] == true;
+      final shareSuggestion = botGuidance['share_suggestion']?.toString() ?? '';
+
+      final boundaries = (botGuidance['boundaries'] as List?)
+              ?.map((e) => e.toString())
+              .where((e) => e.trim().isNotEmpty)
+              .join('；') ??
+          '';
+
+      final referenceDirections = (botGuidance['reference_directions'] as List?)
               ?.map((e) => e.toString())
               .where((e) => e.trim().isNotEmpty)
               .take(3)
-              .join('；') ??
+              .join('\n- ') ??
           '';
-      final avoid = (json['avoid'] as List?)
+
+      final referenceExamples = (botGuidance['reference_examples'] as List?)
               ?.map((e) => e.toString())
               .where((e) => e.trim().isNotEmpty)
-              .join('；') ??
+              .take(3)
+              .join('\n- ') ??
           '';
-      return '【AI军师·本轮内部策略，禁止复述】意图 ${json['intent']}，危险 ${json['risk']}/9，是否字面 ${json['literal']}，立即给实质内容 ${json['reply_now']}，动作 ${json['action']}，需求 ${json['need']}，紧张已解除 ${json['resolved']}。回复方向提示：$references。避免：$avoid。重要：这些只是方向提示，不是具体回复句子。你必须用自己的人设、说话方式和当前上下文重新组织语言，绝对不能照抄或拼接这些提示。保留自己的性格、判断和边界，可有小脾气。';
+
+      // 构建传递给机器人的指导信息
+      final guidance = StringBuffer();
+      guidance.writeln('【AI军师·本轮内部策略，禁止复述】');
+      guidance.writeln('\n## 用户分析');
+      guidance.writeln('- 意图：$intent');
+      guidance.writeln('- 情绪：$emotion');
+      if (subtext.isNotEmpty) guidance.writeln('- 话外音：$subtext');
+      guidance.writeln('- 危险等级：$riskLevel/9');
+      guidance.writeln('- 紧急程度：$urgency');
+
+      if (previousUnresolved.isNotEmpty || relationshipStatus.isNotEmpty) {
+        guidance.writeln('\n## 上下文信号');
+        if (previousUnresolved.isNotEmpty)
+          guidance.writeln('- 遗留问题：$previousUnresolved');
+        if (relationshipStatus.isNotEmpty)
+          guidance.writeln('- 关系状态：$relationshipStatus');
+      }
+
+      guidance.writeln('\n## 回复策略');
+      guidance.writeln('- 推荐语气：$recommendedTone');
+      guidance.writeln('- 核心信息：$coreMessage');
+      if (emotionalStance.isNotEmpty)
+        guidance.writeln('- 情感立场：$emotionalStance');
+      if (shouldShareOwn && shareSuggestion.isNotEmpty) {
+        guidance.writeln('- 主动分享建议：$shareSuggestion');
+      }
+      if (boundaries.isNotEmpty) guidance.writeln('- 边界提示：$boundaries');
+
+      if (referenceDirections.isNotEmpty) {
+        guidance.writeln('\n## 回复方向（要传达的内容）');
+        guidance.writeln('- $referenceDirections');
+      }
+
+      if (referenceExamples.isNotEmpty) {
+        guidance.writeln('\n## 参考句子（可参考但绝对不能照抄）');
+        guidance.writeln('- $referenceExamples');
+      }
+
+      if (innerThoughtSeed.isNotEmpty) {
+        guidance.writeln('\n## 内心独白种子');
+        guidance.writeln('$innerThoughtSeed');
+      }
+
+      guidance.writeln('\n---');
+      guidance.writeln(
+          '重要：以上是军师的策略建议。你必须用自己的人设、说话方式和当前上下文重新组织语言，绝对不能照抄参考句子。保留自己的性格、判断和边界，可有小脾气。');
+
+      return guidance.toString();
     } catch (e) {
       AppLogService.instance.add('JARVIS', '军师跳过：$e');
       return '';

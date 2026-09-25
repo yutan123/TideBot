@@ -1126,6 +1126,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       await _setTypingState(true);
       Map<String, dynamic>? streamingMessage;
       var pendingDisplay = '';
+      var insideInnerThought = false; // 是否正在内心独白中
+      var streamStarted = false; // 是否已开始显示流式内容
+      var streamComplete = false; // 流式是否已完成
       if (streamEnabled && mounted) {
         streamingMessage = <String, dynamic>{
           'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
@@ -1143,18 +1146,105 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
         final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
         final batch = (speed >= 85 ? 2 : 1);
+
+        // 缓冲设置：初始缓冲30字符，运行中最低保持10字符缓冲
+        const initialBufferSize = 30;
+        const minBufferSize = 10;
+
         _streamDisplayTimer?.cancel();
-        final displayMessage = streamingMessage;
+        var displayMessage = streamingMessage; // 改为 var 以便重新赋值
         _streamDisplayTimer = Timer.periodic(interval, (_) {
-          if (!mounted || pendingDisplay.isEmpty) return;
+          if (!mounted) return;
+
+          // 初始缓冲：积累足够内容后再开始显示
+          if (!streamStarted && pendingDisplay.length < initialBufferSize) {
+            return;
+          }
+
+          // 持续缓冲：显示过程中如果缓冲不足且流式未完成，暂停等待
+          if (streamStarted &&
+              pendingDisplay.length < minBufferSize &&
+              !streamComplete) {
+            return;
+          }
+
+          // 缓冲区为空时停止
+          if (pendingDisplay.isEmpty) return;
+
+          // 标记已开始显示
+          if (!streamStarted) streamStarted = true;
           final take =
               pendingDisplay.length < batch ? pendingDisplay.length : batch;
           final chunk = pendingDisplay.substring(0, take);
           pendingDisplay = pendingDisplay.substring(take);
-          setState(
-            () => displayMessage['content'] =
-                '${displayMessage['content']}$chunk',
-          );
+
+          // 处理内心独白标签：检测开头和结尾标签，动态切换消息类型
+          var processedChunk = chunk;
+
+          if (!insideInnerThought) {
+            // 检测是否进入内心独白
+            final startTagIndex = (displayMessage['content'].toString() + chunk)
+                .indexOf('<inner_thought>');
+            if (startTagIndex >= 0) {
+              // 找到开头标签，切换为内心独白类型
+              insideInnerThought = true;
+              displayMessage['type'] = 'inner_thought';
+              // 移除开头标签
+              final currentContent = displayMessage['content'].toString();
+              final combined = currentContent + chunk;
+              final afterTag =
+                  combined.substring(startTagIndex + '<inner_thought>'.length);
+              displayMessage['content'] = '';
+              processedChunk = afterTag;
+            }
+          }
+
+          if (insideInnerThought) {
+            // 检测是否结束内心独白
+            final currentPlusChunk =
+                displayMessage['content'].toString() + processedChunk;
+            final endTagIndex = currentPlusChunk.indexOf('</inner_thought>');
+            if (endTagIndex >= 0) {
+              // 找到结尾标签，提取内心独白内容
+              final innerThoughtContent =
+                  currentPlusChunk.substring(0, endTagIndex);
+              final afterEndTag = currentPlusChunk
+                  .substring(endTagIndex + '</inner_thought>'.length);
+
+              // 完成内心独白消息
+              displayMessage['content'] = innerThoughtContent;
+              displayMessage.remove('is_streaming');
+              insideInnerThought = false;
+
+              // 创建新的文本消息用于后续内容
+              if (afterEndTag.isNotEmpty || pendingDisplay.isNotEmpty) {
+                final newTextMessage = <String, dynamic>{
+                  'id': 'stream_text_${DateTime.now().millisecondsSinceEpoch}',
+                  'bot_id': botId,
+                  'role': 'assistant',
+                  'type': 'text',
+                  'content': afterEndTag,
+                  'timestamp': DateTime.now().millisecondsSinceEpoch + 1,
+                  'is_streaming': true,
+                };
+                setState(() {
+                  _msgs.add(newTextMessage);
+                  displayMessage = newTextMessage;
+                });
+              }
+              return;
+            } else {
+              // 仍在内心独白中，正常追加
+              setState(() => displayMessage['content'] = currentPlusChunk);
+            }
+          } else {
+            // 普通文本，正常追加
+            setState(
+              () => displayMessage['content'] =
+                  '${displayMessage['content']}$processedChunk',
+            );
+          }
+
           // Do not animate on every streamed chunk: repeated animateTo calls
           // cause layout churn, dropped frames and heat during long replies.
           if (pendingDisplay.isEmpty ||
@@ -1187,6 +1277,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
       });
+
+      // 标记流式完成，让缓冲区能够完全清空
+      if (streamEnabled) {
+        streamComplete = true;
+      }
 
       if (result['success'] == true) {
         for (final item in userMessages) {
