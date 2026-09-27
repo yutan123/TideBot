@@ -23,6 +23,15 @@ import 'chat_protocol.dart';
 import 'skill_runtime.dart';
 import 'world_book_service.dart';
 
+const _presetCategories = <String>[
+  '记忆',
+  '事件',
+  '日程',
+  '人物',
+  '规则',
+  '偏好',
+];
+
 class AICancellationToken {
   bool _cancelled = false;
   final List<void Function()> _callbacks = [];
@@ -799,9 +808,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       for (int i = history.length - 1; i >= 0 && count < 3; i--) {
         final msg = history[i];
         if (msg['role']?.toString() == 'assistant') {
-          final thought = msg['inner_thought']?.toString().trim() ?? '';
-          if (thought.isNotEmpty) {
-            recentThoughts.insert(0, thought);
+          final innerThought = msg['inner_thought']?.toString().trim() ?? '';
+          if (innerThought.isNotEmpty) {
+            recentThoughts.insert(0, innerThought);
             count++;
           }
         }
@@ -811,26 +820,32 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             '\n【你最近三轮的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
       }
     }
-    final systemPrompt = _buildSystemPrompt(bot, activeGame) +
-        worldBookContext +
-        (extraSystemPrompt.trim().isEmpty
-            ? ''
-            : '\n【当前会话约束】${extraSystemPrompt.trim()}') +
-        _safetyContext(text) +
-        lifeContext +
-        deviceContextPrompt +
-        emotionContext +
+    final presetCategoryContext =
+        '\n【世界书类别】可用预设类别：${_presetCategories.join('、')}。用户可以新增自定义类别；添加或修改条目时优先选择最合适的类别。';
+    final stableSystemPrompt = _buildSystemPrompt(bot, activeGame) +
+        presetCategoryContext +
         profileContext +
-        recentThoughtsContext +
         (innerThoughtEnabled
-            ? '\n\n【内心独白机制】\n你可以在回复前写一段内心独白，展现真实想法。用 <inner_thought>独白内容</inner_thought> 包裹。\n\n写作风格：\n1. 口语化、情绪化，像真实的内心想法而非正式记录。可以带点小吐槽、小纠结、小兴奋，展现真实情绪波动\n2. 不要用第二人称（不要说"你"），这会打破第四堵墙。称呼用户时：优先用已知的昵称/名字；都不知道时才说"用户"；知道名字后立即停止叫"用户"\n3. 内容可以是：对用户话语的真实反应、回忆过往对话、情绪波动、自我对话、犹豫纠结、小小的期待或担心等，展现思考深度和情感真实性\n4. 不要写成"记录事实"的格式（如"小泽中秋没班，那杯林应该是放假喝的"），而要写成"emmm 小泽中秋没班啊，那杯林是不是放假喝的？""诶不对，那杯林该不会是放假喝的吧""啊这...小泽中秋没班，杯林肯定放假了吧"这种真实想法的样子\n5. 这是可选的。你可以选择不写，不写时不输出任何 <inner_thought> 标签\n6. 建议长度 15-50 字，过短显得敷衍，过长显得刻意\n\n写完内心独白（如果写）后，再输出正常的聊天回复。'
+            ? '\n\n【内心独白机制】\n你可以在回复前写一段内心独白，展现真实想法。用 <inner_thought>独白内容</inner_thought> 包裹。'
             : '') +
         toolContext;
-    // 搜索结果仅由 web_search 工具调用产生，避免关键词猜测和重复请求。
+    final dynamicContext = [
+      if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
+      if (extraSystemPrompt.trim().isNotEmpty)
+        '【当前会话约束】${extraSystemPrompt.trim()}',
+      _safetyContext(text),
+      lifeContext,
+      deviceContextPrompt,
+      emotionContext,
+      recentThoughtsContext,
+    ].where((item) => item.trim().isNotEmpty).join('\n\n');
     var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': systemPrompt},
+      {'role': 'system', 'content': stableSystemPrompt},
     ];
+    if (dynamicContext.isNotEmpty) {
+      messages.add({'role': 'system', 'content': dynamicContext});
+    }
     final historyMessages = <Map<String, dynamic>>[];
     final historyIds = <String>[];
     // 总是从完整历史开始加载，由后续的 rollChatWindow 动态截断
@@ -1043,13 +1058,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // compatibility is handled by retrying the exact same turn without only
       // the unsupported tool fields after an explicit provider rejection.
       final toolCallingEnabled = allowTools && tools.isNotEmpty;
+      final promptCache = <String, dynamic>{
+        'type': 'ephemeral',
+      };
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
         'max_tokens': maxContext,
+        if (messages.isNotEmpty && messages.first['role'] == 'system')
+          'cache_control': promptCache,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
-        // 启用真实流式输出（通过 onDelta 回调传递增量）
         if (onDelta != null) 'stream': true,
       };
       // 过滤payload中的base64图片，避免日志过长
@@ -1120,8 +1139,51 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 处理流式响应（SSE 格式）或非流式响应
       String? innerThought;
+      final streamTagBuffer = StringBuffer();
+      var inThought = false;
+      void consumeDelta(String value) {
+        streamTagBuffer.write(value);
+        var source = streamTagBuffer.toString();
+        while (source.isNotEmpty) {
+          if (inThought) {
+            final end = source.indexOf('</inner_thought>');
+            if (end < 0) {
+              streamTagBuffer
+                ..clear()
+                ..write(source.length > 15
+                    ? source.substring(source.length - 15)
+                    : source);
+              return;
+            }
+            source = source.substring(end + '</inner_thought>'.length);
+            inThought = false;
+          } else {
+            final start = source.indexOf('<inner_thought>');
+            if (start < 0) {
+              final safeLength = source.length > 15 ? source.length - 15 : 0;
+              if (safeLength > 0) {
+                final visible = source.substring(0, safeLength);
+                replyText += visible;
+                onDelta?.call(visible);
+              }
+              streamTagBuffer
+                ..clear()
+                ..write(source.substring(safeLength));
+              return;
+            }
+            if (start > 0) {
+              final visible = source.substring(0, start);
+              replyText += visible;
+              onDelta?.call(visible);
+            }
+            source = source.substring(start + '<inner_thought>'.length);
+            inThought = true;
+          }
+        }
+        streamTagBuffer.clear();
+      }
+
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
-        // 流式处理：逐行读取 SSE 格式
         final lines = streamedResponse.stream
             .transform(utf8.decoder)
             .transform(const LineSplitter());
@@ -1137,8 +1199,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               final choice = json['choices']?[0];
               final delta = choice?['delta']?['content']?.toString();
               if (delta != null && delta.isNotEmpty) {
-                replyText += delta;
-                onDelta(delta);
+                consumeDelta(delta);
+              }
+              if (json['usage'] is Map) {
+                usage = Map.from(json['usage'] as Map);
               }
               final calls = choice?['delta']?['tool_calls'] ??
                   choice?['message']?['tool_calls'];
@@ -1154,20 +1218,27 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         client.close();
         errorBody = '';
 
-        // 流式完成后提取内心独白
-        if (replyText.contains('<inner_thought>')) {
-          final startTag = replyText.indexOf('<inner_thought>');
-          final endTag = replyText.indexOf('</inner_thought>');
-          if (startTag >= 0 && endTag > startTag) {
-            innerThought = replyText
+        if (streamTagBuffer.isNotEmpty) {
+          final tail = streamTagBuffer.toString();
+          if (!inThought) {
+            replyText += tail;
+            onDelta.call(tail);
+          }
+          streamTagBuffer.clear();
+        }
+        final rawThought = replyText;
+        if (rawThought.contains('<inner_thought>')) {
+          final startTag = rawThought.indexOf('<inner_thought>');
+          final endTag = rawThought.indexOf('</inner_thought>');
+          if (endTag > startTag) {
+            innerThought = rawThought
                 .substring(startTag + '<inner_thought>'.length, endTag)
                 .trim();
-            replyText = (replyText.substring(0, startTag) +
-                    replyText.substring(endTag + '</inner_thought>'.length))
+            replyText = (rawThought.substring(0, startTag) +
+                    rawThought.substring(endTag + '</inner_thought>'.length))
                 .trim();
           }
         }
-
         AppLogService.instance.add('AI_TRACE',
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
@@ -1391,8 +1462,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final hasInnerThought = innerThought != null && innerThought.isNotEmpty;
         final segmented = !forceSingleReply &&
             audioPath == null &&
-            onDelta == null && // 流式输出时不分段
-            !hasInnerThought && // 有内心独白时不分段，保持内心独白与回复的完整性
+            !hasInnerThought &&
             (await db.getKV('segmented_reply_enabled')) != 'false';
         final segments =
             segmented ? _replySegments(replyText) : <String>[replyText];

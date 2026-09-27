@@ -29,8 +29,15 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
   List<Map<String, dynamic>> _categories = [];
   bool _loading = true;
   final Set<String> _expanded = {};
+  static const _presetCategories = <String>[
+    '记忆',
+    '事件',
+    '日程',
+    '人物',
+    '规则',
+    '偏好',
+  ];
 
-  // 预设颜色池（扩展至30色）
   static const _colorPool = <Color>[
     Color(0xFF5AC8FA), // 蓝色
     Color(0xFF34C759), // 绿色
@@ -98,12 +105,27 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
       where: 'key LIKE ?',
       whereArgs: ['wb_category_%'],
     );
-    return rows.map((row) {
-      final key = row['key'].toString();
-      final name = key.replaceFirst('wb_category_', '');
-      final colorValue = int.tryParse(row['value'].toString()) ?? 0xFF5AC8FA;
-      return {'name': name, 'color': colorValue};
-    }).toList();
+    final stored = <String, int>{};
+    for (final row in rows) {
+      final name = row['key'].toString().replaceFirst('wb_category_', '');
+      if (name.isNotEmpty) {
+        stored[name] = int.tryParse(row['value'].toString()) ?? 0xFF5AC8FA;
+      }
+    }
+    final result = <Map<String, dynamic>>[];
+    for (var index = 0; index < _presetCategories.length; index++) {
+      final name = _presetCategories[index];
+      final color = stored[name] ?? _colorPool[index % _colorPool.length].value;
+      if (!stored.containsKey(name)) {
+        await _db.setKV('wb_category_$name', color.toString());
+      }
+      result.add({'name': name, 'color': color, 'preset': true});
+    }
+    for (final entry in stored.entries) {
+      if (_presetCategories.contains(entry.key)) continue;
+      result.add({'name': entry.key, 'color': entry.value, 'preset': false});
+    }
+    return result;
   }
 
   String _text(Map<String, dynamic> row, String key) =>
@@ -618,9 +640,13 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     required VoidCallback onTap,
   }) {
     final color = _categoryColor(category);
-    final canDelete = !category.startsWith('+') &&
-        category != '记忆' &&
-        !_allCategoryNames.take(3).contains(category);
+    final categoryData = _categories.firstWhere(
+      (item) => item['name']?.toString() == category,
+      orElse: () => const <String, dynamic>{},
+    );
+    final canDelete = categoryData['preset'] != true &&
+        !category.startsWith('+') &&
+        category != '记忆';
 
     return GestureDetector(
       onTap: onTap,

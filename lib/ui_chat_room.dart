@@ -294,6 +294,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
     });
     if (row['role'] == 'assistant') {
+      if (row['type']?.toString() == 'text' &&
+          row['inner_thought']?.toString().trim().isNotEmpty == true) {
+        final thought = Map<String, dynamic>.from(row)
+          ..['type'] = 'inner_thought'
+          ..['content'] = row['inner_thought'];
+        setState(() => _msgs.add(thought));
+      }
       unawaited(MessageDeliveryService.instance.markRead(botId));
     }
     _scrollDown();
@@ -333,8 +340,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
       if (mounted && revision == _messagesRevision) {
         setState(() {
+          final normalized = <Map<String, dynamic>>[];
+          for (final message in msgs) {
+            normalized.add(message);
+            if (message['role']?.toString() == 'assistant' &&
+                message['type']?.toString() == 'text' &&
+                message['inner_thought']?.toString().trim().isNotEmpty ==
+                    true) {
+              normalized.add(Map<String, dynamic>.from(message)
+                ..['type'] = 'inner_thought'
+                ..['content'] = message['inner_thought']
+                ..['id'] = '${message['id']}_thought');
+            }
+          }
           final byId = <String, Map<String, dynamic>>{
-            for (final m in msgs)
+            for (final m in normalized)
               m['id']?.toString() ?? 'db_${m['timestamp']}': m,
           };
           for (final m in _msgs) {
@@ -492,7 +512,20 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           }
         }
         if (additions.isNotEmpty) {
-          _msgs.addAll(additions);
+          final nextMessages = <Map<String, dynamic>>[];
+          for (final message in additions) {
+            nextMessages.add(message);
+            if (message['role']?.toString() == 'assistant' &&
+                message['type']?.toString() == 'text' &&
+                message['inner_thought']?.toString().trim().isNotEmpty ==
+                    true) {
+              nextMessages.add(Map<String, dynamic>.from(message)
+                ..['type'] = 'inner_thought'
+                ..['content'] = message['inner_thought']
+                ..['id'] = '${message['id']}_thought');
+            }
+          }
+          _msgs.addAll(nextMessages);
           _msgs.sort(
             (a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0).compareTo(
               (b['timestamp'] as num?)?.toInt() ?? 0,

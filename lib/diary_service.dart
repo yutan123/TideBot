@@ -1,6 +1,7 @@
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
+import 'life_schedule_service.dart';
 
 class DiaryService {
   DiaryService._();
@@ -30,14 +31,14 @@ class DiaryService {
           final key = _dateKey(DateTime.fromMillisecondsSinceEpoch(stamp));
           byDate.putIfAbsent(key, () => []).add(message);
         }
-        for (var day = DateTime(yesterday.year, yesterday.month, yesterday.day);
-            !day.isBefore(
-                DateTime(yesterday.year, yesterday.month, yesterday.day)
-                    .subtract(const Duration(days: 30)));
+        for (var day = yesterday;
+            !day.isBefore(yesterday.subtract(const Duration(days: 30)));
             day = day.subtract(const Duration(days: 1))) {
           final dateKey = _dateKey(day);
           if (!byDate.containsKey(dateKey) ||
-              await db.getDiary(botId, dateKey) != null) continue;
+              await db.getDiary(botId, dateKey) != null) {
+            continue;
+          }
           await _writeDiary(botId, dateKey, byDate[dateKey]!);
         }
       }
@@ -48,13 +49,25 @@ class DiaryService {
     }
   }
 
+  Future<String> _todayScheduleText(String botId) async {
+    try {
+      if (!await LifeScheduleService.instance.enabled()) return '当天未启用日程';
+      final row = await LifeScheduleService.instance.ensureToday(botId);
+      return row == null
+          ? '当天暂无已生成日程'
+          : LifeScheduleService.instance.compactContext(row);
+    } catch (_) {
+      return '当天日程暂时不可用';
+    }
+  }
+
   Future<void> _writeDiary(
       String botId, String dateKey, List<Map<String, dynamic>> messages) async {
     final db = DBManager();
     final transcript = messages
         .where((m) => m['type'] == 'text' || m['type'] == 'audio')
         .map((m) =>
-            '${m['role'] == 'assistant' ? '机器人' : '用户'}：${m['content'] ?? ''}')
+            '${m['role'] == 'assistant' ? '角色' : '用户'}：${m['content'] ?? ''}')
         .where((line) => line.trim().isNotEmpty)
         .join('\n');
     if (transcript.isEmpty) return;
@@ -69,19 +82,20 @@ class DiaryService {
     final eventStart = DateTime(dayStart.year, dayStart.month, dayStart.day);
     final eventEnd = eventStart.add(const Duration(days: 1));
     final generatedAt = DateTime.now();
-    final response = await AIManager().sendMessage(
+    final scheduleText = await _todayScheduleText(botId);
+    final result = await AIManager().sendMessage(
       botId: botId,
       priority: false,
       text:
-          '这是内部日记任务，不是与用户聊天。请以机器人第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼；不要问候用户、不要解释任务、不要使用 Markdown。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n日记生成时间：${generatedAt.toIso8601String()}\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
+          '这是内部日记任务，不是与用户聊天。请以第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼；不要问候用户、不要解释任务、不要使用 Markdown。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n当天日程：$scheduleText\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
       skipLifeState: true,
       allowTools: false,
     );
-    final content = response['reply']?.toString().trim() ?? '';
-    if (response['success'] == true && content.isNotEmpty) {
+    final content = result['reply']?.toString().trim() ?? '';
+    if (result['success'] == true && content.isNotEmpty) {
       await db.upsertDiary(botId: botId, dateKey: dateKey, content: content);
       AppLogService.instance.add('DIARY', '已补写 $botId $dateKey 日记');
     }
