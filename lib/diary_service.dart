@@ -2,6 +2,7 @@ import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
 import 'life_schedule_service.dart';
+import 'ops.dart';
 
 class DiaryService {
   DiaryService._();
@@ -10,6 +11,28 @@ class DiaryService {
 
   String _dateKey(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  /// Schedules daily diary catch-up at 23:50 using AlarmManager.
+  Future<void> scheduleDailyAlarm() async {
+    try {
+      final now = DateTime.now();
+      var nextRun = DateTime(now.year, now.month, now.day, 23, 50);
+      if (now.isAfter(nextRun)) {
+        nextRun = nextRun.add(const Duration(days: 1));
+      }
+      final success = await OpsManager().setSystemAlarm(
+        nextRun.hour,
+        nextRun.minute,
+        'TideBot 日记补写',
+        repeating: true,
+      );
+      if (success) {
+        AppLogService.instance.add('DIARY', '已设置每日 23:50 日记补写闹钟');
+      }
+    } catch (error) {
+      AppLogService.instance.add('DIARY', '设置日记闹钟失败：$error');
+    }
+  }
 
   Future<void> catchUp() async {
     if (_running) return;

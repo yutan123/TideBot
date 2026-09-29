@@ -91,6 +91,12 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   });
   Future<void>.delayed(const Duration(seconds: 2), OtaUpdate.checkOncePerDay);
 
+  // Schedule daily AlarmManager tasks for diary and schedule generation
+  unawaited(
+      _runStartupTask('diary_alarm', DiaryService.instance.scheduleDailyAlarm));
+  unawaited(_runStartupTask(
+      'schedule_alarm', LifeScheduleService.instance.scheduleDailyAlarm));
+
   // Notification callbacks need the root navigator, which runApp has now
   // created. All startup work remains best-effort.
   unawaited(
@@ -274,6 +280,17 @@ void onStart(ServiceInstance service) {
     await DBManager().setKV('persistent_service_heartbeat', '');
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
+
+  // Handle periodic WorkManager wake to ensure background tasks run even when app is killed
+  service
+      .on('com.yutan123.tidebot.ACTION_PERIODIC_QUEUE_WAKE')
+      .listen((_) async {
+    debugPrint('[service] WorkManager periodic wake received');
+    if (!tickRunning) {
+      unawaited(tick());
+    }
+  });
+
   unawaited(() async {
     final db = DBManager();
     final restarts = int.tryParse(

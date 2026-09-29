@@ -220,14 +220,22 @@ class OpsManager {
 
   // 手机操控桥接已移除。
 
-  Future<bool> setSystemAlarm(int hour, int minute, String message) async {
+  Future<bool> setSystemAlarm(int hour, int minute, String message,
+      {bool repeating = true}) async {
     try {
-      final bool result = await _nativeChannel.invokeMethod('setAlarmManager', {
-        'hour': hour,
-        'minute': minute,
-        'message': message,
+      final taskId = 'daily_${message.hashCode}_${hour}_$minute';
+      final now = DateTime.now();
+      var target = DateTime(now.year, now.month, now.day, hour, minute);
+      if (now.isAfter(target)) {
+        target = target.add(const Duration(days: 1));
+      }
+      // Note: repeating parameter will be used when Kotlin scheduler is updated
+      final result = await _nativeChannel.invokeMethod('scheduleFutureTask', {
+        'taskId': taskId,
+        'triggerAt': target.millisecondsSinceEpoch,
+        'title': message,
       });
-      return result;
+      return result == true;
     } on PlatformException {
       return false;
     }

@@ -6,6 +6,7 @@ import 'app_log_service.dart';
 import 'chat_content.dart';
 import 'db.dart';
 import 'bot_state.dart';
+import 'ops.dart';
 
 Map<String, dynamic>? parseLifeSchedulePayload(String raw) {
   var source = cleanChatContent(raw).trim();
@@ -230,6 +231,37 @@ class LifeScheduleService {
 
   Future<void> savePools(Map<String, List<String>> value) async {
     await DBManager().setKV('life_schedule_pools', jsonEncode(value));
+  }
+
+  /// Schedules daily schedule generation at the configured hour using AlarmManager.
+  Future<void> scheduleDailyAlarm() async {
+    try {
+      final db = DBManager();
+      final configured = int.tryParse(
+            await db.getKV('life_schedule_generation_hour') ?? '',
+          ) ??
+          7;
+      final hour = configured.clamp(0, 23);
+      final now = DateTime.now();
+      var nextRun = DateTime(now.year, now.month, now.day, hour, 0);
+      if (now.isAfter(nextRun)) {
+        nextRun = nextRun.add(const Duration(days: 1));
+      }
+      final success = await OpsManager().setSystemAlarm(
+        nextRun.hour,
+        nextRun.minute,
+        'TideBot 日程生成',
+        repeating: true,
+      );
+      if (success) {
+        AppLogService.instance.add(
+          'SCHEDULE',
+          '已设置每日 ${hour.toString().padLeft(2, '0')}:00 日程生成闹钟',
+        );
+      }
+    } catch (error) {
+      AppLogService.instance.add('SCHEDULE', '设置日程闹钟失败：$error');
+    }
   }
 
   final Map<String, Future<Map<String, dynamic>?>> _generationFlights = {};
