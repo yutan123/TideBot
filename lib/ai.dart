@@ -679,24 +679,44 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final history = includeChatHistory
         ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
         : <Map<String, dynamic>>[];
-    // 世界书统一管理所有记忆：身份档案每轮固定注入，普通记忆由关键词匹配激活。
-    final profileMemories = activeGame == null
-        ? (await db.queryMemories(botId, limit: 200))
-            .where((m) {
-              final text =
-                  '${m['title'] ?? ''} ${m['category'] ?? ''}'.toLowerCase();
-              return text.contains('自我') ||
-                  text.contains('用户') ||
-                  text.contains('关系') ||
-                  text.contains('人格') ||
-                  text.contains('称呼');
-            })
-            .take(12)
-            .toList()
+    // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
+    // 读取三个核心设定字段（独立于普通世界书条目）
+    final allMemories = activeGame == null
+        ? await db.queryMemories(botId, limit: 200)
         : <Map<String, dynamic>>[];
-    final profileContext = profileMemories.isEmpty
-        ? ''
-        : '\n【固定身份档案（每轮都有效）】\n${profileMemories.map((m) => '${m['title'] ?? '档案'}：${m['content'] ?? ''}').join('\n')}';
+
+    String? botViewOfUser; // 你眼中的对方（原"角色眼中的你"）
+    String? selfCognition; // 你认为的自己（原"角色的自我认知"）
+    String? relationship; // 你们的关系
+
+    for (final m in allMemories) {
+      final cat = m['category']?.toString() ?? '';
+      if (cat == '角色眼中的你') {
+        botViewOfUser = m['content']?.toString().trim();
+      } else if (cat == '角色的自我认知') {
+        selfCognition = m['content']?.toString().trim();
+      } else if (cat == '关系') {
+        relationship = m['content']?.toString().trim();
+      }
+    }
+
+    // 构建核心设定提示
+    final coreSettings = [
+      if (botViewOfUser?.isNotEmpty == true)
+        '【你眼中的对方】\n$botViewOfUser'
+      else
+        '【你眼中的对方】\n当前暂未记录。你可在获取到对方的特点、习惯、偏好等信息后，调用工具填入世界书的"角色眼中的你"类别。',
+      if (selfCognition?.isNotEmpty == true)
+        '【你认为的自己】\n$selfCognition'
+      else
+        '【你认为的自己】\n当前暂未记录。你可在明确自己的性格、习惯、偏好等特点后，调用工具填入世界书的"角色的自我认知"类别。',
+      if (relationship?.isNotEmpty == true)
+        '【你们的关系】\n$relationship'
+      else
+        '【你们的关系】\n当前暂未记录。你可在明确与对方的关系定位后，调用工具填入世界书的"关系"类别。',
+    ].join('\n\n');
+
+    final profileContext = '\n$coreSettings';
 
     // 世界书激活：只有带关键词的普通条目参与正则/关键词匹配。
     final worldBookEntries = activeGame == null
@@ -822,13 +842,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     final presetCategoryContext =
         '\n【世界书类别】可用预设类别：${_presetCategories.join('、')}。用户可以新增自定义类别；添加或修改条目时优先选择最合适的类别。';
+
+    // 构建分层系统提示
+    // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
     final stableSystemPrompt = _buildSystemPrompt(bot, activeGame) +
         presetCategoryContext +
-        profileContext +
         (innerThoughtEnabled
             ? '\n\n【内心独白机制】\n你可以在回复前写一段内心独白，展现真实想法。用 <inner_thought>独白内容</inner_thought> 包裹。'
             : '') +
         toolContext;
+
+    // 第二层：固定身份档案（每轮固定注入，只在档案内容修改时变化）
+    // 独立成一条 system，以便独立缓存
+
+    // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
     final dynamicContext = [
       if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
       if (extraSystemPrompt.trim().isNotEmpty)
@@ -839,13 +866,25 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       emotionContext,
       recentThoughtsContext,
     ].where((item) => item.trim().isNotEmpty).join('\n\n');
+
     var searchSources = <Map<String, String>>[];
     final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': stableSystemPrompt},
+      {
+        'role': 'system',
+        'content': stableSystemPrompt,
+        'cache_control': {'type': 'ephemeral'}, // 缓存点1：稳定人设
+      },
     ];
-    if (dynamicContext.isNotEmpty) {
-      messages.add({'role': 'system', 'content': dynamicContext});
+
+    // 第二层：固定身份档案
+    if (profileContext.isNotEmpty) {
+      messages.add({
+        'role': 'system',
+        'content': profileContext,
+        'cache_control': {'type': 'ephemeral'}, // 缓存点2：固定档案
+      });
     }
+
     final historyMessages = <Map<String, dynamic>>[];
     final historyIds = <String>[];
     // 总是从完整历史开始加载，由后续的 rollChatWindow 动态截断
@@ -880,6 +919,18 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       historyIds.add(msg['id']?.toString() ?? '');
     }
     messages.addAll(historyMessages);
+
+    // 缓存点3：在截断后的历史消息末尾打标记
+    // 这样每轮只有新增的最后两条（一问一答）不命中缓存，前面所有历史都命中
+    if (historyMessages.isNotEmpty) {
+      messages.last['cache_control'] = {'type': 'ephemeral'};
+    }
+
+    // 动态上下文放在历史之后，不打缓存标记（每轮都会变化）
+    if (dynamicContext.isNotEmpty) {
+      messages.add({'role': 'system', 'content': dynamicContext});
+    }
+
     var lastIsCurrentUser = false;
     // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
     // 标记以免下方再次追加造成重复喂给模型。
@@ -977,6 +1028,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'CONTEXT',
           '聊天上下文：${messages.length - 1} 条，估算 ${window.tokens}/$maxContext token'
               '，本轮整条截断 ${window.removed} 条；系统提示、世界书与工具另计');
+
+      // 截断后重新在历史末尾打缓存标记
+      // 找到最后一条 user 或 assistant 消息（排除后面可能插入的 system）
+      for (int i = messages.length - 1; i >= 0; i--) {
+        final role = messages[i]['role']?.toString();
+        if (role == 'user' || role == 'assistant') {
+          messages[i]['cache_control'] = {'type': 'ephemeral'};
+          break;
+        }
+      }
     }
     // 世界书注入：在聊天历史之后、当前用户消息之前插入，保持历史缓存稳定。
     if (worldBookContext.isNotEmpty) {
@@ -1058,15 +1119,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // compatibility is handled by retrying the exact same turn without only
       // the unsupported tool fields after an explicit provider rejection.
       final toolCallingEnabled = allowTools && tools.isNotEmpty;
-      final promptCache = <String, dynamic>{
-        'type': 'ephemeral',
-      };
+
       final payload = <String, dynamic>{
         'model': modelName,
         'messages': messages,
         'max_tokens': maxContext,
-        if (messages.isNotEmpty && messages.first['role'] == 'system')
-          'cache_control': promptCache,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         if (onDelta != null) 'stream': true,
@@ -1396,6 +1453,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 estimateTokens(replyText);
         final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
             promptTokens + completionTokens;
+
+        // 读取缓存命中统计（OpenAI 兼容格式）
+        final cachedTokens = usage['prompt_tokens_details'] is Map
+            ? ((usage['prompt_tokens_details'] as Map)['cached_tokens'] as num?)
+                ?.toInt()
+            : (usage['cached_tokens'] as num?)?.toInt();
+
+        if (cachedTokens != null && cachedTokens > 0) {
+          AppLogService.instance.add(
+            'CACHE',
+            'Prompt 缓存命中：$cachedTokens / $promptTokens tokens (${(cachedTokens * 100 / promptTokens).toStringAsFixed(1)}%)',
+          );
+        }
+
         AppLogService.instance.add('AI_TRACE', '开始写入 usage');
         await db.recordAiUsage(
           botId: botId,

@@ -7,7 +7,7 @@ import 'db.dart';
 
 // ================= 全局主题系统 =================
 // 每个主题含日/夜两套主色，夜间更沉静、更护眼。
-class TideBackground extends StatelessWidget {
+class TideBackground extends StatefulWidget {
   const TideBackground({
     super.key,
     required this.child,
@@ -22,35 +22,78 @@ class TideBackground extends StatelessWidget {
   final bool excludeGlobalBackground;
 
   @override
+  State<TideBackground> createState() => _TideBackgroundState();
+}
+
+class _TideBackgroundState extends State<TideBackground> {
+  static final Map<String, ImageProvider> _imageCache = {};
+  static String _lastGlobalPath = '';
+  static ImageProvider? _lastGlobalImage;
+
+  @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final useGlobalBackground =
-        theme.hasGlobalBackground && !excludeGlobalBackground;
-    final path =
-        backgroundPath ?? (useGlobalBackground ? theme.globalBackground : '');
-    final image = backgroundPath != null
-        ? FileImage(File(backgroundPath!))
-        : useGlobalBackground
-            ? theme.globalBackgroundImage
-            : null;
+        theme.hasGlobalBackground && !widget.excludeGlobalBackground;
+    final path = widget.backgroundPath ??
+        (useGlobalBackground ? theme.globalBackground : '');
+
+    ImageProvider? image;
+    if (widget.backgroundPath != null) {
+      // 聊天背景优先，使用缓存
+      final cachePath = widget.backgroundPath!;
+      if (_imageCache.containsKey(cachePath)) {
+        image = _imageCache[cachePath];
+      } else {
+        image = FileImage(File(cachePath));
+        _imageCache[cachePath] = image;
+      }
+    } else if (useGlobalBackground) {
+      // 全局背景使用主题提供的 ImageProvider，避免重复创建
+      if (theme.globalBackground == _lastGlobalPath &&
+          _lastGlobalImage != null) {
+        image = _lastGlobalImage;
+      } else {
+        image = theme.globalBackgroundImage;
+        _lastGlobalPath = theme.globalBackground;
+        _lastGlobalImage = image;
+      }
+    }
+
     final hasImage = image != null &&
-        (backgroundPath != null || theme.isGlobalBackgroundReady) &&
+        theme.isGlobalBackgroundReady &&
         (path.isEmpty || File(path).existsSync());
-    final scrimOpacity = opacity ?? theme.effectiveBackgroundOpacity;
+
+    // 无背景图时直接用纯色底，避免 Stack 切换时的闪烁
+    if (!hasImage) {
+      return ColoredBox(
+        color: theme.pageBackground,
+        child: widget.child,
+      );
+    }
+
+    final scrimOpacity = widget.opacity ?? theme.effectiveBackgroundOpacity;
     final scrim = Colors.black.withValues(alpha: scrimOpacity);
+
+    // 使用 RepaintBoundary 让背景图单独成层，避免重绘
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColoredBox(color: theme.pageBackground),
-        if (hasImage)
-          Image(
+        RepaintBoundary(
+          child: Image(
             image: image,
             fit: BoxFit.cover,
             gaplessPlayback: true,
-            errorBuilder: (_, __, ___) => const SizedBox.expand(),
+            errorBuilder: (_, __, ___) =>
+                ColoredBox(color: theme.pageBackground),
           ),
-        if (hasImage) IgnorePointer(child: ColoredBox(color: scrim)),
-        if (hasImage) child else child,
+        ),
+        IgnorePointer(
+          child: RepaintBoundary(
+            child: ColoredBox(color: scrim),
+          ),
+        ),
+        widget.child,
       ],
     );
   }
