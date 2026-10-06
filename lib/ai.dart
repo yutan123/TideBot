@@ -1,4 +1,3 @@
-import 'chat_context_window.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1020,14 +1019,27 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     // Only conversation messages count; system prompts and tools are separate.
     if (includeChatHistory) {
       final chat = messages.skip(1).toList();
-      final window = rollChatWindow(chat, maxContext);
-      if (window.removed > 0) {
-        messages.removeRange(1, 1 + window.removed);
+      // 历史截断策略：只要总 token 达到上限的 80%，就删除最旧的 1 条消息（渐进式）
+      // 这样可以保持缓存前缀相对稳定，避免一次性删除一半导致缓存完全失效
+      final softLimit = (maxContext * 0.8).toInt();
+      var removed = 0;
+      while (chat.isNotEmpty) {
+        final sizes = chat
+            .map((m) => estimateTokens(m['content']?.toString() ?? ''))
+            .toList();
+        final tokens = sizes.fold<int>(0, (a, b) => a + b);
+        if (tokens < softLimit) {
+          AppLogService.instance.add('CONTEXT',
+              '聊天上下文：${chat.length} 条，估算 $tokens/$maxContext token（软上限 $softLimit），渐进式截断已移除 $removed 条；系统提示、世界书与工具另计');
+          break;
+        }
+        // 达到软上限，删除最旧的 1 条
+        chat.removeAt(0);
+        removed++;
       }
-      AppLogService.instance.add(
-          'CONTEXT',
-          '聊天上下文：${messages.length - 1} 条，估算 ${window.tokens}/$maxContext token'
-              '，本轮整条截断 ${window.removed} 条；系统提示、世界书与工具另计');
+      if (removed > 0) {
+        messages.removeRange(1, 1 + removed);
+      }
 
       // 截断后重新在历史末尾打缓存标记
       // 找到最后一条 user 或 assistant 消息（排除后面可能插入的 system）
@@ -1197,37 +1209,50 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // 处理流式响应（SSE 格式）或非流式响应
       String? innerThought;
       final streamTagBuffer = StringBuffer();
+      final innerThoughtBuffer = StringBuffer();
       var inThought = false;
+      var hasToolCallStarted = false;
       void consumeDelta(String value) {
+        // 检测工具调用开始（JSON 格式特征）
+        if (!hasToolCallStarted && value.contains('"tool_calls"')) {
+          hasToolCallStarted = true;
+        }
+        // 如果工具调用已开始，不再推送任何内容到 UI（避免泄露参数）
+        if (hasToolCallStarted) {
+          return;
+        }
+
         streamTagBuffer.write(value);
         var source = streamTagBuffer.toString();
         while (source.isNotEmpty) {
           if (inThought) {
             final end = source.indexOf('</inner_thought>');
             if (end < 0) {
-              streamTagBuffer
-                ..clear()
-                ..write(source.length > 15
-                    ? source.substring(source.length - 15)
-                    : source);
+              // 独白未结束，继续累积到独白 buffer
+              innerThoughtBuffer.write(source);
+              streamTagBuffer.clear();
               return;
             }
+            // 独白结束，保存并继续处理剩余内容
+            innerThoughtBuffer.write(source.substring(0, end));
+            innerThought = innerThoughtBuffer.toString().trim();
+            innerThoughtBuffer.clear();
             source = source.substring(end + '</inner_thought>'.length);
             inThought = false;
+            streamTagBuffer.clear();
+            streamTagBuffer.write(source);
           } else {
             final start = source.indexOf('<inner_thought>');
             if (start < 0) {
-              final safeLength = source.length > 15 ? source.length - 15 : 0;
-              if (safeLength > 0) {
-                final visible = source.substring(0, safeLength);
-                replyText += visible;
-                onDelta?.call(visible);
+              // 没有独白标签，直接输出所有可见内容（不再保留 15 字符）
+              if (source.isNotEmpty) {
+                replyText += source;
+                onDelta?.call(source);
               }
-              streamTagBuffer
-                ..clear()
-                ..write(source.substring(safeLength));
+              streamTagBuffer.clear();
               return;
             }
+            // 发现独白标签，输出标签前的可见内容
             if (start > 0) {
               final visible = source.substring(0, start);
               replyText += visible;
@@ -1235,9 +1260,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             }
             source = source.substring(start + '<inner_thought>'.length);
             inThought = true;
+            streamTagBuffer.clear();
+            streamTagBuffer.write(source);
           }
         }
-        streamTagBuffer.clear();
       }
 
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
@@ -1277,11 +1303,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
         if (streamTagBuffer.isNotEmpty) {
           final tail = streamTagBuffer.toString();
-          if (!inThought) {
+          if (!inThought && !hasToolCallStarted) {
             replyText += tail;
             onDelta.call(tail);
           }
           streamTagBuffer.clear();
+        }
+        // 流式结束后如果独白 buffer 还有内容（结束标签丢失），也保存
+        if (inThought && innerThoughtBuffer.isNotEmpty) {
+          innerThought = innerThoughtBuffer.toString().trim();
+          innerThoughtBuffer.clear();
         }
         final rawThought = replyText;
         if (rawThought.contains('<inner_thought>')) {
@@ -1497,7 +1528,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (replyText.isEmpty && generatedImagePath != null) {
           replyText = '图片已生成。';
         }
-        if (replyText.isEmpty) {
+        // 允许工具成功执行但无文本的情况（贴纸/心情已设置，模型未返回说明文本）
+        // 注意：toolSilenced 时会在前面 return，不会走到这里
+        if (replyText.isEmpty && (toolSticker == null && toolMood == null)) {
           const detail = '工具已完成，但模型没有返回可显示的说明。请查看 RESPONSE_DEBUG 日志或重试。';
           AppLogService.instance.add('RESPONSE_DEBUG', detail);
           return {
@@ -1505,6 +1538,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'error_log': 'HTTP 200\n$detail\n原始响应：$errorBody',
             'error_code': 'empty_response',
           };
+        }
+        // 如果工具已设置但文本为空，记录日志但允许继续（气泡会显示贴纸/心情）
+        if (replyText.isEmpty) {
+          AppLogService.instance.add(
+            'RESPONSE_DEBUG',
+            '工具已执行（贴纸=${toolSticker != null}，心情=${toolMood != null}）但模型未返回文本，允许继续',
+          );
         }
 
         // 工具调用可能已返回图片路径，先初始化供下方落库使用.
@@ -1530,7 +1570,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
           }
         }
-        final hasInnerThought = innerThought != null && innerThought.isNotEmpty;
+        final hasInnerThought = innerThought?.isNotEmpty == true;
         final segmented = !forceSingleReply &&
             audioPath == null &&
             !hasInnerThought &&
@@ -4088,7 +4128,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (requireEmotion) {
       parts.add(
-        '【本轮强制协议】必须先通过 set_emotion 调用一次写入心情，再给出正常、可见的文字回复。不得调用 choose_silence，不得在正文输出心情、表情包、工具名或内部标签。',
+        '【本轮强制协议】必须先通过 set_emotion 调用一次写入心情，再给出正常、可见的文字回复。工具调用成功后必须返回可见的文字内容（如"好的"、"明白了"等），不得返回空 content。不得调用 choose_silence，不得在正文输出心情、表情包、工具名或内部标签。',
       );
     }
     if (stickerEmotions.isNotEmpty) {

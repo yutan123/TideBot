@@ -79,12 +79,10 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
     debugPrint('[startup] MCP auto-connect skipped: $e');
   }));
 
+  // 外部 API 服务已移到后台 isolate 启动，这里只记录日志
   final externalApiEnabled = await _readStartupKV('external_api_enabled');
   if (externalApiEnabled == 'true') {
-    unawaited(ExternalApiService.instance.start().catchError((e, st) {
-      debugPrint('[startup] external API skipped: $e');
-      return false;
-    }));
+    debugPrint('[startup] 外部 API 服务将在后台 isolate 中启动');
   }
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());
@@ -181,6 +179,27 @@ void onStart(ServiceInstance service) {
   Timer? heartbeat;
   var tickRunning = false;
   var futureTasksRunning = false;
+
+  // 启动外部 API 服务（必须在后台 isolate 中运行，否则 APP 切到后台时会暂停）
+  Future<void> ensureExternalApi() async {
+    try {
+      final db = DBManager();
+      final enabled = await db.getKV('external_api_enabled') == 'true';
+      if (enabled) {
+        final started = await ExternalApiService.instance.start();
+        if (started) {
+          AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 中启动成功');
+        } else {
+          AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 中启动失败');
+        }
+      }
+    } catch (error) {
+      AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 启动异常：$error');
+    }
+  }
+
+  // 首次启动时检查外部 API
+  unawaited(ensureExternalApi());
 
   Future<void> recordError(String scope, Object error, StackTrace stack) async {
     final message = '$scope: $error';
@@ -289,6 +308,12 @@ void onStart(ServiceInstance service) {
     if (!tickRunning) {
       unawaited(tick());
     }
+  });
+
+  // Handle external API service control from UI
+  service.on('ensure_external_api').listen((_) async {
+    debugPrint('[service] ensure_external_api received');
+    unawaited(ensureExternalApi());
   });
 
   unawaited(() async {

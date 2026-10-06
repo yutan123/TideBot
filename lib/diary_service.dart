@@ -89,8 +89,19 @@ class DiaryService {
     final db = DBManager();
     final transcript = messages
         .where((m) => m['type'] == 'text' || m['type'] == 'audio')
-        .map((m) =>
-            '${m['role'] == 'assistant' ? '角色' : '用户'}：${m['content'] ?? ''}')
+        .map((m) {
+          final stamp = (m['timestamp'] as num?)?.toInt();
+          final timeStr = stamp != null
+              ? DateTime.fromMillisecondsSinceEpoch(stamp)
+                  .toIso8601String()
+                  .substring(11, 16) // HH:mm
+              : '';
+          final role = m['role'] == 'assistant' ? '角色' : '用户';
+          final content = m['content'] ?? '';
+          return timeStr.isEmpty
+              ? '$role：$content'
+              : '[$timeStr] $role：$content';
+        })
         .where((line) => line.trim().isNotEmpty)
         .join('\n');
     if (transcript.isEmpty) return;

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -366,16 +367,19 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       await db.setKV('external_api_bot_id', botId);
     }
     await db.setKV('external_api_enabled', '$value');
-    bool ok = true;
+
+    // 通知后台服务 isolate 启动或停止外部 API
     if (value) {
-      ok = await ExternalApiService.instance.start();
+      FlutterBackgroundService().invoke('ensure_external_api');
+      AppLogService.instance.add('EXTERNAL_API', '已通知后台服务启动外部 API');
     } else {
       await ExternalApiService.instance.stop();
+      AppLogService.instance.add('EXTERNAL_API', '已停止外部 API 服务');
     }
+
     await _load();
     if (mounted) {
-      GlobalNotice.show(
-          ok ? (value ? '外部访问服务已启动' : '外部访问服务已停止') : '外部访问服务启动失败，请查看开发日志');
+      GlobalNotice.show(value ? '外部访问服务已启动' : '外部访问服务已停止');
     }
   }
 

@@ -112,20 +112,29 @@ class ExternalApiService {
   }
 
   Future<void> _listen(HttpServer server) async {
-    await for (final request in server) {
-      unawaited(_handle(request));
+    try {
+      await for (final request in server) {
+        unawaited(_handle(request));
+      }
+    } catch (error, stackTrace) {
+      AppLogService.instance.add('EXTERNAL_API', '监听循环异常：$error');
+      AppLogService.instance.add('EXTERNAL_API',
+          '堆栈：${stackTrace.toString().split('\n').take(10).join('\n')}');
     }
   }
 
   Future<void> _handle(HttpRequest request) async {
     final requestLabel =
         '${request.method} ${request.uri.path} from ${request.connectionInfo?.remoteAddress.address ?? 'unknown'}';
+    AppLogService.instance.add('EXTERNAL_API', '开始处理请求：$requestLabel');
     try {
       if (request.method == 'OPTIONS') {
+        AppLogService.instance.add('EXTERNAL_API', 'OPTIONS 预检请求');
         _json(request, 204, const {});
         return;
       }
       if (!_allowRequest(request)) {
+        AppLogService.instance.add('EXTERNAL_API', '请求被限流拒绝');
         return _json(request, 429, {
           'error': {
             'message': 'Rate limit exceeded',
@@ -137,7 +146,10 @@ class ExternalApiService {
       AppLogService.instance.add('EXTERNAL_API', requestLabel);
       final db = DBManager();
       final expected = (await db.getKV('external_api_key') ?? '').trim();
+      AppLogService.instance
+          .add('EXTERNAL_API', '读取配置的 API Key 长度=${expected.length}');
       if (expected.isEmpty) {
+        AppLogService.instance.add('EXTERNAL_API', '拒绝请求：未配置 API Key');
         return _json(request, 503, {
           'error': {
             'message': 'External API key is not configured',
@@ -150,7 +162,10 @@ class ExternalApiService {
       final supplied = authorization.startsWith('Bearer ')
           ? authorization.substring(7).trim()
           : request.uri.queryParameters['api_key'] ?? '';
+      AppLogService.instance
+          .add('EXTERNAL_API', '客户端提供的 API Key 长度=${supplied.length}');
       if (supplied != expected) {
+        AppLogService.instance.add('EXTERNAL_API', '拒绝请求：API Key 不匹配');
         return _json(request, 401, {
           'error': {
             'message': 'Invalid API key',
@@ -158,11 +173,18 @@ class ExternalApiService {
           }
         });
       }
+      AppLogService.instance.add('EXTERNAL_API', 'API Key 验证通过');
       if (request.method == 'GET' && request.uri.path == '/v1/models') {
         final botId = await db.getKV('external_api_bot_id') ?? '';
         final bot = botId.isEmpty ? null : await db.getBotById(botId);
-        if (bot == null) return _error(request, 400, '未选择可用机器人');
-        return _json(request, 200, {
+        AppLogService.instance.add('EXTERNAL_API',
+            '/v1/models 查询机器人结果：bot=${bot != null ? bot['name'] : 'null'}');
+        if (bot == null) {
+          AppLogService.instance
+              .add('EXTERNAL_API', '/v1/models 返回 400：未选择可用机器人');
+          return _error(request, 400, '未选择可用机器人');
+        }
+        final response = {
           'object': 'list',
           'data': [
             {
@@ -171,7 +193,10 @@ class ExternalApiService {
               'owned_by': 'tidebot',
             }
           ]
-        });
+        };
+        AppLogService.instance
+            .add('EXTERNAL_API', '/v1/models 返回成功：model=${_modelId(bot)}');
+        return _json(request, 200, response);
       }
       if (request.method == 'POST' &&
           request.uri.path == '/v1/chat/completions') {
@@ -179,14 +204,20 @@ class ExternalApiService {
             .bind(request)
             .join()
             .timeout(const Duration(seconds: 15));
+        AppLogService.instance.add('EXTERNAL_API', '接收到请求体，长度=${body.length}');
         if (body.length > 2 * 1024 * 1024) {
           return _error(request, 413, '请求体超过 2 MB 限制');
         }
         final decoded = jsonDecode(body);
         if (decoded is! Map) return _error(request, 400, '请求体必须是 JSON 对象');
+        AppLogService.instance
+            .add('EXTERNAL_API', 'JSON 解析成功，stream=${decoded['stream']}');
         final stream = decoded['stream'] == true;
         final botId = await db.getKV('external_api_bot_id') ?? '';
+        AppLogService.instance.add('EXTERNAL_API', '读取绑定的 botId=$botId');
         final bot = botId.isEmpty ? null : await db.getBotById(botId);
+        AppLogService.instance.add('EXTERNAL_API',
+            '查询机器人结果：bot=${bot != null ? bot['name'] : 'null'}');
         if (bot == null) return _error(request, 400, '未选择可用机器人');
         final disabled = isBotDisabled(bot['is_disabled']);
         AppLogService.instance.add(
@@ -197,21 +228,29 @@ class ExternalApiService {
           return _error(request, 403, '所选机器人已禁用');
         }
         final messages = decoded['messages'];
+        AppLogService.instance.add('EXTERNAL_API',
+            'messages 类型=${messages.runtimeType}，长度=${messages is List ? messages.length : 'N/A'}');
         if (messages is! List || messages.isEmpty) {
           return _error(request, 400, 'messages 不能为空');
         }
         final normalized = _normalizeMessages(messages);
+        AppLogService.instance.add('EXTERNAL_API',
+            '消息标准化结果：${normalized != null ? normalized.length : 'null'} 条');
         if (normalized == null || normalized.isEmpty) {
           return _error(request, 400, 'messages 格式无效');
         }
         final userMessages = normalized
             .where((item) => item['role'] == 'user')
             .toList(growable: false);
+        AppLogService.instance
+            .add('EXTERNAL_API', 'user 消息数量=${userMessages.length}');
         if (userMessages.isEmpty) {
           return _error(request, 400, 'messages 必须包含 user 消息');
         }
         final latestUser = userMessages.last;
         final text = latestUser['text']?.toString().trim() ?? '';
+        AppLogService.instance
+            .add('EXTERNAL_API', '最后一条 user 消息文本长度=${text.length}');
         final imagePaths = <String>[];
         for (final image in latestUser['images'] as List<dynamic>) {
           final path = await _materializeImage(image.toString());
@@ -358,8 +397,10 @@ class ExternalApiService {
     } on AICancelledException {
       AppLogService.instance.add('EXTERNAL_API', '客户端已断开，已取消上游模型请求');
       return;
-    } catch (error) {
+    } catch (error, stackTrace) {
       AppLogService.instance.add('EXTERNAL_API', '请求处理失败：$error');
+      AppLogService.instance.add('EXTERNAL_API',
+          '堆栈跟踪：${stackTrace.toString().split('\n').take(5).join('\n')}');
       try {
         _error(request, 500, 'Internal server error');
       } catch (_) {
@@ -505,11 +546,19 @@ class ExternalApiService {
       });
 
   void _json(HttpRequest request, int code, Map<String, dynamic> body) {
-    request.response.statusCode = code;
-    request.response.headers.contentType = ContentType.json;
-    request.response.headers
-        .set(HttpHeaders.accessControlAllowOriginHeader, '*');
-    request.response.write(jsonEncode(body));
-    request.response.close();
+    try {
+      request.response.statusCode = code;
+      request.response.headers.contentType = ContentType.json;
+      request.response.headers
+          .set(HttpHeaders.accessControlAllowOriginHeader, '*');
+      request.response.write(jsonEncode(body));
+      request.response.close();
+      AppLogService.instance.add('EXTERNAL_API', '响应已发送：$code');
+    } catch (error) {
+      AppLogService.instance.add('EXTERNAL_API', '发送响应失败：$error');
+      try {
+        request.response.close();
+      } catch (_) {}
+    }
   }
 }
