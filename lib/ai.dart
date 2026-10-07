@@ -919,8 +919,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     messages.addAll(historyMessages);
 
-    // 缓存点3：在截断后的历史消息末尾打标记
-    // 这样每轮只有新增的最后两条（一问一答）不命中缓存，前面所有历史都命中
+    // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
+    // 确保缓存标记后面只有动态上下文和当前用户消息（不会命中缓存）
     if (historyMessages.isNotEmpty) {
       messages.last['cache_control'] = {'type': 'ephemeral'};
     }
@@ -1041,8 +1041,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         messages.removeRange(1, 1 + removed);
       }
 
-      // 截断后重新在历史末尾打缓存标记
-      // 找到最后一条 user 或 assistant 消息（排除后面可能插入的 system）
+      // 截断后重新在历史消息末尾打缓存标记
+      // 注意：此时 messages 包含了 dynamicContext，需要找到它之前的最后一条历史消息
+      // dynamicContext 是在第 928-930 行插入的，在所有历史消息之后
       for (int i = messages.length - 1; i >= 0; i--) {
         final role = messages[i]['role']?.toString();
         if (role == 'user' || role == 'assistant') {
@@ -2898,16 +2899,30 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final prefs = await SharedPreferences.getInstance();
     final imageModelId =
         (prefs.getString('image_gen_model_$botId') ?? '').trim();
-    if (imageModelId.isEmpty) return null;
+    if (imageModelId.isEmpty) {
+      AppLogService.instance.add('IMAGE_GEN', '生图模型未配置（botId=$botId）');
+      return null;
+    }
     final provider = await db.getChatProviderById(imageModelId);
-    if (provider == null) return null;
+    if (provider == null) {
+      AppLogService.instance
+          .add('IMAGE_GEN', '生图模型提供商不存在（modelId=$imageModelId）');
+      return null;
+    }
     final baseUrl = (provider['base_url']?.toString() ?? '').replaceFirst(
       RegExp(r'/+$'),
       '',
     );
-    if (baseUrl.isEmpty) return null;
+    if (baseUrl.isEmpty) {
+      AppLogService.instance.add('IMAGE_GEN', '生图模型 baseUrl 为空');
+      return null;
+    }
     final styleRaw = (await db.getKV('bot_image_style') ?? '').trim();
     final imagePrompt = _imagePromptWithStyle(prompt, styleRaw);
+    AppLogService.instance.add(
+      'IMAGE_GEN',
+      '开始请求生图接口：$baseUrl/images/generations（model=${provider['model']}，promptLength=${imagePrompt.length}）',
+    );
     try {
       final response = await http
           .post(
@@ -2923,11 +2938,27 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               'size': '1024x1024',
             }),
           )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode != 200) return null;
+          .timeout(const Duration(seconds: 120));
+      AppLogService.instance.add(
+        'IMAGE_GEN',
+        '生图接口响应：HTTP ${response.statusCode}（bodyLength=${response.bodyBytes.length}）',
+      );
+      if (response.statusCode != 200) {
+        AppLogService.instance.add(
+          'IMAGE_GEN',
+          '生图接口返回非 200 状态码：${response.statusCode}，body=${utf8.decode(response.bodyBytes, allowMalformed: true)}',
+        );
+        return null;
+      }
       final body = jsonDecode(utf8.decode(response.bodyBytes));
       final data = body['data'];
-      if (data is! List || data.isEmpty) return null;
+      if (data is! List || data.isEmpty) {
+        AppLogService.instance.add(
+          'IMAGE_GEN',
+          '生图接口返回的 data 字段为空或格式错误：${body.toString()}',
+        );
+        return null;
+      }
       final item = data.first;
       final directory = await getApplicationDocumentsDirectory();
       final path =
@@ -2935,18 +2966,36 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final b64 = item['b64_json']?.toString();
       if (b64 != null && b64.isNotEmpty) {
         await File(path).writeAsBytes(base64Decode(b64));
+        AppLogService.instance.add('IMAGE_GEN', '生图成功（base64 模式）：$path');
         return path;
       }
       final url = item['url']?.toString() ?? '';
       if (url.startsWith('http')) {
+        AppLogService.instance.add('IMAGE_GEN', '开始下载图片：$url');
         final file =
-            await http.get(Uri.parse(url)).timeout(const Duration(seconds: 45));
+            await http.get(Uri.parse(url)).timeout(const Duration(seconds: 90));
         if (file.statusCode == 200) {
           await File(path).writeAsBytes(file.bodyBytes);
+          AppLogService.instance.add('IMAGE_GEN', '生图成功（URL 下载模式）：$path');
           return path;
+        } else {
+          AppLogService.instance.add(
+            'IMAGE_GEN',
+            '图片下载失败：HTTP ${file.statusCode}',
+          );
         }
+      } else {
+        AppLogService.instance.add(
+          'IMAGE_GEN',
+          '生图接口返回的 data 既无 b64_json 也无有效 url：${item.toString()}',
+        );
       }
-    } catch (_) {}
+    } catch (e, stack) {
+      AppLogService.instance.add(
+        'IMAGE_GEN',
+        '生图异常：$e\n${stack.toString().split('\n').take(5).join('\n')}',
+      );
+    }
     return null;
   }
 
