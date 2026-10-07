@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'db.dart';
 import 'theme.dart';
+import 'ui_components.dart';
 
 class DiaryCalendarWidget extends StatefulWidget {
   final String botId;
@@ -223,23 +224,51 @@ class DiaryDetailPage extends StatelessWidget {
               tooltip: '删除日记',
               icon: const Icon(Icons.delete_outline_rounded),
               onPressed: () async {
-                final confirmed = await showDialog<bool>(
+                final confirmed = await showTideDialog<bool>(
                   context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('删除这篇日记？'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('取消'),
+                  builder: (dialogContext) {
+                    final theme = TideTheme.of(dialogContext);
+                    return TideDialogSurface(
+                      child: TideDialogs.glassContent(
+                        context: dialogContext,
+                        children: [
+                          Text(
+                            '删除这篇日记？',
+                            style: TextStyle(
+                              color: theme.textStrong,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, false),
+                                child: Text(
+                                  '取消',
+                                  style: TextStyle(color: theme.textWeak),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, true),
+                                child: Text(
+                                  '删除',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('删除'),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 );
-                if (confirmed == true) {
+                if (confirmed == true && context.mounted) {
                   await DBManager().deleteDiary(botId, dateKey);
                   if (context.mounted) Navigator.pop(context, true);
                 }

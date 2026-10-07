@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'db.dart';
@@ -600,5 +601,232 @@ $conversationSummary
   Future<void> deleteBook(String bookId) async {
     final database = await db.database;
     await database.delete('world_books', where: 'id = ?', whereArgs: [bookId]);
+  }
+
+  // ========== N-gram 语义匹配（零成本方案）==========
+
+  /// 生成 n-gram 集合
+  static Set<String> _ngrams(String text, int n) {
+    final grams = <String>{};
+    final cleaned = text.replaceAll(RegExp(r'\s+'), '');
+    for (int i = 0; i <= cleaned.length - n; i++) {
+      grams.add(cleaned.substring(i, i + n));
+    }
+    return grams;
+  }
+
+  /// 计算 Jaccard 相似度
+  static double _jaccardSimilarity(String a, String b, int n) {
+    final gramsA = _ngrams(a, n);
+    final gramsB = _ngrams(b, n);
+    if (gramsA.isEmpty && gramsB.isEmpty) return 1.0;
+    if (gramsA.isEmpty || gramsB.isEmpty) return 0.0;
+    final intersection = gramsA.intersection(gramsB).length;
+    final union = gramsA.union(gramsB).length;
+    return union > 0 ? intersection / union : 0.0;
+  }
+
+  /// 混合相似度（2-gram + 3-gram）
+  static double hybridSimilarity(String a, String b) {
+    return _jaccardSimilarity(a, b, 2) * 0.6 +
+        _jaccardSimilarity(a, b, 3) * 0.4;
+  }
+
+  /// N-gram 语义激活（用于关键词匹配失败时的补充）
+  Future<List<WorldBookEntry>> activateEntriesNGram({
+    required String botId,
+    required String query,
+    double threshold = 0.2,
+    int limit = 5,
+  }) async {
+    final database = await db.database;
+
+    // 获取所有启用条目
+    final rows = await database.query(
+      'world_book_entries',
+      where: '(bot_id = ? OR bot_id IS NULL) AND enabled = 1',
+      whereArgs: [botId],
+    );
+
+    if (rows.isEmpty) return [];
+
+    final entries = rows.map((r) => WorldBookEntry.fromMap(r)).toList();
+    final scored = <Map<String, dynamic>>[];
+
+    for (final entry in entries) {
+      // 计算标题和内容的综合相似度
+      final titleSim = hybridSimilarity(query, entry.title);
+      final contentSim = hybridSimilarity(query, entry.content);
+      final score = max(titleSim * 1.2, contentSim); // 标题权重更高
+
+      if (score > threshold) {
+        scored.add({'entry': entry, 'score': score});
+      }
+    }
+
+    // 按相似度排序
+    scored
+        .sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+
+    // 更新激活统计
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final item in scored.take(limit)) {
+      final entry = item['entry'] as WorldBookEntry;
+      await database.update(
+        'world_book_entries',
+        {
+          'activation_count': entry.activationCount + 1,
+          'last_activated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [entry.id],
+      );
+    }
+
+    return scored.take(limit).map((s) => s['entry'] as WorldBookEntry).toList();
+  }
+
+  // ========== 记忆评分系统 ==========
+
+  /// 计算记忆激活评分（综合时间衰减、激活强度、情绪匹配）
+  static double calculateActivationScore({
+    required WorldBookEntry entry,
+    required String query,
+    double currentEmotionValence = 0.0, // -1到+1，当前用户/机器人情绪
+  }) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 1. 时间新近度得分（Recency）
+    final daysSinceActivation = entry.lastActivatedAt != null
+        ? (now - entry.lastActivatedAt!) / 86400000
+        : 9999.0;
+    final recencyScore = 1.0 / (1.0 + daysSinceActivation * 0.05); // 20天后衰减到0.5
+
+    // 2. 历史激活强度（Signal）
+    final signalScore = min(entry.activationCount * 0.1, 1.0);
+
+    // 3. 关键词匹配强度（Cue）
+    final keyMatchCount = entry.keys
+        .where((key) => query.toLowerCase().contains(key.toLowerCase()))
+        .length;
+    final cueScore = min(keyMatchCount / max(entry.keys.length, 1), 1.0);
+
+    // 4. 优先级权重
+    final priorityWeight = entry.priority / 100.0;
+
+    // 综合评分（可根据实际情况调整权重）
+    final rawScore = signalScore * 0.2 +
+        cueScore * 2.0 +
+        recencyScore * 1.0 +
+        priorityWeight * 0.5;
+
+    // Sigmoid 归一化到 0-1
+    return 1.0 / (1.0 + exp(-rawScore));
+  }
+
+  /// 智能激活（关键词 + N-gram + 评分排序）
+  Future<List<WorldBookEntry>> activateEntriesIntelligent({
+    required String botId,
+    required String conversationText,
+    int maxResults = 10,
+    double ngramThreshold = 0.2,
+  }) async {
+    // 第一层：关键词精确匹配
+    final keywordMatches = await activateEntries(
+      botId: botId,
+      conversationText: conversationText,
+    );
+
+    // 如果关键词匹配足够，直接返回
+    if (keywordMatches.length >= 5) {
+      return keywordMatches.take(maxResults).toList();
+    }
+
+    // 第二层：N-gram 语义匹配（补充）
+    final ngramMatches = await activateEntriesNGram(
+      botId: botId,
+      query: conversationText,
+      threshold: ngramThreshold,
+      limit: maxResults - keywordMatches.length,
+    );
+
+    // 合并去重
+    final allMatches = <String, WorldBookEntry>{};
+    for (final entry in keywordMatches) {
+      allMatches[entry.id] = entry;
+    }
+    for (final entry in ngramMatches) {
+      allMatches[entry.id] = entry;
+    }
+
+    // 按评分排序
+    final entries = allMatches.values.toList();
+    entries.sort((a, b) {
+      final scoreA =
+          calculateActivationScore(entry: a, query: conversationText);
+      final scoreB =
+          calculateActivationScore(entry: b, query: conversationText);
+      return scoreB.compareTo(scoreA);
+    });
+
+    return entries.take(maxResults).toList();
+  }
+
+  // ========== 工具调用：记忆库搜索 ==========
+
+  /// 供机器人主动搜索记忆库（tool 调用）
+  Future<Map<String, dynamic>> searchMemoryForTool({
+    required String botId,
+    required String query,
+    int limit = 5,
+  }) async {
+    try {
+      debugPrint('[WorldBook] 机器人主动搜索记忆：$query');
+
+      // 使用智能激活（关键词 + N-gram）
+      final results = await activateEntriesIntelligent(
+        botId: botId,
+        conversationText: query,
+        maxResults: limit,
+      );
+
+      if (results.isEmpty) {
+        return {
+          'success': true,
+          'found': false,
+          'message': '没有找到相关记忆',
+          'results': [],
+        };
+      }
+
+      // 格式化返回结果
+      final formattedResults = results.map((entry) {
+        return {
+          'title': entry.title,
+          'content': entry.content,
+          'comment': entry.comment,
+          'activation_count': entry.activationCount,
+          'last_activated': entry.lastActivatedAt != null
+              ? DateTime.fromMillisecondsSinceEpoch(entry.lastActivatedAt!)
+                  .toString()
+                  .substring(0, 19)
+              : null,
+        };
+      }).toList();
+
+      return {
+        'success': true,
+        'found': true,
+        'count': results.length,
+        'results': formattedResults,
+        'message': '找到 ${results.length} 条相关记忆',
+      };
+    } catch (e) {
+      debugPrint('[WorldBook] 搜索记忆异常: $e');
+      return {
+        'success': false,
+        'error': e.toString(),
+      };
+    }
   }
 }

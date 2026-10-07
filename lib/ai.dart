@@ -717,18 +717,31 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
     final profileContext = '\n$coreSettings';
 
-    // 世界书激活：只有带关键词的普通条目参与正则/关键词匹配。
+    // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
+    final conversationForMatch =
+        '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}';
     final worldBookEntries = activeGame == null
-        ? await WorldBookService.instance.activateEntries(
+        ? await WorldBookService.instance.activateEntriesIntelligent(
             botId: botId,
-            conversationText:
-                '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}',
-            scanDepth: 10,
+            conversationText: conversationForMatch,
+            maxResults: 10,
           )
         : <WorldBookEntry>[];
 
     final worldBookContext =
         WorldBookService.formatActivatedEntries(worldBookEntries);
+
+    // 第三层：如果世界书匹配少于3条，在系统提示中增加记忆库候选列表
+    String memoryContextHint = '';
+    if (worldBookEntries.length < 3 && activeGame == null) {
+      final recentMemories = await db.queryMemories(botId, limit: 15);
+      if (recentMemories.isNotEmpty) {
+        final candidateList = recentMemories
+            .map((m) => '- ${m['title'] ?? '未命名'}: ${m['content']}')
+            .join('\n');
+        memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
+      }
+    }
     final stickerPlan = allowTools
         ? await _planStickerForTurn(db)
         : const _StickerPlan.disabled();
@@ -864,6 +877,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       deviceContextPrompt,
       emotionContext,
       recentThoughtsContext,
+      memoryContextHint, // 第三层增强：记忆库候选列表
     ].where((item) => item.trim().isNotEmpty).join('\n\n');
 
     var searchSources = <Map<String, String>>[];
@@ -3337,6 +3351,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_memoryToolSchema());
+    tools.add(_searchMemoryToolSchema()); // 新增：记忆库搜索工具
     tools.add(_diaryToolSchema());
     tools.add(_queryDiaryToolSchema());
     if (await db.getKV('voice_reply_enabled') == 'true') {
@@ -3466,6 +3481,32 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               },
             },
             'required': ['date'],
+            'additionalProperties': false,
+          },
+        },
+      };
+
+  Map<String, dynamic> _searchMemoryToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'search_memory',
+          'description':
+              '当需要主动查找世界书记忆库中的特定信息时调用（例如用户询问"我的时薪是多少"、"你记得XX吗"、"我之前跟你说过什么"）。使用语义搜索，能匹配同义词（如"工资"能匹配到"时薪"）。不会自动注入记忆；需要时必须主动搜索。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'query': {
+                'type': 'string',
+                'description': '搜索关键词或问题描述，例如"时薪"、"工资"、"收入信息"',
+              },
+              'limit': {
+                'type': 'integer',
+                'description': '返回结果数量，默认5条',
+                'minimum': 1,
+                'maximum': 10,
+              },
+            },
+            'required': ['query'],
             'additionalProperties': false,
           },
         },
@@ -4004,6 +4045,47 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'content': diary['content']?.toString() ?? '',
         },
       };
+    }
+    if (name == 'search_memory') {
+      final query = args['query']?.toString().trim() ?? '';
+      final limit = (args['limit'] as int?) ?? 5;
+
+      if (query.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '搜索关键词不能为空'},
+        };
+      }
+
+      try {
+        final startTime = DateTime.now().millisecondsSinceEpoch;
+        final searchResult =
+            await WorldBookService.instance.searchMemoryForTool(
+          botId: botId,
+          query: query,
+          limit: limit.clamp(1, 10),
+        );
+        final durationMs = DateTime.now().millisecondsSinceEpoch - startTime;
+
+        await db.insertToolAudit(
+          source: 'native',
+          toolName: name,
+          inputSummary: _redactToolInput({'query': query, 'limit': limit}),
+          status: searchResult['success'] == true ? 'success' : 'error',
+          durationMs: durationMs,
+        );
+
+        AppLogService.instance.add(
+          'MEMORY',
+          '机器人搜索记忆库：query="$query" limit=$limit found=${searchResult['count'] ?? 0}条 耗时${durationMs}ms',
+        );
+
+        return {'result': searchResult};
+      } catch (error) {
+        AppLogService.instance.add('MEMORY', 'search_memory 执行异常：$error');
+        return {
+          'result': {'ok': false, 'error': '搜索失败：$error'},
+        };
+      }
     }
     if (name == 'request_voice_reply') {
       return {

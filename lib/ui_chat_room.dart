@@ -1527,28 +1527,29 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Future<void> _retryMessage(Map<String, dynamic> message) async {
-    if (_loading ||
-        message['is_retrying'] == true ||
-        message['retry_status'] == 'retrying') {
-      return;
-    }
+    if (_loading) return;
+
     final text = message['content']?.toString().trim() ?? '';
     if (text.isEmpty || !mounted) return;
-    setState(() {
-      message['is_retrying'] = true;
-      message['retry_status'] = 'retrying';
-      _msgC.text = text;
-      _hasText = true;
-    });
+
     try {
-      await DBManager().markMessageRetrying(message['id'].toString());
-      await _send(noUserBubble: true, retryTarget: message);
-    } catch (_) {
+      // 删除失败的消息
+      final messageId = message['id'].toString();
+      await DBManager().deleteMessage(messageId);
+
       if (mounted) {
         setState(() {
-          message.remove('is_retrying');
-          message['retry_status'] = 'failed';
+          _msgs.removeWhere((m) => m['id'].toString() == messageId);
+          _msgC.text = text;
+          _hasText = true;
         });
+      }
+
+      // 发送新消息
+      await _send();
+    } catch (e) {
+      if (mounted) {
+        GlobalNotice.show('重新发送失败：$e');
       }
     }
   }
@@ -1902,6 +1903,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           msg['_thought_expanded'] = !isExpanded;
         });
       },
+      onLongPress: () => _msgLongPress(msg), // 增加长按支持
       child: Container(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
