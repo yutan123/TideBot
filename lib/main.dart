@@ -174,11 +174,14 @@ Future<void> _initPersistentService({
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  debugPrint('[service] onStart 入口函数开始执行');
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+  debugPrint('[service] Flutter 绑定初始化完成');
 
   // 后台 isolate 启动时恢复日志状态（关键修复：让后台 isolate 的日志可见）
   await AppLogService.instance.restoreFromPreferences();
+  debugPrint('[service] AppLogService 恢复完成');
 
   Timer? heartbeat;
   var tickRunning = false;
@@ -186,24 +189,32 @@ void onStart(ServiceInstance service) async {
 
   // 启动外部 API 服务（必须在后台 isolate 中运行，否则 APP 切到后台时会暂停）
   Future<void> ensureExternalApi() async {
+    debugPrint('[service] ensureExternalApi 开始执行');
     try {
       final db = DBManager();
+      debugPrint('[service] DBManager 实例化完成');
       final enabled = await db.getKV('external_api_enabled') == 'true';
+      debugPrint('[service] external_api_enabled = $enabled');
       if (enabled) {
+        debugPrint('[service] 准备调用 ExternalApiService.instance.start()');
         final started = await ExternalApiService.instance.start();
+        debugPrint('[service] start() 返回 $started');
         if (started) {
           AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 中启动成功');
         } else {
           AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 中启动失败');
         }
       }
-    } catch (error) {
+    } catch (error, stack) {
+      debugPrint('[service] ensureExternalApi 异常：$error\n$stack');
       AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 启动异常：$error');
     }
   }
 
   // 首次启动时检查外部 API
+  debugPrint('[service] 准备首次启动时检查外部 API');
   unawaited(ensureExternalApi());
+  debugPrint('[service] ensureExternalApi 已 unawaited 启动');
 
   Future<void> recordError(String scope, Object error, StackTrace stack) async {
     final message = '$scope: $error';
@@ -315,10 +326,12 @@ void onStart(ServiceInstance service) async {
   });
 
   // Handle external API service control from UI
+  debugPrint('[service] 开始注册 ensure_external_api 监听器');
   service.on('ensure_external_api').listen((_) async {
     debugPrint('[service] ensure_external_api received');
     unawaited(ensureExternalApi());
   });
+  debugPrint('[service] ensure_external_api 监听器注册完成');
 
   // Handle external API service restart from UI
   service.on('restart_external_api').listen((_) async {
