@@ -13,6 +13,7 @@ import 'device_capability_service.dart';
 import 'external_api_service.dart';
 import 'global_notice.dart';
 import 'log_session_detail_page.dart';
+import 'persistent_service_coordinator.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
@@ -370,11 +371,29 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
 
     // 通知后台服务 isolate 启动或停止外部 API
     if (value) {
-      FlutterBackgroundService().invoke('ensure_external_api');
-      AppLogService.instance.add('EXTERNAL_API', '已通知后台服务启动外部 API');
+      // 外部 API 必须运行在后台 isolate，强制启动（忽略"持久通知"开关）
+      try {
+        final started = await PersistentServiceCoordinator.instance
+            .forceStartForDependentFeature();
+        if (!started) {
+          throw StateError('后台服务 isolate 启动失败');
+        }
+        AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 已启动');
+        await Future.delayed(
+            const Duration(milliseconds: 800)); // 等待 isolate 初始化
+        FlutterBackgroundService().invoke('ensure_external_api');
+        AppLogService.instance.add('EXTERNAL_API', '已通知后台服务启动外部 API');
+      } catch (error) {
+        AppLogService.instance.add('EXTERNAL_API', '启动后台服务失败：$error');
+        await db.setKV('external_api_enabled', 'false'); // 回滚状态
+        if (mounted) {
+          GlobalNotice.show('外部访问服务启动失败：$error');
+        }
+        return;
+      }
     } else {
-      await ExternalApiService.instance.stop();
-      AppLogService.instance.add('EXTERNAL_API', '已停止外部 API 服务');
+      FlutterBackgroundService().invoke('stop_external_api');
+      AppLogService.instance.add('EXTERNAL_API', '已通知后台服务停止外部 API');
     }
 
     await _load();
@@ -485,7 +504,13 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     await db.setKV('external_api_key', keyController.text.trim());
     await db.setKV('external_api_bot_id', botId);
     await db.setKV('external_api_sync_messages', '$syncMessages');
-    if (_externalApiEnabled) await ExternalApiService.instance.restart();
+
+    // 通知后台 isolate 重启外部 API 服务（关键修复：不能在 UI isolate 直接 restart）
+    if (_externalApiEnabled) {
+      FlutterBackgroundService().invoke('restart_external_api');
+      AppLogService.instance.add('EXTERNAL_API', '已通知后台服务重启外部 API');
+    }
+
     await _load();
   }
 

@@ -173,9 +173,13 @@ Future<void> _initPersistentService({
 }
 
 @pragma('vm:entry-point')
-void onStart(ServiceInstance service) {
+void onStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+
+  // 后台 isolate 启动时恢复日志状态（关键修复：让后台 isolate 的日志可见）
+  await AppLogService.instance.restoreFromPreferences();
+
   Timer? heartbeat;
   var tickRunning = false;
   var futureTasksRunning = false;
@@ -314,6 +318,35 @@ void onStart(ServiceInstance service) {
   service.on('ensure_external_api').listen((_) async {
     debugPrint('[service] ensure_external_api received');
     unawaited(ensureExternalApi());
+  });
+
+  // Handle external API service restart from UI
+  service.on('restart_external_api').listen((_) async {
+    debugPrint('[service] restart_external_api received');
+    try {
+      await ExternalApiService.instance.stop();
+      AppLogService.instance.add('EXTERNAL_API', '后台 isolate 中已停止服务');
+      await Future.delayed(const Duration(milliseconds: 300)); // 等待端口完全释放
+      final started = await ExternalApiService.instance.start();
+      if (started) {
+        AppLogService.instance.add('EXTERNAL_API', '后台 isolate 中重启成功');
+      } else {
+        AppLogService.instance.add('EXTERNAL_API', '后台 isolate 中重启失败');
+      }
+    } catch (error) {
+      AppLogService.instance.add('EXTERNAL_API', '后台 isolate 重启异常：$error');
+    }
+  });
+
+  // Handle external API service stop from UI
+  service.on('stop_external_api').listen((_) async {
+    debugPrint('[service] stop_external_api received');
+    try {
+      await ExternalApiService.instance.stop();
+      AppLogService.instance.add('EXTERNAL_API', '后台 isolate 中已停止服务');
+    } catch (error) {
+      AppLogService.instance.add('EXTERNAL_API', '后台 isolate 停止异常：$error');
+    }
   });
 
   unawaited(() async {

@@ -23,6 +23,18 @@ class PersistentServiceCoordinator {
   Future<bool> ensureRunning() async {
     final db = DBManager();
     if (await db.getKV(_intentKey) != 'true') return false;
+    return _forceStart(db);
+  }
+
+  /// 强制启动后台服务 isolate，忽略"持久通知"用户意图开关。
+  /// 用于外部访问服务等必须依赖后台 isolate 才能工作的功能：
+  /// 即使用户没有打开"持久通知"，这些功能被启用时也必须有后台 isolate 承载。
+  Future<bool> forceStartForDependentFeature() async {
+    final db = DBManager();
+    return _forceStart(db);
+  }
+
+  Future<bool> _forceStart(DBManager db) async {
     final service = FlutterBackgroundService();
     final running = await service.isRunning();
     if (!running) await service.startService();
@@ -31,6 +43,10 @@ class PersistentServiceCoordinator {
       'persistent_service_start_requested_at',
       '${DateTime.now().millisecondsSinceEpoch}',
     );
+    for (var i = 0; i < 10; i++) {
+      if (await service.isRunning()) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
     return await service.isRunning();
   }
 

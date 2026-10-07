@@ -68,6 +68,21 @@ class AppLogService {
         .setBool('dev_log_enabled', false);
   }
 
+  /// 从 SharedPreferences 恢复日志启用状态（用于后台 isolate）
+  Future<void> restoreFromPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _enabled = prefs.getBool('dev_log_enabled') ?? false;
+      if (_enabled) {
+        _startedAt = DateTime.now();
+        entries.clear();
+        add('INFO', '[后台isolate] 实时日志已恢复');
+      }
+    } catch (error) {
+      debugPrint('[AppLogService] restoreFromPreferences failed: $error');
+    }
+  }
+
   Future<void> setEnabled(bool value) async {
     _enabled = value;
     if (value) {
