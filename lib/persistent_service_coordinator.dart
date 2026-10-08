@@ -12,6 +12,10 @@ class PersistentServiceCoordinator {
     final db = DBManager();
     await db.setKV(_intentKey, enabled ? 'true' : 'false');
     if (!enabled) {
+      if (await db.getKV('external_api_enabled') == 'true') {
+        await _forceStart(db);
+        return;
+      }
       FlutterBackgroundService().invoke('stopService');
       await db.setKV('persistent_service_state', 'stopped_by_user');
       await db.setKV('persistent_service_heartbeat', '');
@@ -22,7 +26,8 @@ class PersistentServiceCoordinator {
 
   Future<bool> ensureRunning() async {
     final db = DBManager();
-    if (await db.getKV(_intentKey) != 'true') return false;
+    if (await db.getKV(_intentKey) != 'true' &&
+        await db.getKV('external_api_enabled') != 'true') return false;
     return _forceStart(db);
   }
 

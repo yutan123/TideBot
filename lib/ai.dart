@@ -135,6 +135,7 @@ class AIManager {
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
+    List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
@@ -192,6 +193,7 @@ class AIManager {
           activeGame: activeGame,
           persistResponse: persistResponse,
           includeChatHistory: includeChatHistory,
+          requestHistory: requestHistory,
           enableAutoSummary: enableAutoSummary,
           skipLifeState: skipLifeState,
           allowTools: allowTools,
@@ -621,6 +623,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String? activeGame,
     bool persistResponse = true,
     bool includeChatHistory = true,
+    List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
@@ -675,9 +678,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
     final maxContext = (bot['max_tokens'] as int? ?? 10000).clamp(1000, 128000);
     final timeAware = (await db.getKV('time_awareness')) != 'false';
-    final history = includeChatHistory
-        ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
-        : <Map<String, dynamic>>[];
+    final history = requestHistory ??
+        (includeChatHistory
+            ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
+            : <Map<String, dynamic>>[]);
     // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
     // 读取三个核心设定字段（独立于普通世界书条目）
     final allMemories = activeGame == null
@@ -1190,6 +1194,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       Map<String, dynamic>? toolSticker;
       String? toolMood;
       var toolSilenced = false;
+      var hadToolCalls = false;
       var toolRequestedVoice = false;
       Map usage = const {};
       String errorBody = '';
@@ -1287,6 +1292,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             .transform(const LineSplitter());
 
         List<Map<String, dynamic>>? streamedToolCalls;
+        String? streamFinishReason;
+        final streamDebugLog = <String>[];
         await for (final line in lines) {
           token?.throwIfCancelled();
           if (line.startsWith('data:')) {
@@ -1310,9 +1317,26 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                     .map((call) => Map<String, dynamic>.from(call))
                     .toList();
               }
+              // 记录 finish_reason
+              final finishReason = choice?['finish_reason']?.toString();
+              if (finishReason != null && finishReason.isNotEmpty) {
+                streamFinishReason = finishReason;
+              }
+              // 记录前5条 delta 样本用于诊断
+              if (streamDebugLog.length < 5) {
+                streamDebugLog.add(
+                    'delta=${delta?.substring(0, (delta.length).clamp(0, 50)) ?? 'null'} finish=$finishReason');
+              }
             } catch (_) {}
           }
         }
+        AppLogService.instance.addJson('RESPONSE_DEBUG', 'SSE流式解析诊断', {
+          'stream_finish_reason': streamFinishReason,
+          'reply_length': replyText.length,
+          'inner_thought_length': innerThought?.length ?? 0,
+          'has_tool_calls': streamedToolCalls?.isNotEmpty ?? false,
+          'delta_samples': streamDebugLog,
+        });
         client.close();
         errorBody = '';
 
@@ -1346,6 +1370,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
         if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
+          hadToolCalls = true;
           messages.add({
             'role': 'assistant',
             'content': replyText,
@@ -1436,6 +1461,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               (message['reasoning_content'] ?? message['reasoning']) != null,
           'has_tool_calls': message is Map && message['tool_calls'] is List,
           'parsed_length': replyText.length,
+          'raw_content_sample': message is Map
+              ? (message['content']?.toString() ?? '').substring(0,
+                  ((message['content']?.toString() ?? '').length).clamp(0, 200))
+              : '',
+          'raw_response_sample':
+              errorBody.substring(0, errorBody.length.clamp(0, 500)),
         });
         if (message is Map && message['tool_calls'] is List) {
           final toolCalls = (message['tool_calls'] as List)
@@ -1443,6 +1474,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               .map((call) => Map<String, dynamic>.from(call))
               .toList();
           if (toolCalls.isNotEmpty) {
+            hadToolCalls = true;
             messages.add({
               'role': 'assistant',
               'content': replyText,
@@ -1545,14 +1577,28 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
         // 允许工具成功执行但无文本的情况（贴纸/心情已设置，模型未返回说明文本）
         // 注意：toolSilenced 时会在前面 return，不会走到这里
-        if (replyText.isEmpty && (toolSticker == null && toolMood == null)) {
-          const detail = '工具已完成，但模型没有返回可显示的说明。请查看 RESPONSE_DEBUG 日志或重试。';
-          AppLogService.instance.add('RESPONSE_DEBUG', detail);
+        if (replyText.isEmpty &&
+            !hadToolCalls &&
+            !toolSilenced &&
+            generatedImagePath == null) {
+          const detail = '模型未调用工具且返回空内容';
+          AppLogService.instance.addJson('RESPONSE_DEBUG', detail, {
+            'finish_reason': 'unknown_or_stop',
+            'had_tool_calls': hadToolCalls,
+            'reply_length': replyText.length,
+          });
           return {
             'error': detail,
             'error_log': 'HTTP 200\n$detail\n原始响应：$errorBody',
             'error_code': 'empty_response',
           };
+        }
+        if (replyText.isEmpty &&
+            hadToolCalls &&
+            toolSticker == null &&
+            toolMood == null) {
+          AppLogService.instance.add('RESPONSE_DEBUG', '本轮已调用工具，允许无聊天正文');
+          return {'success': true, 'silent': true, 'reply': '', 'usage': usage};
         }
         // 如果工具已设置但文本为空，记录日志但允许继续（气泡会显示贴纸/心情）
         if (replyText.isEmpty) {
@@ -4668,7 +4714,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
         "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
-        "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n";
+        "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
+        "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n";
 
     if (activeGame == 'poker') {
       p +=

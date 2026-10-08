@@ -104,7 +104,8 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   );
 
   final restorePersistentService =
-      (await _readStartupKV('persistent_notification')) == 'true';
+      (await _readStartupKV('persistent_notification')) == 'true' ||
+          externalApiEnabled == 'true';
   unawaited(
     _initPersistentService(
       restoreAfterUserOptIn: restorePersistentService,
@@ -249,7 +250,8 @@ void onStart(ServiceInstance service) async {
       final now = DateTime.now().millisecondsSinceEpoch;
       await db.setKV('persistent_service_last_tick_started_at', '$now');
       await db.setKV('persistent_service_heartbeat', '$now');
-      final keepRunning = await db.getKV('persistent_notification') == 'true';
+      final keepRunning = await db.getKV('persistent_notification') == 'true' ||
+          await db.getKV('external_api_enabled') == 'true';
       if (!keepRunning) {
         // An exact AlarmManager wake may start this service while the user has
         // deliberately disabled continuous foreground operation. Consume due

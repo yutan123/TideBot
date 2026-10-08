@@ -21,6 +21,7 @@ class ExternalApiService {
   static const _maxTrackedClients = 256;
 
   HttpServer? _server;
+  Future<bool>? _starting;
   final Map<String, List<DateTime>> _recentRequests = {};
   int? get activePort => _server?.port;
   bool get running => _server != null;
@@ -72,6 +73,18 @@ class ExternalApiService {
   }
 
   Future<bool> start() async {
+    final pending = _starting;
+    if (pending != null) return pending;
+    final operation = _start();
+    _starting = operation;
+    try {
+      return await operation;
+    } finally {
+      _starting = null;
+    }
+  }
+
+  Future<bool> _start() async {
     if (_server != null) return true;
     final db = DBManager();
     final enabled = await db.getKV('external_api_enabled') == 'true';
@@ -86,7 +99,7 @@ class ExternalApiService {
     requested = requested.clamp(1024, 65535);
     try {
       _server = await HttpServer.bind(InternetAddress.anyIPv4, requested,
-          shared: true);
+          shared: false);
     } on SocketException catch (error) {
       AppLogService.instance
           .add('EXTERNAL_API', '外部访问服务启动失败：端口 $requested 不可用：$error');
@@ -100,6 +113,8 @@ class ExternalApiService {
   }
 
   Future<void> stop() async {
+    final pending = _starting;
+    if (pending != null) await pending;
     final server = _server;
     _server = null;
     if (server != null) await server.close(force: true);
@@ -127,10 +142,20 @@ class ExternalApiService {
     final requestLabel =
         '${request.method} ${request.uri.path} from ${request.connectionInfo?.remoteAddress.address ?? 'unknown'}';
     AppLogService.instance.add('EXTERNAL_API', '开始处理请求：$requestLabel');
+    final response = request.response;
+    Timer? heartbeat;
+    var sseStarted = false;
+    final temporaryImages = <String>[];
+    final cancellationToken = AICancellationToken();
     try {
+      response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
+      response.headers.set(
+          HttpHeaders.accessControlAllowMethodsHeader, 'GET, POST, OPTIONS');
+      response.headers.set(HttpHeaders.accessControlAllowHeadersHeader,
+          'Authorization, Content-Type');
       if (request.method == 'OPTIONS') {
-        AppLogService.instance.add('EXTERNAL_API', 'OPTIONS 预检请求');
-        _json(request, 204, const {});
+        response.statusCode = HttpStatus.noContent;
+        await response.close();
         return;
       }
       if (!_allowRequest(request)) {
@@ -200,10 +225,7 @@ class ExternalApiService {
       }
       if (request.method == 'POST' &&
           request.uri.path == '/v1/chat/completions') {
-        final body = await utf8.decoder
-            .bind(request)
-            .join()
-            .timeout(const Duration(seconds: 15));
+        final body = await _readBody(request);
         AppLogService.instance.add('EXTERNAL_API', '接收到请求体，长度=${body.length}');
         if (body.length > 2 * 1024 * 1024) {
           return _error(request, 413, '请求体超过 2 MB 限制');
@@ -247,7 +269,10 @@ class ExternalApiService {
         if (userMessages.isEmpty) {
           return _error(request, 400, 'messages 必须包含 user 消息');
         }
-        final latestUser = userMessages.last;
+        if (normalized.last['role'] != 'user') {
+          return _error(request, 400, '最后一条消息必须是 user 消息');
+        }
+        final latestUser = normalized.last;
         final text = latestUser['text']?.toString().trim() ?? '';
         AppLogService.instance
             .add('EXTERNAL_API', '最后一条 user 消息文本长度=${text.length}');
@@ -258,20 +283,20 @@ class ExternalApiService {
             return _error(request, 400, '图片地址无效、无法下载或超过 8 MB');
           }
           imagePaths.add(path);
+          temporaryImages.add(path);
         }
         if (text.isEmpty && imagePaths.isEmpty) {
           return _error(request, 400, 'user 消息必须包含文本或图片');
         }
-        final priorTurns = normalized.length > 1
-            ? normalized
-                .take(normalized.length - 1)
-                .map((item) => '${item['role']}: ${item['text']}')
-                .where((line) => line.split(': ').last.trim().isNotEmpty)
-                .join('\n')
-            : '';
-        final prompt = priorTurns.isEmpty
-            ? text
-            : '以下是外部客户端提供的对话上下文，请保持角色和语义连续：\n$priorTurns\n\nuser: $text';
+        final clientHistory = <Map<String, dynamic>>[
+          for (final item in normalized.take(normalized.length - 1))
+            if (item['role'] == 'user' || item['role'] == 'assistant')
+              {'role': item['role'], 'type': 'text', 'content': item['text']},
+        ];
+        final clientInstructions = normalized
+            .where((item) => item['role'] == 'system')
+            .map((item) => item['text'].toString())
+            .join('\n');
         final sync = await db.getKV('external_api_sync_messages') != 'false';
         // Inbound platform traffic is persisted as a normal TideBot turn.
         // App-originated messages never enter this HTTP handler, so they are
@@ -290,27 +315,56 @@ class ExternalApiService {
         }
         AppLogService.instance.add('EXTERNAL_API',
             '已桥接入站消息至 ${bot['name'] ?? botId}，同步记录=${sync ? '开启' : '关闭'}，文本长度=${text.length}');
-        final cancellationToken = AICancellationToken();
-        // A closed response is the only lifecycle signal exposed by dart:io's
-        // server response. It also protects long-running upstream work when the
-        // handler is terminated before it can write the completion.
-        unawaited(request.response.done.whenComplete(cancellationToken.cancel));
+        // Observe disconnect failures without leaking an unhandled future.
+        unawaited(response.done.then<void>((_) {}, onError: (Object error) {
+          cancellationToken.cancel();
+        }));
+        if (stream) {
+          response.headers.contentType =
+              ContentType('text', 'event-stream', charset: 'utf-8');
+          response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+          response.bufferOutput = false;
+          sseStarted = true;
+          response.write(': connected\n\n');
+          await response.flush();
+          heartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
+            try {
+              response.write(': heartbeat\n\n');
+              unawaited(response.flush().catchError((Object error) {
+                cancellationToken.cancel();
+              }));
+            } catch (_) {
+              cancellationToken.cancel();
+            }
+          });
+        }
         AppLogService.instance
             .add('EXTERNAL_API', '开始调用 AIManager.sendMessage');
         final result = await AIManager().sendMessage(
           botId: botId,
-          text: prompt,
+          text: text,
           imagePaths: imagePaths,
           persistResponse: sync,
-          includeChatHistory: sync,
+          includeChatHistory: false,
+          requestHistory: clientHistory,
+          extraSystemPrompt: clientInstructions,
+          enableAutoSummary: false,
+          onDelta: stream ? (_) {} : null,
           cancellationToken: cancellationToken,
         );
         AppLogService.instance.add('EXTERNAL_API',
             'AIManager.sendMessage 返回：success=${result['success']}, reply长度=${(result['reply']?.toString() ?? '').length}');
         cancellationToken.throwIfCancelled();
+        heartbeat?.cancel();
         if (result['success'] != true) {
-          return _error(
-              request, 502, result['error']?.toString() ?? 'TideBot 上游模型请求失败');
+          final message = result['error']?.toString() ?? 'TideBot 上游模型请求失败';
+          if (sseStarted) {
+            await _writeSse(request, {
+              'error': {'message': message, 'type': 'upstream_error'}
+            });
+            return _finishSse(request);
+          }
+          return _error(request, 502, message);
         }
         final reply = result['reply']?.toString() ?? '';
         final rawUsage = result['usage'];
@@ -394,6 +448,19 @@ class ExternalApiService {
         });
       }
       return _error(request, 404, 'Not found');
+    } on HttpException catch (error) {
+      _error(request, 413, error.message);
+    } on TimeoutException {
+      _error(request, 408, '读取请求体超时');
+    } on FormatException catch (error) {
+      if (sseStarted) {
+        await _writeSse(request, {
+          'error': {'message': error.message, 'type': 'invalid_request_error'}
+        });
+        await _finishSse(request);
+      } else {
+        _error(request, 400, error.message);
+      }
     } on AICancelledException {
       AppLogService.instance.add('EXTERNAL_API', '客户端已断开，已取消上游模型请求');
       return;
@@ -402,11 +469,43 @@ class ExternalApiService {
       AppLogService.instance.add('EXTERNAL_API',
           '堆栈跟踪：${stackTrace.toString().split('\n').take(5).join('\n')}');
       try {
-        _error(request, 500, 'Internal server error');
+        if (sseStarted) {
+          await _writeSse(request, {
+            'error': {
+              'message': 'Internal server error',
+              'type': 'server_error'
+            }
+          });
+          await _finishSse(request);
+        } else {
+          _error(request, 500, 'Internal server error');
+        }
       } catch (_) {
         // The peer may have closed the response while upstream work was running.
       }
+    } finally {
+      heartbeat?.cancel();
+      cancellationToken.cancel();
+      for (final path in temporaryImages) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+      try {
+        await response.close();
+      } catch (_) {}
     }
+  }
+
+  Future<String> _readBody(HttpRequest request) async {
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in request.timeout(const Duration(seconds: 15))) {
+      if (bytes.length + chunk.length > 2 * 1024 * 1024) {
+        throw const HttpException('请求体超过 2 MB 限制');
+      }
+      bytes.add(chunk);
+    }
+    return utf8.decode(bytes.takeBytes());
   }
 
   List<Map<String, dynamic>>? _normalizeMessages(List<dynamic> raw) {
@@ -498,16 +597,6 @@ class ExternalApiService {
   Future<void> _writeSse(
       HttpRequest request, Map<String, dynamic> payload) async {
     final response = request.response;
-    if (response.statusCode == 200) {
-      // Headers already set
-    } else {
-      response.statusCode = 200;
-      response.headers.contentType =
-          ContentType('text', 'event-stream', charset: 'utf-8');
-      response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
-      response.headers.set(HttpHeaders.connectionHeader, 'keep-alive');
-      response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
-    }
     response.write('data: ${jsonEncode(payload)}\n\n');
     await response.flush();
   }

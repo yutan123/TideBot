@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -344,6 +345,32 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
           ),
         ],
       );
+  Future<void> _waitForExternalApi({bool restart = false}) async {
+    final db = DBManager();
+    final port = await db.getKV('external_api_port') ?? '6666';
+    final key = await db.getKV('external_api_key') ?? '';
+    final service = FlutterBackgroundService();
+    final client = http.Client();
+    try {
+      for (var attempt = 0; attempt < 12; attempt++) {
+        service
+            .invoke(restart ? 'restart_external_api' : 'ensure_external_api');
+        restart = false;
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        try {
+          final response = await client.get(
+            Uri.parse('http://127.0.0.1:$port/v1/models'),
+            headers: {'Authorization': 'Bearer $key'},
+          ).timeout(const Duration(seconds: 1));
+          if (response.statusCode == 200) return;
+        } catch (_) {}
+      }
+      throw StateError('外部 API 未能监听端口 $port，请检查日志');
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _toggleExternalApi(bool value) async {
     final db = DBManager();
     final usableBots =
@@ -367,6 +394,10 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
       if (botId == null || botId.isEmpty) return;
       await db.setKV('external_api_bot_id', botId);
     }
+    if (value && (await db.getKV('external_api_key') ?? '').trim().isEmpty) {
+      GlobalNotice.show('请先配置外部访问 API Key');
+      return;
+    }
     await db.setKV('external_api_enabled', '$value');
 
     // 通知后台服务 isolate 启动或停止外部 API
@@ -379,10 +410,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
           throw StateError('后台服务 isolate 启动失败');
         }
         AppLogService.instance.add('EXTERNAL_API', '后台服务 isolate 已启动');
-        await Future.delayed(
-            const Duration(milliseconds: 800)); // 等待 isolate 初始化
-        FlutterBackgroundService().invoke('ensure_external_api');
-        AppLogService.instance.add('EXTERNAL_API', '已通知后台服务启动外部 API');
+        await _waitForExternalApi();
       } catch (error) {
         AppLogService.instance.add('EXTERNAL_API', '启动后台服务失败：$error');
         await db.setKV('external_api_enabled', 'false'); // 回滚状态
@@ -444,7 +472,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: '端口',
-                  helperText: '默认 6666；端口占用时会自动换用可用端口。',
+                  helperText: '默认 6666；端口占用时启动失败，请更换端口。',
                 ),
               ),
               TextField(
@@ -507,8 +535,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
 
     // 通知后台 isolate 重启外部 API 服务（关键修复：不能在 UI isolate 直接 restart）
     if (_externalApiEnabled) {
-      FlutterBackgroundService().invoke('restart_external_api');
-      AppLogService.instance.add('EXTERNAL_API', '已通知后台服务重启外部 API');
+      await _waitForExternalApi(restart: true);
+      AppLogService.instance.add('EXTERNAL_API', '外部 API 已重启并通过健康检查');
     }
 
     await _load();
