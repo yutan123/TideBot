@@ -72,7 +72,7 @@ class _PendingExpression {
   bool get isEmoji => type == 'emoji';
 
   String get modelContext =>
-      type == 'emoji' ? '[$name]' : '[用户发送了一个表情包，类型：$name]';
+      type == 'emoji' ? '[$name]' : '[对方发送了一个表情包，表情包类型：$name]';
 
   Map<String, dynamic> toMessage({
     required String botId,
@@ -630,7 +630,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       await _send(
         noUserBubble: true,
         mediaContext:
-            '[用户发送了一个表情包，类型：${message['content'].toString().isEmpty ? '未分类' : message['content']}]',
+            '[对方发送了一个表情包，表情包类型：${message['content'].toString().isEmpty ? '未分类' : message['content']}]',
       );
     } catch (error) {
       if (mounted) setState(() => _msgs.remove(message));

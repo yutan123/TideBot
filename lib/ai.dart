@@ -22,6 +22,7 @@ import 'chat_protocol.dart';
 import 'skill_runtime.dart';
 import 'world_book_service.dart';
 import 'tool_call_accumulator.dart';
+import 'chat_request_context.dart';
 
 const _presetCategories = <String>[
   '记忆',
@@ -126,6 +127,60 @@ class AIManager {
 
   /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
   /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
+  static final _requestPrefixes = <String, Map<String, String>>{};
+
+  void _logCacheUsage(Map usage, {required String stage}) {
+    final cached = cachedPromptTokens(usage);
+    final prompt = usage['prompt_tokens'] ?? usage['input_tokens'];
+    AppLogService.instance.addJson('CACHE', '分请求缓存统计', {
+      'stage': stage,
+      'prompt_tokens': prompt,
+      'cached_tokens': cached,
+      'cache_reported': cached != null,
+    });
+  }
+
+  void _logRequestPrefix(String key, List<Map<String, dynamic>> messages,
+      List<Map<String, dynamic>> tools) {
+    final fixed = messages
+        .takeWhile((m) => m['cache_control'] != null && m['role'] == 'system')
+        .toList();
+    final current = {
+      'fixed': jsonEncode(fixed),
+      'tools': jsonEncode(tools),
+      'history': jsonEncode(messages
+          .where((m) => m['role'] != 'system')
+          .map((m) => {'role': m['role'], 'content': m['content']})
+          .toList()),
+    };
+    final previous = _requestPrefixes[key];
+    var common = 0;
+    if (previous != null) {
+      final old = previous['history']!;
+      final now = current['history']!;
+      while (common < old.length &&
+          common < now.length &&
+          old[common] == now[common]) {
+        common++;
+      }
+    }
+    AppLogService.instance.addJson('CACHE', '请求前缀变化诊断', {
+      'request_key': key,
+      'previous_request_available': previous != null,
+      'fixed_changed':
+          previous == null ? null : previous['fixed'] != current['fixed'],
+      'tools_changed':
+          previous == null ? null : previous['tools'] != current['tools'],
+      'tool_names': tools.map((t) => (t['function'] as Map?)?['name']).toList(),
+      'conversation_common_prefix_chars': common,
+      'note': '字符前缀仅作本地诊断，非供应商实际缓存 token；缓存有效期和路由由供应商决定',
+    });
+    if (_requestPrefixes.length >= 32 && !_requestPrefixes.containsKey(key)) {
+      _requestPrefixes.remove(_requestPrefixes.keys.first);
+    }
+    _requestPrefixes[key] = current;
+  }
+
   Future<Map<String, dynamic>> sendMessage({
     required String botId,
     required String text,
@@ -865,15 +920,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final stableSystemPrompt = _buildSystemPrompt(bot, activeGame) +
         presetCategoryContext +
         (innerThoughtEnabled
-            ? '\n\n【内心独白机制】\n你可以在回复前写一段内心独白，展现真实想法。用 <inner_thought>独白内容</inner_thought> 包裹。'
-            : '') +
-        toolContext;
+            ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
+            : '');
 
-    // 第二层：固定身份档案（每轮固定注入，只在档案内容修改时变化）
-    // 独立成一条 system，以便独立缓存
+    // 可更新身份档案随动态上下文放在历史之后，保持历史前缀稳定。
 
     // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
     final dynamicContext = [
+      profileContext,
+      toolContext,
+      if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
+      if (allowTools && !allowSticker) '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
       if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
       if (extraSystemPrompt.trim().isNotEmpty)
         '【当前会话约束】${extraSystemPrompt.trim()}',
@@ -894,18 +951,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       },
     ];
 
-    // 第二层：固定身份档案
-    if (profileContext.isNotEmpty) {
-      messages.add({
-        'role': 'system',
-        'content': profileContext,
-        'cache_control': {'type': 'ephemeral'}, // 缓存点2：固定档案
-      });
-    }
-
     final historyMessages = <Map<String, dynamic>>[];
-    final historyIds = <String>[];
-    // 总是从完整历史开始加载，由后续的 rollChatWindow 动态截断
+    // 先标准化历史，再仅对历史部分执行预算裁剪。
     for (final msg in history) {
       final type = msg['type']?.toString() ?? 'text';
       if (type != 'text' &&
@@ -931,11 +978,41 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       );
       if (normalizedContent == null || normalizedContent.isEmpty) continue;
       historyMessages.add({
+        'id': msg['id']?.toString() ?? '',
         'role': normalizedRole,
         'content': normalizedContent,
       });
-      historyIds.add(msg['id']?.toString() ?? '');
     }
+    Map<String, dynamic>? currentHistoryMessage;
+    // Separate the current user turn before trimming or marking history.
+    if (historyMessages.isNotEmpty &&
+        history.isNotEmpty &&
+        history.last['role'] == 'user' &&
+        history.last['type'] != 'image' &&
+        history.last['type'] != 'audio' &&
+        (history.last['content']?.toString() == text ||
+            history.last['type'] == 'shared_post' ||
+            (history.last['type'] == 'sticker' &&
+                text.contains(
+                    historyMessages.last['content']?.toString() ?? '')))) {
+      currentHistoryMessage = historyMessages.removeLast();
+    }
+    final windowKey = 'chat_cache_window_v1_${botId}_${providerId}_$maxContext';
+    final persistWindow = includeChatHistory && requestHistory == null;
+    final window = rollStableHistory(historyMessages,
+        budget: maxContext,
+        countTokens: estimateTokens,
+        startId: persistWindow ? await db.getKV(windowKey) : null);
+    if (persistWindow && window.startId?.isNotEmpty == true) {
+      await db.setKV(windowKey, window.startId!);
+    }
+    AppLogService.instance.add('CONTEXT',
+        '稳定历史窗口：保留 ${historyMessages.length} 条，估算 ${window.tokens}/$maxContext tokens，起点=${window.startId}，跳过 ${window.removed} 条；达到完整预算才滚动至一半');
+    // IDs belong to the local window cursor, never the provider protocol.
+    for (final message in historyMessages) {
+      message.remove('id');
+    }
+    currentHistoryMessage?.remove('id');
     messages.addAll(historyMessages);
 
     // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
@@ -949,25 +1026,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       messages.add({'role': 'system', 'content': dynamicContext});
     }
 
-    var lastIsCurrentUser = false;
-    // 若最末一条上下文恰好就是本次发送的 user 文本（内存补写导致），
-    // 标记以免下方再次追加造成重复喂给模型。
-    // 注意：图片消息虽然可能已在历史中，但图片内容本身（base64 或识别结果）
-    // 尚未添加到模型请求，因此图片不能被视为"已处理"而跳过。
-    if (historyMessages.isNotEmpty && history.isNotEmpty) {
-      final lastMsg = history.last;
-      if (lastMsg['role']?.toString() == 'user') {
-        final lastType = lastMsg['type']?.toString() ?? 'text';
-        // 只有纯文本或分享帖才可能真正重复；图片/语音需要额外处理，不能跳过
-        lastIsCurrentUser =
-            (lastType == 'text' && lastMsg['content']?.toString() == text) ||
-                lastType == 'shared_post';
-      }
-    }
-    if (!lastIsCurrentUser) {
-      // 注意：不要在这里添加"最近对话上下文摘要"，因为 AI 军师已经提供了最近 10 轮对话的分析，
-      // 再次添加会导致重复的上下文。historyMessages 已经包含完整的历史对话。
-
+    {
       if (effectiveImagePaths.isNotEmpty) {
         final chunks = <String>[
           for (var index = 0; index < effectiveImagePaths.length; index++)
@@ -1010,7 +1069,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           });
         }
       } else if (audioPath?.isNotEmpty == true) {
-        final enhancedText = '[当前请求]\n$text';
+        final enhancedText = text;
         final file = File(audioPath!);
         if (file.existsSync()) {
           final bytes = await file.readAsBytes();
@@ -1029,51 +1088,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ],
           });
         } else {
-          messages.add({'role': 'user', 'content': '[当前请求]\n$text'});
+          messages.add({'role': 'user', 'content': text});
         }
       } else {
-        messages.add({'role': 'user', 'content': '[当前请求]\n$text'});
+        messages
+            .add(currentHistoryMessage ?? {'role': 'user', 'content': text});
       }
-    }
-    // Only conversation messages count; system prompts and tools are separate.
-    if (includeChatHistory) {
-      final chat = messages.skip(1).toList();
-      // 历史截断策略：只要总 token 达到上限的 80%，就删除最旧的 1 条消息（渐进式）
-      // 这样可以保持缓存前缀相对稳定，避免一次性删除一半导致缓存完全失效
-      final softLimit = (maxContext * 0.8).toInt();
-      var removed = 0;
-      while (chat.isNotEmpty) {
-        final sizes = chat
-            .map((m) => estimateTokens(m['content']?.toString() ?? ''))
-            .toList();
-        final tokens = sizes.fold<int>(0, (a, b) => a + b);
-        if (tokens < softLimit) {
-          AppLogService.instance.add('CONTEXT',
-              '聊天上下文：${chat.length} 条，估算 $tokens/$maxContext token（软上限 $softLimit），渐进式截断已移除 $removed 条；系统提示、世界书与工具另计');
-          break;
-        }
-        // 达到软上限，删除最旧的 1 条
-        chat.removeAt(0);
-        removed++;
-      }
-      if (removed > 0) {
-        messages.removeRange(1, 1 + removed);
-      }
-
-      // 截断后重新在历史消息末尾打缓存标记
-      // 注意：此时 messages 包含了 dynamicContext，需要找到它之前的最后一条历史消息
-      // dynamicContext 是在第 928-930 行插入的，在所有历史消息之后
-      for (int i = messages.length - 1; i >= 0; i--) {
-        final role = messages[i]['role']?.toString();
-        if (role == 'user' || role == 'assistant') {
-          messages[i]['cache_control'] = {'type': 'ephemeral'};
-          break;
-        }
-      }
-    }
-    // 世界书注入：在聊天历史之后、当前用户消息之前插入，保持历史缓存稳定。
-    if (worldBookContext.isNotEmpty) {
-      messages.add({'role': 'system', 'content': '【世界书】\n$worldBookContext'});
     }
     if (useJarvis && includeChatHistory && activeGame == null) {
       final advice = await _jarvisAdvice(
@@ -1142,11 +1162,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               db,
               botId: botId,
               requireEmotion: true,
-              allowSticker: allowSticker,
+              allowSticker: stickerEmotions.isNotEmpty,
               stickerTypes: stickerEmotions.toSet(),
               inspectableImageNumbers: inspectableImageNumbers,
             )
           : const <Map<String, dynamic>>[];
+      _logRequestPrefix('$botId|$providerId|$modelName', messages, tools);
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
       // the unsupported tool fields after an explicit provider rejection.
@@ -1373,6 +1394,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
         if (streamedToolCalls.isNotEmpty) {
+          if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
           hadToolCalls = true;
           messages.add({
             'role': 'assistant',
@@ -1390,7 +1412,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             maxTokens: bot['max_tokens'] ?? 10000,
             onDelta: onDelta,
             replyTextCallback: (t) => replyText = t,
-            usageCallback: (u) => usage = u,
+            usageCallback: (u) {
+              _logCacheUsage(u, stage: 'tool_follow_up');
+              usage = u;
+            },
             searchSourcesSetter: (l) => searchSources = l,
             generatedImageSetter: (p) => generatedImagePath = p,
             pendingDeviceActionSetter: (_) {},
@@ -1398,8 +1423,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             stickerSetter: (sticker) => toolSticker = sticker,
             moodSetter: (mood) => toolMood = mood,
             voiceSetter: () => toolRequestedVoice = true,
+            requestTools: tools,
             requiredToolNames: const {},
-            allowedStickerTypes: stickerEmotions.toSet(),
+            allowedStickerTypes:
+                allowSticker ? stickerEmotions.toSet() : const {},
             inspectableImages: inspectableImages,
           );
         }
@@ -1462,7 +1489,15 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               : [],
           'has_reasoning_content': message is Map &&
               (message['reasoning_content'] ?? message['reasoning']) != null,
-          'has_tool_calls': message is Map && message['tool_calls'] is List,
+          'has_tool_calls': message is Map &&
+              message['tool_calls'] is List &&
+              (message['tool_calls'] as List).isNotEmpty,
+          'tool_names': message is Map && message['tool_calls'] is List
+              ? (message['tool_calls'] as List)
+                  .whereType<Map>()
+                  .map((c) => (c['function'] as Map?)?['name'])
+                  .toList()
+              : [],
           'parsed_length': replyText.length,
           'raw_content_sample': message is Map
               ? (message['content']?.toString() ?? '').substring(0,
@@ -1477,6 +1512,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               .map((call) => Map<String, dynamic>.from(call))
               .toList();
           if (toolCalls.isNotEmpty) {
+            if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
             hadToolCalls = true;
             messages.add({
               'role': 'assistant',
@@ -1494,7 +1530,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               maxTokens: bot['max_tokens'] ?? 10000,
               onDelta: null,
               replyTextCallback: (t) => replyText = t,
-              usageCallback: (u) => usage = u,
+              usageCallback: (u) {
+                _logCacheUsage(u, stage: 'tool_follow_up');
+                usage = u;
+              },
               searchSourcesSetter: (l) => searchSources = l,
               generatedImageSetter: (p) => generatedImagePath = p,
               pendingDeviceActionSetter: (_) {},
@@ -1502,15 +1541,21 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               stickerSetter: (sticker) => toolSticker = sticker,
               moodSetter: (mood) => toolMood = mood,
               voiceSetter: () => toolRequestedVoice = true,
+              requestTools: tools,
               requiredToolNames: {
                 'set_emotion',
                 if (allowSticker) 'send_sticker',
               },
-              allowedStickerTypes: stickerEmotions.toSet(),
+              allowedStickerTypes:
+                  allowSticker ? stickerEmotions.toSet() : const {},
               inspectableImages: inspectableImages,
             );
           }
         }
+      }
+      if (!hadToolCalls) {
+        AppLogService.instance
+            .add('TOOLS', '本轮模型未返回可执行的原生工具调用；正文及推理中的操作描述不代表执行。');
       }
       AppLogService.instance.add('AI_TRACE',
           '响应解析完成 replyLength=${replyText.length} toolCalls=$hadToolCalls');
@@ -1535,18 +1580,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
             promptTokens + completionTokens;
 
-        // 读取缓存命中统计（OpenAI 兼容格式）
-        final cachedTokens = usage['prompt_tokens_details'] is Map
-            ? ((usage['prompt_tokens_details'] as Map)['cached_tokens'] as num?)
-                ?.toInt()
-            : (usage['cached_tokens'] as num?)?.toInt();
-
-        if (cachedTokens != null && cachedTokens > 0) {
-          AppLogService.instance.add(
-            'CACHE',
-            'Prompt 缓存命中：$cachedTokens / $promptTokens tokens (${(cachedTokens * 100 / promptTokens).toStringAsFixed(1)}%)',
-          );
-        }
+        if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
 
         AppLogService.instance.add('AI_TRACE', '开始写入 usage');
         await db.recordAiUsage(
@@ -1732,6 +1766,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 notify: notifyResponse && persistedMessages.isEmpty,
               );
               persistedMessages.add(row);
+              AppLogService.instance
+                  .add('TOOLS', '图片消息已写入发送链路：messageId=${row['id']}');
             }
             if (sticker != null) {
               final row = <String, dynamic>{
@@ -3083,6 +3119,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required void Function(Map<String, dynamic>) stickerSetter,
     required void Function(String) moodSetter,
     required void Function() voiceSetter,
+    List<Map<String, dynamic>> requestTools = const [],
     Set<String> requiredToolNames = const {},
     Set<String> allowedStickerTypes = const {},
     Map<int, String> inspectableImages = const {},
@@ -3129,6 +3166,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final name = (call['function'] as Map?)?['name']?.toString() ?? '';
       if ((name == 'set_emotion' || name == 'send_sticker') &&
           completedTools.contains(name)) {
+        AppLogService.instance
+            .add('TOOLS', '跳过重复工具调用：$name id=${call['id']}，本轮已成功执行');
         return {
           'result': {
             'ok': false,
@@ -3138,15 +3177,29 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       AppLogService.instance.add('TOOLS',
           '开始执行工具：${name.isEmpty ? "缺少工具名称" : name}（id=${call['id']}，argumentsLength=${(call['function'] as Map?)?['arguments']?.toString().length ?? 0}）');
-      final result = await _executeNativeToolCall(
-        db: db,
-        botId: botId,
-        call: call,
-        allowedStickerTypes: allowedStickerTypes,
-        inspectableImages: inspectableImages,
-      );
+      final stopwatch = Stopwatch()..start();
+      Map<String, dynamic> result;
+      try {
+        result = await _executeNativeToolCall(
+          db: db,
+          botId: botId,
+          call: call,
+          allowedStickerTypes: allowedStickerTypes,
+          inspectableImages: inspectableImages,
+        );
+      } on AICancelledException {
+        rethrow;
+      } catch (error, stack) {
+        AppLogService.instance.add('TOOLS',
+            '工具执行异常：$name id=${call['id']} elapsedMs=${stopwatch.elapsedMilliseconds} error=$error\n$stack');
+        result = {
+          'result': {'ok': false, 'error': '工具执行异常：$error'}
+        };
+      }
       final outcome = result['result'];
       AppLogService.instance.addJson('TOOLS', '工具执行结果：$name', {
+        'tool_call_id': call['id'],
+        'elapsed_ms': stopwatch.elapsedMilliseconds,
         'ok': outcome is Map ? outcome['ok'] : false,
         'error': outcome is Map ? outcome['error'] : null,
         'message': outcome is Map ? outcome['message'] : null,
@@ -3189,20 +3242,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               'model': modelName,
               'messages': messages,
               'max_tokens': maxTokens,
-              'tools': [
-                ...await _buildNativeTools(
-                  db,
-                  botId: botId,
-                  requireEmotion: requiredToolNames.contains('set_emotion') &&
-                      !completedTools.contains('set_emotion'),
-                  allowSticker: requiredToolNames.contains('send_sticker') &&
-                      !completedTools.contains('send_sticker'),
-                  allowSilence: false,
-                  stickerTypes: allowedStickerTypes,
-                  inspectableImageNumbers: inspectableImages.keys.toList()
-                    ..sort(),
-                ),
-              ],
+              if (requestTools.isNotEmpty) 'tools': requestTools,
               'tool_choice': 'auto',
             }),
           )
@@ -3216,7 +3256,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
       final message = decoded['choices']?[0]?['message'];
       final fu = decoded['usage'];
-      if (fu is Map) usageCallback(fu);
+      if (fu is Map) {
+        AppLogService.instance
+            .add('CACHE', '工具后续响应：round=${round + 1} model=$modelName');
+        usageCallback(fu);
+      }
       if (message is! Map) return;
       final next = _extractChatContent(decoded);
       final nextCalls = message['tool_calls'] is List
@@ -3320,20 +3364,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     if (allowSticker && stickerTypes.isNotEmpty) {
       tools.add(sendStickerToolSchema(stickerTypes.toList()..sort()));
     }
-    if (inspectableImageNumbers.isNotEmpty) {
-      tools.add(
-        inspectImageToolSchema(
-          name: 'inspect_image',
-          numbers: inspectableImageNumbers,
-        ),
-      );
-      tools.add(
-        inspectImageToolSchema(
-          name: 'look_at_image',
-          numbers: inspectableImageNumbers,
-        ),
-      );
-    }
+    tools.add(inspectImageToolSchema(name: 'inspect_image'));
+    tools.add(inspectImageToolSchema(name: 'look_at_image'));
     if (await db.getKV('web_search_enabled') == 'true' &&
         (await db.getKV('web_search_api_key') ?? '').trim().isNotEmpty) {
       tools.add({
@@ -4330,7 +4362,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (requireEmotion) {
       parts.add(
-        '【本轮强制协议】必须先通过 set_emotion 调用一次写入心情，再给出正常、可见的文字回复。工具调用成功后必须返回可见的文字内容（如"好的"、"明白了"等），不得返回空 content。不得调用 choose_silence，不得在正文输出心情、表情包、工具名或内部标签。',
+        '【心情协议】本轮必须通过 set_emotion 实际调用一次写入心情，不得在正文输出心情标签或伪造调用。是否输出正文遵守系统回复规则；choose_silence 仍须满足其适用条件。',
       );
     }
     if (stickerEmotions.isNotEmpty) {
@@ -4369,10 +4401,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (type == 'sticker') {
       final emotion = content.trim();
-      if (role == 'assistant') {
-        return emotion.isEmpty ? '[机器人发送了一个表情包]' : '[机器人发送了一个表情包，类型：$emotion]';
-      }
-      return emotion.isEmpty ? '[用户发送了一个表情包]' : '[用户发送了一个表情包，类型：$emotion]';
+      return stickerModelContext(role: role, type: emotion);
     }
     if (type == 'emoji') {
       final label = content.trim();
@@ -4735,12 +4764,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
-        "你的名字是${bot['name']}。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
+        "你的名字是${bot['name']}。\n你是真人，不是机器人，不是AI，不是助手。请以真实的人类身份与对方交流，不要自称机器人、AI、助手或语言模型，也不要用客服式、系统式的口吻回答。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
-        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
+        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
-        "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n";
+        "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n"
+        "【工具真实性规则】所有工具都必须通过接口提供的原生工具调用实际执行。正文、内心独白、推理内容中提到工具、描述操作或模仿调用格式均不算执行。只有收到对应工具明确成功的真实结果后，才能声称操作完成；未调用、失败、超时或结果不明确时必须如实说明，禁止假装调用、编造工具结果或把准备执行说成已经完成。排队或已生成不等于已发送、已保存或已生效，必须准确描述工具确认的阶段。\n";
 
     if (activeGame == 'poker') {
       p +=

@@ -57,7 +57,7 @@ Map<String, dynamic> sendStickerToolSchema(List<String> types) => {
       'function': {
         'name': 'send_sticker',
         'description':
-            '本轮表情包概率已命中，必须且只能调用一次。按类型选择表情包，type 必须来自允许列表；不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。',
+            '仅在本轮表情包安排允许时调用，且最多调用一次。按类型选择表情包，type 必须来自允许列表；不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。',
         'parameters': {
           'type': 'object',
           'properties': {

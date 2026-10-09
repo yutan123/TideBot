@@ -1871,7 +1871,8 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryMessages(String botId,
       {int? limit, bool descending = false}) async {
     final db = await database;
-    final orderBy = descending ? 'timestamp DESC' : 'timestamp ASC';
+    final orderBy =
+        descending ? 'timestamp DESC, id DESC' : 'timestamp ASC, id ASC';
     try {
       return await db.query(
         'chat_history',
