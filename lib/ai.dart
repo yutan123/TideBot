@@ -21,6 +21,7 @@ import 'chat_content.dart';
 import 'chat_protocol.dart';
 import 'skill_runtime.dart';
 import 'world_book_service.dart';
+import 'tool_call_accumulator.dart';
 
 const _presetCategories = <String>[
   '记忆',
@@ -1291,7 +1292,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             .transform(utf8.decoder)
             .transform(const LineSplitter());
 
-        List<Map<String, dynamic>>? streamedToolCalls;
+        final toolCallAccumulator = ToolCallAccumulator();
         String? streamFinishReason;
         final streamDebugLog = <String>[];
         await for (final line in lines) {
@@ -1312,10 +1313,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               final calls = choice?['delta']?['tool_calls'] ??
                   choice?['message']?['tool_calls'];
               if (calls is List && calls.isNotEmpty) {
-                streamedToolCalls = calls
-                    .whereType<Map>()
-                    .map((call) => Map<String, dynamic>.from(call))
-                    .toList();
+                toolCallAccumulator.add(calls,
+                    snapshot: choice?['delta']?['tool_calls'] == null);
               }
               // 记录 finish_reason
               final finishReason = choice?['finish_reason']?.toString();
@@ -1330,11 +1329,15 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             } catch (_) {}
           }
         }
+        final streamedToolCalls = toolCallAccumulator.calls;
         AppLogService.instance.addJson('RESPONSE_DEBUG', 'SSE流式解析诊断', {
           'stream_finish_reason': streamFinishReason,
           'reply_length': replyText.length,
           'inner_thought_length': innerThought?.length ?? 0,
-          'has_tool_calls': streamedToolCalls?.isNotEmpty ?? false,
+          'has_tool_calls': streamedToolCalls.isNotEmpty,
+          'tool_names': streamedToolCalls
+              .map((call) => (call['function'] as Map?)?['name'])
+              .toList(),
           'delta_samples': streamDebugLog,
         });
         client.close();
@@ -1369,7 +1372,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         AppLogService.instance.add('AI_TRACE',
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
-        if (streamedToolCalls != null && streamedToolCalls.isNotEmpty) {
+        if (streamedToolCalls.isNotEmpty) {
           hadToolCalls = true;
           messages.add({
             'role': 'assistant',
@@ -1510,7 +1513,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
       }
       AppLogService.instance.add('AI_TRACE',
-          '响应解析完成 replyLength=${replyText.length} toolCalls=${toolSticker != null || toolMood != null}');
+          '响应解析完成 replyLength=${replyText.length} toolCalls=$hadToolCalls');
       if (toolSilenced) replyText = '';
       print('[ai] response status=$statusCode');
       AppLogService.instance.add('AI', '服务商响应 HTTP $statusCode');
@@ -3133,13 +3136,23 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           },
         };
       }
-      return _executeNativeToolCall(
+      AppLogService.instance.add('TOOLS',
+          '开始执行工具：${name.isEmpty ? "缺少工具名称" : name}（id=${call['id']}，argumentsLength=${(call['function'] as Map?)?['arguments']?.toString().length ?? 0}）');
+      final result = await _executeNativeToolCall(
         db: db,
         botId: botId,
         call: call,
         allowedStickerTypes: allowedStickerTypes,
         inspectableImages: inspectableImages,
       );
+      final outcome = result['result'];
+      AppLogService.instance.addJson('TOOLS', '工具执行结果：$name', {
+        'ok': outcome is Map ? outcome['ok'] : false,
+        'error': outcome is Map ? outcome['error'] : null,
+        'message': outcome is Map ? outcome['message'] : null,
+        'has_image': outcome is Map && outcome['image_path'] != null,
+      });
+      return result;
     }
 
     for (final call in calls) {
@@ -3194,7 +3207,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             }),
           )
           .timeout(const Duration(seconds: 60));
-      if (followUp.statusCode != 200) return;
+      if (followUp.statusCode != 200) {
+        AppLogService.instance
+            .add('TOOLS', '工具后续请求失败：HTTP ${followUp.statusCode}');
+        replyTextCallback('工具执行后的回复请求失败，请查看工具执行结果。');
+        return;
+      }
       final decoded = jsonDecode(utf8.decode(followUp.bodyBytes));
       final message = decoded['choices']?[0]?['message'];
       final fu = decoded['usage'];
@@ -4175,6 +4193,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (name == 'generate_image') {
       var prompt = args['prompt']?.toString().trim() ?? '';
+      if (prompt.isEmpty) {
+        return {
+          'result': {'ok': false, 'error': '生图参数 prompt 不能为空，图片未生成，禁止声称已发送。'}
+        };
+      }
       final life = await LifeScheduleService.instance.ensureToday(botId);
       final outfit = life?['outfit']?.toString().trim() ?? '';
       if (outfit.isNotEmpty) {
@@ -4193,7 +4216,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'result': {
           'ok': path != null,
           'image_path': path,
-          'message': path == null ? '图片生成失败或未配置生图模型。' : '图片已生成并将作为聊天图片发送。',
+          'message': path == null
+              ? '图片生成失败或未配置生图模型，图片未发送，必须如实说明失败，禁止声称已发送。'
+              : '图片已生成并将作为聊天图片发送。',
         },
       };
     }
