@@ -97,7 +97,7 @@ class MainActivity: FlutterActivity() {
                     val taskId = call.argument<String>("taskId").orEmpty()
                     val triggerAt = call.argument<Number>("triggerAt")?.toLong() ?: 0L
                     val title = call.argument<String>("title") ?: "TideBot 提醒"
-                    result.success(TideAlarmScheduler.schedule(this, taskId, triggerAt, title))
+                    result.success(TideAlarmScheduler.schedule(this, taskId, triggerAt, title, call.argument<Boolean>("repeating") == true))
                 }
                 "cancelFutureTask" -> {
                     TideAlarmScheduler.cancel(this, call.argument<String>("taskId").orEmpty())

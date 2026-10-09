@@ -75,7 +75,9 @@ void main() {
       expect(description, contains('历史图片'));
       expect(description, contains('本轮发送的图片会自动附着'));
       expect(description, contains('不得为本轮图片调用'));
-      expect(description, contains('#2、#5'));
+      expect(description, isNot(contains('#2、#5')));
+      expect(inspectImageToolSchema(numbers: [2, 5]),
+          inspectImageToolSchema(numbers: [1]));
       expect(imageNumber['description'], contains('不得填写本轮图片'));
       expect(parameters['additionalProperties'], isFalse);
     });

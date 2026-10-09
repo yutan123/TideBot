@@ -26,6 +26,7 @@ import 'db.dart';
 import 'future_task_scheduler.dart';
 
 import 'diary_service.dart';
+import 'daily_quote_service.dart';
 import 'chat_event_bus.dart';
 import 'global_notice.dart';
 import 'ops.dart';
@@ -187,6 +188,9 @@ void onStart(ServiceInstance service) async {
   Timer? heartbeat;
   var tickRunning = false;
   var futureTasksRunning = false;
+  var dailyTasksRunning = false;
+
+  AppState.isForeground.value = false;
 
   // 启动外部 API 服务（必须在后台 isolate 中运行，否则 APP 切到后台时会暂停）
   Future<void> ensureExternalApi() async {
@@ -242,6 +246,24 @@ void onStart(ServiceInstance service) async {
     }
   }
 
+  Future<void> dailyTasks() async {
+    if (dailyTasksRunning) return;
+    dailyTasksRunning = true;
+    try {
+      await runTask('daily_quotes', () async {
+        for (final bot in await DBManager().queryBots()) {
+          if (isBotDisabled(bot['is_disabled'])) continue;
+          final id = bot['id']?.toString() ?? '';
+          if (id.isNotEmpty) await DailyQuoteService.instance.get(id);
+        }
+      }, timeout: const Duration(minutes: 30));
+      await runTask('diary', DiaryService.instance.catchUp,
+          timeout: const Duration(minutes: 30));
+    } finally {
+      dailyTasksRunning = false;
+    }
+  }
+
   Future<void> tick() async {
     if (tickRunning) return;
     tickRunning = true;
@@ -253,6 +275,11 @@ void onStart(ServiceInstance service) async {
       final keepRunning = await db.getKV('persistent_notification') == 'true' ||
           await db.getKV('external_api_enabled') == 'true';
       if (!keepRunning) {
+        await dailyTasks();
+        await runTask('schedule_generation', _generateMissingLifeSchedules,
+            timeout: const Duration(minutes: 10));
+        await runTask('proactive_replies', _runDueProactiveReplies,
+            timeout: const Duration(minutes: 6));
         // An exact AlarmManager wake may start this service while the user has
         // deliberately disabled continuous foreground operation. Consume due
         // tasks once before stopping; otherwise alarm wakes would immediately
@@ -281,6 +308,7 @@ void onStart(ServiceInstance service) async {
         return;
       }
       await db.setKV('persistent_service_state', 'running');
+      unawaited(dailyTasks());
       await runTask('schedule_generation', _generateMissingLifeSchedules);
       await runTask(
           'mcp_auto_connect', McpConnectionService.instance.connectAuto);
@@ -316,6 +344,10 @@ void onStart(ServiceInstance service) async {
     await DBManager().setKV('persistent_service_heartbeat', '');
     if (service is AndroidServiceInstance) await service.stopSelf();
   });
+
+  service
+      .on('com.yutan123.tidebot.ACTION_TASK_ALARM')
+      .listen((_) => unawaited(tick()));
 
   // Handle periodic WorkManager wake to ensure background tasks run even when app is killed
   service

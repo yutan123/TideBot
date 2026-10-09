@@ -46,3 +46,19 @@ int? cachedPromptTokens(Map usage) {
       usage['cache_read_input_tokens'];
   return value is num ? value.toInt() : null;
 }
+
+String memoryRecordedTime(Map<String, dynamic> memory) {
+  final stamp = memory['timestamp'] ?? memory['created_at'];
+  if (stamp is! num) return '未知';
+  return DateTime.fromMillisecondsSinceEpoch(stamp.toInt()).toIso8601String();
+}
+
+List<String> recentMessageThoughts(List<Map<String, dynamic>> history) {
+  final start = history.length > 3 ? history.length - 3 : 0;
+  return history
+      .skip(start)
+      .where((m) => m['role'] == 'assistant')
+      .map((m) => m['inner_thought']?.toString().trim() ?? '')
+      .where((s) => s.isNotEmpty)
+      .toList();
+}

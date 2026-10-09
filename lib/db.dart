@@ -146,7 +146,7 @@ class DBManager {
     await _execSql(db, '''
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
-        content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
+        content TEXT, category TEXT DEFAULT '记忆', importance INTEGER DEFAULT 3,
         expires_at INTEGER, timestamp INTEGER, updated_at INTEGER,
         keys_json TEXT DEFAULT '[]', trigger_count INTEGER DEFAULT 0,
         last_triggered_at INTEGER, auto_created INTEGER DEFAULT 0,
@@ -299,7 +299,7 @@ class DBManager {
         'title': "TEXT DEFAULT ''",
         'type': 'TEXT',
         'content': 'TEXT',
-        'category': "TEXT DEFAULT 'fact'",
+        'category': "TEXT DEFAULT '记忆'",
         'importance': 'INTEGER DEFAULT 3',
         'expires_at': 'INTEGER',
         'timestamp': 'INTEGER',
@@ -371,6 +371,8 @@ class DBManager {
       },
       onOpen: (db) async {
         await _repairExistingDatabase(db);
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -395,7 +397,7 @@ class DBManager {
         await db.execute('''
           CREATE TABLE memories (
             id TEXT PRIMARY KEY, bot_id TEXT, title TEXT DEFAULT '', type TEXT,
-            content TEXT, category TEXT DEFAULT 'fact', importance INTEGER DEFAULT 3,
+            content TEXT, category TEXT DEFAULT '记忆', importance INTEGER DEFAULT 3,
             expires_at INTEGER, timestamp INTEGER, updated_at INTEGER,
             FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
           )
@@ -523,9 +525,13 @@ class DBManager {
       onDowngrade: (db, oldVersion, newVersion) async {
         print('[db] onDowngrade $oldVersion -> $newVersion; preserving data');
         await _repairExistingDatabase(db);
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         await _repairExistingDatabase(db);
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
         try {
           if (oldVersion < 2) {
             try {
@@ -642,7 +648,7 @@ class DBManager {
           if (oldVersion < 13) {
             try {
               await db.execute(
-                  "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'fact'");
+                  "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT '记忆'");
             } catch (_) {}
             try {
               await db.execute(
@@ -870,6 +876,8 @@ class DBManager {
           print('[db] onUpgrade continued after error: $error');
         }
         await _repairExistingDatabase(db);
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
     );
     // Legacy summaries are optional cleanup. Schedule it after the database
@@ -2192,6 +2200,50 @@ class DBManager {
         orderBy: 'date_key ASC');
   }
 
+  Future<bool> claimBackgroundJob(String key,
+      {Duration lease = const Duration(minutes: 30)}) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return db.transaction((txn) async {
+      final rows = await txn
+          .query('kv_store', where: 'key = ?', whereArgs: ['job_lease_$key']);
+      final until = rows.isEmpty
+          ? 0
+          : int.tryParse(rows.first['value']?.toString() ?? '') ?? 0;
+      if (until > now) return false;
+      await txn.insert('kv_store',
+          {'key': 'job_lease_$key', 'value': '${now + lease.inMilliseconds}'},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      return true;
+    });
+  }
+
+  Future<void> releaseBackgroundJob(String key) async {
+    await setKV('job_lease_$key', '0');
+  }
+
+  Future<List<String>> memoryCategories() async {
+    final db = await database;
+    final rows = await db
+        .query('kv_store', where: 'key LIKE ?', whereArgs: ['wb_category_%']);
+    final used = await db.rawQuery('SELECT DISTINCT category FROM memories');
+    return <String>{
+      '记忆',
+      '事件',
+      '日程',
+      '人物',
+      '规则',
+      '偏好',
+      '角色眼中的你',
+      '角色的自我认知',
+      '关系',
+      ...rows.map((r) => r['key'].toString().substring('wb_category_'.length)),
+      ...used
+          .map((r) => r['category']?.toString() ?? '')
+          .where((s) => s.isNotEmpty && s != 'fact'),
+    }.toList();
+  }
+
   Future<void> insertMemory(Map<String, dynamic> memory) async {
     final db = await database;
     await db.insert('memories', memory,
@@ -2206,7 +2258,7 @@ class DBManager {
     required String content,
     String? id,
     String title = '',
-    String category = 'fact',
+    String category = '记忆',
     int importance = 3,
     int? expiresAt,
     int? timestamp,

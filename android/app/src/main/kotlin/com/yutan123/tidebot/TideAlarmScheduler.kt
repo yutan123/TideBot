@@ -29,21 +29,14 @@ object TideAlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or immutableFlag()
         )
         try {
-            if (repeating) {
-                // Daily repeating alarm
-                alarmManager.setRepeating(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAt,
-                    AlarmManager.INTERVAL_DAY,
-                    pending
-                )
-            } else {
-                // One-time exact alarm
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
                 } else {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pending)
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
                 }
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pending)
             }
         } catch (error: SecurityException) {
             Log.w("TideAlarm", "exact alarm unavailable", error)
@@ -62,6 +55,17 @@ object TideAlarmScheduler {
         return true
     }
 
+    fun rearmDaily(context: Context, intent: Intent) {
+        val id = intent.getStringExtra(EXTRA_ID).orEmpty()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val value = prefs.getStringSet(KEY_TASKS, emptySet()).orEmpty()
+            .mapNotNull { decode(it) }.firstOrNull { it.optString("id") == id } ?: return
+        val next = java.util.Calendar.getInstance().apply {
+            timeInMillis = value.optLong("at")
+            while (timeInMillis <= System.currentTimeMillis()) add(java.util.Calendar.DAY_OF_MONTH, 1)
+        }
+        schedule(context, id, next.timeInMillis, value.optString("title"), true)
+    }
     fun cancel(context: Context, taskId: String) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = Intent(context, TideAlarmReceiver::class.java).apply { action = ACTION_TASK }
@@ -87,7 +91,11 @@ object TideAlarmScheduler {
             if (id.isNotBlank()) {
                 // Always restore repeating alarms; only restore one-time alarms if they're in the future
                 if (repeating || at > now) {
-                    schedule(context, id, at, value.optString("title"), repeating)
+                    val target = java.util.Calendar.getInstance().apply {
+                        timeInMillis = at
+                        if (repeating) while (timeInMillis <= now) add(java.util.Calendar.DAY_OF_MONTH, 1)
+                    }.timeInMillis
+                    schedule(context, id, target, value.optString("title"), repeating)
                 }
             }
         }

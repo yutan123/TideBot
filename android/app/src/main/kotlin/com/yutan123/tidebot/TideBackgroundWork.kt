@@ -1,8 +1,6 @@
 package com.yutan123.tidebot
 
 import android.content.Context
-import android.content.Intent
-import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -18,19 +16,8 @@ import java.util.concurrent.TimeUnit
 class TideBackgroundWork(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val serviceIntent = Intent().apply {
-            setClassName(
-                applicationContext,
-                "id.flutter.flutter_background_service.BackgroundService",
-            )
-            action = ACTION_PERIODIC_WAKE
-        }
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(serviceIntent)
-            } else {
-                applicationContext.startService(serviceIntent)
-            }
+            TideServiceWake.start(applicationContext, ACTION_PERIODIC_WAKE)
             Result.success()
         } catch (_: Exception) {
             Result.retry()

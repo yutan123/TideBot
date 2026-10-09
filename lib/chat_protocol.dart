@@ -77,14 +77,12 @@ Map<String, dynamic> inspectImageToolSchema({
   String name = 'inspect_image',
   List<int> numbers = const [],
 }) {
-  final available =
-      numbers.isEmpty ? '当前上下文中的 [图片#n]' : numbers.map((n) => '#$n').join('、');
   return {
     'type': 'function',
     'function': {
       'name': name,
       'description':
-          '查看当前对话中用户先前消息发送的历史图片。仅当你需要回看历史消息里的图片内容时调用。用户本轮发送的图片会自动附着到当前请求：选择主模型识图时你可直接查看，选择专用识图模型时会自动提供识别结果；不得为本轮图片调用此工具。历史图片在上下文中以 [图片#n] 表示，可用编号：$available。image_number 必须来自上下文明确提供的历史图片编号，不得猜测或编造，也不要要求或输出文件路径。',
+          '查看当前对话中用户先前消息发送的历史图片。仅当你需要回看历史消息里的图片内容时调用。用户本轮发送的图片会自动附着到当前请求：选择主模型识图时你可直接查看，选择专用识图模型时会自动提供识别结果；不得为本轮图片调用此工具。历史图片在上下文中以 [图片#n] 表示。image_number 必须来自上下文明确提供的历史图片编号，不得猜测或编造，也不要要求或输出文件路径。',
       'parameters': {
         'type': 'object',
         'properties': {

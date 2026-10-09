@@ -24,15 +24,6 @@ import 'world_book_service.dart';
 import 'tool_call_accumulator.dart';
 import 'chat_request_context.dart';
 
-const _presetCategories = <String>[
-  '记忆',
-  '事件',
-  '日程',
-  '人物',
-  '规则',
-  '偏好',
-];
-
 class AICancellationToken {
   bool _cancelled = false;
   final List<void Function()> _callbacks = [];
@@ -751,11 +742,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     for (final m in allMemories) {
       final cat = m['category']?.toString() ?? '';
       if (cat == '角色眼中的你') {
-        botViewOfUser = m['content']?.toString().trim();
+        botViewOfUser =
+            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       } else if (cat == '角色的自我认知') {
-        selfCognition = m['content']?.toString().trim();
+        selfCognition =
+            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       } else if (cat == '关系') {
-        relationship = m['content']?.toString().trim();
+        relationship =
+            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       }
     }
 
@@ -797,7 +791,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final recentMemories = await db.queryMemories(botId, limit: 15);
       if (recentMemories.isNotEmpty) {
         final candidateList = recentMemories
-            .map((m) => '- ${m['title'] ?? '未命名'}: ${m['content']}')
+            .map((m) =>
+                '- [记录时间：${memoryRecordedTime(m)}] ${m['title'] ?? '未命名'}: ${m['content']}')
             .join('\n');
         memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
       }
@@ -890,30 +885,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       botId,
     );
 
-    // 内心独白功能：读取最近三轮 assistant 的 inner_thought
+    // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
     final innerThoughtEnabled =
         await db.getKV('inner_thought_enabled') == 'true';
     String recentThoughtsContext = '';
     if (innerThoughtEnabled && history.isNotEmpty) {
-      final recentThoughts = <String>[];
-      var count = 0;
-      for (int i = history.length - 1; i >= 0 && count < 3; i--) {
-        final msg = history[i];
-        if (msg['role']?.toString() == 'assistant') {
-          final innerThought = msg['inner_thought']?.toString().trim() ?? '';
-          if (innerThought.isNotEmpty) {
-            recentThoughts.insert(0, innerThought);
-            count++;
-          }
-        }
-      }
+      final recentThoughts = recentMessageThoughts(history);
       if (recentThoughts.isNotEmpty) {
         recentThoughtsContext =
-            '\n【你最近三轮的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
+            '\n【你前面三条消息中的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
       }
     }
+    final categories = await db.memoryCategories();
     final presetCategoryContext =
-        '\n【世界书类别】可用预设类别：${_presetCategories.join('、')}。用户可以新增自定义类别；添加或修改条目时优先选择最合适的类别。';
+        '\n【世界书类别】当前可用类别：${categories.join('、')}。save_memory 的 category 必须选择其中一个类别，默认类别为记忆。long/short 是记忆保留层级，不是类别。没有合适类别时，先调用 create_memory_category 创建，成功后再调用 save_memory 添加。';
 
     // 构建分层系统提示
     // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
@@ -3447,6 +3432,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_memoryToolSchema());
+    tools.add(_createMemoryCategoryToolSchema());
     tools.add(_searchMemoryToolSchema()); // 新增：记忆库搜索工具
     tools.add(_diaryToolSchema());
     tools.add(_queryDiaryToolSchema());
@@ -3531,18 +3517,37 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'type': 'object',
             'properties': {
               'content': {'type': 'string', 'description': '简洁、具体、可复用的记忆内容'},
+              'category': {
+                'type': 'string',
+                'description': '从当前世界书类别中选择；默认记忆，新类别须先创建'
+              },
               'type': {
                 'type': 'string',
                 'enum': ['long', 'short'],
                 'description': 'long 用于稳定画像或偏好；short 用于重要近期事件',
               },
             },
-            'required': ['content', 'type'],
+            'required': ['content', 'type', 'category'],
             'additionalProperties': false,
           },
         },
       };
 
+  Map<String, dynamic> _createMemoryCategoryToolSchema() => {
+        'type': 'function',
+        'function': {
+          'name': 'create_memory_category',
+          'description': '当现有记忆类别都不合适时创建一个简洁的类别；成功后再用 save_memory 添加记忆。',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'name': {'type': 'string', 'description': '类别名称'}
+            },
+            'required': ['name'],
+            'additionalProperties': false,
+          },
+        },
+      };
   Map<String, dynamic> _diaryToolSchema() => {
         'type': 'function',
         'function': {
@@ -4075,9 +4080,37 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'result': {'ok': true, 'silent': true},
       };
     }
+    if (name == 'create_memory_category') {
+      final category = args['name']?.toString().trim() ?? '';
+      if (category.isEmpty || category.length > 40 || category.contains('\n')) {
+        return {
+          'result': {'ok': false, 'error': '类别名称须为1至40个字符的单行文本'}
+        };
+      }
+      if (!(await db.memoryCategories()).contains(category)) {
+        await db.setKV('wb_category_$category', '4284513675');
+      }
+      return {
+        'result': {
+          'ok': true,
+          'category': category,
+          'categories': await db.memoryCategories()
+        }
+      };
+    }
     if (name == 'save_memory') {
       var content = args['content']?.toString().trim() ?? '';
       final type = args['type']?.toString() == 'long' ? 'long' : 'short';
+      final category = args['category']?.toString().trim() ?? '记忆';
+      if (!(await db.memoryCategories()).contains(category)) {
+        return {
+          'result': {
+            'ok': false,
+            'error': '请选择现有类别或先调用 create_memory_category',
+            'categories': await db.memoryCategories()
+          }
+        };
+      }
       if (content.isEmpty) {
         return {
           'result': {'ok': false, 'error': '缺少记忆内容'},
@@ -4091,7 +4124,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         };
       }
       try {
-        await db.upsertMemoryItem(botId: botId, type: type, content: content);
+        await db.upsertMemoryItem(
+            botId: botId, type: type, content: content, category: category);
         AppLogService.instance.add(
           'MEMORY',
           '机器人通过 save_memory 工具写入$type 记忆：${content.length} 字',
@@ -4372,7 +4406,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (inspectableImageNumbers.isNotEmpty) {
       parts.add(
-        '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看上下文中用户先前消息发送的历史图片，当前可用历史编号：${inspectableImageNumbers.map((n) => '#$n').join('、')}。用户本轮发送的图片会自动处理：使用主模型识图时直接附着，使用专用识图模型时自动提供识别结果；不得为本轮图片调用历史图片工具。只有确实需要知道某张历史图片的画面内容时才调用，并且只能使用上下文明确提供的 image_number，不得猜测或编造编号。',
+        '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看上下文中用户先前消息发送的历史图片。用户本轮发送的图片会自动处理：使用主模型识图时直接附着，使用专用识图模型时自动提供识别结果；不得为本轮图片调用历史图片工具。只有确实需要知道某张历史图片的画面内容时才调用，并且只能使用上下文明确提供的 image_number，不得猜测或编造编号。',
       );
     }
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
@@ -4768,6 +4802,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
         "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
+        "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
         "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n"
         "【工具真实性规则】所有工具都必须通过接口提供的原生工具调用实际执行。正文、内心独白、推理内容中提到工具、描述操作或模仿调用格式均不算执行。只有收到对应工具明确成功的真实结果后，才能声称操作完成；未调用、失败、超时或结果不明确时必须如实说明，禁止假装调用、编造工具结果或把准备执行说成已经完成。排队或已生成不等于已发送、已保存或已生效，必须准确描述工具确认的阶段。\n";

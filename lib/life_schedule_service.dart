@@ -101,7 +101,7 @@ String compactLifeScheduleContext(
   }).join('；');
   return '【今日生活状态与完整日程】主题：${row['theme'] ?? ''}；心情：${row['mood'] ?? ''}；'
       '穿搭风格：${row['outfit_style'] ?? ''}；完整穿搭：${row['outfit'] ?? ''}；当前安排：$currentText。'
-      '全天日程：$fullTimeline。'
+      '全天日程：$fullTimeline。主题名称仅供内部了解，不要把xx日直接写进聊天、动态或日记，应写具体活动、经历和感受。'
       '${rigid.isEmpty ? '' : '刚性事项：$rigid。'}'
       '今天的活动仅是角色生活状态，不得虚构成已经与用户共同经历；用户询问今天做了什么时，可基于日程自然说明。需要变更日程或穿搭时必须调用生活状态工具，不得仅在正文声称已修改，也不得删除或改写刚性事项。';
 }

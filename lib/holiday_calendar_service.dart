@@ -16,8 +16,15 @@ class HolidayCalendarService {
   static List<String> _labels(DateTime date) {
     final key = _date(date);
     final labels = <String>[];
-    final annual = _annualCalendar[key];
-    if (annual != null) labels.add(annual);
+    final festival = _festivalDates[key];
+    if (festival != null) labels.add('节日:$festival');
+    final fixedFestival = const {
+      '1-1': '元旦',
+      '5-1': '劳动节',
+      '10-1': '国庆节'
+    }['${date.month}-${date.day}'];
+    if (fixedFestival != null) labels.add('节日:$fixedFestival');
+    if (_annualCalendar[key] == '调休工作日') labels.add('调休工作日');
 
     const observances = <String, String>{
       '2-14': '节日:情人节',
@@ -34,6 +41,20 @@ class HolidayCalendarService {
     return labels;
   }
 
+  static const _festivalDates = <String, String>{
+    '2024-02-10': '春节',
+    '2024-04-04': '清明节',
+    '2024-06-10': '端午节',
+    '2024-09-17': '中秋节',
+    '2025-01-29': '春节',
+    '2025-04-04': '清明节',
+    '2025-05-31': '端午节',
+    '2025-10-06': '中秋节',
+    '2026-02-17': '春节',
+    '2026-04-05': '清明节',
+    '2026-06-19': '端午节',
+    '2026-09-25': '中秋节',
+  };
   // Official mainland China public-holiday and make-up workday notices.
   // Lunar festivals are represented by their published Gregorian dates rather
   // than calculated from an incomplete lunar algorithm.

@@ -244,7 +244,7 @@ $conversationSummary
             'bot_id': botId,
             'title': title,
             'content': content,
-            'category': 'fact',
+            'category': '记忆',
             'keys': jsonEncode(keys),
             'key_mode': 'plain',
             'priority': priority,
@@ -425,7 +425,8 @@ $conversationSummary
         // 按insertion_order排序
         list.sort((a, b) => a.insertionOrder.compareTo(b.insertionOrder));
         for (final entry in list) {
-          buffer.writeln(entry.content.trim());
+          buffer.writeln(
+              '[记录时间：${DateTime.fromMillisecondsSinceEpoch(entry.createdAt).toIso8601String()}] ${entry.content.trim()}');
           buffer.writeln();
         }
       }
@@ -802,6 +803,8 @@ $conversationSummary
       // 格式化返回结果
       final formattedResults = results.map((entry) {
         return {
+          'recorded_at': DateTime.fromMillisecondsSinceEpoch(entry.createdAt)
+              .toIso8601String(),
           'title': entry.title,
           'content': entry.content,
           'comment': entry.comment,

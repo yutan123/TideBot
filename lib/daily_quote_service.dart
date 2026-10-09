@@ -15,12 +15,18 @@ class DailyQuoteService {
     if (botId.isEmpty) return Future.value(_fallback);
     final key = '$botId:${_dateKey(now ?? DateTime.now())}';
     return _inFlight.putIfAbsent(key, () async {
+      final db = DBManager();
+      if (!await db.claimBackgroundJob('quote_$key')) {
+        _inFlight.remove(key);
+        return _recentOrFallback(botId);
+      }
       try {
         final value = await AIManager().getDailyQuote(botId);
         return value.trim().isEmpty ? await _recentOrFallback(botId) : value;
       } catch (_) {
         return _recentOrFallback(botId);
       } finally {
+        await db.releaseBackgroundJob('quote_$key');
         _inFlight.remove(key);
       }
     });

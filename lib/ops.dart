@@ -229,11 +229,12 @@ class OpsManager {
       if (now.isAfter(target)) {
         target = target.add(const Duration(days: 1));
       }
-      // Note: repeating parameter will be used when Kotlin scheduler is updated
+      // Native scheduler re-arms daily exact wakes in local calendar time.
       final result = await _nativeChannel.invokeMethod('scheduleFutureTask', {
         'taskId': taskId,
         'triggerAt': target.millisecondsSinceEpoch,
         'title': message,
+        'repeating': repeating,
       });
       return result == true;
     } on PlatformException {
