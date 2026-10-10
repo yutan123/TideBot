@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -9,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'db.dart';
 import 'skill_runtime.dart';
+import 'skill_package.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
@@ -45,93 +45,90 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       });
   }
 
-  Future<Map<String, dynamic>> _readSkillManifest(PlatformFile file) async {
-    final bytes = file.bytes;
-    if (bytes == null || bytes.length > 10 * 1024 * 1024) {
-      throw const FormatException('文件为空或超过 10 MB');
-    }
-    final lower = file.name.toLowerCase();
-    if (lower.endsWith('.json')) return jsonDecode(utf8.decode(bytes));
-    // .md/.txt/.yaml/.yml/.toml 视为纯文本 manifest.json
-    if (lower.endsWith('.md') ||
-        lower.endsWith('.txt') ||
-        lower.endsWith('.yaml') ||
-        lower.endsWith('.yml') ||
-        lower.endsWith('.toml')) {
-      return jsonDecode(utf8.decode(bytes));
-    }
-    if (!lower.endsWith('.zip') && !lower.endsWith('.tideskill')) {
-      throw const FormatException('仅支持 JSON、ZIP、TIDESKILL、MD、TXT、YAML、TOML');
-    }
-    final archive = ZipDecoder().decodeBytes(bytes);
-    if (archive.length > 100) throw const FormatException('压缩包文件数量超过限制');
-    ArchiveFile? manifestFile;
-    for (final entry in archive) {
-      final normalized = entry.name.replaceAll('\\', '/');
-      if (normalized.startsWith('/') || normalized.split('/').contains('..')) {
-        throw const FormatException('压缩包包含不安全路径');
-      }
-      if (normalized == 'manifest.json') manifestFile = entry;
-    }
-    if (manifestFile == null)
-      throw const FormatException('压缩包缺少 manifest.json');
-    return jsonDecode(utf8.decode(manifestFile.content as List<int>));
-  }
-
-  Future<void> _storeSkillPackage(String id, PlatformFile file) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final skillDir = Directory('${dir.path}/skills/$id');
-    await skillDir.create(recursive: true);
-    final bytes = file.bytes!;
-    final lower = file.name.toLowerCase();
-    if (lower.endsWith('.json') ||
-        lower.endsWith('.md') ||
-        lower.endsWith('.txt') ||
-        lower.endsWith('.yaml') ||
-        lower.endsWith('.yml') ||
-        lower.endsWith('.toml')) {
-      await File('${skillDir.path}/manifest.json')
-          .writeAsBytes(bytes, flush: true);
-      return;
-    }
-    final archive = ZipDecoder().decodeBytes(bytes);
-    for (final entry in archive) {
-      final normalized = entry.name.replaceAll('\\', '/');
-      if (entry.isFile) {
-        final target = File('${skillDir.path}/$normalized');
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(entry.content as List<int>, flush: true);
-      }
-    }
-  }
-
   Future<void> _addSkill() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: true,
-      type: FileType.custom,
-      allowedExtensions: [
-        'json',
-        'zip',
-        'tideskill',
-        'md',
-        'txt',
-        'yaml',
-        'yml',
-        'toml'
-      ],
-    );
-    if (result == null) return;
+    Directory? packageDir;
     try {
+      final result = await FilePicker.platform.pickFiles(
+        withData: true,
+        type: FileType.any,
+      );
+      if (result == null) return;
       final file = result.files.single;
-      final manifest =
-          TideSkillValidator.validate(await _readSkillManifest(file));
-      if (!manifest.isValid) {
-        throw FormatException(manifest.error ?? 'manifest 无效');
+      final bytes = file.bytes ??
+          (file.path == null ? null : await File(file.path!).readAsBytes());
+      if (bytes == null) throw const FormatException('无法读取所选文件');
+      SkillPackage package;
+      try {
+        package = SkillPackage.parse(file.name, bytes);
+      } on SkillEntryChoice catch (choice) {
+        if (!mounted) return;
+        final entry = await showDialog<String>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: const Text('选择要导入的 Skill'),
+            children: [
+              for (final entry in choice.entries)
+                SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, entry),
+                    child: Text(entry))
+            ],
+          ),
+        );
+        if (entry == null) return;
+        package = SkillPackage.parse(file.name, bytes, entry: entry);
       }
-      final validatedManifest = manifest.manifest!;
+      final validatedManifest = package.manifest;
+      var title = validatedManifest['name'].toString();
+      var description = validatedManifest['description']?.toString() ?? '';
+      if (!mounted) return;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('导入 Skill'),
+          content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextFormField(
+                initialValue: title,
+                onChanged: (value) => title = value,
+                decoration: const InputDecoration(labelText: '名称')),
+            TextFormField(
+                initialValue: description,
+                onChanged: (value) => description = value,
+                decoration: const InputDecoration(labelText: '描述'),
+                maxLines: 3),
+            Text(
+                '包含 ${package.files.length} 个文件、${(validatedManifest['tools'] as List).length} 个工具'),
+            if ((validatedManifest['script_files'] as List).isNotEmpty)
+              const Text('附带脚本可读取；当前不支持运行脚本。'),
+          ])),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () {
+                  if (title.trim().isNotEmpty) Navigator.pop(context, true);
+                },
+                child: const Text('导入'))
+          ],
+        ),
+      );
+      if (accepted == true) {
+        validatedManifest['name'] = title.trim();
+        validatedManifest['description'] = description.trim();
+      }
+      if (accepted != true) return;
       final now = DateTime.now().millisecondsSinceEpoch;
       final id = validatedManifest['id'].toString();
-      await _storeSkillPackage(id, file);
+      final dir = await getApplicationDocumentsDirectory();
+      packageDir = Directory('${dir.path}/skills/$id/$now');
+      await packageDir.create(recursive: true);
+      for (final entry in package.files.entries) {
+        final target = File('${packageDir.path}/${entry.key}');
+        await target.parent.create(recursive: true);
+        await target.writeAsBytes(entry.value, flush: true);
+      }
+      validatedManifest['storage_path'] = packageDir.path;
       final tools =
           (validatedManifest['tools'] as List).map<Map<String, dynamic>>((raw) {
         final item = Map<String, dynamic>.from(raw as Map);
@@ -157,8 +154,15 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         'status': 'ready',
         'updated_at': now,
       }, tools);
+      packageDir = null;
       await _reload();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Skill 已导入并启用')));
+      }
     } catch (error) {
+      if (packageDir != null && await packageDir.exists())
+        await packageDir.delete(recursive: true);
       if (mounted)
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('导入失败：$error')));
@@ -314,7 +318,22 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                   ? (item['description']?.toString() ?? '')
                   : '${item['url']}\n状态：${item['status']}'),
               const SizedBox(height: 16),
-              Text(_isSkill ? '工具' : '已发现工具',
+              if (_isSkill) ...[
+                const Text('指引与附带文件'),
+                SelectableText((jsonDecode(item['manifest_json'].toString())
+                            as Map)['instructions']
+                        ?.toString() ??
+                    '此技能通过工具提供能力'),
+                Text(
+                    '文件：${(jsonDecode(item['manifest_json'].toString()) as Map)['files'] ?? []}'),
+                if (((jsonDecode(item['manifest_json'].toString())
+                            as Map)['script_files'] as List? ??
+                        [])
+                    .isNotEmpty)
+                  const Text('附带脚本可读取，当前没有脚本运行环境；HTTP、MCP 工具可执行。'),
+                const SizedBox(height: 16),
+              ],
+              Text(_isSkill ? '可执行工具' : '已发现工具',
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               for (final tool in tools)

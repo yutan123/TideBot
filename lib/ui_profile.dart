@@ -1,3 +1,4 @@
+import 'bot_reference_images_page.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -1741,80 +1742,94 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                       _save('bot_image_generation_enabled', '$v');
                     },
                     child: _imageGeneration
-                        ? _choiceField(
-                            theme: theme,
-                            label: '默认生图风格',
-                            value: _imageStyle,
-                            options: const ['写实', '动漫', '科幻', '不选择', '自定义'],
-                            icon: Icon(
-                              Icons.palette_outlined,
-                              color: theme.primary,
-                            ),
-                            onPick: (value) async {
-                              if (value == '自定义') {
-                                final controller = TextEditingController(
-                                  text: _imageStyle == '自定义' ? '' : _imageStyle,
-                                );
-                                final custom = await TideDialogs.show<String>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    backgroundColor: Colors.transparent,
-                                    contentPadding: EdgeInsets.zero,
-                                    content: TideDialogs.glassContent(
-                                      context: ctx,
-                                      children: [
-                                        const Text(
-                                          '自定义生图风格',
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w700,
-                                            fontFamily: 'TideFont',
-                                          ),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        TextField(
-                                          controller: controller,
-                                          autofocus: true,
-                                          decoration: const InputDecoration(
-                                            hintText: '例如：水彩插画、赛博朋克、胶片摄影',
-                                          ),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: TideDialogs.glassButton(
-                                                '取消',
-                                                onTap: () => Navigator.pop(ctx),
-                                              ),
+                        ? Column(children: [
+                            ListTile(
+                                leading: const Icon(
+                                    Icons.add_photo_alternate_outlined),
+                                title: const Text('参考图设置'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            const BotReferenceImagesPage()))),
+                            _choiceField(
+                              theme: theme,
+                              label: '默认生图风格',
+                              value: _imageStyle,
+                              options: const ['写实', '动漫', '科幻', '不选择', '自定义'],
+                              icon: Icon(
+                                Icons.palette_outlined,
+                                color: theme.primary,
+                              ),
+                              onPick: (value) async {
+                                if (value == '自定义') {
+                                  final controller = TextEditingController(
+                                    text:
+                                        _imageStyle == '自定义' ? '' : _imageStyle,
+                                  );
+                                  final custom = await TideDialogs.show<String>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      backgroundColor: Colors.transparent,
+                                      contentPadding: EdgeInsets.zero,
+                                      content: TideDialogs.glassContent(
+                                        context: ctx,
+                                        children: [
+                                          const Text(
+                                            '自定义生图风格',
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w700,
+                                              fontFamily: 'TideFont',
                                             ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: TideDialogs.glassButton(
-                                                '保存',
-                                                onTap: () => Navigator.pop(
-                                                  ctx,
-                                                  controller.text.trim(),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          TextField(
+                                            controller: controller,
+                                            autofocus: true,
+                                            decoration: const InputDecoration(
+                                              hintText: '例如：水彩插画、赛博朋克、胶片摄影',
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: TideDialogs.glassButton(
+                                                  '取消',
+                                                  onTap: () =>
+                                                      Navigator.pop(ctx),
                                                 ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
+                                              const SizedBox(width: 10),
+                                              Expanded(
+                                                child: TideDialogs.glassButton(
+                                                  '保存',
+                                                  onTap: () => Navigator.pop(
+                                                    ctx,
+                                                    controller.text.trim(),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                );
-                                controller.dispose();
-                                if (custom == null || custom.isEmpty) return;
-                                if (!mounted) return;
-                                setState(() => _imageStyle = custom);
-                                _save('bot_image_style', custom);
-                                return;
-                              }
-                              setState(() => _imageStyle = value);
-                              _save('bot_image_style', value);
-                            },
-                          )
+                                  );
+                                  controller.dispose();
+                                  if (custom == null || custom.isEmpty) return;
+                                  if (!mounted) return;
+                                  setState(() => _imageStyle = custom);
+                                  _save('bot_image_style', custom);
+                                  return;
+                                }
+                                setState(() => _imageStyle = value);
+                                _save('bot_image_style', value);
+                              },
+                            ),
+                          ])
                         : null,
                   ),
                 ],

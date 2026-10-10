@@ -26,15 +26,18 @@ class TideSkillValidator {
       return const SkillValidationResult(error: 'manifest 必须是 JSON 对象');
     }
     final manifest = Map<String, dynamic>.from(raw);
-    for (final key in const ['id', 'name', 'version', 'tools']) {
+    for (final key in const ['id', 'name', 'version']) {
       if (manifest[key] == null || manifest[key].toString().trim().isEmpty) {
         return SkillValidationResult(error: '缺少 manifest.$key');
       }
     }
     final id = manifest['id'].toString().trim();
-    if (!RegExp(r'^[a-zA-Z0-9._-]{1,80}$').hasMatch(id)) {
+    if (!RegExp(r'^[a-zA-Z0-9._-]{1,80}$').hasMatch(id) ||
+        id == '.' ||
+        id == '..') {
       return const SkillValidationResult(error: 'Skill id 格式无效');
     }
+    manifest['id'] = id;
     final apiVersion = manifest['api_version']?.toString().trim();
     if (apiVersion != null &&
         apiVersion.isNotEmpty &&
@@ -70,8 +73,13 @@ class TideSkillValidator {
         manifest['entry_type']?.toString() != 'manifest') {
       return const SkillValidationResult(error: '不支持的 manifest.entry_type');
     }
-    if (manifest['tools'] is! List || (manifest['tools'] as List).isEmpty) {
-      return const SkillValidationResult(error: 'tools 不能为空');
+    manifest.putIfAbsent('tools', () => <dynamic>[]);
+    if (manifest['tools'] is! List) {
+      return const SkillValidationResult(error: 'tools 必须是数组');
+    }
+    if ((manifest['tools'] as List).isEmpty &&
+        (manifest['instructions']?.toString().trim() ?? '').isEmpty) {
+      return const SkillValidationResult(error: '技能必须包含指引或工具');
     }
     final names = <String>{};
     for (final item in manifest['tools'] as List) {

@@ -1,3 +1,4 @@
+import 'bot_image_request.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -20,6 +21,7 @@ import 'device_capability_service.dart';
 import 'chat_content.dart';
 import 'chat_protocol.dart';
 import 'skill_runtime.dart';
+import 'skill_package.dart';
 import 'world_book_service.dart';
 import 'tool_call_accumulator.dart';
 import 'chat_request_context.dart';
@@ -3005,24 +3007,30 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final imagePrompt = _imagePromptWithStyle(prompt, styleRaw);
     AppLogService.instance.add(
       'IMAGE_GEN',
-      '开始请求生图接口：$baseUrl/images/generations（model=${provider['model']}，promptLength=${imagePrompt.length}）',
+      '开始请求生图（已配置参考图时使用图像编辑接口）：$baseUrl（model=${provider['model']}，promptLength=${imagePrompt.length}）',
     );
     try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/images/generations'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${provider['api_key']}',
-            },
-            body: jsonEncode({
-              'model': provider['model'],
-              'prompt': imagePrompt,
-              'n': 1,
-              'size': '1024x1024',
-            }),
-          )
-          .timeout(const Duration(seconds: 120));
+      final referencePath =
+          (await db.getKV('bot_image_reference_$botId') ?? '').trim();
+      final reference = referencePath.isEmpty
+          ? null
+          : await File(referencePath).readAsBytes();
+      final request = buildBotImageRequest(
+        baseUrl: baseUrl,
+        model: provider['model'].toString(),
+        apiKey: provider['api_key']?.toString() ?? '',
+        prompt: imagePrompt,
+        reference: reference,
+      );
+      final client = http.Client();
+      late http.Response response;
+      try {
+        response = await (() async =>
+                http.Response.fromStream(await client.send(request)))()
+            .timeout(const Duration(seconds: 120));
+      } finally {
+        client.close();
+      }
       AppLogService.instance.add(
         'IMAGE_GEN',
         '生图接口响应：HTTP ${response.statusCode}（bodyLength=${response.bodyBytes.length}）',
@@ -3448,8 +3456,37 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
   Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async {
     final tools = <Map<String, dynamic>>[];
+    final skills =
+        (await db.querySkills()).where((s) => s['enabled'] == 1).toList();
+    if (skills.isNotEmpty) {
+      final catalog = skills
+          .map((s) => '${s['id']}: ${s['name']} — ${s['description']}')
+          .join('\n');
+      for (final name in ['read_skill', 'read_skill_file']) {
+        tools.add({
+          'type': 'function',
+          'function': {
+            'name': name,
+            'description': name == 'read_skill'
+                ? '按任务选择技能并读取完整指引，再按照指引使用已有工具。可用技能：\n$catalog'
+                : '读取技能包内文本参考资料、模板或脚本。脚本只能阅读，当前不能执行。路径相对于技能根目录。',
+            'parameters': {
+              'type': 'object',
+              'properties': {
+                'id': {'type': 'string'},
+                if (name == 'read_skill_file') ...{
+                  'path': {'type': 'string'},
+                  'offset': {'type': 'integer', 'minimum': 0},
+                },
+              },
+              'required': name == 'read_skill' ? ['id'] : ['id', 'path'],
+            },
+          },
+        });
+      }
+    }
     for (final row in await db.queryEnabledSkillTools()) {
-      final name = 'skill_${row['skill_id']}_${row['name']}';
+      final name = skillToolName(row['skill_id'], row['name']);
       tools.add({
         'type': 'function',
         'function': {
@@ -3666,23 +3703,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String name,
     required Map<String, dynamic> args,
   }) async {
-    final parts = name.split('_');
-    if (parts.length < 3)
-      return {
-        'result': {'ok': false, 'error': 'Skill 工具名无效'}
-      };
-    final skillId = parts[1];
-    final toolName = parts.sublist(2).join('_');
     final rows = await db.queryEnabledSkillTools();
     final row = rows
-        .where(
-            (item) => item['skill_id'] == skillId && item['name'] == toolName)
-        .cast<Map<String, dynamic>>()
+        .where((item) => skillToolName(item['skill_id'], item['name']) == name)
         .firstOrNull;
     if (row == null)
       return {
         'result': {'ok': false, 'error': 'Skill 工具不可用'}
       };
+    final skillId = row['skill_id'];
+    final toolName = row['name'];
     final skillRows = await db.querySkills();
     final skill = skillRows.firstWhere(
       (item) => item['id'] == skillId,
@@ -3966,6 +3996,54 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       return {
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'},
       };
+    }
+    if (name == 'read_skill' || name == 'read_skill_file') {
+      try {
+        final skill = (await db.querySkills())
+            .where((s) => s['id'] == args['id'] && s['enabled'] == 1)
+            .firstOrNull;
+        if (skill == null) throw const FormatException('技能不存在或已停用');
+        final manifest = Map<String, dynamic>.from(
+            jsonDecode(skill['manifest_json'].toString()) as Map);
+        if (name == 'read_skill') {
+          return {
+            'result': {
+              'ok': true,
+              'name': skill['name'],
+              'instructions': manifest['instructions'] ?? '',
+              'files': manifest['files'] ?? [],
+              'tools': manifest['tools'],
+              'script_execution': '当前无脚本执行环境；不要声称已运行脚本。'
+            }
+          };
+        }
+        final path = SkillPackage.safePath(args['path']?.toString() ?? '');
+        if (!(manifest['files'] as List? ?? []).contains(path))
+          throw const FormatException('文件不属于此技能');
+        final base = manifest['storage_path']?.toString();
+        if (base == null) throw const FormatException('旧技能需重新导入后读取附带文件');
+        final file = File('$base/$path');
+        if (await file.length() > 2 * 1024 * 1024)
+          throw const FormatException('文本文件超过 2 MB');
+        final text = utf8.decode(await file.readAsBytes());
+        if (text.contains('\u0000')) throw const FormatException('不支持读取二进制文件');
+        final offset = args['offset'] is int ? args['offset'] as int : 0;
+        if (offset < 0 || offset > text.length)
+          throw const FormatException('offset 超出文件范围');
+        final end = min(offset + 24000, text.length);
+        return {
+          'result': {
+            'ok': true,
+            'content': text.substring(offset, end),
+            'next_offset': end < text.length ? end : null,
+            'total_characters': text.length
+          }
+        };
+      } catch (error) {
+        return {
+          'result': {'ok': false, 'error': '读取 Skill 失败：$error'}
+        };
+      }
     }
     if (name.startsWith('mcp_')) {
       return _executeMcpToolCall(db: db, name: name, args: args);

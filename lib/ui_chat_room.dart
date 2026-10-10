@@ -1,3 +1,4 @@
+import 'chat_message_display.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'code_card.dart';
@@ -283,24 +284,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (row == null || id.isEmpty) return;
     final index =
         _msgs.indexWhere((message) => message['id']?.toString() == id);
-    if (index >= 0) {
-      setState(() => _msgs[index] = row);
-      return;
-    }
-    if (event.type != ChatEventType.inserted) return;
+    if (index < 0 && event.type != ChatEventType.inserted) return;
     setState(() {
-      _msgs.add(row);
-      _msgs.sort((a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0)
-          .compareTo((b['timestamp'] as num?)?.toInt() ?? 0));
+      if (index >= 0) {
+        row['_thought_expanded'] = _msgs[index]['_thought_expanded'];
+        _msgs[index] = row;
+      } else {
+        _msgs.add(row);
+      }
+      _msgs = normalizeChatMessages(_msgs);
     });
     if (row['role'] == 'assistant') {
-      if (row['type']?.toString() == 'text' &&
-          row['inner_thought']?.toString().trim().isNotEmpty == true) {
-        final thought = Map<String, dynamic>.from(row)
-          ..['type'] = 'inner_thought'
-          ..['content'] = row['inner_thought'];
-        setState(() => _msgs.add(thought));
-      }
       unawaited(MessageDeliveryService.instance.markRead(botId));
     }
     _scrollDown();
@@ -340,19 +334,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
       if (mounted && revision == _messagesRevision) {
         setState(() {
-          final normalized = <Map<String, dynamic>>[];
-          for (final message in msgs) {
-            normalized.add(message);
-            if (message['role']?.toString() == 'assistant' &&
-                message['type']?.toString() == 'text' &&
-                message['inner_thought']?.toString().trim().isNotEmpty ==
-                    true) {
-              normalized.add(Map<String, dynamic>.from(message)
-                ..['type'] = 'inner_thought'
-                ..['content'] = message['inner_thought']
-                ..['id'] = '${message['id']}_thought');
-            }
-          }
+          final normalized = msgs;
           final byId = <String, Map<String, dynamic>>{
             for (final m in normalized)
               m['id']?.toString() ?? 'db_${m['timestamp']}': m,
@@ -363,12 +345,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               () => m,
             );
           }
-          _msgs = byId.values.toList()
-            ..sort(
-              (a, b) => ((a['timestamp'] as int?) ?? 0).compareTo(
-                (b['timestamp'] as int?) ?? 0,
-              ),
-            );
+          _msgs = normalizeChatMessages(byId.values);
           _msgsLoading = false;
         });
         _locateInitialMessage();
@@ -512,25 +489,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           }
         }
         if (additions.isNotEmpty) {
-          final nextMessages = <Map<String, dynamic>>[];
-          for (final message in additions) {
-            nextMessages.add(message);
-            if (message['role']?.toString() == 'assistant' &&
-                message['type']?.toString() == 'text' &&
-                message['inner_thought']?.toString().trim().isNotEmpty ==
-                    true) {
-              nextMessages.add(Map<String, dynamic>.from(message)
-                ..['type'] = 'inner_thought'
-                ..['content'] = message['inner_thought']
-                ..['id'] = '${message['id']}_thought');
-            }
-          }
-          _msgs.addAll(nextMessages);
-          _msgs.sort(
-            (a, b) => ((a['timestamp'] as num?)?.toInt() ?? 0).compareTo(
-              (b['timestamp'] as num?)?.toInt() ?? 0,
-            ),
-          );
+          _msgs.addAll(additions);
+          _msgs = normalizeChatMessages(_msgs);
           changed = true;
         }
       });
@@ -1398,8 +1358,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           .whereType<Map>()
           .map((message) => Map<String, dynamic>.from(message))
           .toList();
-      final audioReply = result['audio_path']?.toString().isNotEmpty == true;
-      final animate = streamEnabled && !audioReply && persisted.isNotEmpty;
       final persistedIds = persisted
           .map((message) => message['id']?.toString() ?? '')
           .where((id) => id.isNotEmpty)
@@ -1413,61 +1371,30 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         return;
       }
 
-      Future<void> reveal(Map<String, dynamic> row) async {
-        if (!mounted || myGen != _requestGen) return;
-        // 流式输出时不使用 reveal 动画，直接添加持久化消息
-        if (!animate || row['type'] != 'text') {
-          setState(() => _msgs.add(row));
-          _scrollDown();
-          return;
-        }
-        // 非流式输出时才使用 reveal 动画
-        setState(() => _msgs.add(row));
-        _scrollDown();
+      _streamDisplayTimer?.cancel();
+      _streamDisplayTimer = null;
+      if (mounted) {
+        setState(() => _msgs.removeWhere((m) =>
+            m['id'] == streamingMessage?['id'] ||
+            m['id']?.toString().startsWith('stream_text_') == true));
       }
-
-      if (streamingMessage != null && mounted) {
-        // 流式输出完成后，只移除流式文本消息，保留已创建的内心独白消息
-        final streamId = streamingMessage['id'];
-        setState(() {
-          _msgs.removeWhere((m) =>
-              m['id'] == streamId ||
-              (m['id']?.toString().startsWith('stream_text_') == true &&
-                  m['is_streaming'] == true));
-        });
-
-        // 停止流式显示定时器
-        _streamDisplayTimer?.cancel();
-        _streamDisplayTimer = null;
-      }
-
-      // 流式输出时直接添加持久化消息（不使用reveal动画），非流式时使用reveal
-      // 注意：流式模式下，内心独白已经在Timer中创建，这里要跳过
       for (var index = 0; index < persisted.length; index++) {
         if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
         }
-        if (streamEnabled) {
-          // 流式模式：跳过内心独白（已在流式中创建），只添加文本消息
-          if (persisted[index]['type'] == 'inner_thought') {
-            // 更新已存在的内心独白消息为持久化版本
-            final existingIndex = _msgs.indexWhere((m) =>
-                m['type'] == 'inner_thought' &&
-                m['role'] == 'assistant' &&
-                m['content'] == persisted[index]['content']);
-            if (existingIndex >= 0 && mounted && myGen == _requestGen) {
-              setState(() {
-                _msgs[existingIndex] = persisted[index];
-              });
-            }
-          } else if (mounted && myGen == _requestGen) {
-            setState(() => _msgs.add(persisted[index]));
-            _scrollDown();
+        if (!mounted || myGen != _requestGen) break;
+        final row = persisted[index];
+        setState(() {
+          final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
+          if (existing >= 0) {
+            row['_thought_expanded'] = _msgs[existing]['_thought_expanded'];
+            _msgs[existing] = row;
+          } else {
+            _msgs.add(row);
           }
-        } else {
-          // 非流式模式：使用reveal函数
-          await reveal(persisted[index]);
-        }
+          _msgs = normalizeChatMessages(_msgs);
+        });
+        _scrollDown();
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
       await _syncLatestMessages();
@@ -1893,14 +1820,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     return path;
   }
 
+  final Set<String> _expandedThoughtIds = {};
+
   Widget _buildInnerThoughtBubble(TideTheme theme, Map<String, dynamic> msg) {
     final content = msg['content']?.toString() ?? '';
-    final isExpanded = msg['_thought_expanded'] == true;
+    final thoughtId = msg['id']?.toString() ?? '';
+    final isExpanded = _expandedThoughtIds.contains(thoughtId);
 
     return GestureDetector(
       onTap: () {
         setState(() {
-          msg['_thought_expanded'] = !isExpanded;
+          if (isExpanded) {
+            _expandedThoughtIds.remove(thoughtId);
+          } else {
+            _expandedThoughtIds.add(thoughtId);
+          }
         });
       },
       onLongPress: () => _msgLongPress(msg), // 增加长按支持
