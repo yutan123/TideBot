@@ -1,3 +1,4 @@
+import 'assistant_output_guard.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -472,6 +473,9 @@ class LifeScheduleService {
       if (isBotDisabled(bot['is_disabled'])) continue;
       final row = await db.getLifeSchedule(botId, key);
       if (botId.isEmpty || row == null) continue;
+      final resumedAt =
+          int.tryParse(await db.getKV('bot_resumed_at_$botId') ?? '') ?? 0;
+      var attempted = false;
       final timeline = _timeline(row);
       for (var index = 0; index < timeline.length; index++) {
         final item = timeline[index];
@@ -486,7 +490,28 @@ class LifeScheduleService {
           continue;
         }
         final eventKey = 'life_end_${botId}_${key}_$index';
-        if (await db.getKV(eventKey) == 'done') continue;
+        final state = await db.getKV(eventKey);
+        if (state == 'done' || state == 'running') continue;
+        final clock = endTime.split(':');
+        if (clock.length != 2) continue;
+        final hour = int.tryParse(clock[0]);
+        final minute = int.tryParse(clock[1]);
+        if (hour == null ||
+            minute == null ||
+            hour < 0 ||
+            hour > 23 ||
+            minute < 0 ||
+            minute > 59) continue;
+        final end =
+            DateTime(current.year, current.month, current.day, hour, minute);
+        if (!isFreshLifeEndEvent(end, current, resumedAt: resumedAt) ||
+            attempted) {
+          await db.setKV(eventKey, 'done');
+          continue;
+        }
+        if (!await db.claimBackgroundJob(eventKey,
+            lease: const Duration(minutes: 10))) continue;
+        attempted = true;
         await db.setKV(eventKey, 'running');
         try {
           final activity = item['activity']?.toString() ?? '';
@@ -504,7 +529,7 @@ class LifeScheduleService {
           }
           await db.setKV(eventKey, 'done');
         } catch (e) {
-          await db.setKV(eventKey, 'pending');
+          await db.setKV(eventKey, 'done');
           AppLogService.instance.add('SCHEDULE', '日程结束事件失败：$e');
         }
       }

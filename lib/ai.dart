@@ -1,3 +1,6 @@
+import 'skill_context.dart';
+import 'assistant_output_guard.dart';
+import 'model_image.dart';
 import 'bot_image_request.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -876,6 +879,28 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             inspectableImageNumbers: inspectableImageNumbers,
           )
         : '';
+    final skillSections = <String>[];
+    final injectedSkillIds = <String>[];
+    for (final skill in await db.querySkills()) {
+      if (skill['enabled'] != 1) continue;
+      try {
+        final context = buildEnabledSkillContext([skill]);
+        if (context.isNotEmpty) {
+          skillSections.add(context);
+          injectedSkillIds.add(skill['id'].toString());
+        }
+      } catch (error) {
+        AppLogService.instance.add('SKILL', '技能清单读取失败 ${skill['id']}：$error');
+      }
+    }
+    final skillContext = skillSections.join('\n\n');
+    AppLogService.instance.addJson('SKILL', '本轮实际注入的 Skill 指引', {
+      'bot_id': botId,
+      'skill_ids': injectedSkillIds,
+      'characters': skillContext.length,
+      'context': skillContext,
+      'tools_enabled': allowTools,
+    });
     final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
     final deviceContext = await DeviceCapabilityService.instance.contextFor(
       botId,
@@ -915,6 +940,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
     final dynamicContext = [
       profileContext,
+      skillContext,
       toolContext,
       if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
       if (allowTools && !allowSticker) '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
@@ -1034,15 +1060,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           for (final path in effectiveImagePaths) {
             final file = File(path);
             if (!file.existsSync()) continue;
-            final bytes = await file.readAsBytes();
-            final lower = path.toLowerCase();
-            final mime = lower.endsWith('.png')
-                ? 'image/png'
-                : lower.endsWith('.webp')
-                    ? 'image/webp'
-                    : lower.endsWith('.gif')
-                        ? 'image/gif'
-                        : 'image/jpeg';
+            final bytes = await modelImageBytes(path);
+            const mime = 'image/png';
             parts.add({
               'type': 'image_url',
               'image_url': {'url': 'data:$mime;base64,${base64Encode(bytes)}'},
@@ -1868,7 +1887,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     // Some providers leak internal labels into normal text. Remove whole
     // protocol lines before rendering so content such as ":平静]" or
     // "记忆:..." never becomes a chat bubble.
-    final withoutProtocolLines = raw
+    final withoutProtocolLines = stripInternalToolPayloads(raw)
         .replaceAll(
           RegExp(
             r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
@@ -2030,7 +2049,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String userText,
   }) async {
     try {
-      final bytes = await File(imagePath).readAsBytes();
+      final bytes = await modelImageBytes(imagePath);
       final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
                 RegExp(r'/+$'),
                 '',
@@ -2066,7 +2085,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                     {
                       'type': 'image_url',
                       'image_url': {
-                        'url': 'data:image/jpeg;base64,${base64Encode(bytes)}',
+                        'url': 'data:image/png;base64,${base64Encode(bytes)}',
                       },
                     },
                   ],

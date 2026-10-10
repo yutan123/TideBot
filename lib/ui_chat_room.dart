@@ -1,3 +1,4 @@
+import 'model_image.dart';
 import 'chat_message_display.dart';
 import 'dart:io';
 import 'dart:convert';
@@ -537,6 +538,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final botId = _bot['id']?.toString() ?? '';
     if (botId.isNotEmpty) {
       unawaited(DBManager().setKV('proactive_unanswered_$botId', '0'));
+      unawaited(DBManager().setKV('proactive_due_at_$botId', '0'));
     }
   }
 
@@ -1792,18 +1794,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (!await source.exists()) {
         throw FileSystemException('所选图片不可访问', source.path);
       }
-      if (p.isWithin(directory.path, source.path)) {
-        stored.add(source.path);
-        continue;
-      }
-      final rawExtension = p.extension(source.path).toLowerCase();
-      final extension = RegExp(r'^\.[a-z0-9]{2,5}$').hasMatch(rawExtension)
-          ? rawExtension
-          : '.jpg';
+      final bytes = await modelImageBytes(source.path);
       final fileName =
-          'chat_${DateTime.now().microsecondsSinceEpoch}_${index + 1}$extension';
+          'chat_${DateTime.now().microsecondsSinceEpoch}_${index + 1}.png';
       final destination = File(p.join(directory.path, fileName));
-      await source.copy(destination.path);
+      await destination.writeAsBytes(bytes, flush: true);
       stored.add(destination.path);
     }
     return stored;

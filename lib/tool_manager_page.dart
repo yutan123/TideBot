@@ -62,16 +62,17 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         package = SkillPackage.parse(file.name, bytes);
       } on SkillEntryChoice catch (choice) {
         if (!mounted) return;
-        final entry = await showDialog<String>(
+        final entry = await TideDialogs.show<String>(
           context: context,
-          builder: (context) => SimpleDialog(
-            title: const Text('选择要导入的 Skill'),
-            children: [
+          builder: (dialogContext) => TideDialogSurface(
+            child: TideDialogs.glassContent(context: dialogContext, children: [
+              const Text('选择要导入的 Skill',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               for (final entry in choice.entries)
-                SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, entry),
-                    child: Text(entry))
-            ],
+                ListTile(
+                    title: Text(entry),
+                    onTap: () => Navigator.pop(dialogContext, entry)),
+            ]),
           ),
         );
         if (entry == null) return;
@@ -81,37 +82,72 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       var title = validatedManifest['name'].toString();
       var description = validatedManifest['description']?.toString() ?? '';
       if (!mounted) return;
-      final accepted = await showDialog<bool>(
+      final accepted = await TideDialogs.show<bool>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('导入 Skill'),
-          content: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextFormField(
-                initialValue: title,
-                onChanged: (value) => title = value,
-                decoration: const InputDecoration(labelText: '名称')),
-            TextFormField(
-                initialValue: description,
-                onChanged: (value) => description = value,
-                decoration: const InputDecoration(labelText: '描述'),
-                maxLines: 3),
-            Text(
-                '包含 ${package.files.length} 个文件、${(validatedManifest['tools'] as List).length} 个工具'),
-            if ((validatedManifest['script_files'] as List).isNotEmpty)
-              const Text('附带脚本可读取；当前不支持运行脚本。'),
-          ])),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消')),
-            TextButton(
-                onPressed: () {
-                  if (title.trim().isNotEmpty) Navigator.pop(context, true);
-                },
-                child: const Text('导入'))
-          ],
-        ),
+        builder: (dialogContext) {
+          final theme = TideTheme.of(dialogContext);
+          InputDecoration decoration(String label) => InputDecoration(
+                labelText: label,
+                labelStyle: TextStyle(color: theme.textWeak),
+                filled: true,
+                fillColor: theme.surfaceVariant,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: theme.primary)),
+              );
+          return TideDialogSurface(
+              child: Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(dialogContext).bottom),
+            child: TideDialogs.glassContent(context: dialogContext, children: [
+              Text('导入 Skill',
+                  style: TextStyle(
+                      color: theme.textStrong,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 18),
+              TextFormField(
+                  initialValue: title,
+                  onChanged: (value) => title = value,
+                  style: TextStyle(color: theme.textStrong),
+                  cursorColor: theme.primary,
+                  decoration: decoration('名称')),
+              const SizedBox(height: 12),
+              TextFormField(
+                  initialValue: description,
+                  onChanged: (value) => description = value,
+                  style: TextStyle(color: theme.textStrong),
+                  cursorColor: theme.primary,
+                  decoration: decoration('描述'),
+                  minLines: 2,
+                  maxLines: 4),
+              const SizedBox(height: 12),
+              Text(
+                  '包含 ${package.files.length} 个文件、${(validatedManifest['tools'] as List).length} 个工具',
+                  style: TextStyle(color: theme.textWeak, fontSize: 12)),
+              if ((validatedManifest['script_files'] as List).isNotEmpty)
+                Text('附带脚本可读取；当前不支持运行脚本。',
+                    style: TextStyle(color: theme.textWeak, fontSize: 12)),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(
+                    child: TideDialogs.glassButton('取消',
+                        onTap: () => Navigator.pop(dialogContext, false),
+                        color: theme.surfaceVariant,
+                        textColor: theme.textStrong)),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: TideDialogs.glassButton('导入', onTap: () {
+                  if (title.trim().isNotEmpty)
+                    Navigator.pop(dialogContext, true);
+                })),
+              ]),
+            ]),
+          ));
+        },
       );
       if (accepted == true) {
         validatedManifest['name'] = title.trim();
@@ -207,7 +243,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       context: context,
       builder: (dialogContext) => TideDialogSurface(
         contentPadding: EdgeInsets.zero,
-        content: TideDialogs.glassContent(
+        child: TideDialogs.glassContent(
           context: dialogContext,
           children: [
             const Text('添加 MCP 服务',
@@ -352,7 +388,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                       final approved = await TideDialogs.show<bool>(
                         context: sheetContext,
                         builder: (dialogContext) => TideDialogSurface(
-                          content: TideDialogs.glassContent(
+                          child: TideDialogs.glassContent(
                             context: dialogContext,
                             children: [
                               const Text('授权敏感工具',
@@ -486,7 +522,23 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                     ],
                                   ),
                                 ),
+                                if (!_isSkill)
+                                  IconButton(
+                                    tooltip: '刷新连接',
+                                    icon: const Icon(Icons.refresh_rounded),
+                                    onPressed: item['enabled'] != 1
+                                        ? null
+                                        : () => _connectMcpItem(item),
+                                  ),
+                                IconButton(
+                                  tooltip: '删除',
+                                  icon:
+                                      const Icon(Icons.delete_outline_rounded),
+                                  onPressed: () => _deleteItem(item),
+                                ),
                                 Switch.adaptive(
+                                  activeTrackColor: theme.primary,
+                                  activeThumbColor: Colors.white,
                                   value: item['enabled'] == 1,
                                   onChanged: (enabled) async {
                                     if (_isSkill) {
@@ -499,19 +551,6 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                     }
                                     await _reload();
                                   },
-                                ),
-                                IconButton(
-                                  tooltip: '刷新连接',
-                                  icon: const Icon(Icons.refresh_rounded),
-                                  onPressed: _isSkill || item['enabled'] != 1
-                                      ? null
-                                      : () => _connectMcpItem(item),
-                                ),
-                                IconButton(
-                                  tooltip: '删除',
-                                  icon:
-                                      const Icon(Icons.delete_outline_rounded),
-                                  onPressed: () => _deleteItem(item),
                                 ),
                               ],
                             ),
@@ -543,7 +582,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     final confirmed = await TideDialogs.show<bool>(
       context: context,
       builder: (dialogContext) => TideDialogSurface(
-        content: TideDialogs.glassContent(
+        child: TideDialogs.glassContent(
           context: dialogContext,
           children: [
             const Text('确认删除',
@@ -620,7 +659,11 @@ class _ToolToggleRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Switch.adaptive(value: value, onChanged: onChanged),
+          Switch.adaptive(
+              activeTrackColor: theme.primary,
+              activeThumbColor: Colors.white,
+              value: value,
+              onChanged: onChanged),
         ],
       ),
     );

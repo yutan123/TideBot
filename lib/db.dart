@@ -1228,6 +1228,21 @@ class DBManager {
 
   Future<void> updateBot(String id, Map<String, dynamic> data) async {
     final db = await database;
+    if (data.containsKey('is_disabled')) {
+      await db.transaction((txn) async {
+        await txn.update('bots', data, where: 'id = ?', whereArgs: [id]);
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final entry in {
+          'bot_resumed_at_$id': '$now',
+          'proactive_due_at_$id': '0',
+          'proactive_unanswered_$id': '0',
+        }.entries) {
+          await txn.insert('kv_store', {'key': entry.key, 'value': entry.value},
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      });
+      return;
+    }
     await db.update('bots', data, where: 'id = ?', whereArgs: [id]);
   }
 
