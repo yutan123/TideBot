@@ -1,7 +1,9 @@
 import 'skill_context.dart';
 import 'assistant_output_guard.dart';
 import 'model_image.dart';
+import 'bot_image_tool.dart';
 import 'bot_image_request.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -747,13 +749,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     for (final m in allMemories) {
       final cat = m['category']?.toString() ?? '';
       if (cat == '角色眼中的你') {
-        botViewOfUser =
+        botViewOfUser ??=
             '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       } else if (cat == '角色的自我认知') {
-        selfCognition =
+        selfCognition ??=
             '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       } else if (cat == '关系') {
-        relationship =
+        relationship ??=
             '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
       }
     }
@@ -873,6 +875,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final toolContext = allowTools
         ? await _buildToolContext(
             db,
+            botId: botId,
             requireEmotion: true,
             requireSticker: allowSticker,
             stickerEmotions: stickerEmotions,
@@ -2979,12 +2982,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   Future<String?> generateImageForBot({
     required String botId,
     required String prompt,
+    bool usePortraitReference = false,
   }) =>
       _generateImageIfAuthorized(
         db: DBManager(),
         botId: botId,
         prompt: prompt,
         force: true,
+        usePortraitReference: usePortraitReference,
       );
 
   String _imagePromptWithStyle(String prompt, String style) {
@@ -2998,6 +3003,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String botId,
     required String prompt,
     bool force = false,
+    bool usePortraitReference = false,
   }) async {
     if ((!force && !_needsImageGeneration(prompt)) ||
         await db.getKV('bot_image_generation_enabled') == 'false') return null;
@@ -3024,16 +3030,25 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     final styleRaw = (await db.getKV('bot_image_style') ?? '').trim();
     final imagePrompt = _imagePromptWithStyle(prompt, styleRaw);
-    AppLogService.instance.add(
-      'IMAGE_GEN',
-      '开始请求生图（已配置参考图时使用图像编辑接口）：$baseUrl（model=${provider['model']}，promptLength=${imagePrompt.length}）',
-    );
     try {
-      final referencePath =
-          (await db.getKV('bot_image_reference_$botId') ?? '').trim();
-      final reference = referencePath.isEmpty
-          ? null
-          : await File(referencePath).readAsBytes();
+      final referencePath = usePortraitReference
+          ? (await db.getKV('bot_image_reference_$botId') ?? '').trim()
+          : '';
+      if (usePortraitReference && referencePath.isEmpty) {
+        AppLogService.instance.add('IMAGE_GEN', '已选择图改，但未设置人像参考图，取消请求');
+        return null;
+      }
+      final reference =
+          usePortraitReference ? await modelImageBytes(referencePath) : null;
+      AppLogService.instance.addJson('IMAGE_GEN', '开始请求生图', {
+        'bot_id': botId,
+        'mode': usePortraitReference ? 'image_edit' : 'text_to_image',
+        'use_portrait_reference': usePortraitReference,
+        'endpoint':
+            '$baseUrl/images/${usePortraitReference ? 'edits' : 'generations'}',
+        'model': provider['model'],
+        'prompt': imagePrompt,
+      });
       final request = buildBotImageRequest(
         baseUrl: baseUrl,
         model: provider['model'].toString(),
@@ -3398,7 +3413,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       // 具体 bot 是否配置生图模型由执行阶段校验，未配置时返回明确 tool 结果。
-      tools.add(_imageToolSchema());
+      final hasPortraitReference =
+          (await db.getKV('bot_image_reference_$botId') ?? '')
+              .trim()
+              .isNotEmpty;
+      tools.add(botImageToolSchema(hasPortraitReference: hasPortraitReference));
     }
     tools.add({
       'type': 'function',
@@ -3678,23 +3697,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'parameters': {
             'type': 'object',
             'properties': {},
-            'additionalProperties': false,
-          },
-        },
-      };
-
-  Map<String, dynamic> _imageToolSchema() => {
-        'type': 'function',
-        'function': {
-          'name': 'generate_image',
-          'description':
-              '当用户明确需要照片、图片、插画、绘制或创作视觉内容时必须调用；在你判断图片能明显帮助当前回答时也可以调用。生成提示词必须先结合画面地点、时间、天气、活动、姿势与镜头范围选择合理穿搭，只保留当前画面可见且需要的服装细节；不得机械照搬完整日常穿搭。床上、居家、睡前、洗漱等场景优先自然的睡衣、居家服、袜子或赤足状态，不得无故写鞋或白天正装；被被子遮挡、坐姿或半身镜头时不要补写不可见的下半身穿搭。',
-          'parameters': {
-            'type': 'object',
-            'properties': {
-              'prompt': {'type': 'string', 'description': '完整的绘图提示词'},
-            },
-            'required': ['prompt'],
             'additionalProperties': false,
           },
         },
@@ -4361,11 +4363,34 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'result': {'ok': false, 'error': '生图参数 prompt 不能为空，图片未生成，禁止声称已发送。'}
         };
       }
-      final life = await LifeScheduleService.instance.ensureToday(botId);
-      final outfit = life?['outfit']?.toString().trim() ?? '';
-      if (outfit.isNotEmpty) {
-        prompt =
-            '$prompt。角色当前的日常穿搭参考为：$outfit。请严格按画面场景、活动、姿势和镜头范围选择其中合理且可见的部分；室内休息、床上、睡前或被遮挡时不要强行写完整穿搭、鞋或白天正装。';
+      final hasPortraitReference =
+          (await db.getKV('bot_image_reference_$botId') ?? '')
+              .trim()
+              .isNotEmpty;
+      late bool usePortraitReference;
+      try {
+        usePortraitReference = resolvePortraitReference(
+          hasPortraitReference: hasPortraitReference,
+          selection: args['use_portrait_reference'],
+        );
+      } on FormatException catch (error) {
+        return {
+          'result': {
+            'ok': false,
+            'error': error.message,
+            'message': '图片未生成，请修正参数后重新调用。'
+          },
+        };
+      }
+      if (usePortraitReference) {
+        final life = await LifeScheduleService.instance.ensureToday(botId);
+        final outfit = life?['outfit']?.toString().trim() ?? '';
+        if (outfit.isNotEmpty) {
+          prompt =
+              '$prompt。角色当前的日常穿搭参考为：$outfit。请严格按画面场景、活动、姿势和镜头范围选择其中合理且可见的部分；室内休息、床上、睡前或被遮挡时不要强行写完整穿搭、鞋或白天正装。';
+        }
+      } else if (hasPortraitReference) {
+        prompt = '$prompt。本次画面不包含人物、人像、手部或身体局部，不添加人物元素。';
       }
       final path = prompt.isEmpty
           ? null
@@ -4374,11 +4399,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               botId: botId,
               prompt: prompt,
               force: true,
+              usePortraitReference: usePortraitReference,
             );
       return {
         'result': {
           'ok': path != null,
           'image_path': path,
+          'use_portrait_reference': usePortraitReference,
+          'mode': usePortraitReference ? 'image_edit' : 'text_to_image',
           'message': path == null
               ? '图片生成失败或未配置生图模型，图片未发送，必须如实说明失败，禁止声称已发送。'
               : '图片已生成并将作为聊天图片发送。',
@@ -4465,6 +4493,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
   Future<String> _buildToolContext(
     DBManager db, {
+    required String botId,
     bool requireEmotion = false,
     bool requireSticker = false,
     List<String> stickerEmotions = const [],
@@ -4476,8 +4505,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final styleRule = style.isEmpty || style == '不选择'
           ? '图片风格由你根据用户需求自行决定。'
           : '所有图片必须采用“$style”风格。';
+      final hasPortraitReference =
+          (await db.getKV('bot_image_reference_$botId') ?? '')
+              .trim()
+              .isNotEmpty;
+      final referenceRule =
+          hasPortraitReference ? portraitReferenceRule : '当前未设置人像参考图，使用文生图。';
       parts.add(
-        '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule 不要声称已生成不存在的图片。',
+        '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule $referenceRule 不要声称已生成不存在的图片。',
       );
     }
     if (await db.getKV('web_search_enabled') == 'true') {

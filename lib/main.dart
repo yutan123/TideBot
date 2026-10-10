@@ -26,6 +26,7 @@ import 'db.dart';
 import 'future_task_scheduler.dart';
 
 import 'diary_service.dart';
+import 'cognition_review_service.dart';
 import 'daily_quote_service.dart';
 import 'chat_event_bus.dart';
 import 'global_notice.dart';
@@ -85,6 +86,10 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   if (externalApiEnabled == 'true') {
     debugPrint('[startup] 外部 API 服务将在后台 isolate 中启动');
   }
+  unawaited(CognitionReviewService.instance.runDue());
+  Timer.periodic(const Duration(minutes: 1), (_) {
+    unawaited(CognitionReviewService.instance.runDue());
+  });
   Timer.periodic(const Duration(minutes: 2), (_) {
     unawaited(_runDeviceEventTriggeredReply());
   });
@@ -257,6 +262,8 @@ void onStart(ServiceInstance service) async {
           if (id.isNotEmpty) await DailyQuoteService.instance.get(id);
         }
       }, timeout: const Duration(minutes: 30));
+      await runTask('cognition_review', CognitionReviewService.instance.runDue,
+          timeout: const Duration(minutes: 30));
       await runTask('diary', DiaryService.instance.catchUp,
           timeout: const Duration(minutes: 30));
     } finally {

@@ -2348,6 +2348,49 @@ class DBManager {
     }
   }
 
+  Future<void> applyCognitionUpdates(
+      String botId, Map<String, String> updates) async {
+    const categories = ['角色眼中的你', '角色的自我认知', '关系'];
+    if (updates.keys.any((key) => !categories.contains(key)) ||
+        updates.values.any((value) => value.trim().isEmpty)) {
+      throw const FormatException('认知更新类别或内容无效');
+    }
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      for (final entry in updates.entries) {
+        final rows = await txn.query('memories',
+            where: 'bot_id = ? AND category = ?',
+            whereArgs: [botId, entry.key],
+            orderBy: 'timestamp DESC');
+        final values = <String, dynamic>{
+          'bot_id': botId,
+          'title': entry.key,
+          'category': entry.key,
+          'type': 'long',
+          'content': entry.value.trim(),
+          'importance': 5,
+          'expires_at': null,
+          'timestamp': now,
+          'updated_at': now,
+        };
+        if (rows.isEmpty) {
+          await txn.insert('memories', {
+            ...values,
+            'id': 'cognition_${botId}_${entry.key}_$now',
+          });
+        } else {
+          await txn.update('memories', values,
+              where: 'id = ?', whereArgs: [rows.first['id']]);
+          for (final duplicate in rows.skip(1)) {
+            await txn.delete('memories',
+                where: 'id = ?', whereArgs: [duplicate['id']]);
+          }
+        }
+      }
+    });
+  }
+
   Future<void> updateMemory(String id, Map<String, dynamic> values) async {
     final db = await database;
     await db.update('memories', values, where: 'id = ?', whereArgs: [id]);

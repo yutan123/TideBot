@@ -12,7 +12,7 @@ http.BaseRequest buildBotImageRequest(
     'model': model,
     'prompt': reference == null
         ? prompt
-        : '参考所附图片中的人物外观与特征，按照以下要求创作，保持人物身份一致：$prompt',
+        : '参考所附图片中的人物外观与特征，按照以下要求创作，保持人物身份一致：$prompt。无需按照参考图中的姿势、动作或构图生成，姿势和构图以当前提示词为准。',
     'n': '1',
     'size': '1024x1024'
   };

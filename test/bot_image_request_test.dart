@@ -26,6 +26,8 @@ void main() {
     expect(request.fields['model'], 'image');
     expect(request.fields['prompt'], contains('海边自拍'));
     expect(request.fields['prompt'], contains('保持人物身份一致'));
+    expect(request.fields['prompt'],
+        endsWith('无需按照参考图中的姿势、动作或构图生成，姿势和构图以当前提示词为准。'));
     expect(request.files.single.field, 'image');
     expect(request.files.single.contentType.toString(), 'image/png');
     expect(await request.files.single.finalize().toBytes(), [137, 80, 78, 71]);

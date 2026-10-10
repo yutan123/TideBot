@@ -1,3 +1,4 @@
+import 'bot_image_tool.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -746,10 +747,17 @@ class SquarePageState extends State<SquarePage>
         final wantsImage = withImages &&
             Random('$dayKey:$botId:$index:image'.hashCode).nextInt(100) <
                 imageChance;
+        final hasPortraitReference =
+            (await db.getKV('bot_image_reference_$botId') ?? '')
+                .trim()
+                .isNotEmpty;
+        final referenceRule = hasPortraitReference
+            ? '已设置你自己的人像照片作为参考图。必须在 JSON 中填写 use_portrait_reference 布尔值：美食、景点、物件等不含人物的配图为 false，image_prompt 明确不出现人物；配图出现人物（包括自拍、合照或局部人像）必须为 true。false 使用文生图，true 使用人像参考图进行图改，不要为了使用参考图额外添加人物。'
+            : '未设置人像参考图，使用文生图，use_portrait_reference 填写 false。';
         final res = await AIManager().sendMessage(
           botId: botId,
           text: wantsImage
-              ? '请以第一人称创作今天第 ${index + 1} 条朋友圈生活动态。仅输出严格 JSON，不要 markdown：{"content":"20到60字的自然生活动态","image_prompt":"与正文一致的完整生图提示词"}。正文要具体、口语化，不写标签，不提图片。image_prompt 必须包含当前场景、时间、动作、可见穿搭或环境；未配置明确外观时优先第一人称生活场景、物件、环境或局部画面。不要出现机器人、机械人、AI 助手、文字、水印、UI 或聊天截图。'
+              ? '请以第一人称创作今天第 ${index + 1} 条朋友圈生活动态。仅输出严格 JSON，不要 markdown：{"content":"20到60字的自然生活动态","image_prompt":"与正文一致的完整生图提示词","use_portrait_reference":false}。$referenceRule 正文要具体、口语化，不写标签，不提图片。image_prompt 必须包含当前场景、时间、动作、可见穿搭或环境；未配置明确外观时优先第一人称生活场景、物件、环境或局部画面。不要出现机器人、机械人、AI 助手、文字、水印、UI 或聊天截图。'
               : '请以第一人称发一条像朋友圈一样的生活动态（20到60字）：写今天真实、具体的小事、行动、瞬间感受或想分享给朋友的话。这是今天第 ${index + 1} 条，请避免重复已有内容。不要写成文章、日记、总结、散文或说教；自然口语化、有生活感，不要使用心情标签、话题标签，也不要提到图片、照片、配图或任何媒体占位。',
           persistResponse: false,
           allowTools: false,
@@ -758,20 +766,25 @@ class SquarePageState extends State<SquarePage>
         final rawReply = res['reply']?.toString().trim() ?? '';
         String content = rawReply;
         String imagePrompt = '';
+        bool usePortraitReference = false;
         if (wantsImage) {
           try {
             final decoded = jsonDecode(rawReply);
             if (decoded is Map) {
               content = decoded['content']?.toString().trim() ?? '';
               imagePrompt = decoded['image_prompt']?.toString().trim() ?? '';
+              usePortraitReference = resolvePortraitReference(
+                hasPortraitReference: hasPortraitReference,
+                selection: decoded['use_portrait_reference'],
+              );
             } else {
               content = rawReply;
             }
           } catch (error) {
             // A malformed structured response should lose only its image plan.
-            content = rawReply;
+            // Keep valid prose when only the reference decision is invalid.
             imagePrompt = '';
-            AppLogService.instance.add('POST', '动态 JSON 解析失败，已降级为无图动态：$error');
+            AppLogService.instance.add('POST', '动态图片计划解析失败，已降级为无图动态：$error');
           }
           if (content.isEmpty) {
             AppLogService.instance.add('POST', '带图动态缺少有效正文，已跳过');
@@ -790,7 +803,10 @@ class SquarePageState extends State<SquarePage>
             imagePrompt.length <= 2000) {
           imagePath = await AIManager().generateImageForBot(
                 botId: botId,
-                prompt: imagePrompt,
+                prompt: hasPortraitReference && !usePortraitReference
+                    ? '$imagePrompt。画面不包含人物、人像、手部或身体局部，不添加人物元素。'
+                    : imagePrompt,
+                usePortraitReference: usePortraitReference,
               ) ??
               '';
         }
