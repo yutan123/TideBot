@@ -212,10 +212,46 @@ class DBManager {
       )
     ''');
     await _execSql(db, '''
-      CREATE TABLE IF NOT EXISTS kv_store (
-        key TEXT PRIMARY KEY, value TEXT
+      CREATE TABLE IF NOT EXISTS photo_memories (
+        id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, image_path TEXT NOT NULL,
+        sender TEXT NOT NULL, description TEXT DEFAULT '', message_id TEXT,
+        timestamp INTEGER NOT NULL,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
       )
     ''');
+    await _execSql(db, '''
+      CREATE INDEX IF NOT EXISTS idx_photo_memories_bot_time
+      ON photo_memories(bot_id, timestamp DESC)
+    ''');
+  }
+
+  Future<bool> _shouldRepairSchema(Database db) async {
+    try {
+      final result = await db.rawQuery(
+          "SELECT value FROM kv_store WHERE key = 'schema_repair_version'");
+      if (result.isEmpty) return true;
+      final stored = int.tryParse(result.first['value']?.toString() ?? '') ?? 0;
+      return stored < 33; // 当前数据库版本
+    } catch (_) {
+      return true; // kv_store 不存在时需要修复
+    }
+  }
+
+  Future<void> _markSchemaRepaired(Database db) async {
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS kv_store (
+          key TEXT PRIMARY KEY, value TEXT
+        )
+      ''');
+      await db.insert(
+        'kv_store',
+        {'key': 'schema_repair_version', 'value': '33'},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (error) {
+      print('[db] mark schema repaired failed: $error');
+    }
   }
 
   Future<void> _repairExistingDatabase(Database db) async {
@@ -365,12 +401,17 @@ class DBManager {
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 32,
+      version: 33,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onOpen: (db) async {
-        await _repairExistingDatabase(db);
+        // 只在首次打开或版本变更时执行完整修复，避免每次启动重复检查
+        final needsRepair = await _shouldRepairSchema(db);
+        if (needsRepair) {
+          await _repairExistingDatabase(db);
+          await _markSchemaRepaired(db);
+        }
         await db.update('memories', {'category': '记忆'},
             where: "category = 'fact' OR category IS NULL OR category = ''");
       },
@@ -830,13 +871,13 @@ class DBManager {
             } catch (_) {}
             try {
               await db.execute('''
-                CREATE INDEX IF NOT EXISTS idx_world_book_entries_book 
+                CREATE INDEX IF NOT EXISTS idx_world_book_entries_book
                 ON world_book_entries(book_id, enabled)
               ''');
             } catch (_) {}
             try {
               await db.execute('''
-                CREATE INDEX IF NOT EXISTS idx_world_book_entries_bot 
+                CREATE INDEX IF NOT EXISTS idx_world_book_entries_bot
                 ON world_book_entries(bot_id, enabled)
               ''');
             } catch (_) {}
@@ -2830,5 +2871,48 @@ class DBManager {
     final db = await database;
     await db.update('bots', {'is_pinned': isPinned},
         where: 'id = ?', whereArgs: [botId]);
+  }
+
+  // ==================== 照片回忆 ====================
+
+  Future<void> savePhotoMemory({
+    required String botId,
+    required String imagePath,
+    required String sender,
+    String? description,
+    String? messageId,
+    int? timestamp,
+  }) async {
+    final db = await database;
+    final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
+    final id = 'photo_${botId}_$now';
+    await db.insert('photo_memories', {
+      'id': id,
+      'bot_id': botId,
+      'image_path': imagePath,
+      'sender': sender,
+      'description': description ?? '',
+      'message_id': messageId,
+      'timestamp': now,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> queryPhotoMemories(String botId,
+      {int? limit}) async {
+    final db = await database;
+    return await db.query(
+      'photo_memories',
+      where: 'bot_id = ?',
+      whereArgs: [botId],
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
+  }
+
+  Future<void> updatePhotoDescription(
+      String photoId, String description) async {
+    final db = await database;
+    await db.update('photo_memories', {'description': description},
+        where: 'id = ?', whereArgs: [photoId]);
   }
 }

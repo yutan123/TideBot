@@ -185,6 +185,7 @@ class AIManager {
     bool priority = true,
     String? imagePath,
     List<String>? imagePaths,
+    List<String>? imageAttachments,
     String? audioPath,
     String? activeGame,
     bool persistResponse = true,
@@ -235,6 +236,7 @@ class AIManager {
       final selectedImagePaths = <String>[
         if (imagePath?.isNotEmpty == true) imagePath!,
         ...?imagePaths,
+        ...?imageAttachments,
       ];
       try {
         final result = await _sendMessageOnce(

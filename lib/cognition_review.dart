@@ -2,6 +2,24 @@ import 'dart:convert';
 
 const cognitionCategories = ['角色眼中的你', '角色的自我认知', '关系'];
 
+bool isCognitionReviewDue(String? status,
+    {String? retryAt, required DateTime now}) {
+  if (status == 'done') return false;
+  final retry = int.tryParse(retryAt ?? '') ?? 0;
+  return now.millisecondsSinceEpoch >= retry;
+}
+
+Map<String, String> parseCognitionReviewResult(Map<String, dynamic> result) {
+  if (result['success'] != true || result['silent'] == true) {
+    throw StateError(result['error']?.toString() ?? '认知复核没有真实回复');
+  }
+  final reply = result['reply'];
+  if (reply is! String || reply.trim().isEmpty) {
+    throw const FormatException('认知复核回复为空');
+  }
+  return parseCognitionReview(reply);
+}
+
 String cognitionReviewPrompt({
   required Map<String, dynamic> bot,
   required List<Map<String, dynamic>> memories,

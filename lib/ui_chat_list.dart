@@ -73,9 +73,25 @@ class ChatListPageState extends State<ChatListPage> {
       }
       return;
     }
-    final enriched = <Map<String, dynamic>>[];
-    for (var b in bots) {
-      // 取该机器人「最新」一条消息作聊天列表预览（按时间倒序取首条）。
+
+    // 立即显示机器人列表（无预览），避免启动空白
+    if (mounted) {
+      setState(() {
+        _bots = bots
+            .map((b) => {
+                  ...b,
+                  'preview': '',
+                  'lastTime': (b['last_msg_time'] as int?) ??
+                      (b['created_at'] as int?) ??
+                      0,
+                  'unread': false,
+                })
+            .toList();
+      });
+    }
+
+    // 并发查询所有机器人的消息预览
+    final previewFutures = bots.map((b) async {
       List<Map<String, dynamic>> msgs = const [];
       try {
         msgs = await DBManager()
@@ -105,13 +121,15 @@ class ChatListPageState extends State<ChatListPage> {
         return timestamp > latest ? timestamp : latest;
       });
       final lastRead = (b['last_read_at'] as num?)?.toInt() ?? 0;
-      enriched.add({
+      return {
         ...b,
         'preview': preview,
         'lastTime': lastTime,
         'unread': latestAssistant > lastRead,
-      });
-    }
+      };
+    }).toList();
+
+    final enriched = await Future.wait(previewFutures);
     enriched.sort((a, b) {
       final aPin = (a['is_pinned'] as int?) ?? 0;
       final bPin = (b['is_pinned'] as int?) ?? 0;

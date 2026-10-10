@@ -20,13 +20,16 @@ class CognitionReviewService {
         final id = bot['id']?.toString() ?? '';
         if (id.isEmpty || isBotDisabled(bot['is_disabled'])) continue;
         final key = 'cognition_review_${id}_$date';
-        if (await db.getKV(key) != null || !await db.claimBackgroundJob(key))
-          continue;
+        if (!isCognitionReviewDue(await db.getKV(key),
+                retryAt: await db.getKV('${key}_retry_at'), now: now) ||
+            !await db.claimBackgroundJob(key)) continue;
         try {
-          if (await db.getKV(key) != null) continue;
-          // Record the attempt before requesting: no repeated model billing or
-          // edits when the provider fails or the application restarts.
-          await db.setKV(key, 'attempted');
+          if (!isCognitionReviewDue(await db.getKV(key),
+              retryAt: await db.getKV('${key}_retry_at'),
+              now: DateTime.now())) continue;
+          // An interrupted request stays pending; the lease prevents concurrent
+          // requests and expires so a later launch can recover it.
+          await db.setKV(key, 'pending');
           final memories = await db.queryMemories(id);
           final result = await AIManager().sendMessage(
             botId: id,
@@ -40,10 +43,7 @@ class CognitionReviewService {
             forceSingleReply: true,
             extraSystemPrompt: '本轮是内部认知复核，必须只返回要求的 JSON，不遵循聊天气泡、独白或分段回复格式。',
           );
-          if (result['success'] != true)
-            throw StateError(result['error']?.toString() ?? '认知复核请求失败');
-          final updates =
-              parseCognitionReview(result['reply']?.toString() ?? '');
+          final updates = parseCognitionReviewResult(result);
           final bots = await db.queryBots();
           if (!bots.any((b) =>
               b['id']?.toString() == id && !isBotDisabled(b['is_disabled'])))
@@ -57,7 +57,9 @@ class CognitionReviewService {
             'decision': updates.isEmpty ? 'keep' : 'modify',
           });
         } catch (error) {
-          AppLogService.instance.add('COGNITION', '$id 每日认知复核失败：$error');
+          await db.setKV('${key}_retry_at',
+              '${DateTime.now().add(const Duration(minutes: 5)).millisecondsSinceEpoch}');
+          AppLogService.instance.add('COGNITION', '$id 每日认知复核失败，将补写：$error');
         } finally {
           await db.releaseBackgroundJob(key);
         }

@@ -3,6 +3,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tide_bot/cognition_review.dart';
 
 void main() {
+  test('only completed reviews suppress catch-up, including legacy attempts',
+      () {
+    final now = DateTime(2026, 1, 2, 12);
+    for (final state in [null, 'attempted', 'pending']) {
+      expect(isCognitionReviewDue(state, now: now), isTrue);
+    }
+    expect(isCognitionReviewDue('done', now: now), isFalse);
+    final retry = now.add(const Duration(minutes: 5));
+    expect(
+        isCognitionReviewDue('pending',
+            now: now, retryAt: '${retry.millisecondsSinceEpoch}'),
+        isFalse);
+    expect(
+        isCognitionReviewDue('pending',
+            now: retry, retryAt: '${retry.millisecondsSinceEpoch}'),
+        isTrue);
+  });
+
+  test('review requires a real reply with all three decisions', () {
+    final reply = jsonEncode({
+      for (final category in cognitionCategories) category: {'modify': false}
+    });
+    expect(
+        parseCognitionReviewResult({'success': true, 'reply': reply}), isEmpty);
+    for (final result in <Map<String, dynamic>>[
+      {'success': false, 'reply': reply},
+      {'success': true, 'silent': true, 'reply': reply},
+      {'success': true, 'reply': ''},
+      {'success': true},
+      {'success': true, 'reply': '{}'},
+    ]) {
+      expect(() => parseCognitionReviewResult(result),
+          throwsA(anyOf(isA<StateError>(), isA<FormatException>())));
+    }
+  });
   test('cognition review prompt includes persona and eight world entries', () {
     final rows = [
       {'category': '角色眼中的你', 'content': '当前认知'},

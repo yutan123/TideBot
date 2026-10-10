@@ -14,10 +14,10 @@ import 'theme.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
-import 'emotion_state_service.dart';
 import 'daily_quote_service.dart';
 import 'diary_calendar_page.dart';
 import 'world_book_detail_page.dart';
+import 'photo_album_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -32,22 +32,15 @@ class _SpacePageState extends State<SpacePage> {
   String _botName = '';
   String _dailyQuote = '';
   int _daysSince = 0;
-  String _moodIcon = 'smile';
-  String _moodLabel = '';
   List<Map<String, dynamic>> _memories = [];
+  List<Map<String, dynamic>> _recentPhotos = [];
+  int _photoCarouselIndex = 0;
+  Timer? _photoCarouselTimer;
   final ScrollController _diaryScrollController = ScrollController();
   Timer? _diaryTimer;
   int _diaryScrollIndex = 0;
   int _diaryVisibleStart = 0;
   bool _loading = true;
-  final Map<String, IconData> _moodIcons = {
-    'smile': Icons.sentiment_satisfied_rounded,
-    'heart': Icons.favorite_rounded,
-    'sad': Icons.sentiment_dissatisfied_rounded,
-    'angry': Icons.sentiment_very_dissatisfied_rounded,
-    'sleep': Icons.bedtime_rounded,
-    'think': Icons.psychology_rounded,
-  };
 
   @override
   void initState() {
@@ -58,6 +51,7 @@ class _SpacePageState extends State<SpacePage> {
   @override
   void dispose() {
     _diaryTimer?.cancel();
+    _photoCarouselTimer?.cancel();
     _diaryScrollController.dispose();
     super.dispose();
   }
@@ -76,6 +70,26 @@ class _SpacePageState extends State<SpacePage> {
       final next = (_diaryVisibleStart + 1) % _memories.length;
       setState(() => _diaryVisibleStart = next);
     });
+  }
+
+  void _startPhotoCarousel() {
+    _photoCarouselTimer?.cancel();
+    if (_recentPhotos.length < 2) return;
+    _photoCarouselTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) {
+        _photoCarouselTimer?.cancel();
+        _photoCarouselTimer = null;
+        return;
+      }
+      setState(() {
+        _photoCarouselIndex = (_photoCarouselIndex + 1) % _recentPhotos.length;
+      });
+    });
+  }
+
+  void _stopPhotoCarousel() {
+    _photoCarouselTimer?.cancel();
+    _photoCarouselTimer = null;
   }
 
   void _toggleDiaryAutoScroll() {
@@ -130,17 +144,14 @@ class _SpacePageState extends State<SpacePage> {
         limit: 50,
       );
       final mem = [...shortMemories, ...longMemories];
+
+      // 加载最近3张照片用于轮播预览
+      final photos = await db.queryPhotoMemories(_botId, limit: 3);
+      _recentPhotos = photos;
+      _photoCarouselIndex = 0;
+
       // The space card reflects the same state injected into chat prompts,
       // including safe time-based fluctuations between messages.
-      final mood = await EmotionStateService.instance.currentMood(_botId);
-      _moodLabel = mood;
-      _moodIcon = mood == '开心'
-          ? 'smile'
-          : mood == '伤心'
-              ? 'sad'
-              : mood == '生气'
-                  ? 'angry'
-                  : 'think';
       _memories = mem;
       if (_diaryVisibleStart >= _memories.length) _diaryVisibleStart = 0;
       if (_diaryScrollIndex >= _memories.length) _diaryScrollIndex = 0;
@@ -155,11 +166,14 @@ class _SpacePageState extends State<SpacePage> {
         });
         // 打开空间页面即自动开始记忆循环滚动。
         _startDiaryAutoScroll();
+        // 启动照片轮播
+        _startPhotoCarousel();
       }
     } else {
       _daysSince = 0;
       _dailyQuote = '';
       _memories = [];
+      _recentPhotos = [];
       _botId = '';
       _botName = '';
       if (mounted) setState(() => _loading = false);
@@ -309,13 +323,9 @@ class _SpacePageState extends State<SpacePage> {
                     if (_botId.isNotEmpty) ...[
                       _buildQuoteCard(theme),
                       const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(child: _buildDaysCard(theme)),
-                          const SizedBox(width: 12),
-                          Expanded(child: _buildMoodCard(theme)),
-                        ],
-                      ),
+                      _buildDaysCard(theme),
+                      const SizedBox(height: 16),
+                      _buildPhotoCarousel(theme),
                     ] else
                       const FrostCard(
                         padding: EdgeInsets.all(24),
@@ -553,56 +563,146 @@ class _SpacePageState extends State<SpacePage> {
 
   Widget _buildDaysCard(TideTheme theme) => FrostCard(
         liquid: true,
-        child: Column(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              '$_daysSince',
-              style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.w300,
-                fontFamily: 'TideFont',
-                color: theme.primary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              '相遇天数',
-              style: TextStyle(
-                fontSize: 13,
-                color: Color(0xFF8E8E93),
-                fontFamily: 'TideFont',
-              ),
+            Column(
+              children: [
+                Text(
+                  '$_daysSince',
+                  style: TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w300,
+                    fontFamily: 'TideFont',
+                    color: theme.primary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  '相遇天数',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF8E8E93),
+                    fontFamily: 'TideFont',
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       );
-  Widget _buildMoodCard(TideTheme theme) {
-    final icon = _moodIcons[_moodIcon] ?? Icons.sentiment_satisfied_rounded;
-    return FrostCard(
-      liquid: true,
-      child: Column(
-        children: [
-          Icon(icon, size: 36, color: theme.primary),
-          const SizedBox(height: 4),
-          Text(
-            _moodLabel,
-            style: TextStyle(
-              fontSize: 13,
-              color: theme.textStrong,
-              fontFamily: 'TideFont',
+
+  Widget _buildPhotoCarousel(TideTheme theme) {
+    if (_recentPhotos.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return BouncyTap(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoAlbumPage(
+              botId: _botId,
+              botName: _botName,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            '由 TA 的最近回复决定',
-            textAlign: TextAlign.start,
-            style: TextStyle(
-              fontSize: 11,
-              color: theme.textFaint,
-              fontFamily: 'TideFont',
-            ),
+        );
+        _loadData();
+      },
+      child: FrostCard(
+        liquid: true,
+        padding: const EdgeInsets.all(0),
+        child: SizedBox(
+          height: 200,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // 3张照片层叠效果：中间主显，左右折叠在后
+              ...List.generate(_recentPhotos.length.clamp(0, 3), (i) {
+                final displayIndex = (_photoCarouselIndex + i) % _recentPhotos.length;
+                final photo = _recentPhotos[displayIndex];
+                final imagePath = photo['image_path']?.toString() ?? '';
+
+                if (imagePath.isEmpty || !File(imagePath).existsSync()) {
+                  return const SizedBox.shrink();
+                }
+
+                // 中间照片最前，左右照片在后
+                final isCurrent = i == 0;
+                final offset = i == 1 ? -40.0 : i == 2 ? 40.0 : 0.0;
+                final scale = isCurrent ? 1.0 : 0.85;
+                final opacity = isCurrent ? 1.0 : 0.5;
+
+                return AnimatedPositioned(
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                  left: MediaQuery.of(context).size.width / 2 - 140 + offset,
+                  top: 16,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 400),
+                    opacity: opacity,
+                    child: Transform.scale(
+                      scale: scale,
+                      child: Container(
+                        width: 160,
+                        height: 160,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.file(
+                            File(imagePath),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+              // 底部提示文字
+              Positioned(
+                bottom: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: theme.surface.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.border.withOpacity(0.5)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.photo_library_rounded,
+                        size: 16,
+                        color: theme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '照片回忆 ${_recentPhotos.length}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: theme.textStrong,
+                          fontFamily: 'TideFont',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

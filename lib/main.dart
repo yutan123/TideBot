@@ -790,6 +790,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
     AppState.updateLifecycle(state);
     if (state == AppLifecycleState.resumed) {
       unawaited(DiaryService.instance.catchUp());
+      unawaited(CognitionReviewService.instance.runDue());
       unawaited(McpConnectionService.instance.connectAuto());
     }
   }
@@ -1492,18 +1493,22 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
     if (state == AppLifecycleState.resumed) _refreshUnread();
   }
 
-  void _onDockTap(int i) {
+void _onDockTap(int i) {
     if (_idx != i) {
       setState(() => _idx = i);
       if (i == 0) {
         _chatListKey.currentState?.load();
         Future<void>.delayed(const Duration(milliseconds: 350), _refreshUnread);
+      } else if (i == 1) {
+        // 切换到空间页时，确保停止轮播（离开时会自动停止，但重新进入需要重启）
       }
       _pageCtrl.animateToPage(
         i,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeOutCubic,
       );
+    } else if (_idx == 2 && i == 2) {
+      _squareKey.currentState?.toggleGames();
     }
   }
 
