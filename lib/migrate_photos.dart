@@ -1,80 +1,64 @@
 import 'dart:io';
+import 'app_log_service.dart';
 import 'db.dart';
 import 'photo_memory_service.dart';
 
-/// 迁移历史图片到照片回忆相册
-/// 
-/// 将 chat_history 表中已有的图片消息（type='image'）导入到 photo_memories 表
-/// 并为每张照片异步生成 AI 描述
+bool _migrationRunning = false;
+
+/// 把 chat_history 中已有的图片消息迁移到照片回忆相册。
+///
+/// 逐张处理：每张照片的描述生成完成后再处理下一张，避免一次性
+/// 发出大量模型请求。图片文件不存在或已迁移的直接跳过。
 Future<void> migrateHistoricalPhotos() async {
-  final db = DBManager();
-  
-  print('[迁移] 开始迁移历史图片...');
-  
-  // 查询所有图片消息
-  final database = await db.database;
-  final images = await database.rawQuery('''
-    SELECT id, bot_id, role, file_path, timestamp
-    FROM chat_history
-    WHERE type = 'image' 
-      AND file_path IS NOT NULL 
-      AND file_path != ''
-      AND (role = 'user' OR role = 'assistant')
-    ORDER BY timestamp DESC
-  ''');
-  
-  print('[迁移] 找到 ${images.length} 条图片消息');
-  
-  int recordedCount = 0;
-  int skipCount = 0;
-  
-  for (final img in images) {
-    final botId = img['bot_id']?.toString();
-    final filePath = img['file_path']?.toString();
-    final role = img['role']?.toString();
-    final messageId = img['id']?.toString();
-    final timestamp = (img['timestamp'] as num?)?.toInt();
-    
-    if (botId == null || filePath == null || role == null) {
-      skipCount++;
-      continue;
-    }
-    
-    // 检查文件是否存在，不存在直接跳过
-    if (!await File(filePath).exists()) {
-      skipCount++;
-      continue;
-    }
-    
-    // 检查是否已记录
-    final existing = await database.query(
-      'photo_memories',
-      where: 'message_id = ?',
-      whereArgs: [messageId],
-      limit: 1,
-    );
-    
-    if (existing.isNotEmpty) {
-      skipCount++;
-      continue;
-    }
-    
-    try {
-      final sender = role == 'user' ? 'user' : 'bot';
-      // 异步处理，不等待描述生成完成
-      PhotoMemoryService.instance.handleChatPhoto(
+  if (_migrationRunning) return;
+  _migrationRunning = true;
+  try {
+    // 等首页渲染完成后再开始，不和冷启动抢资源。
+    await Future<void>.delayed(const Duration(seconds: 8));
+    final database = await DBManager().database;
+    final images = await database.rawQuery('''
+      SELECT h.id, h.bot_id, h.role, h.file_path, h.timestamp
+      FROM chat_history h
+      WHERE h.type = 'image'
+        AND h.file_path IS NOT NULL AND h.file_path != ''
+        AND h.role IN ('user', 'assistant')
+        AND NOT EXISTS (
+          SELECT 1 FROM photo_memories p WHERE p.message_id = h.id
+        )
+      ORDER BY h.timestamp DESC
+    ''');
+
+    var recorded = 0;
+    var skipped = 0;
+    for (final img in images) {
+      final botId = img['bot_id']?.toString();
+      final filePath = img['file_path']?.toString();
+      final role = img['role']?.toString();
+      if (botId == null || filePath == null || role == null) {
+        skipped++;
+        continue;
+      }
+      if (!await File(filePath).exists()) {
+        skipped++;
+        continue;
+      }
+      await PhotoMemoryService.instance.handleChatPhoto(
         botId: botId,
         imagePath: filePath,
-        sender: sender,
-        messageId: messageId,
-        timestamp: timestamp,
+        sender: role == 'user' ? 'user' : 'bot',
+        messageId: img['id']?.toString(),
+        timestamp: (img['timestamp'] as num?)?.toInt(),
+        awaitDescription: true,
       );
-      recordedCount++;
-    } catch (error) {
-      print('[迁移] 记录失败: $filePath, 错误: $error');
-      skipCount++;
+      recorded++;
     }
+    AppLogService.instance.addJson('PHOTO', '历史图片迁移完成', {
+      'recorded': recorded,
+      'skipped': skipped,
+    });
+  } catch (error) {
+    AppLogService.instance.add('PHOTO', '历史图片迁移失败：$error');
+  } finally {
+    _migrationRunning = false;
   }
-  
-  print('[迁移] 已记录 $recordedCount 张照片，跳过 $skipCount 张，AI 描述生成中...');
 }

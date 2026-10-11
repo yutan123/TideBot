@@ -84,6 +84,53 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
     }
   }
 
+  /// 全屏查看参考图，支持双指缩放，点击任意处关闭。
+  void _preview(String id, String path, String title) {
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black.withValues(alpha: .92),
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (context, animation, _) => FadeTransition(
+        opacity: animation,
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Stack(children: [
+                Center(
+                  child: InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 5,
+                    child: Hero(
+                      tag: 'bot_reference_$id',
+                      child: Image.file(File(path),
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Text('图片已失效',
+                              style: TextStyle(color: Colors.white70))),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 20,
+                  right: 20,
+                  top: 12,
+                  child: Text(title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
+
   Future<void> _remove(String id) async {
     if (_busy.contains(id)) return;
     setState(() => _busy.add(id));
@@ -129,26 +176,35 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(color: theme.divider)),
                       child: Row(children: [
-                        Container(
-                            width: 52,
-                            height: 52,
-                            clipBehavior: Clip.antiAlias,
-                            decoration: BoxDecoration(
-                                color: theme.surfaceVariant,
-                                borderRadius: BorderRadius.circular(12)),
-                            child: path.isEmpty
-                                ? Center(
-                                    child: Text('空',
-                                        style: TextStyle(
-                                            color: theme.textWeak,
-                                            fontSize: 13)))
-                                : Image.file(File(path),
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Center(
-                                        child: Text('失效',
+                        GestureDetector(
+                          onTap: path.isEmpty
+                              ? null
+                              : () => _preview(
+                                  id, path, bot['name']?.toString() ?? '参考图'),
+                          child: Hero(
+                            tag: 'bot_reference_$id',
+                            child: Container(
+                                width: 52,
+                                height: 52,
+                                clipBehavior: Clip.antiAlias,
+                                decoration: BoxDecoration(
+                                    color: theme.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(12)),
+                                child: path.isEmpty
+                                    ? Center(
+                                        child: Text('空',
                                             style: TextStyle(
                                                 color: theme.textWeak,
-                                                fontSize: 12))))),
+                                                fontSize: 13)))
+                                    : Image.file(File(path),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                            child: Text('失效',
+                                                style: TextStyle(
+                                                    color: theme.textWeak,
+                                                    fontSize: 12))))),
+                          ),
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                             child: Column(

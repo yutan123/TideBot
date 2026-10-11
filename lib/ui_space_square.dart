@@ -75,7 +75,8 @@ class _SpacePageState extends State<SpacePage> {
   void _startPhotoCarousel() {
     _photoCarouselTimer?.cancel();
     if (_recentPhotos.length < 2) return;
-    _photoCarouselTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _photoCarouselTimer =
+        Timer.periodic(const Duration(milliseconds: 4200), (_) {
       if (!mounted) {
         _photoCarouselTimer?.cancel();
         _photoCarouselTimer = null;
@@ -318,9 +319,13 @@ class _SpacePageState extends State<SpacePage> {
                     if (_botId.isNotEmpty) ...[
                       _buildQuoteCard(theme),
                       const SizedBox(height: 16),
-                      _buildDaysCard(theme),
-                      const SizedBox(height: 16),
-                      _buildPhotoCarousel(theme),
+                      Row(
+                        children: [
+                          Expanded(child: _buildDaysCard(theme)),
+                          const SizedBox(width: 16),
+                          Expanded(child: _buildPhotoCarousel(theme)),
+                        ],
+                      ),
                     ] else
                       const FrostCard(
                         padding: EdgeInsets.all(24),
@@ -558,30 +563,28 @@ class _SpacePageState extends State<SpacePage> {
 
   Widget _buildDaysCard(TideTheme theme) => FrostCard(
         liquid: true,
-        child: Row(
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Column(
-              children: [
-                Text(
-                  '$_daysSince',
-                  style: TextStyle(
-                    fontSize: 36,
-                    fontWeight: FontWeight.w300,
-                    fontFamily: 'TideFont',
-                    color: theme.primary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  '相遇天数',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF8E8E93),
-                    fontFamily: 'TideFont',
-                  ),
-                ),
-              ],
+            Text(
+              '$_daysSince',
+              style: TextStyle(
+                fontSize: 56,
+                fontWeight: FontWeight.w200,
+                fontFamily: 'TideFont',
+                color: theme.primary,
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '相遇天数',
+              style: TextStyle(
+                fontSize: 14,
+                color: theme.textWeak,
+                fontFamily: 'TideFont',
+                letterSpacing: 2,
+              ),
             ),
           ],
         ),
@@ -603,138 +606,147 @@ class _SpacePageState extends State<SpacePage> {
       },
       child: FrostCard(
         liquid: true,
-        padding: const EdgeInsets.all(0),
-        child: SizedBox(
-          height: 200,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              if (_recentPhotos.isEmpty)
-                // 空状态占位：3张灰色卡片
-                ...List.generate(3, (i) {
-                  final offset = i == 0 ? 0.0 : i == 1 ? -40.0 : 40.0;
-                  final scale = i == 0 ? 1.0 : 0.85;
-                  final opacity = i == 0 ? 1.0 : 0.5;
-
-                  return Positioned(
-                    left: MediaQuery.of(context).size.width / 2 - 140 + offset,
-                    top: 16,
-                    child: Opacity(
-                      opacity: opacity,
-                      child: Transform.scale(
-                        scale: scale,
-                        child: Container(
-                          width: 160,
-                          height: 160,
-                          decoration: BoxDecoration(
-                            color: theme.pageBackground,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: theme.border.withOpacity(0.3),
-                              width: 2,
-                            ),
-                          ),
-                          child: Center(
-                            child: Icon(
-                              Icons.photo_rounded,
-                              size: 48,
-                              color: theme.textFaint.withOpacity(0.3),
-                            ),
-                          ),
-                        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // 顶部标题
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.photo_library_rounded,
+                      size: 20,
+                      color: theme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '照片回忆',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: theme.textStrong,
+                        fontFamily: 'TideFont',
                       ),
                     ),
-                  );
-                })
-              else
-                // 有照片：显示真实照片轮播
-                ...List.generate(_recentPhotos.length.clamp(0, 3), (i) {
-                  final displayIndex =
-                      (_photoCarouselIndex + i) % _recentPhotos.length;
-                  final photo = _recentPhotos[displayIndex];
-                  final imagePath = photo['image_path']?.toString() ?? '';
-
-                  if (imagePath.isEmpty || !File(imagePath).existsSync()) {
-                    return const SizedBox.shrink();
-                  }
-
-                  final isCurrent = i == 0;
-                  final offset = i == 1 ? -40.0 : i == 2 ? 40.0 : 0.0;
-                  final scale = isCurrent ? 1.0 : 0.85;
-                  final opacity = isCurrent ? 1.0 : 0.5;
-
-                  return AnimatedPositioned(
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
-                    left: MediaQuery.of(context).size.width / 2 - 140 + offset,
-                    top: 16,
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 400),
-                      opacity: opacity,
-                      child: Transform.scale(
-                        scale: scale,
-                        child: Container(
-                          width: 160,
-                          height: 160,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.file(
-                              File(imagePath),
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ),
-                      ),
+                  ],
+                ),
+                if (_recentPhotos.isNotEmpty)
+                  Text(
+                    '${_recentPhotos.length} 张',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: theme.textFaint,
+                      fontFamily: 'TideFont',
                     ),
-                  );
-                }),
-              // 底部提示文字
-              Positioned(
-                bottom: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: theme.surface.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: theme.border.withOpacity(0.5)),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.photo_library_rounded,
-                        size: 16,
-                        color: theme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _recentPhotos.isEmpty
-                            ? '照片回忆'
-                            : '照片回忆 ${_recentPhotos.length}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: theme.textStrong,
-                          fontFamily: 'TideFont',
-                        ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // 照片堆叠区域
+            SizedBox(
+              height: 160,
+              child: _recentPhotos.isEmpty
+                  ? _buildEmptyPhotoStack(theme)
+                  : _buildPhotoStack(theme),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 空状态照片堆叠
+  Widget _buildEmptyPhotoStack(TideTheme theme) {
+    return Stack(
+      children: List.generate(3, (i) {
+        final offset = (i - 1) * 15.0;
+        final rotation = (i - 1) * 0.02;
+        return Positioned(
+          left: offset,
+          right: -offset,
+          top: 10 + i * 5.0,
+          bottom: 10 - i * 5.0,
+          child: Transform.rotate(
+            angle: rotation,
+            child: Container(
+              decoration: BoxDecoration(
+                color: theme.pageBackground,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: theme.border.withOpacity(0.3),
+                  width: 1.5,
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.photo_rounded,
+                  size: 32,
+                  color: theme.textFaint.withOpacity(0.3),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  // 真实照片堆叠轮播
+  Widget _buildPhotoStack(TideTheme theme) {
+    return Stack(
+      children: List.generate(
+        _recentPhotos.length.clamp(0, 3),
+        (i) {
+          final displayIndex = (_photoCarouselIndex + i) % _recentPhotos.length;
+          final photo = _recentPhotos[displayIndex];
+          final imagePath = photo['image_path']?.toString() ?? '';
+
+          if (imagePath.isEmpty || !File(imagePath).existsSync()) {
+            return const SizedBox.shrink();
+          }
+
+          final offset = (i - 1) * 15.0;
+          final rotation = (i - 1) * 0.02;
+          final scale = 1.0 - i * 0.05;
+
+          return AnimatedPositioned(
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+            left: offset,
+            right: -offset,
+            top: 10 + i * 5.0,
+            bottom: 10 - i * 5.0,
+            child: AnimatedRotation(
+              duration: const Duration(milliseconds: 400),
+              turns: rotation / (2 * 3.14159),
+              child: AnimatedScale(
+                duration: const Duration(milliseconds: 400),
+                scale: scale,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15 * (3 - i)),
+                        blurRadius: 8 + i * 4.0,
+                        offset: Offset(0, 2 + i * 2.0),
                       ),
                     ],
                   ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(
+                      File(imagePath),
+                      fit: BoxFit.cover,
+                    ),
+                  ),
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

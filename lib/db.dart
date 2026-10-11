@@ -2878,7 +2878,8 @@ class DBManager {
 
   // ==================== 照片回忆 ====================
 
-  Future<void> savePhotoMemory({
+  /// 保存照片记录并返回记录 id；同一条消息重复保存时返回已有记录 id。
+  Future<String> savePhotoMemory({
     required String botId,
     required String imagePath,
     required String sender,
@@ -2887,17 +2888,39 @@ class DBManager {
     int? timestamp,
   }) async {
     final db = await database;
+    if (messageId != null && messageId.isNotEmpty) {
+      final existing = await db.query('photo_memories',
+          columns: ['id'],
+          where: 'message_id = ?',
+          whereArgs: [messageId],
+          limit: 1);
+      if (existing.isNotEmpty) return existing.first['id'].toString();
+    }
     final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
-    final id = 'photo_${botId}_$now';
-    await db.insert('photo_memories', {
-      'id': id,
-      'bot_id': botId,
-      'image_path': imagePath,
-      'sender': sender,
-      'description': description ?? '',
-      'message_id': messageId,
-      'timestamp': now,
-    });
+    final id = messageId != null && messageId.isNotEmpty
+        ? 'photo_$messageId'
+        : 'photo_${botId}_${now}_${DateTime.now().microsecondsSinceEpoch}';
+    await db.insert(
+      'photo_memories',
+      {
+        'id': id,
+        'bot_id': botId,
+        'image_path': imagePath,
+        'sender': sender,
+        'description': description ?? '',
+        'message_id': messageId,
+        'timestamp': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    return id;
+  }
+
+  Future<int> countPhotoMemories(String botId) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+        'SELECT COUNT(*) AS c FROM photo_memories WHERE bot_id = ?', [botId]);
+    return (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
   Future<List<Map<String, dynamic>>> queryPhotoMemories(String botId,

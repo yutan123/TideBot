@@ -9,7 +9,7 @@ class PhotoMemoryService {
   static final instance = PhotoMemoryService._();
 
   /// 为照片生成回忆描述
-  /// 
+  ///
   /// 提供：照片本身、最近几轮对话上下文、机器人人设、最近3条世界书记忆
   /// 生成：日期 + 描述 + 发送理由（机器人发的照片）
   Future<String> generatePhotoDescription({
@@ -27,21 +27,22 @@ class PhotoMemoryService {
 
       // 获取最近几轮对话上下文（最多10轮，约20条消息）
       final recentHistory = await db.queryMessages(botId, limit: 20);
-final contextLines = <String>[];
+      final contextLines = <String>[];
       for (final msg in recentHistory.reversed.take(20)) {
         final role = msg['role'] == 'user' ? '用户' : bot['name'];
         final content = msg['content']?.toString() ?? '';
         if (content.isNotEmpty) {
-          contextLines.add('$role: ${content.length > 100 ? content.substring(0, 100) + '...' : content}');
+          contextLines.add(
+              '$role: ${content.length > 100 ? content.substring(0, 100) + '...' : content}');
         }
       }
 
       // 获取最近3条世界书记忆
       final memories = await db.queryMemories(botId, limit: 50);
       final recentMemories = memories
-          .where((m) => 
-              m['category'] != '角色眼中的你' && 
-              m['category'] != '角色的自我认知' && 
+          .where((m) =>
+              m['category'] != '角色眼中的你' &&
+              m['category'] != '角色的自我认知' &&
               m['category'] != '关系' &&
               m['category'] != '角色档案')
           .take(3)
@@ -56,12 +57,10 @@ final contextLines = <String>[];
         }
       }
 
-      final contextStr = contextLines.isEmpty 
-          ? '（暂无对话上下文）' 
-          : contextLines.join('\n');
-      final memoryStr = memoryLines.isEmpty 
-          ? '（暂无相关记忆）' 
-          : memoryLines.join('\n');
+      final contextStr =
+          contextLines.isEmpty ? '（暂无对话上下文）' : contextLines.join('\n');
+      final memoryStr =
+          memoryLines.isEmpty ? '（暂无相关记忆）' : memoryLines.join('\n');
 
       final now = DateTime.now();
       final dateStr = '${now.year}年${now.month}月${now.day}日';
@@ -135,50 +134,64 @@ $memoryStr
     }
   }
 
-  /// 处理聊天中的照片消息：保存记录并生成描述
+  /// 处理聊天中的照片消息：保存记录并生成描述。
+  ///
+  /// [awaitDescription] 为 true 时等待描述生成完成（历史迁移逐张生成用），
+  /// 否则描述在后台生成，不阻塞消息发送。
   Future<void> handleChatPhoto({
     required String botId,
     required String imagePath,
     required String sender,
     String? messageId,
     int? timestamp,
+    bool awaitDescription = false,
   }) async {
     try {
       final db = DBManager();
-      
-      // 先保存照片记录（描述为空）
-      await db.savePhotoMemory(
+      final photoId = await db.savePhotoMemory(
         botId: botId,
         imagePath: imagePath,
         sender: sender,
         messageId: messageId,
         timestamp: timestamp,
       );
-
-      // 异步生成描述
-      unawaited(() async {
-        final description = await generatePhotoDescription(
-          botId: botId,
-          imagePath: imagePath,
-          sender: sender,
-          messageId: messageId,
-        );
-
-        if (description.isNotEmpty) {
-          final photos = await db.queryPhotoMemories(botId, limit: 1);
-          if (photos.isNotEmpty) {
-            final photoId = photos.first['id']?.toString() ?? '';
-            await db.updatePhotoDescription(photoId, description);
-            AppLogService.instance.addJson('PHOTO', '照片描述已生成', {
-              'photo_id': photoId,
-              'sender': sender,
-              'description_length': description.length,
-            });
-          }
-        }
-      }());
+      final task = _describe(
+        photoId: photoId,
+        botId: botId,
+        imagePath: imagePath,
+        sender: sender,
+        messageId: messageId,
+      );
+      if (awaitDescription) {
+        await task;
+      } else {
+        unawaited(task);
+      }
     } catch (error) {
       AppLogService.instance.add('PHOTO', '照片处理失败：$error');
     }
+  }
+
+  Future<void> _describe({
+    required String photoId,
+    required String botId,
+    required String imagePath,
+    required String sender,
+    String? messageId,
+  }) async {
+    final description = await generatePhotoDescription(
+      botId: botId,
+      imagePath: imagePath,
+      sender: sender,
+      messageId: messageId,
+    );
+    if (description.isEmpty) return;
+    // 按记录 id 精确回写，避免并发时写到其他照片上。
+    await DBManager().updatePhotoDescription(photoId, description);
+    AppLogService.instance.addJson('PHOTO', '照片描述已生成', {
+      'photo_id': photoId,
+      'sender': sender,
+      'description_length': description.length,
+    });
   }
 }
