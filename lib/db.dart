@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
 import 'chat_event_bus.dart';
+import 'migrate_photos.dart';
 
 /// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
 ///
@@ -411,6 +412,8 @@ class DBManager {
         if (needsRepair) {
           await _repairExistingDatabase(db);
           await _markSchemaRepaired(db);
+          // 首次修复后迁移历史图片
+          _migrateHistoricalPhotos();
         }
         await db.update('memories', {'category': '记忆'},
             where: "category = 'fact' OR category IS NULL OR category = ''");
