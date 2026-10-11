@@ -413,7 +413,7 @@ class DBManager {
           await _repairExistingDatabase(db);
           await _markSchemaRepaired(db);
           // 首次修复后迁移历史图片
-          _migrateHistoricalPhotos();
+          migrateHistoricalPhotos();
         }
         await db.update('memories', {'category': '记忆'},
             where: "category = 'fact' OR category IS NULL OR category = ''");
