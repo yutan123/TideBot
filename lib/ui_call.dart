@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'call_message.dart';
 import 'app_permissions.dart';
 import 'package:flutter/material.dart';
@@ -83,16 +84,20 @@ class _CallPageState extends State<CallPage>
   /// 本轮通话流式输出是否已失败（失败后降级到非流式）
   bool _streamFailedThisCall = false;
 
+  /// STT/TTS 实际配置的 provider ID
+  String _sttProviderId = '';
+  String _ttsProviderId = '';
+
   /// STT/TTS 自动检测状态
   bool _hasStt = false;
   bool _hasTts = false;
 
   // Keep the gate tolerant of Android devices whose amplitude reporting is
   // conservative. A user can always finish the current turn explicitly.
-  static const int _speechStartTicks = 2;
-  static const int _silentStopTicks = 6; // 降低到6（1.2秒静音即停止）
-  static const double _minimumVoiceLevel = -68;
-  static const double _speechOverNoise = 2; // 降低到2（更容易检测到语音）
+  static const int _speechStartTicks = 3; // 提高到3（600ms），降低误判
+  static const int _silentStopTicks = 8; // 提高到8（1.6秒静音），避免截断
+  static const double _minimumVoiceLevel = -55; // 提高到-55（真人说话才够响）
+  static const double _speechOverNoise = 8; // 提高到8dB（避免把机器人声音当成插话）
   static const Duration _minimumRecordingDuration =
       Duration(milliseconds: 300); // 降低到300ms
   static const String _callSystemPrompt =
@@ -198,7 +203,7 @@ class _CallPageState extends State<CallPage>
       _appendMessage(answer, isUser: false);
       _transcript.add('机器人：$answer');
       if (mounted) setState(() => _caption = answer);
-      final ttsId = widget.bot['tts_model']?.toString() ?? '';
+      final ttsId = _ttsProviderId;
       if (_hasTts && ttsId.isNotEmpty) {
         await _synthesizeAndPlay(answer, ttsId);
       } else if (!_hasTts) {
@@ -224,6 +229,10 @@ class _CallPageState extends State<CallPage>
             _flowState = CallFlowState.idle;
           }
         });
+        // 文字回复完成后也恢复监听
+        if (!_muted && _flowState != CallFlowState.playing) {
+          unawaited(_startListening());
+        }
       }
     }
   }
@@ -345,9 +354,18 @@ class _CallPageState extends State<CallPage>
       if (_player.state == PlayerState.playing) await _player.stop();
       final dir = await getApplicationDocumentsDirectory();
       final path =
-          '${dir.path}/call_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${dir.path}/call_${DateTime.now().millisecondsSinceEpoch}.wav';
+      // WAV（16kHz 单声道 PCM）是 Whisper、MiMo 和聊天模型 input_audio
+      // 都接受的格式；m4a 在 input_audio 中通常不被支持。
       await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+          echoCancel: true,
+          noiseSuppress: true,
+          autoGain: true,
+        ),
         path: path,
       );
       _startAmpMonitor();
@@ -589,7 +607,7 @@ class _CallPageState extends State<CallPage>
       AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
       _transcript.add('机器人：$answer');
       // 先不显示文字，等 TTS 生成后再同步显示和播放
-      final ttsId = widget.bot['tts_model']?.toString() ?? '';
+      final ttsId = _ttsProviderId;
       if (ttsId.isEmpty || !_hasTts) {
         AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，保留文字回复');
         _appendMessage(answer, isUser: false);
@@ -613,8 +631,9 @@ class _CallPageState extends State<CallPage>
     } finally {
       if (mounted && !_ending) {
         setState(() => _processing = false);
-        if (!_muted && _flowState != CallFlowState.failed) {
-          await _startListening();
+        // 任何错误都重新开始监听，不要卡住
+        if (!_muted) {
+          unawaited(_startListening());
         }
       }
     }
@@ -665,22 +684,13 @@ class _CallPageState extends State<CallPage>
     }
   }
 
-  /// 播放机器人回复；播放期间监听录音，检测到用户声音（超过分贝阈值）即打断，
-  /// 让用户随时插话。
+  /// 播放机器人回复；使用扬声器模式，不再开录音监听插话。
+  /// 用户想插话时可以点"暂停"按钮手动打断。
   Future<void> _playBotReply(String audioPath) async {
-    AppLogService.instance.add('VOICE_CALL', '开始播放 TTS 音频');
+    AppLogService.instance.add('VOICE_CALL', '开始播放 TTS 音频（扬声器模式）');
     StreamSubscription<PlayerState>? stateSub;
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final vadPath =
-          '${dir.path}/call_vad_${DateTime.now().millisecondsSinceEpoch}.m4a';
-      await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
-        path: vadPath,
-      );
       _playDone = Completer<void>();
-      _startAmpMonitor();
-      _vadActive = true;
       if (mounted) {
         setState(() {
           _flowState = CallFlowState.playing;
@@ -693,7 +703,6 @@ class _CallPageState extends State<CallPage>
       });
       // Some player implementations do not emit onPlayerComplete reliably.
       stateSub = _player.onPlayerStateChanged.listen((state) {
-        if (!_vadActive) return;
         if (state == PlayerState.stopped || state == PlayerState.completed) {
           if (!(_playDone?.isCompleted ?? true)) _playDone?.complete();
         }
@@ -710,17 +719,17 @@ class _CallPageState extends State<CallPage>
       await _playSub?.cancel();
       _playSub = null;
       await stateSub?.cancel();
-      _stopAmpMonitor();
-      try {
-        await _recorder.stop();
-      } catch (_) {}
       if (mounted) {
         setState(() {
           _botSpeaking = false;
           if (!_processing) _flowState = CallFlowState.idle;
         });
       }
-      AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束，VAD 录音已释放');
+      AppLogService.instance.add('VOICE_CALL', 'TTS 播放结束');
+      // 播放完成后继续监听
+      if (mounted && !_ending && !_muted && !_processing) {
+        unawaited(_startListening());
+      }
     }
   }
 
@@ -878,15 +887,36 @@ class _CallPageState extends State<CallPage>
         setState(() => _elapsed = DateTime.now().difference(_startedAt));
     });
 
-    // 自动检测 STT/TTS 可用性
-    _hasStt = widget.bot['stt_model']?.toString().trim().isNotEmpty == true;
-    _hasTts = widget.bot['tts_model']?.toString().trim().isNotEmpty == true;
+    // 先用入口传入的判定渲染，避免异步读取前闪现"配置语音模型"
+    _hasStt = widget.hasStt;
+    _hasTts = widget.hasTts;
+    // 再从 SharedPreferences 和 bot 记录中读取实际配置的 STT/TTS
+    _loadSttTtsConfig();
+  }
+
+  Future<void> _loadSttTtsConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final botId = widget.bot['id']?.toString() ?? '';
+
+    _sttProviderId = prefs.getString('stt_model_$botId')?.trim() ??
+        widget.bot['stt_model']?.toString().trim() ??
+        '';
+    _ttsProviderId = prefs.getString('tts_model_$botId')?.trim() ??
+        widget.bot['tts_model']?.toString().trim() ??
+        '';
+
+    if (!mounted) return;
+    setState(() {
+      _hasStt = _sttProviderId.isNotEmpty;
+      _hasTts = _ttsProviderId.isNotEmpty;
+    });
+
     AppLogService.instance.add(
       'VOICE_CALL',
-      '通话初始化：STT=${_hasStt ? '可用' : '不可用'}，TTS=${_hasTts ? '可用' : '不可用'}',
+      '通话初始化：STT=${_hasStt ? _sttProviderId : '不可用'}，TTS=${_hasTts ? _ttsProviderId : '不可用'}',
     );
 
-    if (_hasStt) {
+    if (_hasStt && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _startListening();
       });
@@ -1196,7 +1226,7 @@ class _CallPageState extends State<CallPage>
       '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
   String _callStateLabel() {
-    if (!widget.hasStt) return '需要配置语音';
+    if (!_hasStt) return '需要配置语音';
     if (_muted) return '已静音';
     return switch (_flowState) {
       CallFlowState.requestingPermission => '正在请求权限',

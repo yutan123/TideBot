@@ -2153,17 +2153,33 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             '')
         .trim();
 
-    // 聊天室的主模型识别会直接附带音频。语音通话仍需要文本，因此这里保留转写。
+    // 聊天室的主模型识别会直接附带音频。语音通话改为让主模型转写后继续对话。
     if (providerId == '__use_primary_stt__') {
       final chatProviderId = bot?['chat_model']?.toString().trim() ?? '';
-      if (chatProviderId.isEmpty) return null;
+      if (chatProviderId.isEmpty) {
+        AppLogService.instance.add('STT', '主模型识别：未配置聊天模型');
+        return null;
+      }
       final chatProvider = await db.getChatProviderById(chatProviderId);
-      if (chatProvider == null) return null;
-      return transcribeWithProvider(
-        chatProvider,
-        audioPath,
+      if (chatProvider == null) {
+        AppLogService.instance.add('STT', '主模型识别：未找到聊天模型配置');
+        return null;
+      }
+
+      AppLogService.instance.add(
+        'STT',
+        '使用主模型转写（通话模式）：${chatProvider['name']}',
+      );
+
+      // 直接调用主模型，让它返回转写文本
+      // 不使用 sendMessage，避免触发工具调用、历史记忆等副作用
+      final transcriptResult = await _transcribeWithChatModel(
+        provider: chatProvider,
+        audioPath: audioPath,
         cancellationToken: cancellationToken,
       );
+
+      return transcriptResult;
     }
 
     if (providerId.isEmpty) {
@@ -2180,6 +2196,104 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       audioPath,
       cancellationToken: cancellationToken,
     );
+  }
+
+  /// 主模型识别（通话模式）：把音频直接交给聊天模型，只要求返回逐字转写。
+  /// 不经过 sendMessage，避免工具调用、历史拼接、消息落库等副作用；
+  /// 转写结果再由通话页按普通文本轮次交给主模型回复。
+  Future<String?> _transcribeWithChatModel({
+    required Map<String, dynamic> provider,
+    required String audioPath,
+    AICancellationToken? cancellationToken,
+  }) async {
+    try {
+      cancellationToken?.throwIfCancelled();
+      final audio = File(audioPath);
+      if (!await audio.exists()) {
+        AppLogService.instance.add('STT', '主模型转写：语音文件不存在');
+        return null;
+      }
+      final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
+          .toString()
+          .trim()
+          .replaceFirst(RegExp(r'/+$'), '');
+      final model = provider['model']?.toString().split(',').first.trim() ?? '';
+      final apiKey =
+          (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
+      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
+        AppLogService.instance.add('STT', '主模型转写失败：缺少地址、Key 或模型');
+        return null;
+      }
+      final bytes = await audio.readAsBytes();
+      final extension = audio.path.split('.').last.toLowerCase();
+      final format = extension == 'wave' ? 'wav' : extension;
+      final endpoint = _chatCompletionsEndpoint(baseUrl);
+      final payload = {
+        'model': model,
+        'stream': false,
+        'temperature': 0,
+        'messages': [
+          {
+            'role': 'system',
+            'content':
+                '你是语音转写器。只输出音频中说话人的原话（逐字转写），不要回答、不要解释、不要加引号或任何前缀。听不清或没有人声时只输出空字符串。',
+          },
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': '请逐字转写这段语音。'},
+              {
+                'type': 'input_audio',
+                'input_audio': {
+                  'data': base64Encode(bytes),
+                  'format': format,
+                },
+              },
+            ],
+          },
+        ],
+      };
+      AppLogService.instance.add(
+        'STT',
+        '请求主模型转写：model=$model，endpoint=$endpoint，${bytes.length} bytes，format=$format',
+      );
+      final response =
+          await _withCancellableClient(cancellationToken, (client) {
+        return client
+            .post(
+              Uri.parse(endpoint),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $apiKey',
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 45));
+      });
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        AppLogService.instance.add(
+          'STT',
+          '主模型转写失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
+        );
+        return null;
+      }
+      final transcript = _extractChatContent(jsonDecode(body))
+          .trim()
+          .replaceAll(RegExp(r'^["“「]+|["”」]+$'), '')
+          .trim();
+      if (transcript.isEmpty) {
+        AppLogService.instance.add('STT', '主模型转写返回为空');
+        return null;
+      }
+      return transcript;
+    } on AICancelledException {
+      rethrow;
+    } catch (e) {
+      cancellationToken?.throwIfCancelled();
+      AppLogService.instance.add('STT', '主模型转写异常：$e');
+      return null;
+    }
   }
 
   Future<String?> transcribeWithProvider(
@@ -2299,6 +2413,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final endpoint = _chatCompletionsEndpoint(baseUrl);
     final bytes = await audio.readAsBytes();
     final extension = audio.path.split('.').last.toLowerCase();
+    // 通话录音已改为 WAV；这里按真实扩展名声明格式，不做伪装。
+    final format = extension == 'wave' ? 'wav' : extension;
     final payload = {
       'model': model,
       'stream': false,
@@ -2312,7 +2428,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               'type': 'input_audio',
               'input_audio': {
                 'data': base64Encode(bytes),
-                'format': extension == 'wave' ? 'wav' : extension,
+                'format': format,
               },
             },
           ],
@@ -2321,7 +2437,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     };
     AppLogService.instance.add(
       'STT',
-      '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes',
+      '请求 MiMo 语音转文字：provider=$providerName，model=$model，endpoint=$endpoint，${bytes.length} bytes，format=$format',
     );
     final response = await _withCancellableClient(cancellationToken, (client) {
       return client

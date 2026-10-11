@@ -307,14 +307,27 @@ void onStart(ServiceInstance service) async {
         if (service is AndroidServiceInstance) await service.stopSelf();
         return;
       }
+
+      // 检查并尝试启动前台服务
       final isForeground = service is AndroidServiceInstance
           ? await service.isForegroundService()
           : false;
-      if (!isForeground) {
-        await db.setKV('persistent_service_state', 'not_foreground');
-        return;
+      if (!isForeground && service is AndroidServiceInstance) {
+        try {
+          await service.setAsForegroundService();
+          await db.setKV('persistent_service_state', 'promoted_to_foreground');
+          AppLogService.instance.add('SERVICE', '后台服务已提升为前台服务');
+        } catch (e) {
+          await db.setKV(
+              'persistent_service_state', 'foreground_promotion_failed');
+          AppLogService.instance.add('SERVICE', '提升前台服务失败：$e');
+          // 继续执行任务，不要因为前台服务失败就停止
+        }
+      } else {
+        await db.setKV('persistent_service_state',
+            isForeground ? 'running' : 'running_background');
       }
-      await db.setKV('persistent_service_state', 'running');
+
       unawaited(dailyTasks());
       await runTask('schedule_generation', _generateMissingLifeSchedules);
       await runTask(
@@ -1493,7 +1506,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
     if (state == AppLifecycleState.resumed) _refreshUnread();
   }
 
-void _onDockTap(int i) {
+  void _onDockTap(int i) {
     if (_idx != i) {
       setState(() => _idx = i);
       if (i == 0) {
