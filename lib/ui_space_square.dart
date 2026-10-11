@@ -87,11 +87,6 @@ class _SpacePageState extends State<SpacePage> {
     });
   }
 
-  void _stopPhotoCarousel() {
-    _photoCarouselTimer?.cancel();
-    _photoCarouselTimer = null;
-  }
-
   void _toggleDiaryAutoScroll() {
     if (_memories.length < 2) return;
     if (_diaryTimer != null) {
@@ -792,7 +787,7 @@ class SquarePageState extends State<SquarePage>
     }
   }
 
-  void _toggle() {
+  void toggleGames() {
     setState(() {
       _showGames = !_showGames;
       _switchCtrl.reset();
@@ -1294,7 +1289,7 @@ class SquarePageState extends State<SquarePage>
                     children: [
                       const Spacer(),
                       BouncyTap(
-                        onTap: _toggle,
+                        onTap: toggleGames,
                         child: AnimatedRotation(
                           turns: _showGames ? 0.5 : 0.0,
                           duration: const Duration(milliseconds: 500),
