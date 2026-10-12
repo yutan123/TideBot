@@ -326,24 +326,6 @@ class _SpacePageState extends State<SpacePage> {
                           Expanded(child: _buildPhotoCarousel(theme)),
                         ],
                       ),
-                    ] else
-                      const FrostCard(
-                        padding: EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            '还没有创建机器人\n点击底部聊天 Tab 开始',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: Color(0xFF8E8E93),
-                              fontFamily: 'TideFont',
-                              height: 1.6,
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-                    if (_botId.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       Row(
                         children: [
@@ -378,14 +360,18 @@ class _SpacePageState extends State<SpacePage> {
                           ),
                         )
                       else
-                        GestureDetector(
-                          onTap: _toggleDiaryAutoScroll,
-                          onPanDown: (_) {
-                            if (_diaryTimer != null) _toggleDiaryAutoScroll();
-                          },
+                        FrostCard(
+                          liquid: true,
                           child: SizedBox(
                             height: 196,
-                            child: _buildDiaryWindow(theme),
+                            child: GestureDetector(
+                              onTap: _toggleDiaryAutoScroll,
+                              onPanDown: (_) {
+                                if (_diaryTimer != null)
+                                  _toggleDiaryAutoScroll();
+                              },
+                              child: _buildDiaryWindow(theme),
+                            ),
                           ),
                         ),
                       const SizedBox(height: 24),
@@ -399,7 +385,22 @@ class _SpacePageState extends State<SpacePage> {
                           botName: _botName,
                         ),
                       ),
-                    ],
+                    ] else
+                      const FrostCard(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: Text(
+                            '还没有创建机器人\n点击底部聊天 Tab 开始',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: Color(0xFF8E8E93),
+                              fontFamily: 'TideFont',
+                              height: 1.6,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
