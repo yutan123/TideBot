@@ -1,4 +1,3 @@
-import 'model_image.dart';
 import 'chat_message_display.dart';
 import 'dart:io';
 import 'dart:convert';
@@ -99,7 +98,7 @@ final _emojiCategoryIcons = <String, (IconData, String)>{
   'travel': (Icons.directions_car_outlined, '旅行和地点'),
   'objects': (Icons.lightbulb_outline_rounded, '物品'),
   'symbols': (Icons.sentiment_satisfied_alt_outlined, '符号'),
-  'flags': (Icons.flag_outlined, '旗帜'),
+  // 国旗分组已移除
 };
 
 class ChatRoomPage extends StatefulWidget {
@@ -1458,19 +1457,49 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Future<void> _retryMessage(Map<String, dynamic> message) async {
     if (_loading) return;
 
+    final messageId = message['id'].toString();
+    final messageType = message['type']?.toString() ?? 'text';
     final text = message['content']?.toString().trim() ?? '';
-    if (text.isEmpty || !mounted) return;
+    final filePath = message['file_path']?.toString();
 
     try {
-      // 删除失败的消息
-      final messageId = message['id'].toString();
-      await DBManager().deleteMessage(messageId);
+      // 查找同一批次的所有消息（通过时间戳前缀匹配）
+      final idPrefix = messageId.split('_').sublist(0, 2).join('_');
+      final batchMessages = _msgs.where((m) {
+        final id = m['id'].toString();
+        return id.startsWith(idPrefix) && m['role'] == 'user';
+      }).toList();
+
+      // 删除失败的消息批次
+      for (final msg in batchMessages) {
+        await DBManager().deleteMessage(msg['id'].toString());
+      }
+
+      // 收集该批次的图片和文档
+      final images = <String>[];
+      final documents = <String>[];
+      for (final msg in batchMessages) {
+        final type = msg['type']?.toString() ?? 'text';
+        final path = msg['file_path']?.toString();
+        if (path != null && path.isNotEmpty) {
+          if (type == 'image') {
+            images.add(path);
+          } else if (type == 'document') {
+            documents.add(path);
+          }
+        }
+      }
 
       if (mounted) {
         setState(() {
-          _msgs.removeWhere((m) => m['id'].toString() == messageId);
+          _msgs.removeWhere((m) {
+            final id = m['id'].toString();
+            return id.startsWith(idPrefix) && m['role'] == 'user';
+          });
           _msgC.text = text;
-          _hasText = true;
+          _hasText = text.isNotEmpty;
+          _pendingImages.addAll(images);
+          _pendingDocuments.addAll(documents);
         });
       }
 
@@ -1794,11 +1823,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (!await source.exists()) {
         throw FileSystemException('所选图片不可访问', source.path);
       }
-      final bytes = await modelImageBytes(source.path);
+      // 直接复制原图，不做格式转换（转换留给 AI 请求时处理）
+      final extension = paths[index].split('.').last.toLowerCase();
       final fileName =
-          'chat_${DateTime.now().microsecondsSinceEpoch}_${index + 1}.png';
+          'chat_${DateTime.now().microsecondsSinceEpoch}_${index + 1}.$extension';
       final destination = File(p.join(directory.path, fileName));
-      await destination.writeAsBytes(bytes, flush: true);
+      await source.copy(destination.path);
       stored.add(destination.path);
     }
     return stored;

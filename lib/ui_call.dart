@@ -561,16 +561,14 @@ class _CallPageState extends State<CallPage>
             cancellationToken: token,
             extraSystemPrompt: _callSystemPrompt,
             includeChatHistory: true,
-            onDelta: !_streamFailedThisCall
-                ? (delta) {
-                    if (mounted) {
-                      setState(() {
-                        streamingReply += delta;
-                        _caption = streamingReply;
-                      });
-                    }
-                  }
-                : null,
+            onDelta: (delta) {
+              if (mounted) {
+                setState(() {
+                  streamingReply += delta;
+                  _caption = streamingReply;
+                });
+              }
+            },
           )
           .timeout(const Duration(seconds: 60));
       if (_ending) return;
@@ -815,6 +813,7 @@ class _CallPageState extends State<CallPage>
     }
     final now = DateTime.now().millisecondsSinceEpoch;
     final sessionId = 'call_$now';
+    // 通话记录保存到独立的 call_messages 表，不插入到聊天历史
     final messages = <Map<String, dynamic>>[];
     for (var index = 0; index < transcript.length; index++) {
       final line = transcript[index];

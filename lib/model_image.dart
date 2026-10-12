@@ -8,11 +8,23 @@ Future<Uint8List> modelImageBytes(String path) async {
   var source = path;
   final lower = path.toLowerCase();
   if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
-    final converted = await HeifConverter.convert(path);
-    if (converted == null) {
-      throw const FormatException('无法转换 HEIC 图片，请选择 JPG 或 PNG 图片');
+    try {
+      final converted = await HeifConverter.convert(path);
+      if (converted != null) {
+        source = converted;
+      } else {
+        // HEIC 转换失败，尝试直接读取（某些系统可能支持）
+        // 如果不支持会在后续 readAsBytes 时抛出异常
+      }
+    } catch (e) {
+      // HEIC 转换器异常，尝试直接读取原图
     }
-    source = converted;
   }
-  return prepareBotReferenceImage(await File(source).readAsBytes());
+
+  // 对于其他格式（jpg、png、webp、gif、bmp 等），直接处理
+  try {
+    return prepareBotReferenceImage(await File(source).readAsBytes());
+  } catch (e) {
+    throw FormatException('无法读取图片文件：$e');
+  }
 }

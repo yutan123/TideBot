@@ -319,12 +319,14 @@ class _SpacePageState extends State<SpacePage> {
                     if (_botId.isNotEmpty) ...[
                       _buildQuoteCard(theme),
                       const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(child: _buildDaysCard(theme)),
-                          const SizedBox(width: 16),
-                          Expanded(child: _buildPhotoCarousel(theme)),
-                        ],
+                      IntrinsicHeight(
+                        child: Row(
+                          children: [
+                            Expanded(child: _buildDaysCard(theme)),
+                            const SizedBox(width: 16),
+                            Expanded(child: _buildPhotoCarousel(theme)),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Row(
@@ -570,8 +572,8 @@ class _SpacePageState extends State<SpacePage> {
             Text(
               '$_daysSince',
               style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.w300,
+                fontSize: 56,
+                fontWeight: FontWeight.w200,
                 fontFamily: 'TideFont',
                 color: theme.primary,
                 height: 1.0,
@@ -581,10 +583,10 @@ class _SpacePageState extends State<SpacePage> {
             Text(
               '相遇天数',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 14,
                 color: theme.textWeak,
                 fontFamily: 'TideFont',
-                letterSpacing: 1,
+                letterSpacing: 2,
               ),
             ),
           ],
@@ -607,9 +609,8 @@ class _SpacePageState extends State<SpacePage> {
       },
       child: FrostCard(
         liquid: true,
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // 顶部标题
             Row(
@@ -618,15 +619,15 @@ class _SpacePageState extends State<SpacePage> {
                 Row(
                   children: [
                     Icon(
-                      Icons.collections_rounded,
-                      size: 18,
+                      Icons.photo_library_rounded,
+                      size: 20,
                       color: theme.primary,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Text(
-                      '相册',
+                      '照片回忆',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 16,
                         fontWeight: FontWeight.w600,
                         color: theme.textStrong,
                         fontFamily: 'TideFont',
@@ -636,18 +637,19 @@ class _SpacePageState extends State<SpacePage> {
                 ),
                 if (_recentPhotos.isNotEmpty)
                   Text(
-                    '${_recentPhotos.length}',
+                    '${_recentPhotos.length} 张',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 13,
                       color: theme.textFaint,
                       fontFamily: 'TideFont',
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
             // 照片堆叠区域
-            Expanded(
+            SizedBox(
+              height: 160,
               child: _recentPhotos.isEmpty
                   ? _buildEmptyPhotoStack(theme)
                   : _buildPhotoStack(theme),
@@ -694,71 +696,60 @@ class _SpacePageState extends State<SpacePage> {
     );
   }
 
-  // 真实照片堆叠轮播 - 翻页抽出动画
+  // 真实照片堆叠轮播
   Widget _buildPhotoStack(TideTheme theme) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Stack(
-          children: List.generate(
-            _recentPhotos.length.clamp(0, 3),
-            (i) {
-              final displayIndex =
-                  (_photoCarouselIndex + i) % _recentPhotos.length;
-              final photo = _recentPhotos[displayIndex];
-              final imagePath = photo['image_path']?.toString() ?? '';
+    return Stack(
+      children: List.generate(
+        _recentPhotos.length.clamp(0, 3),
+        (i) {
+          final displayIndex = (_photoCarouselIndex + i) % _recentPhotos.length;
+          final photo = _recentPhotos[displayIndex];
+          final imagePath = photo['image_path']?.toString() ?? '';
 
-              if (imagePath.isEmpty || !File(imagePath).existsSync()) {
-                return const SizedBox.shrink();
-              }
+          if (imagePath.isEmpty || !File(imagePath).existsSync()) {
+            return const SizedBox.shrink();
+          }
 
-              // 翻页效果：底层照片向上移动到顶层
-              final offset = i * 8.0;
-              final rotation = i * 0.015;
-              final scale = 1.0 - i * 0.04;
-              final opacity = 1.0 - i * 0.15;
+          final offset = (i - 1) * 15.0;
+          final rotation = (i - 1) * 0.02;
+          final scale = 1.0 - i * 0.05;
 
-              return AnimatedPositioned(
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.easeInOutCubic,
-                left: offset,
-                right: offset,
-                top: offset * 1.2,
-                bottom: 0,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 600),
-                  opacity: opacity,
-                  child: Transform(
-                    transform: Matrix4.identity()
-                      ..setEntry(3, 2, 0.001)
-                      ..rotateZ(rotation)
-                      ..scale(scale),
-                    alignment: Alignment.center,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.12 * (3 - i)),
-                            blurRadius: 6 + i * 3.0,
-                            offset: Offset(0, 2 + i * 1.5),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.file(
-                          File(imagePath),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
+          return AnimatedPositioned(
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOut,
+            left: offset,
+            right: -offset,
+            top: 10 + i * 8.0,
+            bottom: 10 - i * 8.0,
+            child: Transform(
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.001)
+                ..rotateZ(rotation)
+                ..scale(scale),
+              alignment: Alignment.center,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.12),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
                     ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.file(
+                    File(imagePath),
+                    fit: BoxFit.cover,
                   ),
                 ),
-              );
-            },
-          ),
-        );
-      },
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
