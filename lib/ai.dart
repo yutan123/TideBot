@@ -1,3 +1,4 @@
+import 'bot_vital_signs_service.dart';
 import 'skill_context.dart';
 import 'assistant_output_guard.dart';
 import 'model_image.dart';
@@ -229,57 +230,77 @@ class AIManager {
       return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
     }
 
-    Map<String, dynamic>? lastFailure;
-    for (var index = 0; index < attempts.length; index++) {
-      cancellationToken?.throwIfCancelled();
-      final candidate = attempts[index];
-      final selectedImagePaths = <String>[
-        if (imagePath?.isNotEmpty == true) imagePath!,
-        ...?imagePaths,
-        ...?imageAttachments,
-      ];
-      try {
-        final result = await _sendMessageOnce(
-          botId: botId,
-          text: text,
-          imagePath:
-              selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-          imagePaths: selectedImagePaths,
-          audioPath: audioPath,
-          activeGame: activeGame,
-          persistResponse: persistResponse,
-          includeChatHistory: includeChatHistory,
-          requestHistory: requestHistory,
-          enableAutoSummary: enableAutoSummary,
-          skipLifeState: skipLifeState,
-          allowTools: allowTools,
-          forceSingleReply: forceSingleReply,
-          notifyResponse: notifyResponse,
-          extraSystemPrompt: extraSystemPrompt,
-          useJarvis: useJarvis,
-          cancellationToken: cancellationToken,
-          // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-          // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-          onDelta: onDelta,
-          forcedLocalId: candidate['local']!,
-          forcedProviderId: candidate['provider']!,
-        );
-        if (result['success'] == true) return result;
-        lastFailure = result;
-        final code = int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
-        final retryable = result['error_code']?.toString() == 'network' ||
-            code == 429 ||
-            code >= 500;
-        if (!retryable || index == attempts.length - 1) break;
-      } on AICancelledException {
-        rethrow;
-      }
+    final vitalTracked =
+        persistResponse && !skipLifeState && activeGame == null;
+    final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
+    if (vitalTracked) {
+      final vitalContext =
+          await BotVitalSignsService.instance.beforeRequest(botId);
+      extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
     }
-    return {
-      ...?lastFailure,
-      'error':
-          '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
-    };
+    try {
+      Map<String, dynamic>? lastFailure;
+      for (var index = 0; index < attempts.length; index++) {
+        cancellationToken?.throwIfCancelled();
+        final candidate = attempts[index];
+        final selectedImagePaths = <String>[
+          if (imagePath?.isNotEmpty == true) imagePath!,
+          ...?imagePaths,
+          ...?imageAttachments,
+        ];
+        try {
+          final result = await _sendMessageOnce(
+            botId: botId,
+            text: text,
+            imagePath:
+                selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+            imagePaths: selectedImagePaths,
+            audioPath: audioPath,
+            activeGame: activeGame,
+            persistResponse: persistResponse,
+            includeChatHistory: includeChatHistory,
+            requestHistory: requestHistory,
+            enableAutoSummary: enableAutoSummary,
+            skipLifeState: skipLifeState,
+            allowTools: allowTools,
+            forceSingleReply: forceSingleReply,
+            notifyResponse: notifyResponse,
+            extraSystemPrompt: extraSystemPrompt,
+            useJarvis: useJarvis,
+            cancellationToken: cancellationToken,
+            // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+            // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+            onDelta: onDelta,
+            forcedLocalId: candidate['local']!,
+            forcedProviderId: candidate['provider']!,
+          );
+          if (result['success'] == true) {
+            if (vitalTracked)
+              await BotVitalSignsService.instance
+                  .afterRequest(botId, result, vitalCutoff);
+            return result;
+          }
+          lastFailure = result;
+          final code =
+              int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+          final retryable = result['error_code']?.toString() == 'network' ||
+              code == 429 ||
+              code >= 500;
+          if (!retryable || index == attempts.length - 1) break;
+        } on AICancelledException {
+          rethrow;
+        }
+      }
+      if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+      return {
+        ...?lastFailure,
+        'error':
+            '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
+      };
+    } catch (_) {
+      if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+      rethrow;
+    }
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -656,7 +677,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       if (innerThoughtSeed.isNotEmpty) {
         guidance.writeln('\n## 内心独白种子');
-        guidance.writeln('$innerThoughtSeed');
+        guidance.writeln(innerThoughtSeed);
       }
 
       guidance.writeln('\n---');
@@ -3592,7 +3613,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       });
     }
     if (allowSilence &&
-        (await db.getKV('adaptive_silence_enabled')) != 'false') {
+        ((await db.getKV('adaptive_silence_enabled')) != 'false' ||
+            await BotVitalSignsService.instance.isSleepPeriod(botId))) {
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_memoryToolSchema());
@@ -3692,7 +3714,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'function': {
           'name': 'choose_silence',
           'description':
-              '仅在用户明确不希望回复、对话自然结束且无需回应，或主动问候判断不宜打扰时调用。调用后本轮不会发送任何文字。绝不可用于求助、悲伤、愤怒、困惑、危机、提问或任何需要回应的情况；绝不可作为惩罚、冷暴力、控制或施压。',
+              '在角色自己的睡眠时段可自主选择暂不回复；或在用户明确不希望回复、对话自然结束且无需回应、主动问候判断不宜打扰时调用。调用后本轮不会发送任何文字。清醒时不可用于求助、悲伤、愤怒、困惑、危机、提问或任何需要回应的情况；绝不可作为惩罚、冷暴力、控制或施压。',
           'parameters': {
             'type': 'object',
             'properties': {},
@@ -5071,7 +5093,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           "\n【游戏规则】你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-3），再简短聊天。";
     }
     p +=
-        '\n【适时沉默】当 choose_silence 工具可用时，你可在用户明确暂不希望回复、对话自然结束且不需回应、或主动问候不宜打扰时调用它；调用后不要输出文本。不得在求助、悲伤、愤怒、困惑、危机、提问或任何需要回应时调用，绝不可作为惩罚、冷暴力、控制或施压。\n【日记】你拥有 write_diary 工具。遇到值得保留的经历、感受或事件时可按需调用，把日记内容写入工具参数；日记应记录机器人自己的日常、感受和经历，不仅限于与用户的对话，也应包含自己的生活事件。日记内容不要包含日期和时间信息，系统会自动记录。绝不把日记正文当作聊天消息发送。';
+        '\n【适时沉默】当 choose_silence 工具可用时，你可在用户明确暂不希望回复、对话自然结束且不需回应、或主动问候不宜打扰时调用它；调用后不要输出文本。睡眠期间可暂不回复普通消息，但危机与紧急求助仍应回应；清醒时不得在求助、悲伤、愤怒、困惑、危机、提问或任何需要回应时调用，绝不可作为惩罚、冷暴力、控制或施压。\n【日记】你拥有 write_diary 工具。遇到值得保留的经历、感受或事件时可按需调用，把日记内容写入工具参数；日记应记录机器人自己的日常、感受和经历，不仅限于与用户的对话，也应包含自己的生活事件。日记内容不要包含日期和时间信息，系统会自动记录。绝不把日记正文当作聊天消息发送。';
     return p;
   }
 

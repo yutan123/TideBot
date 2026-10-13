@@ -1,3 +1,4 @@
+import 'bot_vital_signs_service.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -103,6 +104,7 @@ class EmotionStateService {
     }
     state['last_updated'] = DateTime.now().millisecondsSinceEpoch;
     await DBManager().setKV(_key(botId), jsonEncode(state));
+    await BotVitalSignsService.instance.observeMood(botId, mood, intensity);
   }
 
   Future<String> currentMood(String botId) async {

@@ -7,7 +7,6 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
 import 'chat_event_bus.dart';
-import 'migrate_photos.dart';
 
 /// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
 ///
@@ -212,18 +211,6 @@ class DBManager {
         reply_count INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL
       )
     ''');
-    await _execSql(db, '''
-      CREATE TABLE IF NOT EXISTS photo_memories (
-        id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, image_path TEXT NOT NULL,
-        sender TEXT NOT NULL, description TEXT DEFAULT '', message_id TEXT,
-        timestamp INTEGER NOT NULL,
-        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
-      )
-    ''');
-    await _execSql(db, '''
-      CREATE INDEX IF NOT EXISTS idx_photo_memories_bot_time
-      ON photo_memories(bot_id, timestamp DESC)
-    ''');
   }
 
   Future<bool> _shouldRepairSchema(Database db) async {
@@ -412,8 +399,7 @@ class DBManager {
         if (needsRepair) {
           await _repairExistingDatabase(db);
           await _markSchemaRepaired(db);
-          // 首次修复后迁移历史图片
-          migrateHistoricalPhotos();
+          // 历史数据库保留原数据，停用照片回忆迁移。
         }
         await db.update('memories', {'category': '记忆'},
             where: "category = 'fact' OR category IS NULL OR category = ''");
@@ -2874,71 +2860,5 @@ class DBManager {
     final db = await database;
     await db.update('bots', {'is_pinned': isPinned},
         where: 'id = ?', whereArgs: [botId]);
-  }
-
-  // ==================== 照片回忆 ====================
-
-  /// 保存照片记录并返回记录 id；同一条消息重复保存时返回已有记录 id。
-  Future<String> savePhotoMemory({
-    required String botId,
-    required String imagePath,
-    required String sender,
-    String? description,
-    String? messageId,
-    int? timestamp,
-  }) async {
-    final db = await database;
-    if (messageId != null && messageId.isNotEmpty) {
-      final existing = await db.query('photo_memories',
-          columns: ['id'],
-          where: 'message_id = ?',
-          whereArgs: [messageId],
-          limit: 1);
-      if (existing.isNotEmpty) return existing.first['id'].toString();
-    }
-    final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
-    final id = messageId != null && messageId.isNotEmpty
-        ? 'photo_$messageId'
-        : 'photo_${botId}_${now}_${DateTime.now().microsecondsSinceEpoch}';
-    await db.insert(
-      'photo_memories',
-      {
-        'id': id,
-        'bot_id': botId,
-        'image_path': imagePath,
-        'sender': sender,
-        'description': description ?? '',
-        'message_id': messageId,
-        'timestamp': now,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-    return id;
-  }
-
-  Future<int> countPhotoMemories(String botId) async {
-    final db = await database;
-    final rows = await db.rawQuery(
-        'SELECT COUNT(*) AS c FROM photo_memories WHERE bot_id = ?', [botId]);
-    return (rows.first['c'] as num?)?.toInt() ?? 0;
-  }
-
-  Future<List<Map<String, dynamic>>> queryPhotoMemories(String botId,
-      {int? limit}) async {
-    final db = await database;
-    return await db.query(
-      'photo_memories',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'timestamp DESC',
-      limit: limit,
-    );
-  }
-
-  Future<void> updatePhotoDescription(
-      String photoId, String description) async {
-    final db = await database;
-    await db.update('photo_memories', {'description': description},
-        where: 'id = ?', whereArgs: [photoId]);
   }
 }

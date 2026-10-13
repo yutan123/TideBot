@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'app_state.dart';
 import 'chat_event_bus.dart';
 import 'db.dart';
 import 'ops.dart';
-import 'photo_memory_service.dart';
 
 /// Single entry point for messages that become visible outside the caller.
 class MessageDeliveryService {
@@ -27,24 +24,6 @@ class MessageDeliveryService {
       messageId: messageId,
       message: Map<String, dynamic>.from(message),
     ));
-
-    // 照片消息自动记录并生成描述
-    final role = message['role']?.toString();
-    final type = message['type']?.toString();
-    final filePath = message['file_path']?.toString();
-    if (botId != null &&
-        filePath != null &&
-        filePath.isNotEmpty &&
-        type == 'image' &&
-        (role == 'user' || role == 'assistant')) {
-      unawaited(PhotoMemoryService.instance.handleChatPhoto(
-        botId: botId,
-        imagePath: filePath,
-        sender: role == 'user' ? 'user' : 'bot',
-        messageId: messageId,
-        timestamp: (message['timestamp'] as num?)?.toInt(),
-      ));
-    }
 
     if (notify &&
         message['role'] == 'assistant' &&

@@ -17,7 +17,8 @@ import 'memory_manager_page.dart';
 import 'daily_quote_service.dart';
 import 'diary_calendar_page.dart';
 import 'world_book_detail_page.dart';
-import 'photo_album_page.dart';
+import 'bot_vital_signs_service.dart';
+import 'bot_data_page.dart';
 
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
@@ -33,9 +34,9 @@ class _SpacePageState extends State<SpacePage> {
   String _dailyQuote = '';
   int _daysSince = 0;
   List<Map<String, dynamic>> _memories = [];
-  List<Map<String, dynamic>> _recentPhotos = [];
-  int _photoCarouselIndex = 0;
-  Timer? _photoCarouselTimer;
+  Map<String, dynamic>? _vitalSigns;
+  int _vitalCardIndex = 0;
+  Timer? _vitalCardTimer;
   final ScrollController _diaryScrollController = ScrollController();
   Timer? _diaryTimer;
   int _diaryScrollIndex = 0;
@@ -51,7 +52,7 @@ class _SpacePageState extends State<SpacePage> {
   @override
   void dispose() {
     _diaryTimer?.cancel();
-    _photoCarouselTimer?.cancel();
+    _vitalCardTimer?.cancel();
     _diaryScrollController.dispose();
     super.dispose();
   }
@@ -72,20 +73,29 @@ class _SpacePageState extends State<SpacePage> {
     });
   }
 
-  void _startPhotoCarousel() {
-    _photoCarouselTimer?.cancel();
-    if (_recentPhotos.length < 2) return;
-    _photoCarouselTimer =
-        Timer.periodic(const Duration(milliseconds: 4200), (_) {
-      if (!mounted) {
-        _photoCarouselTimer?.cancel();
-        _photoCarouselTimer = null;
-        return;
-      }
+  void _startVitalCarousel() {
+    _vitalCardTimer?.cancel();
+    _vitalCardIndex = Random().nextInt(6);
+    _vitalCardTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
       setState(() {
-        _photoCarouselIndex = (_photoCarouselIndex + 1) % _recentPhotos.length;
+        var next = Random().nextInt(5);
+        if (next >= _vitalCardIndex) next++;
+        _vitalCardIndex = next;
       });
+      unawaited(_refreshVitals());
     });
+  }
+
+  Future<void> _refreshVitals() async {
+    final id = _botId;
+    if (id.isEmpty) return;
+    try {
+      final data = await BotVitalSignsService.instance.snapshot(id);
+      if (mounted && id == _botId) setState(() => _vitalSigns = data);
+    } catch (e) {
+      debugPrint('[vitals] refresh failed: $e');
+    }
   }
 
   void _toggleDiaryAutoScroll() {
@@ -141,11 +151,7 @@ class _SpacePageState extends State<SpacePage> {
       );
       final mem = [...shortMemories, ...longMemories];
 
-      // 加载最近3张照片用于轮播预览
-      final photos = await db.queryPhotoMemories(_botId, limit: 3);
-      _recentPhotos = photos;
-      _photoCarouselIndex = 0;
-
+      _vitalSigns = await BotVitalSignsService.instance.snapshot(_botId);
       // The space card reflects the same state injected into chat prompts,
       // including safe time-based fluctuations between messages.
       _memories = mem;
@@ -162,14 +168,14 @@ class _SpacePageState extends State<SpacePage> {
         });
         // 打开空间页面即自动开始记忆循环滚动。
         _startDiaryAutoScroll();
-        // 启动照片轮播
-        _startPhotoCarousel();
+        // Five-second character data carousel
+        _startVitalCarousel();
       }
     } else {
       _daysSince = 0;
       _dailyQuote = '';
       _memories = [];
-      _recentPhotos = [];
+      _vitalSigns = null;
       _botId = '';
       _botName = '';
       if (mounted) setState(() => _loading = false);
@@ -319,15 +325,16 @@ class _SpacePageState extends State<SpacePage> {
                     if (_botId.isNotEmpty) ...[
                       _buildQuoteCard(theme),
                       const SizedBox(height: 16),
-                      IntrinsicHeight(
-                        child: Row(
-                          children: [
-                            Expanded(child: _buildDaysCard(theme)),
-                            const SizedBox(width: 16),
-                            Expanded(child: _buildPhotoCarousel(theme)),
-                          ],
-                        ),
-                      ),
+                      Row(children: [
+                        Expanded(
+                            child: AspectRatio(
+                                aspectRatio: 1, child: _buildDaysCard(theme))),
+                        const SizedBox(width: 16),
+                        Expanded(
+                            child: AspectRatio(
+                                aspectRatio: 1,
+                                child: _buildVitalCarousel(theme))),
+                      ]),
                       const SizedBox(height: 16),
                       Row(
                         children: [
@@ -569,16 +576,18 @@ class _SpacePageState extends State<SpacePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              '$_daysSince',
-              style: TextStyle(
-                fontSize: 56,
-                fontWeight: FontWeight.w200,
-                fontFamily: 'TideFont',
-                color: theme.primary,
-                height: 1.0,
-              ),
-            ),
+            FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  '$_daysSince',
+                  style: TextStyle(
+                    fontSize: 56,
+                    fontWeight: FontWeight.w200,
+                    fontFamily: 'TideFont',
+                    color: theme.primary,
+                    height: 1.0,
+                  ),
+                )),
             const SizedBox(height: 8),
             Text(
               '相遇天数',
@@ -593,164 +602,33 @@ class _SpacePageState extends State<SpacePage> {
         ),
       );
 
-  Widget _buildPhotoCarousel(TideTheme theme) {
-    return BouncyTap(
-      onTap: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PhotoAlbumPage(
-              botId: _botId,
-              botName: _botName,
-            ),
-          ),
-        );
-        _loadData();
-      },
-      child: FrostCard(
-        liquid: true,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // 顶部标题
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.photo_library_rounded,
-                      size: 20,
-                      color: theme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '照片回忆',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: theme.textStrong,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                  ],
-                ),
-                if (_recentPhotos.isNotEmpty)
-                  Text(
-                    '${_recentPhotos.length} 张',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: theme.textFaint,
-                      fontFamily: 'TideFont',
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // 照片堆叠区域
-            SizedBox(
-              height: 160,
-              child: _recentPhotos.isEmpty
-                  ? _buildEmptyPhotoStack(theme)
-                  : _buildPhotoStack(theme),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 空状态照片堆叠
-  Widget _buildEmptyPhotoStack(TideTheme theme) {
-    return Stack(
-      children: List.generate(3, (i) {
-        final offset = (i - 1) * 15.0;
-        final rotation = (i - 1) * 0.02;
-        return Positioned(
-          left: offset,
-          right: -offset,
-          top: 10 + i * 5.0,
-          bottom: 10 - i * 5.0,
-          child: Transform.rotate(
-            angle: rotation,
-            child: Container(
-              decoration: BoxDecoration(
-                color: theme.pageBackground,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: theme.border.withOpacity(0.3),
-                  width: 1.5,
-                ),
-              ),
-              child: Center(
-                child: Icon(
-                  Icons.photo_rounded,
-                  size: 32,
-                  color: theme.textFaint.withOpacity(0.3),
-                ),
-              ),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
-  // 真实照片堆叠轮播
-  Widget _buildPhotoStack(TideTheme theme) {
-    return Stack(
-      children: List.generate(
-        _recentPhotos.length.clamp(0, 3),
-        (i) {
-          final displayIndex = (_photoCarouselIndex + i) % _recentPhotos.length;
-          final photo = _recentPhotos[displayIndex];
-          final imagePath = photo['image_path']?.toString() ?? '';
-
-          if (imagePath.isEmpty || !File(imagePath).existsSync()) {
-            return const SizedBox.shrink();
-          }
-
-          final offset = (i - 1) * 15.0;
-          final rotation = (i - 1) * 0.02;
-          final scale = 1.0 - i * 0.05;
-
-          return AnimatedPositioned(
-            duration: const Duration(milliseconds: 350),
-            curve: Curves.easeOut,
-            left: offset,
-            right: -offset,
-            top: 10 + i * 8.0,
-            bottom: 10 - i * 8.0,
-            child: Transform(
-              transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.001)
-                ..rotateZ(rotation)
-                ..scale(scale),
-              alignment: Alignment.center,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.12),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.file(
-                    File(imagePath),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
+  Widget _buildVitalCarousel(TideTheme theme) {
+    return ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 450),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                  position: Tween<Offset>(
+                          begin: const Offset(.2, 0), end: Offset.zero)
+                      .animate(animation),
+                  child: child)),
+          child: VitalMetricCard(
+              key: ValueKey('$_botId:$_vitalCardIndex'),
+              data: _vitalSigns ?? {},
+              index: _vitalCardIndex,
+              onTap: () async {
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            BotDataPage(botId: _botId, botName: _botName)));
+                if (mounted) await _refreshVitals();
+              }),
+        ));
   }
 
   Widget _buildSectionTitle(String title) => Padding(

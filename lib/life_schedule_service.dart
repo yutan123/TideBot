@@ -8,6 +8,8 @@ import 'chat_content.dart';
 import 'db.dart';
 import 'bot_state.dart';
 import 'ops.dart';
+import 'bot_vital_signs_service.dart';
+import 'bot_vital_model.dart';
 
 Map<String, dynamic>? parseLifeSchedulePayload(String raw) {
   var source = cleanChatContent(raw).trim();
@@ -78,7 +80,8 @@ String compactLifeScheduleContext(
     final overnight = end.startsWith('次日');
     if (start.isEmpty || end.isEmpty) continue;
     if (overnight) {
-      if (nowText.compareTo(start) >= 0 || nowText.compareTo('09:00') < 0) {
+      if (nowText.compareTo(start) >= 0 ||
+          nowText.compareTo(end.replaceAll('次日', '')) < 0) {
         current = item;
         break;
       }
@@ -272,7 +275,26 @@ class LifeScheduleService {
     if (!await enabled()) return null;
     final key = dateKey();
     final existing = await DBManager().getLifeSchedule(botId, key);
-    if (existing != null) return Map<String, dynamic>.from(existing);
+    if (existing != null) {
+      final timeline = decodeLifeScheduleTimeline(existing);
+      final nights = timeline.where((e) => '${e['activity']}'.contains('睡'));
+      final valid = timeline.every((e) => e['steps'] is num) &&
+          nights.any((e) {
+            final start = vitalTime(key, '${e['time']}');
+            var end = vitalTime(key, '${e['end_time']}');
+            if (start == null || end == null) return false;
+            if (!end.isAfter(start)) end = end.add(const Duration(days: 1));
+            return end.difference(start).inMinutes >= 420 &&
+                end.difference(start).inMinutes <= 540;
+          });
+      if (valid) {
+        if (!await BotVitalSignsService.instance.hasSchedule(botId, key)) {
+          await BotVitalSignsService.instance
+              .applySchedule(botId, key, timeline);
+        }
+        return Map<String, dynamic>.from(existing);
+      }
+    }
     final flightKey = '$botId:$key';
     final future = _generationFlights.putIfAbsent(
       flightKey,
@@ -298,13 +320,11 @@ class LifeScheduleService {
         ) ??
         7;
     if (current.hour < configured.clamp(0, 23)) return;
-    final today = dateKey(current);
     for (final bot in await DBManager().getAllBots()) {
       final botId = bot['id']?.toString().trim() ?? '';
       if (botId.isEmpty) continue;
-      if (await DBManager().getLifeSchedule(botId, today) == null) {
-        await ensureToday(botId);
-      }
+      if (isBotDisabled(bot['is_disabled'])) continue;
+      await ensureToday(botId);
     }
   }
 
@@ -332,11 +352,27 @@ class LifeScheduleService {
       botId: botId,
       text: '''这是内部日程任务，不要和用户聊天。请只输出 JSON。
 今天是 $key。为自己生成真实连续的拟人化生活状态。
+${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snapshot(botId))}
 主题：$theme；心情：$mood；穿搭风格：$outfitStyle；日程类型：$scheduleType。
 可用天气池：$weatherPool。你必须根据全天时间合理选择天气，并让相邻时段天气平缓变化；无需使用全部天气，禁止无理由的大幅跳变。
+
+【重要】睡眠时间要求：
+- 你自己决定今晚的入睡时间和明早的起床时间
+- 睡眠时长建议在 7-9 小时区间，根据人设与状态在这个区间内决定
+- 入睡时间和起床时间不固定，由你根据今天的安排和心情决定
+- 在 timeline 中必须包含睡觉时段，格式如：{"time":"23:30","end_time":"次日07:00","activity":"睡觉","weather":"...","rigid":false}
+- end_time 如果是第二天，必须加"次日"前缀
+
+【重要】步数分配要求：
+- 你需要为今天的每个时间段分配步数
+- timeline 中每个时段都要有 steps 字段，表示该时段的步数
+- 根据活动类型合理分配：睡觉0步、宅家200-500步、外出1000-3000步、运动3000-6000步
+- 全天总步数建议在 5000-12000 区间
+
+首次生成时请同时给出 body 对象，依据人设已有身高体重，缺失则生成适合角色且无需性别判断的稳定初始数据；字段 height(cm)、weight(kg)、heart、temperature、systolic、diastolic。
 输出格式：
-{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","rigid":false}]}
-只安排 09:00 至 23:00。按任务实际耗时自由安排足够多的连续时段，短任务不要虚构为一小时，不能重叠，不能留出不合理的大空档；每条都必须提供晚于开始时间的 end_time。固定追加一条 23:00 至次日09:00 的“睡觉”，weather 沿用夜间合理天气。刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
+{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","sleep_plan_start":"23:30","sleep_plan_end":"次日07:00","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","steps":800,"rigid":false}]}
+从你决定的起床时间安排当天生活，直到下一次睡觉结束。不要使用固定的09:00或23:00。按任务实际耗时自由安排足够多的连续时段，短任务不要虚构为一小时，不能重叠，不能留出不合理的大空档；每条都必须提供晚于开始时间的 end_time。必须包含一条睡觉时段（从入睡到起床）。刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
@@ -367,6 +403,7 @@ class LifeScheduleService {
                 'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
                 'weather': e['weather']?.toString().trim() ?? '',
+                'steps': vitalInt(e['steps']),
                 'rigid': e['rigid'] == true,
               })
           .where((e) =>
@@ -374,6 +411,17 @@ class LifeScheduleService {
               (e['activity']?.toString().isNotEmpty ?? false))
           .toList();
       _normalizeTimeline(timeline, all['weather'] ?? const <String>[]);
+      final sleepEntries =
+          timeline.where((e) => '${e['activity']}'.contains('睡')).toList();
+      if (sleepEntries.isEmpty) return old;
+      final selected = sleepEntries.last;
+      final sleepStart = vitalTime(key, '${selected['time']}');
+      var sleepEnd = vitalTime(key, '${selected['end_time']}');
+      if (sleepStart == null || sleepEnd == null) return old;
+      if (!sleepEnd.isAfter(sleepStart))
+        sleepEnd = sleepEnd.add(const Duration(days: 1));
+      if (sleepEnd.difference(sleepStart).inMinutes < 420 ||
+          sleepEnd.difference(sleepStart).inMinutes > 540) return old;
       final outfit = payload['outfit']?.toString().trim() ?? '';
       if (timeline.length < 2 || outfit.isEmpty) {
         AppLogService.instance.add(
@@ -382,6 +430,7 @@ class LifeScheduleService {
         );
         return old;
       }
+
       final now = DateTime.now().millisecondsSinceEpoch;
       final row = <String, dynamic>{
         'id': old?['id'] ?? 'life_${botId}_$key',
@@ -400,8 +449,12 @@ class LifeScheduleService {
         'updated_at': now,
       };
       await db.upsertLifeSchedule(row);
-      AppLogService.instance.add('SCHEDULE',
-          '已生成拟人化日程 $key：主题=${row['theme']}，心情=${row['mood']}，时间线${timeline.length}条');
+
+      await BotVitalSignsService.instance.applySchedule(botId, key, timeline,
+          initial: payload['body'] is Map
+              ? Map<String, dynamic>.from(payload['body'])
+              : null);
+      AppLogService.instance.add('SCHEDULE', '已生成生活日程 $key');
       return row;
     } catch (_) {
       return old;
@@ -413,51 +466,21 @@ class LifeScheduleService {
     List<String> weatherPool,
   ) {
     final allowedWeather = weatherPool.toSet();
-    timeline.removeWhere((item) {
-      final start = item['time']?.toString() ?? '';
-      return !_isTime(start) ||
-          start.compareTo('09:00') < 0 ||
-          start.compareTo('23:00') >= 0;
-    });
-    timeline.sort((a, b) =>
-        (a['time']?.toString() ?? '').compareTo(b['time']?.toString() ?? ''));
-    var previousEnd = '09:00';
+    timeline.removeWhere((e) =>
+        vitalTime('2026-01-01', '${e['time']}') == null ||
+        vitalTime('2026-01-01', '${e['end_time']}') == null);
+    timeline.sort((a, b) => vitalTime('2026-01-01', '${a['time']}')!
+        .compareTo(vitalTime('2026-01-01', '${b['time']}')!));
     var previousWeather = weatherPool.isEmpty ? '' : weatherPool.first;
     for (final item in timeline) {
-      var start = item['time']?.toString() ?? previousEnd;
-      if (start.compareTo(previousEnd) < 0) start = previousEnd;
-      var end = item['end_time']?.toString() ?? '';
-      if (!_isTime(end) || end.compareTo(start) <= 0) {
-        end = _plusMinutes(start, 30);
-      }
-      if (end.compareTo('23:00') > 0) end = '23:00';
-      item['time'] = start;
-      item['end_time'] = end;
-      final weather = item['weather']?.toString().trim() ?? '';
+      final weather = '${item['weather'] ?? ''}';
       item['weather'] =
           allowedWeather.contains(weather) ? weather : previousWeather;
-      previousWeather = item['weather'].toString();
-      previousEnd = end;
+      previousWeather = '${item['weather']}';
+      item['steps'] = '${item['activity']}'.contains('睡')
+          ? 0
+          : vitalInt(item['steps']).clamp(0, 30000);
     }
-    timeline.removeWhere((item) =>
-        (item['end_time']?.toString() ?? '')
-            .compareTo(item['time']?.toString() ?? '') <=
-        0);
-    timeline.add({
-      'time': '23:00',
-      'end_time': '次日09:00',
-      'activity': '睡觉',
-      'weather': previousWeather,
-      'rigid': false,
-    });
-  }
-
-  bool _isTime(String value) => isLifeScheduleClockTime(value);
-
-  String _plusMinutes(String value, int minutes) {
-    final parts = value.split(':').map(int.parse).toList();
-    final total = (parts[0] * 60 + parts[1] + minutes).clamp(0, 23 * 60);
-    return '${(total ~/ 60).toString().padLeft(2, '0')}:${(total % 60).toString().padLeft(2, '0')}';
   }
 
   Future<void> runDueEndEvents({DateTime? now}) async {
@@ -470,6 +493,7 @@ class LifeScheduleService {
         '${current.hour.toString().padLeft(2, '0')}:${current.minute.toString().padLeft(2, '0')}';
     for (final bot in await db.getAllBots()) {
       final botId = bot['id']?.toString() ?? '';
+      if (await BotVitalSignsService.instance.isSleepPeriod(botId)) continue;
       if (isBotDisabled(bot['is_disabled'])) continue;
       final row = await db.getLifeSchedule(botId, key);
       if (botId.isEmpty || row == null) continue;
@@ -561,6 +585,7 @@ class LifeScheduleService {
                 'end_time': e['end_time']?.toString() ?? '',
                 'activity': e['activity']?.toString().trim() ?? '',
                 'weather': e['weather']?.toString().trim() ?? '',
+                'steps': vitalInt(e['steps']),
                 'rigid': e['rigid'] == true,
               })
           .where((e) =>
@@ -584,6 +609,8 @@ class LifeScheduleService {
     if (mood.isNotEmpty) row['mood'] = mood;
     row['updated_at'] = DateTime.now().millisecondsSinceEpoch;
     await db.upsertLifeSchedule(row);
+    await BotVitalSignsService.instance
+        .applySchedule(botId, dateKey(), _timeline(row));
     AppLogService.instance.add('SCHEDULE',
         '已通过工具更新拟人化日程 ${dateKey()}：${args['kind']?.toString() ?? 'timeline'}');
     return row;

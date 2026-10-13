@@ -1,3 +1,4 @@
+import 'bot_vital_signs_service.dart';
 import 'dart:async';
 import 'dart:ui';
 import 'dart:math';
@@ -282,6 +283,7 @@ void onStart(ServiceInstance service) async {
       final keepRunning = await db.getKV('persistent_notification') == 'true' ||
           await db.getKV('external_api_enabled') == 'true';
       if (!keepRunning) {
+        await runTask('vital_signs', BotVitalSignsService.instance.runDue);
         await dailyTasks();
         await runTask('schedule_generation', _generateMissingLifeSchedules,
             timeout: const Duration(minutes: 10));
@@ -329,6 +331,7 @@ void onStart(ServiceInstance service) async {
       }
 
       unawaited(dailyTasks());
+      await runTask('vital_signs', BotVitalSignsService.instance.runDue);
       await runTask('schedule_generation', _generateMissingLifeSchedules);
       await runTask(
           'mcp_auto_connect', McpConnectionService.instance.connectAuto);
@@ -512,6 +515,7 @@ Future<void> _runDeviceEventTriggeredReply() async {
     AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：未绑定机器人');
     return;
   }
+  if (await BotVitalSignsService.instance.isSleepPeriod(botId)) return;
   if (!await capability.isAuthorized(
     DeviceCapabilityService.proactiveFeature,
     botId,
@@ -617,6 +621,7 @@ Future<void> _runDueProactiveReplies() async {
       await db.setKV('proactive_last_result_$botId', 'bot_disabled');
       continue;
     }
+    if (await BotVitalSignsService.instance.isSleepPeriod(botId)) continue;
     final dueKey = 'proactive_due_at_$botId';
     final dueAt = int.tryParse(await db.getKV(dueKey) ?? '') ?? 0;
     if (dueAt <= 0) {
