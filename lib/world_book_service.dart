@@ -195,6 +195,7 @@ $conversationSummary
 }
 
 如果不需要更新，返回 {"needUpdate": false, "actions": []}
+没有新信息或需要修改的内容时，judgment['needUpdate'] 填写 false。
 ''';
 
       debugPrint('[WorldBook] 开始AI记忆判断...');

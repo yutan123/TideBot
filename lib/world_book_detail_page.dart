@@ -187,97 +187,84 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     final promptCtrl = TextEditingController(text: _text(_bot, 'prompt'));
     final descCtrl = TextEditingController(text: _text(_bot, 'desc'));
 
-    final saved = await showTideSheet<bool>(
+    final saved = await showTideDialog<bool>(
       context: context,
-      height: MediaQuery.sizeOf(context).height * .75,
-      child: StatefulBuilder(
-        builder: (context, setSheetState) {
-          final theme = TideTheme.of(context);
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              8,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        return TideDialogSurface(
+          child: TideDialogs.glassContent(
+            context: dialogContext,
+            children: [
+              Text(
+                '编辑角色档案',
+                style: TextStyle(
+                  color: theme.textStrong,
+                  fontFamily: 'TideFont',
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: promptCtrl,
+                minLines: 3,
+                maxLines: 6,
+                decoration: InputDecoration(
+                  labelText: '说话方式',
+                  hintText: '描述角色的说话风格、语气、用词习惯等',
+                  hintStyle: TextStyle(color: theme.textFaint, fontSize: 13),
+                  filled: true,
+                  fillColor: theme.surfaceVariant.withValues(alpha: .56),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: descCtrl,
+                minLines: 5,
+                maxLines: 10,
+                decoration: InputDecoration(
+                  labelText: '人设概述',
+                  hintText: '描述角色的性格、背景、特点等',
+                  hintStyle: TextStyle(color: theme.textFaint, fontSize: 13),
+                  filled: true,
+                  fillColor: theme.surfaceVariant.withValues(alpha: .56),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
                 children: [
-                  Text(
-                    '编辑角色档案',
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '取消',
+                      onTap: () => Navigator.pop(dialogContext, false),
+                      color: theme.surfaceVariant,
+                      textColor: theme.textStrong,
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: promptCtrl,
-                    minLines: 3,
-                    maxLines: 6,
-                    decoration: InputDecoration(
-                      labelText: '说话方式',
-                      hintText: '描述角色的说话风格、语气、用词习惯等',
-                      hintStyle:
-                          TextStyle(color: theme.textFaint, fontSize: 13),
-                      filled: true,
-                      fillColor: theme.surfaceVariant.withValues(alpha: .56),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.all(16),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '保存',
+                      onTap: () => Navigator.pop(dialogContext, true),
+                      color: theme.primary,
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: descCtrl,
-                    minLines: 5,
-                    maxLines: 10,
-                    decoration: InputDecoration(
-                      labelText: '人设概述',
-                      hintText: '描述角色的性格、背景、特点等',
-                      hintStyle:
-                          TextStyle(color: theme.textFaint, fontSize: 13),
-                      filled: true,
-                      fillColor: theme.surfaceVariant.withValues(alpha: .56),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.all(16),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '取消',
-                          onTap: () => Navigator.pop(context, false),
-                          color: theme.surfaceVariant,
-                          textColor: theme.textStrong,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '保存',
-                          onTap: () => Navigator.pop(context, true),
-                          color: theme.primary,
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
-            ),
-          );
-        },
-      ),
+            ],
+          ),
+        );
+      },
     );
 
     if (saved == true) {
@@ -368,83 +355,72 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     String? existingId,
   }) async {
     final controller = TextEditingController(text: existingContent ?? '');
-    final saved = await showTideSheet<bool>(
+    final saved = await showTideDialog<bool>(
       context: context,
-      height: MediaQuery.sizeOf(context).height * .75,
-      child: StatefulBuilder(
-        builder: (context, setSheetState) {
-          final theme = TideTheme.of(context);
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              8,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        return TideDialogSurface(
+          child: TideDialogs.glassContent(
+            context: dialogContext,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: theme.textStrong,
+                  fontFamily: 'TideFont',
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: controller,
+                minLines: 8,
+                maxLines: 15,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  hintStyle: TextStyle(
+                    color: theme.textFaint,
+                    fontSize: 13,
+                  ),
+                  filled: true,
+                  fillColor: theme.surfaceVariant.withValues(alpha: .56),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '取消',
+                      onTap: () => Navigator.pop(dialogContext, false),
+                      color: theme.surfaceVariant,
+                      textColor: theme.textStrong,
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: controller,
-                    minLines: 8,
-                    maxLines: 15,
-                    decoration: InputDecoration(
-                      hintText: hint,
-                      hintStyle: TextStyle(
-                        color: theme.textFaint,
-                        fontSize: 13,
-                      ),
-                      filled: true,
-                      fillColor: theme.surfaceVariant.withValues(alpha: .56),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.all(16),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TideDialogs.glassButton(
+                      '保存',
+                      onTap: () {
+                        if (controller.text.trim().isNotEmpty) {
+                          Navigator.pop(dialogContext, true);
+                        }
+                      },
+                      color: theme.primary,
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '取消',
-                          onTap: () => Navigator.pop(context, false),
-                          color: theme.surfaceVariant,
-                          textColor: theme.textStrong,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '保存',
-                          onTap: () {
-                            if (controller.text.trim().isNotEmpty) {
-                              Navigator.pop(context, true);
-                            }
-                          },
-                          color: theme.primary,
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
-            ),
-          );
-        },
-      ),
+            ],
+          ),
+        );
+      },
     );
 
     if (saved == true) {
@@ -496,111 +472,102 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
       text: row == null ? '' : _text(row, 'content'),
     );
     var category = row == null ? '记忆' : _category(row);
-    final saved = await showTideSheet<bool>(
+    final saved = await showTideDialog<bool>(
       context: context,
-      height: MediaQuery.sizeOf(context).height * .82,
-      child: StatefulBuilder(
-        builder: (context, setSheetState) {
-          final theme = TideTheme.of(context);
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              8,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    row == null ? '添加世界书条目' : '编辑世界书条目',
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final theme = TideTheme.of(dialogContext);
+          return TideDialogSurface(
+            child: TideDialogs.glassContent(
+              context: dialogContext,
+              children: [
+                Text(
+                  row == null ? '添加世界书条目' : '编辑世界书条目',
+                  style: TextStyle(
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 18),
-                  _sheetField(
-                    theme,
-                    controller: title,
-                    label: '标题',
-                    hint: '例如：喜欢的食物、重要约定',
+                ),
+                const SizedBox(height: 18),
+                _sheetField(
+                  theme,
+                  controller: title,
+                  label: '标题',
+                  hint: '例如：喜欢的食物、重要约定',
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '类别',
+                  style: TextStyle(
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 16),
-                  Text(
-                    '类别',
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final item in _allCategoryNames)
-                        _categoryChoice(
-                          theme,
-                          item,
-                          selected: category == item,
-                          onTap: () => setSheetState(() => category = item),
-                        ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final item in _allCategoryNames)
                       _categoryChoice(
                         theme,
-                        '+ 添加类别',
-                        selected: false,
-                        onTap: () async {
-                          final newCat = await _addCategory(theme);
-                          if (newCat != null) {
-                            setSheetState(() => category = newCat);
-                            await _load();
+                        item,
+                        selected: category == item,
+                        onTap: () => setDialogState(() => category = item),
+                      ),
+                    _categoryChoice(
+                      theme,
+                      '+ 添加类别',
+                      selected: false,
+                      onTap: () async {
+                        final newCat = await _addCategory(theme);
+                        if (newCat != null) {
+                          setDialogState(() => category = newCat);
+                          await _load();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _sheetField(
+                  theme,
+                  controller: content,
+                  label: '完整内容',
+                  hint: '写下需要长期保留和用于对话的信息',
+                  minLines: 5,
+                  maxLines: 10,
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TideDialogs.glassButton(
+                        '取消',
+                        onTap: () => Navigator.pop(dialogContext, false),
+                        color: theme.surfaceVariant,
+                        textColor: theme.textStrong,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TideDialogs.glassButton(
+                        '保存',
+                        onTap: () {
+                          if (content.text.trim().isNotEmpty) {
+                            Navigator.pop(dialogContext, true);
                           }
                         },
+                        color: theme.primary,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _sheetField(
-                    theme,
-                    controller: content,
-                    label: '完整内容',
-                    hint: '写下需要长期保留和用于对话的信息',
-                    minLines: 5,
-                    maxLines: 10,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '取消',
-                          onTap: () => Navigator.pop(context, false),
-                          color: theme.surfaceVariant,
-                          textColor: theme.textStrong,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '保存',
-                          onTap: () {
-                            if (content.text.trim().isNotEmpty) {
-                              Navigator.pop(context, true);
-                            }
-                          },
-                          color: theme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           );
         },
@@ -757,122 +724,113 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     final nameCtrl = TextEditingController();
     Color selectedColor = _colorPool[math.Random().nextInt(_colorPool.length)];
 
-    final result = await showTideSheet<String>(
+    final result = await showTideDialog<String>(
       context: context,
-      height: MediaQuery.sizeOf(context).height * .6,
-      child: StatefulBuilder(
-        builder: (context, setSheetState) {
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              8,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '添加类别',
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          return TideDialogSurface(
+            child: TideDialogs.glassContent(
+              context: dialogContext,
+              children: [
+                Text(
+                  '添加类别',
+                  style: TextStyle(
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: _fieldDecoration(theme, '类别名称').copyWith(
-                      hintText: '例如：兴趣爱好、工作技能',
-                    ),
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: _fieldDecoration(theme, '类别名称').copyWith(
+                    hintText: '例如：兴趣爱好、工作技能',
                   ),
-                  const SizedBox(height: 16),
-                  Text(
-                    '选择颜色',
-                    style: TextStyle(
-                      color: theme.textStrong,
-                      fontFamily: 'TideFont',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '选择颜色',
+                  style: TextStyle(
+                    color: theme.textStrong,
+                    fontFamily: 'TideFont',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: _colorPool.map((color) {
-                      final colorValue = ((color.a * 255).toInt() << 24) |
-                          ((color.r * 255).toInt() << 16) |
-                          ((color.g * 255).toInt() << 8) |
-                          (color.b * 255).toInt();
-                      final isUsed =
-                          _categories.any((c) => c['color'] == colorValue);
-                      final selected = selectedColor == color;
-                      return BouncyTap(
-                        onTap: isUsed
-                            ? null
-                            : () => setSheetState(() => selectedColor = color),
-                        scaleAmount: .05,
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                            border: selected
-                                ? Border.all(color: Colors.white, width: 3)
-                                : null,
-                            boxShadow: selected
-                                ? [
-                                    BoxShadow(
-                                      color: color.withValues(alpha: .4),
-                                      blurRadius: 12,
-                                    )
-                                  ]
-                                : null,
-                          ),
-                          child: isUsed
-                              ? Icon(
-                                  Icons.close_rounded,
-                                  color: Colors.white.withValues(alpha: .6),
-                                  size: 20,
-                                )
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: _colorPool.map((color) {
+                    final colorValue = ((color.a * 255).toInt() << 24) |
+                        ((color.r * 255).toInt() << 16) |
+                        ((color.g * 255).toInt() << 8) |
+                        (color.b * 255).toInt();
+                    final isUsed =
+                        _categories.any((c) => c['color'] == colorValue);
+                    final selected = selectedColor == color;
+                    return BouncyTap(
+                      onTap: isUsed
+                          ? null
+                          : () => setDialogState(() => selectedColor = color),
+                      scaleAmount: .05,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: selected
+                              ? Border.all(color: Colors.white, width: 3)
+                              : null,
+                          boxShadow: selected
+                              ? [
+                                  BoxShadow(
+                                    color: color.withValues(alpha: .4),
+                                    blurRadius: 12,
+                                  )
+                                ]
                               : null,
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '取消',
-                          onTap: () => Navigator.pop(context),
-                          color: theme.surfaceVariant,
-                          textColor: theme.textStrong,
-                        ),
+                        child: isUsed
+                            ? Icon(
+                                Icons.close_rounded,
+                                color: Colors.white.withValues(alpha: .6),
+                                size: 20,
+                              )
+                            : null,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TideDialogs.glassButton(
-                          '保存',
-                          onTap: () {
-                            final name = nameCtrl.text.trim();
-                            if (name.isNotEmpty) {
-                              Navigator.pop(context, name);
-                            }
-                          },
-                          color: theme.primary,
-                        ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TideDialogs.glassButton(
+                        '取消',
+                        onTap: () => Navigator.pop(dialogContext),
+                        color: theme.surfaceVariant,
+                        textColor: theme.textStrong,
                       ),
-                    ],
-                  ),
-                ],
-              ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TideDialogs.glassButton(
+                        '保存',
+                        onTap: () {
+                          final name = nameCtrl.text.trim();
+                          if (name.isNotEmpty) {
+                            Navigator.pop(dialogContext, name);
+                          }
+                        },
+                        color: theme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           );
         },
@@ -1044,9 +1002,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
               decoration: BoxDecoration(
                 color: theme.surfaceVariant.withValues(alpha: .58),
                 shape: BoxShape.circle,
-                border: Border.all(
-                  color: theme.border.withValues(alpha: .65),
-                ),
               ),
               child: Icon(
                 Icons.arrow_back_ios_new_rounded,
@@ -1736,10 +1691,6 @@ class _GlassPanel extends StatelessWidget {
             ? theme.glass.withValues(alpha: theme.isDark ? .35 : .48)
             : theme.surface,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(
-          color: theme.border.withValues(alpha: glass ? .54 : .82),
-          width: .7,
-        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(
