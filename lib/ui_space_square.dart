@@ -1,6 +1,7 @@
 import 'bot_image_tool.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:math';
@@ -369,17 +370,53 @@ class _SpacePageState extends State<SpacePage> {
                           ),
                         )
                       else
-                        FrostCard(
-                          liquid: true,
-                          child: SizedBox(
-                            height: 196,
-                            child: GestureDetector(
-                              onTap: _toggleDiaryAutoScroll,
-                              onPanDown: (_) {
-                                if (_diaryTimer != null)
-                                  _toggleDiaryAutoScroll();
-                              },
-                              child: _buildDiaryWindow(theme),
+                        Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                                color: theme.border.withValues(alpha: 0.5),
+                                width: 0.5),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(24),
+                            child: BackdropFilter(
+                              filter: theme.hasGlobalBackground &&
+                                      theme.enableLiquidGlass
+                                  ? ImageFilter.blur(sigmaX: 30, sigmaY: 30)
+                                  : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      if (theme.hasGlobalBackground &&
+                                          theme.enableLiquidGlass) ...[
+                                        Colors.white.withValues(
+                                            alpha: theme.isDark ? 0.12 : 0.55),
+                                        Colors.white.withValues(
+                                            alpha: theme.isDark ? 0.05 : 0.35),
+                                      ] else ...[
+                                        theme.surface,
+                                        theme.surface,
+                                      ]
+                                    ],
+                                  ),
+                                ),
+                                child: SizedBox(
+                                  height: 196,
+                                  child: GestureDetector(
+                                    onTap: _toggleDiaryAutoScroll,
+                                    onPanDown: (_) {
+                                      if (_diaryTimer != null)
+                                        _toggleDiaryAutoScroll();
+                                    },
+                                    child: Padding(
+                                        padding: const EdgeInsets.all(18),
+                                        child: _buildDiaryWindow(theme)),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -603,32 +640,29 @@ class _SpacePageState extends State<SpacePage> {
       );
 
   Widget _buildVitalCarousel(TideTheme theme) {
-    return ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 450),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                  position: Tween<Offset>(
-                          begin: const Offset(.2, 0), end: Offset.zero)
-                      .animate(animation),
-                  child: child)),
-          child: VitalMetricCard(
-              key: ValueKey('$_botId:$_vitalCardIndex'),
-              data: _vitalSigns ?? {},
-              index: _vitalCardIndex,
-              onTap: () async {
-                await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) =>
-                            BotDataPage(botId: _botId, botName: _botName)));
-                if (mounted) await _refreshVitals();
-              }),
-        ));
+    return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 450),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+                position:
+                    Tween<Offset>(begin: const Offset(.2, 0), end: Offset.zero)
+                        .animate(animation),
+                child: child)),
+        child: VitalMetricCard(
+            key: ValueKey('$_botId:$_vitalCardIndex'),
+            data: _vitalSigns ?? {},
+            index: _vitalCardIndex,
+            onTap: () async {
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) =>
+                          BotDataPage(botId: _botId, botName: _botName)));
+              if (mounted) await _refreshVitals();
+            }));
   }
 
   Widget _buildSectionTitle(String title) => Padding(

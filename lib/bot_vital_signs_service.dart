@@ -528,12 +528,52 @@ class BotVitalSignsService {
     _active[id] = max(0, (_active[id] ?? 1) - 1);
   }
 
+  Future<void> updateBodyMetrics(String id,
+      {required double height,
+      required double weight,
+      required double temperature,
+      required int heart,
+      required int systolic,
+      required int diastolic}) async {
+    await _serial(id, () async {
+      final s = await _read(id);
+      s['height'] = height;
+      s['weight'] = weight;
+      s['temperature'] = temperature;
+      s['heart'] = heart;
+      s['systolic'] = systolic;
+      s['diastolic'] = diastolic;
+      await _save(id, s);
+    });
+  }
+
   String context(Map<String, dynamic> s) {
-    final base =
-        '【你自己的生活状态】心情：${moodName(vitalDouble(s['mood']))}；压力 ${vitalDouble(s['stress']).toStringAsFixed(1)}/10；精力 ${vitalDouble(s['energy']).round()}；健康：${s['health']} ${s['illness']}。这些是角色生活状态。';
-    return sleeping(s)
-        ? '$base\n【睡眠期间】现在是你的睡觉时间。对方发来了消息，你可以直接自然回复，也可以不回复；不回复必须调用 choose_silence，不输出正文。回复后短暂清醒，之后继续睡。不需要解释系统规则。'
-        : base;
+    final samples = vitalList(s['samples']);
+    final latestSample = samples.isEmpty ? null : samples.last;
+    final mood = moodName(vitalDouble(s['mood']));
+    final stress = vitalDouble(s['stress']).toStringAsFixed(1);
+    final energy = vitalDouble(s['energy']).round();
+    final health = s['health'] ?? '健康';
+    final illness = s['illness'] ?? '';
+
+    final sleepStatus = sleeping(s)
+        ? '\n【睡眠期间】现在是你的睡觉时间。对方发来了消息，你可以直接自然回复，也可以不回复；不回复必须调用 choose_silence，不输出正文。回复后短暂清醒，之后继续睡。不需要解释系统规则。'
+        : '';
+
+    final sleepHistory = vitalList(s['sleep_history']);
+    final todaySleep = sleepHistory.isEmpty ? null : sleepHistory.last;
+    final sleepInfo = todaySleep != null
+        ? '今日睡眠：${(vitalInt(todaySleep['minutes']) / 60).toStringAsFixed(1)}小时，质量${todaySleep['quality']}/100；'
+        : '今日尚未入睡；';
+
+    final bodyInfo = latestSample != null
+        ? '体温${vitalDouble(latestSample['temperature']).toStringAsFixed(1)}°C，心率${latestSample['heart']}次/分，血压${latestSample['systolic']}/${latestSample['diastolic']}；'
+        : '';
+
+    final steps = s['steps'] ?? 0;
+    final activity = s['activity'] ?? '休息';
+
+    return '【你自己的生活状态】心情：$mood；压力 $stress/10；精力 $energy；健康：$health${illness.isNotEmpty ? " $illness" : ""}。$sleepInfo$bodyInfo今日步数${steps}步，当前活动：$activity。这些是角色生活状态。$sleepStatus';
   }
 
   Future<void> _pendingReply(String id, String reason) async {

@@ -50,10 +50,11 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     try {
       final result = await FilePicker.platform.pickFiles(
         withData: true,
+        allowMultiple: true,
         type: FileType.any,
       );
       if (result == null) return;
-      final file = result.files.single;
+      final file = result.files.first;
       final bytes = file.bytes ??
           (file.path == null ? null : await File(file.path!).readAsBytes());
       if (bytes == null) throw const FormatException('无法读取所选文件');
@@ -503,11 +504,41 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(item['name']?.toString() ?? '',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w700)),
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                                item['name']?.toString() ?? '',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w700)),
+                                          ),
+                                          if (_isSkill &&
+                                              item['recommended'] == 1) ...[
+                                            const SizedBox(width: 4),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: theme.primary
+                                                    .withValues(alpha: .2),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: Text('推荐',
+                                                  style: TextStyle(
+                                                      color: theme.primary,
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w600)),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                       const SizedBox(height: 4),
                                       Text(
                                         _isSkill
@@ -530,12 +561,13 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                         ? null
                                         : () => _connectMcpItem(item),
                                   ),
-                                IconButton(
-                                  tooltip: '删除',
-                                  icon:
-                                      const Icon(Icons.delete_outline_rounded),
-                                  onPressed: () => _deleteItem(item),
-                                ),
+                                if (!(_isSkill && item['built_in'] == 1))
+                                  IconButton(
+                                    tooltip: '删除',
+                                    icon: const Icon(
+                                        Icons.delete_outline_rounded),
+                                    onPressed: () => _deleteItem(item),
+                                  ),
                                 Switch.adaptive(
                                   activeTrackColor: theme.primary,
                                   activeThumbColor: Colors.white,
@@ -579,6 +611,12 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
   }
 
   Future<void> _deleteItem(Map<String, dynamic> item) async {
+    if (_isSkill && item['built_in'] == 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('内置Skill无法删除')),
+      );
+      return;
+    }
     final confirmed = await TideDialogs.show<bool>(
       context: context,
       builder: (dialogContext) => TideDialogSurface(

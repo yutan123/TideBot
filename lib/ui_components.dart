@@ -569,7 +569,9 @@ class GlassCard extends StatelessWidget {
         child: child,
       ),
     );
-    if (!liquid || !TideTheme.of(context).hasGlobalBackground) return content;
+    if (!liquid ||
+        !TideTheme.of(context).hasGlobalBackground ||
+        !TideTheme.of(context).enableLiquidGlass) return content;
     return TideLiquidGlass(
       radius: radius,
       child: GestureDetector(
@@ -632,7 +634,9 @@ class FrostCard extends StatelessWidget {
         ),
       ),
     );
-    if (!liquid || !TideTheme.of(context).hasGlobalBackground) return card;
+    if (!liquid ||
+        !TideTheme.of(context).hasGlobalBackground ||
+        !TideTheme.of(context).enableLiquidGlass) return card;
     return Padding(
       padding: margin,
       child: TideLiquidGlass(

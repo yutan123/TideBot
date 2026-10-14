@@ -37,6 +37,15 @@ class AppPermissions {
     return false;
   }
 
+  static Future<bool> camera(BuildContext context) async {
+    var status = await Permission.camera.status;
+    if (!status.isGranted) status = await Permission.camera.request();
+    if (status.isGranted) return true;
+    if (!context.mounted) return false;
+    _showDenied(context, '需要相机权限才能进行视频通话', status.isPermanentlyDenied);
+    return false;
+  }
+
   static void _showDenied(
       BuildContext context, String message, bool permanentlyDenied) {
     GlobalNotice.show(

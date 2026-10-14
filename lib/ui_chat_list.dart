@@ -74,20 +74,12 @@ class ChatListPageState extends State<ChatListPage> {
       return;
     }
 
-    // 立即显示机器人列表（无预览），避免启动空白
-    if (mounted) {
-      setState(() {
-        _bots = bots
-            .map((b) => {
-                  ...b,
-                  'preview': '',
-                  'lastTime': (b['last_msg_time'] as int?) ??
-                      (b['created_at'] as int?) ??
-                      0,
-                  'unread': false,
-                })
-            .toList();
-      });
+    if (bots.isEmpty) {
+      if (mounted) {
+        setState(() => _bots = []);
+        widget.sidebar?.updateBot(null);
+      }
+      return;
     }
 
     // 并发查询所有机器人的消息预览

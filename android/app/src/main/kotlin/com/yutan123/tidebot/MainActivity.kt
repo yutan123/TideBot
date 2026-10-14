@@ -63,7 +63,16 @@ class MainActivity: FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        TideBackgroundWork.ensureScheduled(this)
+        // 使用增强版后台任务调度器
+        TideEnhancedBackgroundWork.ensureScheduled(this)
+        // 注册电池监听器
+        TideBatteryMonitor.register(this)
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        // 取消注册电池监听器
+        TideBatteryMonitor.unregister(this)
     }
 
     override fun onResume() {
@@ -309,6 +318,34 @@ class MainActivity: FlutterActivity() {
                     } else {
                         extractPdfText(path, maxPages, maxChars, result)
                     }
+                }
+                                "registerBackgroundTask" -> {
+                    val taskId = call.argument<String>("taskId").orEmpty()
+                    val taskType = call.argument<String>("taskType").orEmpty()
+                    val botId = call.argument<String>("botId")
+                    val triggerTime = call.argument<Number>("triggerTime")?.toLong() ?: 0L
+                    val repeating = call.argument<Boolean>("repeating") == true
+                    val config = call.argument<String>("config")
+                    
+                    val configJson = if (!config.isNullOrEmpty()) {
+                        try { org.json.JSONObject(config) } catch (e: Exception) { null }
+                    } else null
+                    
+                    val success = TideMasterScheduler.registerTask(
+                        this, taskId, taskType, botId, triggerTime, repeating, configJson
+                    )
+                    result.success(success)
+                }
+                "cancelBackgroundTask" -> {
+                    val taskId = call.argument<String>("taskId").orEmpty()
+                    result.success(TideMasterScheduler.cancelTask(this, taskId))
+                }
+                "getBatteryStatus" -> {
+                    result.success(mapOf(
+                        "isCharging" to TideBatteryMonitor.isCharging(this),
+                        "isLowBattery" to TideBatteryMonitor.isLowBattery(this),
+                        "level" to TideBatteryMonitor.getBatteryLevel(this)
+                    ))
                 }
                 else -> {
                     result.notImplemented()

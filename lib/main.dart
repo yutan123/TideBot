@@ -1,4 +1,5 @@
 import 'bot_vital_signs_service.dart';
+import 'built_in_skill_loader.dart';
 import 'dart:async';
 import 'dart:ui';
 import 'dart:math';
@@ -78,6 +79,8 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   unawaited(_runStartupTask('haptics', TideHaptics.load));
   unawaited(
       _runStartupTask('app log', AppLogService.instance.restoreForLaunch));
+  unawaited(_runStartupTask(
+      'built_in_skills', BuiltInSkillLoader.ensureBuiltInSkills));
   unawaited(McpConnectionService.instance.connectAuto().catchError((e, st) {
     debugPrint('[startup] MCP auto-connect skipped: $e');
   }));

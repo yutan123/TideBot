@@ -36,6 +36,7 @@ dependencies:
   audioplayers: ^6.5.0
   heif_converter: ^1.0.7
   image_picker: ^1.1.2
+  camera: ^0.11.0+2
   file_picker: ^8.0.5
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
@@ -60,10 +61,12 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - assets/icons/
     - assets/images/
+    - assets/fonts/
+    - assets/icons/
     - assets/emoji/
     - assets/emojitwo/
+    - assets/skills/
   fonts:
     - family: TideFont
       fonts:

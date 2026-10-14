@@ -163,6 +163,59 @@ class DBManager {
         FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
       )
     ''');
+
+    // 后台任务注册表
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS background_tasks (
+        task_id TEXT PRIMARY KEY,
+        task_type TEXT NOT NULL,
+        bot_id TEXT,
+        trigger_time INTEGER NOT NULL,
+        repeating INTEGER DEFAULT 0,
+        enabled INTEGER DEFAULT 1,
+        config_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+
+    // 后台任务执行记录（幂等性保证）
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS background_task_executions (
+        execution_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        scheduled_time INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        status TEXT NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        result_json TEXT,
+        error_message TEXT,
+        UNIQUE(task_id, scheduled_time)
+      )
+    ''');
+
+    // 后台消息表（Kotlin 写入，Flutter 读取显示）
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS background_messages (
+        message_id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        image_path TEXT,
+        timestamp INTEGER NOT NULL,
+        displayed INTEGER DEFAULT 0,
+        synced_to_chat INTEGER DEFAULT 0,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+
+    await _execSql(db, '''
+      CREATE INDEX IF NOT EXISTS idx_background_messages_bot 
+      ON background_messages(bot_id, displayed, timestamp DESC)
+    ''');
     await _execSql(db, '''
       CREATE TABLE IF NOT EXISTS post_comments (
         id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author_id TEXT,
@@ -219,7 +272,7 @@ class DBManager {
           "SELECT value FROM kv_store WHERE key = 'schema_repair_version'");
       if (result.isEmpty) return true;
       final stored = int.tryParse(result.first['value']?.toString() ?? '') ?? 0;
-      return stored < 33; // 当前数据库版本
+      return stored < 34; // 当前数据库版本
     } catch (_) {
       return true; // kv_store 不存在时需要修复
     }
@@ -234,7 +287,7 @@ class DBManager {
       ''');
       await db.insert(
         'kv_store',
-        {'key': 'schema_repair_version', 'value': '33'},
+        {'key': 'schema_repair_version', 'value': '34'},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (error) {
@@ -274,6 +327,10 @@ class DBManager {
       await _createRepairCoreTables(db);
       await _createCallTables(db);
       await _createSkillTables(db);
+      await _ensureColumns(db, 'skills', const {
+        'built_in': 'INTEGER NOT NULL DEFAULT 0',
+        'recommended': 'INTEGER NOT NULL DEFAULT 0',
+      });
       await _ensureColumns(db, 'bots', const {
         'name': 'TEXT',
         'desc': 'TEXT',
@@ -389,7 +446,7 @@ class DBManager {
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 33,
+      version: 34,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -985,6 +1042,7 @@ class DBManager {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
       description TEXT DEFAULT '', manifest_json TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ready',
+      built_in INTEGER NOT NULL DEFAULT 0, recommended INTEGER NOT NULL DEFAULT 0,
       error TEXT, updated_at INTEGER NOT NULL)''');
     await _execSql(db, '''CREATE TABLE IF NOT EXISTS skill_tools (
       id TEXT PRIMARY KEY, skill_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -1126,8 +1184,16 @@ class DBManager {
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
 
-  Future<void> deleteSkill(String id) async =>
-      (await database).delete('skills', where: 'id = ?', whereArgs: [id]);
+  Future<void> deleteSkill(String id) async {
+    final db = await database;
+    // 检查是否为内置skill
+    final skill = await db.query('skills', where: 'id = ?', whereArgs: [id]);
+    if (skill.isNotEmpty && skill.first['built_in'] == 1) {
+      throw Exception('内置Skill无法删除');
+    }
+    await db.delete('skills', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<void> deleteMcpServer(String id) async =>
       (await database).delete('mcp_servers', where: 'id = ?', whereArgs: [id]);
 
@@ -1991,6 +2057,42 @@ class DBManager {
     final db = await database;
     await db.insert('schedule_tasks', task,
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // 读取后台消息（Kotlin 写入的主动回复等）
+  Future<List<Map<String, dynamic>>> getBackgroundMessages(String botId,
+      {bool onlyUnread = true}) async {
+    final db = await database;
+    final where = onlyUnread ? 'bot_id = ? AND displayed = 0' : 'bot_id = ?';
+    return db.query(
+      'background_messages',
+      where: where,
+      whereArgs: [botId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+
+  // 标记后台消息为已显示
+  Future<void> markBackgroundMessageDisplayed(String messageId) async {
+    final db = await database;
+    await db.update(
+      'background_messages',
+      {'displayed': 1},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  // 同步后台消息到聊天历史
+  Future<void> syncBackgroundMessageToChat(
+      String messageId, String chatMessageId) async {
+    final db = await database;
+    await db.update(
+      'background_messages',
+      {'synced_to_chat': 1},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
   }
 
   Future<void> deleteFutureTask(String id) async {

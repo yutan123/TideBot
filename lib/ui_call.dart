@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +15,7 @@ import 'ui_components.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
+import 'video_call_overlay.dart';
 
 enum CallFlowState {
   idle,
@@ -92,6 +95,13 @@ class _CallPageState extends State<CallPage>
   bool _hasStt = false;
   bool _hasTts = false;
 
+  /// 视频通话状态
+  bool _videoEnabled = false;
+  String? _generatedImagePath;
+  final List<String> _capturedFrames = [];
+  final GlobalKey<VideoCallOverlayState> _videoOverlayKey =
+      GlobalKey<VideoCallOverlayState>();
+
   // Keep the gate tolerant of Android devices whose amplitude reporting is
   // conservative. A user can always finish the current turn explicitly.
   static const int _speechStartTicks = 3; // 提高到3（600ms），降低误判
@@ -102,6 +112,8 @@ class _CallPageState extends State<CallPage>
       Duration(milliseconds: 300); // 降低到300ms
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
+  static const String _videoCallSystemPrompt =
+      '当前正在进行实时视频通话，对方可以看到你。如果对话涉及视觉内容、需要展示画面或你认为图片会有帮助，请调用 generate_image 工具生成图片。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   int _silentTicks = 0;
   int _voiceTicks = 0;
   DateTime? _recordingStartedAt;
@@ -166,17 +178,24 @@ class _CallPageState extends State<CallPage>
       });
     try {
       final token = _beginTurn();
+      // 视频通话：发送前截取当前摄像头画面
+      final frame = _videoEnabled ? await _captureVideoFrame() : null;
+      if (_ending) return;
+      final systemPrompt =
+          _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
       final reply = await AIManager()
           .sendMessage(
             botId: widget.bot['id'].toString(),
             text: text,
-            allowTools: false,
+            imagePath: frame,
+            allowTools: _videoEnabled,
+            allowStickers: false,
             forceSingleReply: true,
             cancellationToken: token,
-            extraSystemPrompt: _callSystemPrompt,
+            extraSystemPrompt: systemPrompt,
             includeChatHistory: true,
           )
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 60));
       if (_ending) return;
       if (reply['success'] != true) {
         final reason = _replyFailureReason(reply);
@@ -200,6 +219,7 @@ class _CallPageState extends State<CallPage>
         }
         return;
       }
+      _applyGeneratedImage(reply);
       _appendMessage(answer, isUser: false);
       _transcript.add('机器人：$answer');
       if (mounted) setState(() => _caption = answer);
@@ -294,7 +314,7 @@ class _CallPageState extends State<CallPage>
       }
       return;
     }
-    if (_recording && !_processing) {
+    if (_recording && !_processing && !_finishingRecording) {
       if (isVoice) {
         _voiceTicks++;
         _silentTicks = 0;
@@ -310,9 +330,13 @@ class _CallPageState extends State<CallPage>
         }
       } else {
         _voiceTicks = 0;
-        if (_speechDetected) _silentTicks++;
-        if (_speechDetected && _silentTicks >= _silentStopTicks) {
-          unawaited(_finishListening());
+        if (_speechDetected) {
+          _silentTicks++;
+          if (_silentTicks >= _silentStopTicks) {
+            AppLogService.instance
+                .add('VOICE_CALL', '连续静音${_silentTicks}个tick，自动结束录音');
+            unawaited(_finishListening());
+          }
         }
       }
     }
@@ -542,6 +566,11 @@ class _CallPageState extends State<CallPage>
           .add('VOICE_CALL', 'STT 成功，文本长度 ${text.trim().length}');
       _transcript.add('用户：${text.trim()}');
       _appendMessage(text, isUser: true);
+
+      // 视频通话：用户说完话后自动截取一帧摄像头画面随本轮发送
+      final frame = _videoEnabled ? await _captureVideoFrame() : null;
+      if (_ending) return;
+
       if (mounted) setState(() => _caption = text);
       if (mounted) {
         setState(() {
@@ -552,14 +581,18 @@ class _CallPageState extends State<CallPage>
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
 
       String streamingReply = '';
+      final systemPrompt =
+          _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
       final reply = await AIManager()
           .sendMessage(
             botId: widget.bot['id'].toString(),
             text: text,
-            allowTools: false,
+            imagePath: frame,
+            allowTools: _videoEnabled,
+            allowStickers: false,
             forceSingleReply: true,
             cancellationToken: token,
-            extraSystemPrompt: _callSystemPrompt,
+            extraSystemPrompt: systemPrompt,
             includeChatHistory: true,
             onDelta: (delta) {
               if (mounted) {
@@ -604,6 +637,8 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
       _transcript.add('机器人：$answer');
+
+      _applyGeneratedImage(reply);
       // 先不显示文字，等 TTS 生成后再同步显示和播放
       final ttsId = _ttsProviderId;
       if (ttsId.isEmpty || !_hasTts) {
@@ -776,6 +811,14 @@ class _CallPageState extends State<CallPage>
       if (wasRecording) await _recorder.stop();
       await _player.stop();
     } catch (_) {}
+    // 通话结束后删除临时截取的摄像头画面。
+    final frames = List<String>.from(_capturedFrames);
+    _capturedFrames.clear();
+    for (final path in frames) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
   }
 
   Future<void> _persistCallSummary({
@@ -937,15 +980,102 @@ class _CallPageState extends State<CallPage>
     super.dispose();
   }
 
+  Future<void> _toggleVideo() async {
+    if (_videoEnabled) {
+      setState(() {
+        _videoEnabled = false;
+        _generatedImagePath = null;
+      });
+      AppLogService.instance.add('VOICE_CALL', '视频通话已关闭');
+    } else {
+      if (!await AppPermissions.camera(context)) {
+        AppLogService.instance.add('VOICE_CALL', '相机权限未授予');
+        return;
+      }
+      setState(() {
+        _videoEnabled = true;
+        _generatedImagePath = null;
+      });
+      AppLogService.instance.add('VOICE_CALL', '视频通话已开启');
+    }
+  }
+
+  /// 截取当前摄像头画面；摄像头未就绪时返回 null，本轮仅发送文字。
+  Future<String?> _captureVideoFrame() async {
+    final path = await _videoOverlayKey.currentState?.captureFrame();
+    if (path != null) {
+      _capturedFrames.add(path);
+      AppLogService.instance.add('VOICE_CALL', '已截取视频帧');
+    } else {
+      AppLogService.instance.add('VOICE_CALL', '视频帧截取失败，本轮仅发送文字');
+    }
+    return path;
+  }
+
+  /// 机器人通过 generate_image 生成图片后更新视频主画面，保留到下一张出现。
+  void _applyGeneratedImage(Map<String, dynamic> reply) {
+    final path = reply['image_path']?.toString().trim() ?? '';
+    if (path.isEmpty || !mounted) return;
+    setState(() => _generatedImagePath = path);
+    AppLogService.instance.add('VOICE_CALL', '机器人分享了画面');
+  }
+
+  Future<void> _toggleMute() async {
+    TideHaptics.tap();
+    if (_muted) {
+      setState(() => _muted = false);
+      await _startListening();
+      return;
+    }
+    _vadActive = false;
+    _autoStopTimer?.cancel();
+    _stopAmpMonitor();
+    _silentTicks = 0;
+    if (_recording) await _recorder.stop();
+    _recordingStartedAt = null;
+    if (!mounted) return;
+    setState(() {
+      _muted = true;
+      _recording = false;
+      _flowState = CallFlowState.idle;
+      _caption = '已静音';
+    });
+  }
+
+  Future<void> _toggleSpeaker() async {
+    TideHaptics.tap();
+    final next = !_speakerMuted;
+    setState(() => _speakerMuted = next);
+    await _player.setVolume(next ? 0 : 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final ready = _hasStt;
     final name = widget.bot['name']?.toString().trim().isNotEmpty == true
         ? widget.bot['name'].toString()
         : 'TideBot';
     final avatar = widget.bot['avatar']?.toString() ?? '';
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 360),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: _videoEnabled
+          ? KeyedSubtree(
+              key: const ValueKey('video_call'),
+              child: _buildVideoCall(theme, name, avatar),
+            )
+          : KeyedSubtree(
+              key: const ValueKey('voice_call'),
+              child: _buildVoiceCall(theme, name, avatar),
+            ),
+    );
+  }
 
+  // ===================== 语音通话布局 =====================
+
+  Widget _buildVoiceCall(TideTheme theme, String name, String avatar) {
+    final ready = _hasStt;
     return TideBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -1058,27 +1188,7 @@ class _CallPageState extends State<CallPage>
                                       label: _muted ? '已静音' : '静音',
                                       color: theme.surfaceVariant,
                                       iconColor: theme.textStrong,
-                                      onTap: () async {
-                                        TideHaptics.tap();
-                                        if (_muted) {
-                                          setState(() => _muted = false);
-                                          await _startListening();
-                                        } else {
-                                          _vadActive = false;
-                                          _autoStopTimer?.cancel();
-                                          _stopAmpMonitor();
-                                          _silentTicks = 0;
-                                          if (_recording)
-                                            await _recorder.stop();
-                                          _recordingStartedAt = null;
-                                          setState(() {
-                                            _muted = true;
-                                            _recording = false;
-                                            _flowState = CallFlowState.idle;
-                                            _caption = '已静音';
-                                          });
-                                        }
-                                      })),
+                                      onTap: _toggleMute)),
                               _roundButton(
                                   icon: Icons.call_end_rounded,
                                   label: '挂断',
@@ -1094,12 +1204,19 @@ class _CallPageState extends State<CallPage>
                                       label: _speakerMuted ? '声音关闭' : '声音开启',
                                       color: theme.surfaceVariant,
                                       iconColor: theme.textStrong,
-                                      onTap: () async {
-                                        TideHaptics.tap();
-                                        final next = !_speakerMuted;
-                                        setState(() => _speakerMuted = next);
-                                        await _player.setVolume(next ? 0 : 1);
-                                      })),
+                                      onTap: _toggleSpeaker)),
+                              Positioned(
+                                left: 72,
+                                top: 2,
+                                child: IconButton(
+                                  tooltip: '切换为视频通话',
+                                  onPressed: _ending ? null : _toggleVideo,
+                                  icon: Icon(
+                                    Icons.videocam_rounded,
+                                    color: theme.primary,
+                                  ),
+                                ),
+                              ),
                               Positioned(
                                 right: 72,
                                 top: 2,
@@ -1130,6 +1247,535 @@ class _CallPageState extends State<CallPage>
       ),
     );
   }
+
+  // ===================== 视频通话布局 =====================
+
+  Widget _buildVideoCall(TideTheme theme, String name, String avatar) {
+    final image = _generatedImagePath;
+    final subtitle = _videoSubtitle();
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Colors.black),
+            // 机器人画面：未生成时保持纯黑，生成后一直保留到下一张出现。
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 700),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: image == null
+                  ? const SizedBox.expand(key: ValueKey('video_stage_empty'))
+                  : _botImageStage(image),
+            ),
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 200,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xB3000000), Color(0x00000000)],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 340,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [Color(0xE6000000), Color(0x00000000)],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SafeArea(
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 14,
+                    left: 18,
+                    right: 140,
+                    child: _videoHeader(theme, name, avatar),
+                  ),
+                  Positioned(
+                    top: 12,
+                    right: 16,
+                    child: VideoCallOverlay(key: _videoOverlayKey),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 14,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (subtitle.isNotEmpty) ...[
+                          _videoSubtitleCard(subtitle),
+                          const SizedBox(height: 14),
+                        ],
+                        if (_showTextComposer) ...[
+                          _videoGlass(
+                            radius: 22,
+                            padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                            child: _textComposer(theme),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        _videoActionRow(theme),
+                        const SizedBox(height: 16),
+                        _videoControlBar(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _botImageStage(String path) {
+    final file = File(path);
+    Widget fallback(BuildContext _, Object __, StackTrace? ___) =>
+        const SizedBox.shrink();
+    return Stack(
+      key: ValueKey(path),
+      fit: StackFit.expand,
+      children: [
+        // 同一张图的模糊放大版作为氛围底，避免上下留出生硬黑边。
+        ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+          child: Image.file(
+            file,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            excludeFromSemantics: true,
+            errorBuilder: fallback,
+          ),
+        ),
+        const ColoredBox(color: Color(0x99000000)),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(26),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x80000000),
+                    blurRadius: 40,
+                    offset: Offset(0, 18),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(26),
+                child: Image.file(
+                  file,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                  semanticLabel: '对方分享的画面',
+                  errorBuilder: fallback,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _videoHeader(TideTheme theme, String name, String avatar) {
+    final failed = _flowState == CallFlowState.failed;
+    return Row(
+      children: [
+        AnimatedBuilder(
+          animation: _wave,
+          builder: (context, child) {
+            final active = _botSpeaking;
+            final pulse = _wave.value;
+            return Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: active
+                      ? theme.primary.withValues(alpha: .55 + pulse * .4)
+                      : Colors.white.withValues(alpha: .28),
+                  width: 2,
+                ),
+                boxShadow: active
+                    ? [
+                        BoxShadow(
+                          color:
+                              theme.primary.withValues(alpha: .18 + pulse * .3),
+                          blurRadius: 14 + pulse * 10,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: child,
+            );
+          },
+          child: TideBotAvatar(name: name, path: avatar, size: 46),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: failed
+                          ? const Color(0xFFFF453A)
+                          : const Color(0xFF30D158),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${_callStateLabel()} · ${_formatClock(_elapsed)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .72),
+                        fontSize: 12.5,
+                        fontFamily: 'TideFont',
+                        fontFeatures: const [ui.FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _videoSubtitle() {
+    final caption = _caption.trim();
+    if (caption.isNotEmpty) return caption;
+    if (_messages.isNotEmpty) return _messages.last.text;
+    return _hasStt ? '正在自动监听，请直接说话' : '';
+  }
+
+  Widget _videoGlass({
+    required Widget child,
+    EdgeInsetsGeometry padding = EdgeInsets.zero,
+    double radius = 24,
+  }) {
+    final shape = BorderRadius.circular(radius);
+    return ClipRRect(
+      borderRadius: shape,
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            borderRadius: shape,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withValues(alpha: .16),
+                Colors.white.withValues(alpha: .06),
+              ],
+            ),
+            border: Border.all(color: Colors.white.withValues(alpha: .16)),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _videoSubtitleCard(String text) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: _videoGlass(
+        radius: 20,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        child: AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomCenter,
+          child: Text(
+            text,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              height: 1.45,
+              fontFamily: 'TideFont',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _videoPill({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool highlighted = false,
+  }) {
+    final enabled = onTap != null;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: label,
+      child: GestureDetector(
+        onTap: enabled
+            ? () {
+                TideHaptics.tap();
+                onTap();
+              }
+            : null,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 200),
+          opacity: enabled ? 1 : .45,
+          child: highlighted
+              ? Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: _pillContent(icon, label, Colors.black),
+                )
+              : _videoGlass(
+                  radius: 22,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  child: _pillContent(icon, label, Colors.white),
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pillContent(IconData icon, String label, Color color) =>
+      ExcludeSemantics(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'TideFont',
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _videoActionRow(TideTheme theme) {
+    final Widget primary;
+    if (!_hasStt) {
+      primary = _videoPill(
+        icon: Icons.settings_rounded,
+        label: '配置语音模型',
+        onTap: widget.onOpenSettings,
+      );
+    } else if (_flowState == CallFlowState.failed) {
+      primary = _videoPill(
+        icon: Icons.refresh_rounded,
+        label: '重试',
+        onTap: _retryVoiceFlow,
+        highlighted: true,
+      );
+    } else {
+      final speaking = _botSpeaking;
+      final listening = _recording;
+      primary = _videoPill(
+        icon: speaking ? Icons.pause_rounded : Icons.check_rounded,
+        label: speaking ? '暂停' : '说完了',
+        highlighted: speaking,
+        onTap: !(speaking || listening) || _finishingRecording
+            ? null
+            : () {
+                if (speaking) {
+                  unawaited(_pauseBotReply());
+                } else {
+                  unawaited(_finishListening());
+                }
+              },
+      );
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        primary,
+        const SizedBox(width: 10),
+        _videoPill(
+          icon: _showTextComposer ? Icons.edit_off_rounded : Icons.edit_rounded,
+          label: '文字',
+          onTap: _processing || _ending ? null : _openTextComposer,
+        ),
+      ],
+    );
+  }
+
+  Widget _videoControlBar() {
+    return _videoGlass(
+      radius: 36,
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _videoControl(
+            icon: _muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+            label: _muted ? '已静音' : '静音',
+            active: _muted,
+            onTap: _toggleMute,
+          ),
+          _videoControl(
+            icon: Icons.cameraswitch_rounded,
+            label: '翻转',
+            onTap: () => _videoOverlayKey.currentState?.switchCamera(),
+          ),
+          _videoControl(
+            icon: Icons.call_end_rounded,
+            label: '挂断',
+            danger: true,
+            onTap: _endCall,
+          ),
+          _videoControl(
+            icon: Icons.videocam_off_rounded,
+            label: '关视频',
+            onTap: _toggleVideo,
+          ),
+          _videoControl(
+            icon: _speakerMuted
+                ? Icons.volume_off_rounded
+                : Icons.volume_up_rounded,
+            label: _speakerMuted ? '声音关' : '声音开',
+            active: _speakerMuted,
+            onTap: _toggleSpeaker,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _videoControl({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool active = false,
+    bool danger = false,
+  }) {
+    const red = Color(0xFFFF3B30);
+    final size = danger ? 62.0 : 50.0;
+    final background = danger
+        ? red
+        : active
+            ? Colors.white
+            : Colors.white.withValues(alpha: .14);
+    final foreground = danger
+        ? Colors.white
+        : active
+            ? Colors.black
+            : Colors.white;
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (!danger) TideHaptics.tap();
+          onTap();
+        },
+        child: ExcludeSemantics(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: background,
+                  boxShadow: danger
+                      ? [
+                          BoxShadow(
+                            color: red.withValues(alpha: .45),
+                            blurRadius: 20,
+                            offset: const Offset(0, 6),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Icon(icon, color: foreground, size: danger ? 28 : 22),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .78),
+                  fontSize: 11,
+                  fontFamily: 'TideFont',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ===================== 共享组件 =====================
 
   Widget _messageList(TideTheme theme) {
     if (_messages.isEmpty) {

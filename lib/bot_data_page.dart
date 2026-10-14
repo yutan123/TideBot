@@ -145,7 +145,8 @@ class VitalMetricCard extends StatelessWidget {
   final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) {
-    final theme = TideTheme.of(context), color = vitalColors[index];
+    final theme = TideTheme.of(context);
+    final color = index == 0 ? theme.primary : vitalColors[index];
     final points = metricPoints(data, index);
     return BouncyTap(
         onTap: onTap ?? () {},
@@ -363,61 +364,63 @@ class _BotDataPageState extends State<BotDataPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-        backgroundColor: theme.pageBackground,
-        appBar: AppBar(
-            title: const Text('TA的数据'), backgroundColor: theme.pageBackground),
-        body: data == null
-            ? Center(
-                child: error == null
-                    ? const CircularProgressIndicator()
-                    : TextButton(
-                        onPressed: load, child: const Text('读取失败，点击重试')))
-            : RefreshIndicator(
-                onRefresh: load,
-                child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                    children: [
-                      Text('${widget.botName} 的生活轨迹',
-                          style: TextStyle(
-                              color: theme.textStrong,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 6),
-                      Text(
-                          '${data!['sleep'] is Map ? '正在休息' : '${data!['activity'] ?? '日常生活'}'} · 最近更新 ${vitalClock(vitalInt(data!['last_hour']) * 3600000)}',
-                          style:
-                              TextStyle(color: theme.textWeak, fontSize: 12)),
-                      const SizedBox(height: 20),
-                      GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: 6,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  mainAxisSpacing: 14,
-                                  crossAxisSpacing: 14,
-                                  childAspectRatio: 1),
-                          itemBuilder: (context, i) => VitalMetricCard(
-                              data: data!,
-                              index: i,
-                              onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => VitalDetailPage(
-                                          botId: widget.botId,
-                                          botName: widget.botName,
-                                          index: i))))),
-                      const SizedBox(height: 20),
-                      FrostCard(
-                          child: Text(
-                              '睡眠、日程和心情共同构成TA的生活节奏。点击曲线可以查看具体记录。身体指标每日更新，心情、压力和步数每小时更新。',
+    return TideBackground(
+        child: Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+                title: const Text('TA的数据'),
+                backgroundColor: Colors.transparent),
+            body: data == null
+                ? Center(
+                    child: error == null
+                        ? const CircularProgressIndicator()
+                        : TextButton(
+                            onPressed: load, child: const Text('读取失败，点击重试')))
+                : RefreshIndicator(
+                    onRefresh: load,
+                    child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                        children: [
+                          Text('${widget.botName} 的生活轨迹',
                               style: TextStyle(
-                                  color: theme.textWeak,
-                                  height: 1.6,
-                                  fontSize: 12))),
-                    ])));
+                                  color: theme.textStrong,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 6),
+                          Text(
+                              '${data!['sleep'] is Map ? '正在休息' : '${data!['activity'] ?? '日常生活'}'} · 最近更新 ${vitalClock(vitalInt(data!['last_hour']) * 3600000)}',
+                              style: TextStyle(
+                                  color: theme.textWeak, fontSize: 12)),
+                          const SizedBox(height: 20),
+                          GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: 6,
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      mainAxisSpacing: 14,
+                                      crossAxisSpacing: 14,
+                                      childAspectRatio: 1),
+                              itemBuilder: (context, i) => VitalMetricCard(
+                                  data: data!,
+                                  index: i,
+                                  onTap: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                          builder: (_) => VitalDetailPage(
+                                              botId: widget.botId,
+                                              botName: widget.botName,
+                                              index: i))))),
+                          const SizedBox(height: 20),
+                          FrostCard(
+                              child: Text(
+                                  '睡眠、日程和心情共同构成TA的生活节奏。点击曲线可以查看具体记录。身体指标每日更新，心情、压力和步数每小时更新。',
+                                  style: TextStyle(
+                                      color: theme.textWeak,
+                                      height: 1.6,
+                                      fontSize: 12))),
+                        ]))));
   }
 }
 
@@ -440,9 +443,22 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   Map<String, dynamic>? sleep;
   Timer? timer;
   Object? error;
+  late final TextEditingController _heightCtrl,
+      _weightCtrl,
+      _temperatureCtrl,
+      _heartCtrl,
+      _systolicCtrl,
+      _diastolicCtrl;
+  final FocusNode _focusNode = FocusNode();
   @override
   void initState() {
     super.initState();
+    _heightCtrl = TextEditingController();
+    _weightCtrl = TextEditingController();
+    _temperatureCtrl = TextEditingController();
+    _heartCtrl = TextEditingController();
+    _systolicCtrl = TextEditingController();
+    _diastolicCtrl = TextEditingController();
     load();
     timer = Timer.periodic(const Duration(minutes: 1), (_) => load());
   }
@@ -450,6 +466,13 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   @override
   void dispose() {
     timer?.cancel();
+    _heightCtrl.dispose();
+    _weightCtrl.dispose();
+    _temperatureCtrl.dispose();
+    _heartCtrl.dispose();
+    _systolicCtrl.dispose();
+    _diastolicCtrl.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -478,15 +501,19 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context),
         i = widget.index,
-        color = vitalColors[widget.index];
+        color = widget.index == 0 ? theme.primary : vitalColors[widget.index];
     if (data == null)
-      return Scaffold(
-          appBar: AppBar(title: Text(vitalTitles[i])),
-          body: Center(
-              child: error == null
-                  ? const CircularProgressIndicator()
-                  : TextButton(
-                      onPressed: load, child: const Text('读取失败，点击重试'))));
+      return TideBackground(
+          child: Scaffold(
+              backgroundColor: Colors.transparent,
+              appBar: AppBar(
+                  title: Text(vitalTitles[i]),
+                  backgroundColor: Colors.transparent),
+              body: Center(
+                  child: error == null
+                      ? const CircularProgressIndicator()
+                      : TextButton(
+                          onPressed: load, child: const Text('读取失败，点击重试')))));
     final points = metricPoints(data!, i, body: body, days: days);
     final samples = vitalList(data!['samples']);
     final clock = DateTime.now();
@@ -501,179 +528,173 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
         .take(48)
         .toList();
     final values = points.map((p) => vitalDouble(p['value'])).toList();
-    return Scaffold(
-        backgroundColor: theme.pageBackground,
-        appBar: AppBar(
-            title: Text(vitalTitles[i]), backgroundColor: theme.pageBackground),
-        body: RefreshIndicator(
-            onRefresh: load,
-            child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
-                children: [
-                  Row(children: [
-                    Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                            color: color.withValues(alpha: .12),
-                            borderRadius: BorderRadius.circular(18)),
-                        child: Icon(vitalIcons[i], color: color, size: 26)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          text('${widget.botName} · ${vitalTitles[i]}',
-                              size: 12, color: theme.textWeak),
-                          text(metricValue(data!, i), size: 30)
-                        ]))
-                  ]),
-                  const SizedBox(height: 12),
-                  text(metricNote(data!, i), size: 13, color: theme.textWeak),
-                  const SizedBox(height: 18),
-                  Wrap(spacing: 8, children: [
-                    for (final d in [1, 7, 30])
-                      ChoiceChip(
-                          label: Text(d == 1 ? '今天' : '近$d天'),
-                          selected: days == d,
-                          onSelected: (_) => setState(() {
-                                days = d;
-                                selected = null;
-                              }))
-                  ]),
-                  if (i == 3)
-                    Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Wrap(spacing: 6, children: [
-                          for (final e in {
-                            'weight': '体重',
-                            'temperature': '体温',
-                            'heart': '心率',
-                            'systolic': '收缩压',
-                            'diastolic': '舒张压'
-                          }.entries)
-                            ChoiceChip(
-                                label: Text(e.value),
-                                selected: body == e.key,
-                                onSelected: (_) => setState(() {
-                                      body = e.key;
-                                      selected = null;
-                                    }))
-                        ])),
-                  const SizedBox(height: 14),
-                  FrostCard(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        text('变化趋势', size: 16),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                            height: 190,
-                            child: VitalChart(
-                                points: points,
-                                color: color,
-                                onSelected: (p) => setState(() {
-                                      selected = p;
-                                      if (i == 0) {
-                                        final matches =
-                                            vitalList(data!['sleep_history'])
+    return TideBackground(
+        child: Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+                title: Text(vitalTitles[i]),
+                backgroundColor: Colors.transparent),
+            body: RefreshIndicator(
+                onRefresh: load,
+                child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
+                    children: [
+                      Row(children: [
+                        Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                                color: color.withValues(alpha: .12),
+                                borderRadius: BorderRadius.circular(18)),
+                            child: Icon(vitalIcons[i], color: color, size: 26)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              text('${widget.botName} · ${vitalTitles[i]}',
+                                  size: 12, color: theme.textWeak),
+                              text(metricValue(data!, i), size: 30)
+                            ]))
+                      ]),
+                      const SizedBox(height: 12),
+                      text(metricNote(data!, i),
+                          size: 13, color: theme.textWeak),
+                      const SizedBox(height: 18),
+                      Wrap(spacing: 8, children: [
+                        for (final d in [1, 7, 30])
+                          _buildPeriodChip(
+                              theme, d == 1 ? '今天' : '近$d天', days == d, () {
+                            setState(() {
+                              days = d;
+                              selected = null;
+                            });
+                          })
+                      ]),
+                      if (i == 3)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Wrap(spacing: 6, children: [
+                              for (final e in {
+                                'weight': '体重',
+                                'temperature': '体温',
+                                'heart': '心率',
+                                'systolic': '收缩压',
+                                'diastolic': '舒张压'
+                              }.entries)
+                                _buildPeriodChip(theme, e.value, body == e.key,
+                                    () {
+                                  setState(() {
+                                    body = e.key;
+                                    selected = null;
+                                  });
+                                })
+                            ])),
+                      const SizedBox(height: 14),
+                      FrostCard(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            text('变化趋势', size: 16),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                                height: 190,
+                                child: VitalChart(
+                                    points: points,
+                                    color: color,
+                                    onSelected: (p) => setState(() {
+                                          selected = p;
+                                          if (i == 0) {
+                                            final matches = vitalList(
+                                                    data!['sleep_history'])
                                                 .where((e) =>
                                                     e['end'] == p['time']);
-                                        if (matches.isNotEmpty)
-                                          sleep = matches.first;
-                                      }
-                                    }))),
-                        const SizedBox(height: 12),
-                        text(
-                            selected == null
-                                ? '点击或滑动曲线，查看时间与数值'
-                                : '${vitalDate(selected!['time'])} ${vitalClock(selected!['time'])} · ${vitalDouble(selected!['value']).toStringAsFixed(1)}\n${selected!['note'] ?? ''}',
-                            size: 12,
-                            color: theme.textWeak)
-                      ])),
-                  const SizedBox(height: 14),
-                  if (values.isNotEmpty)
-                    FrostCard(
-                        child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                          stat(
-                              '平均',
-                              (values.reduce((a, b) => a + b) / values.length)
-                                  .toStringAsFixed(1)),
-                          stat('最高', values.reduce(max).toStringAsFixed(1)),
-                          stat('最低', values.reduce(min).toStringAsFixed(1))
-                        ])),
-                  if (i == 0) ...sleepContent(theme),
-                  if (i == 3) ...[
-                    const SizedBox(height: 16),
-                    FrostCard(
-                        child: Column(children: [
-                      info('身高',
-                          '${vitalDouble(data!['height']).toStringAsFixed(1)} cm'),
-                      info('体重',
-                          '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
-                      info('体温',
-                          '${vitalDouble(data!['temperature']).toStringAsFixed(1)} °C'),
-                      info('心率', '${data!['heart']} 次/分'),
-                      info('血压',
-                          '${data!['systolic']}/${data!['diastolic']} mmHg'),
-                      info('更新频率', '每日一次')
-                    ]))
-                  ],
-                  if (i == 5) ...[
-                    const SizedBox(height: 16),
-                    FrostCard(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          text('当前状况', size: 16),
-                          const SizedBox(height: 8),
-                          text(data!['health'] == '健康'
-                              ? '状态平稳，继续保持自己的生活节奏。'
-                              : '${data!['illness']}，${data!['health']}。恢复进度 ${vitalDouble(data!['recovery']).round()}%。'),
-                          if (data!['health'] != '健康') ...[
+                                            if (matches.isNotEmpty)
+                                              sleep = matches.first;
+                                          }
+                                        }))),
                             const SizedBox(height: 12),
-                            LinearProgressIndicator(
-                                value: vitalDouble(data!['recovery']) / 100,
-                                color: color)
-                          ]
-                        ]))
-                  ],
-                  if (i != 0) ...[
-                    const SizedBox(height: 22),
-                    text('记录明细', size: 18),
-                    const SizedBox(height: 10),
-                    if (recent.isEmpty) text('还没有历史记录。', color: theme.textWeak),
-                    for (final e in recent)
-                      Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: FrostCard(
-                              padding: const EdgeInsets.all(12),
-                              child: Row(children: [
-                                Expanded(
-                                    child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                      text(
-                                          '${vitalDate(e['time'])} ${vitalClock(e['time'])}',
-                                          size: 12),
-                                      text('${e['activity'] ?? '日常生活'}',
-                                          size: 11, color: theme.textWeak)
-                                    ])),
-                                text(i == 1
-                                    ? '${BotVitalSignsService.instance.moodName(vitalDouble(e['mood']))} ${vitalDouble(e['mood']).round()}'
-                                    : i == 2
-                                        ? '${vitalDouble(e['stress']).toStringAsFixed(1)} / 10'
-                                        : i == 3
-                                            ? vitalDouble(e[body])
-                                                .toStringAsFixed(1)
-                                            : i == 4
-                                                ? '${e['steps']} 步'
-                                                : '${e['health']}')
-                              ])))
-                  ]
-                ])));
+                            text(
+                                selected == null
+                                    ? '点击或滑动曲线，查看时间与数值'
+                                    : '${vitalDate(selected!['time'])} ${vitalClock(selected!['time'])} · ${vitalDouble(selected!['value']).toStringAsFixed(1)}\n${selected!['note'] ?? ''}',
+                                size: 12,
+                                color: theme.textWeak)
+                          ])),
+                      const SizedBox(height: 14),
+                      if (values.isNotEmpty)
+                        FrostCard(
+                            child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceAround,
+                                children: [
+                              stat(
+                                  '平均',
+                                  (values.reduce((a, b) => a + b) /
+                                          values.length)
+                                      .toStringAsFixed(1)),
+                              stat('最高', values.reduce(max).toStringAsFixed(1)),
+                              stat('最低', values.reduce(min).toStringAsFixed(1))
+                            ])),
+                      if (i == 0) ...sleepContent(theme),
+                      if (i == 3) ...[
+                        const SizedBox(height: 16),
+                        _buildDisplayBodyCard(theme),
+                      ],
+                      if (i == 5) ...[
+                        const SizedBox(height: 16),
+                        FrostCard(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              text('当前状况', size: 16),
+                              const SizedBox(height: 8),
+                              text(data!['health'] == '健康'
+                                  ? '状态平稳，继续保持自己的生活节奏。'
+                                  : '${data!['illness']}，${data!['health']}。恢复进度 ${vitalDouble(data!['recovery']).round()}%。'),
+                              if (data!['health'] != '健康') ...[
+                                const SizedBox(height: 12),
+                                LinearProgressIndicator(
+                                    value: vitalDouble(data!['recovery']) / 100,
+                                    color: color)
+                              ]
+                            ]))
+                      ],
+                      if (i != 0) ...[
+                        const SizedBox(height: 22),
+                        text('记录明细', size: 18),
+                        const SizedBox(height: 10),
+                        if (recent.isEmpty)
+                          text('还没有历史记录。', color: theme.textWeak),
+                        for (final e in recent)
+                          Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: FrostCard(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(children: [
+                                    Expanded(
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                          text(
+                                              '${vitalDate(e['time'])} ${vitalClock(e['time'])}',
+                                              size: 12),
+                                          text('${e['activity'] ?? '日常生活'}',
+                                              size: 11, color: theme.textWeak)
+                                        ])),
+                                    text(i == 1
+                                        ? '${BotVitalSignsService.instance.moodName(vitalDouble(e['mood']))} ${vitalDouble(e['mood']).round()}'
+                                        : i == 2
+                                            ? '${vitalDouble(e['stress']).toStringAsFixed(1)} / 10'
+                                            : i == 3
+                                                ? vitalDouble(e[body])
+                                                    .toStringAsFixed(1)
+                                                : i == 4
+                                                    ? '${e['steps']} 步'
+                                                    : '${e['health']}')
+                                  ])))
+                      ]
+                    ]))));
   }
 
   Widget stat(String title, String value) => Column(children: [
@@ -715,10 +736,10 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                         DateTime.now().day)
                     : DateTime.now().subtract(Duration(days: days)))
                 .millisecondsSinceEpoch))
-          ChoiceChip(
-              label: Text(vitalDate(e['start'])),
-              selected: current['start'] == e['start'],
-              onSelected: (_) => setState(() => sleep = e))
+          _buildPeriodChip(
+              theme, vitalDate(e['start']), current['start'] == e['start'], () {
+            setState(() => sleep = e);
+          })
       ]),
       const SizedBox(height: 12),
       FrostCard(
@@ -732,22 +753,20 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
         info(current['end'] == null ? '质量' : '睡眠质量',
             current['end'] == null ? '醒来后结算' : '${settled['quality']} / 100'),
         const SizedBox(height: 10),
-        SizedBox(
-            height: 30,
-            child: Row(children: [
-              for (final e in segments)
-                Expanded(
-                    flex: max(1,
-                        (vitalInt(e['end']) - vitalInt(e['start'])) ~/ 60000),
-                    child: GestureDetector(
-                        onTap: () => showSegment(e),
-                        child: Container(
-                            color: e['state'] == '睡眠'
-                                ? vitalColors[0]
-                                : const Color(0xffedb66f))))
-            ])),
-        const SizedBox(height: 10),
-        text('紫色为睡眠 · 金色为清醒 · 点击查看具体时段', size: 11, color: theme.textWeak)
+        _buildSleepTimeline(theme, segments),
+        const SizedBox(height: 12),
+        Row(children: [
+          Icon(Icons.bedtime_rounded, size: 14, color: theme.primary),
+          const SizedBox(width: 5),
+          text('睡眠', size: 11, color: theme.textWeak),
+          const SizedBox(width: 18),
+          const Icon(Icons.wb_sunny_rounded,
+              size: 14, color: Color(0xffedb66f)),
+          const SizedBox(width: 5),
+          text('清醒', size: 11, color: theme.textWeak),
+          const Spacer(),
+          text('点击查看时段', size: 11, color: theme.textFaint)
+        ])
       ])),
       const SizedBox(height: 16),
       for (final e in segments)
@@ -764,7 +783,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                               ? Icons.bedtime_rounded
                               : Icons.wb_sunny_rounded,
                           color: e['state'] == '睡眠'
-                              ? vitalColors[0]
+                              ? theme.primary
                               : const Color(0xffedb66f),
                           size: 19),
                       const SizedBox(width: 10),
@@ -785,26 +804,326 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
     ];
   }
 
-  void showSegment(Map<String, dynamic> e) => showModalBottomSheet(
+  Widget _buildPeriodChip(
+          TideTheme theme, String label, bool selected, VoidCallback onTap) =>
+      BouncyTap(
+          onTap: onTap,
+          child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                color: selected
+                    ? theme.primary
+                    : Colors.white.withValues(alpha: 0.9),
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                            color: theme.primary.withValues(alpha: 0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4))
+                      ]
+                    : [
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2))
+                      ],
+              ),
+              child: Text(label,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: selected ? Colors.white : theme.textStrong))));
+
+  Widget _buildDisplayBodyCard(TideTheme theme) => GestureDetector(
+      onLongPress: () {
+        _heightCtrl.text = vitalDouble(data!['height']).toStringAsFixed(1);
+        _weightCtrl.text = vitalDouble(data!['weight']).toStringAsFixed(1);
+        _temperatureCtrl.text =
+            vitalDouble(data!['temperature']).toStringAsFixed(1);
+        _heartCtrl.text = '${data!['heart']}';
+        _systolicCtrl.text = '${data!['systolic']}';
+        _diastolicCtrl.text = '${data!['diastolic']}';
+        _showBodyEditor();
+      },
+      child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          transform: Matrix4.identity(),
+          child: FrostCard(
+              child: Column(children: [
+            info('身高', '${vitalDouble(data!['height']).toStringAsFixed(1)} cm'),
+            info('体重', '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
+            info('体温',
+                '${vitalDouble(data!['temperature']).toStringAsFixed(1)} °C'),
+            info('心率', '${data!['heart']} 次/分'),
+            info('血压', '${data!['systolic']}/${data!['diastolic']} mmHg'),
+            info('更新频率', '每日一次')
+          ]))));
+
+  Future<void> _showBodyEditor() async {
+    await showDialog<void>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-          child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    text('${e['state']} · ${e['reason']}', size: 22),
-                    const SizedBox(height: 16),
-                    info('开始',
-                        '${vitalDate(e['start'])} ${vitalClock(e['start'])}'),
-                    info(
-                        '结束', '${vitalDate(e['end'])} ${vitalClock(e['end'])}'),
-                    info(
-                        '持续时间',
-                        vitalDuration(
-                            (vitalInt(e['end']) - vitalInt(e['start'])) ~/
-                                60000))
-                  ]))));
+      barrierColor: Colors.black.withValues(alpha: .28),
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20 + MediaQuery.viewInsetsOf(dialogContext).bottom * .18,
+              bottom: 20 + MediaQuery.viewInsetsOf(dialogContext).bottom * .18),
+          child: Dialog(
+            insetPadding: EdgeInsets.zero,
+            backgroundColor: Colors.transparent,
+            child: SingleChildScrollView(child: _buildEditableBodyCard(theme)),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEditableBodyCard(TideTheme theme) {
+    return AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        transform: Matrix4.identity(),
+        child: FrostCard(
+            child: Focus(
+                focusNode: _focusNode,
+                child: Column(children: [
+                  _editField('身高', _heightCtrl, 'cm'),
+                  _editField('体重', _weightCtrl, 'kg'),
+                  _editField('体温', _temperatureCtrl, '°C'),
+                  _editField('心率', _heartCtrl, '次/分'),
+                  Row(children: [
+                    Expanded(child: text('血压', color: theme.textWeak)),
+                    SizedBox(
+                        width: 60,
+                        child: TextField(
+                            controller: _systolicCtrl,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                fontSize: 14, color: theme.textStrong),
+                            decoration: const InputDecoration(
+                                isDense: true, border: InputBorder.none))),
+                    text(' / ', size: 14),
+                    SizedBox(
+                        width: 60,
+                        child: TextField(
+                            controller: _diastolicCtrl,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                fontSize: 14, color: theme.textStrong),
+                            decoration: const InputDecoration(
+                                isDense: true, border: InputBorder.none))),
+                    text(' mmHg', size: 14)
+                  ]),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: text('更新频率', color: theme.textWeak)),
+                    text('每日一次', size: 14, color: theme.textFaint)
+                  ]),
+                  const SizedBox(height: 8),
+                  BouncyTap(
+                      onTap: () async {
+                        final h = double.tryParse(_heightCtrl.text) ?? 0;
+                        final w = double.tryParse(_weightCtrl.text) ?? 0;
+                        final t = double.tryParse(_temperatureCtrl.text) ?? 0;
+                        final hr = int.tryParse(_heartCtrl.text) ?? 0;
+                        final s = int.tryParse(_systolicCtrl.text) ?? 0;
+                        final d = int.tryParse(_diastolicCtrl.text) ?? 0;
+                        if (h <= 0 ||
+                            w <= 0 ||
+                            t <= 0 ||
+                            hr <= 0 ||
+                            s <= 0 ||
+                            d <= 0) return;
+                        await BotVitalSignsService.instance.updateBodyMetrics(
+                            widget.botId,
+                            height: h,
+                            weight: w,
+                            temperature: t,
+                            heart: hr,
+                            systolic: s,
+                            diastolic: d);
+                        await load();
+                        if (mounted) Navigator.of(context).pop();
+                      },
+                      child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: theme.primary),
+                          child: const Text('更新',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600))))
+                ]))));
+  }
+
+  Widget _editField(String label, TextEditingController ctrl, String unit) {
+    final theme = TideTheme.of(context);
+    return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(children: [
+          Expanded(child: text(label, color: theme.textWeak)),
+          SizedBox(
+              width: 80,
+              child: TextField(
+                  controller: ctrl,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 14, color: theme.textStrong),
+                  decoration: const InputDecoration(
+                      isDense: true, border: InputBorder.none))),
+          text(' $unit', size: 14)
+        ]));
+  }
+
+  void showSegment(Map<String, dynamic> e) => showTideDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = TideTheme.of(dialogContext);
+        final asleep = e['state'] == '睡眠';
+        final color = asleep ? theme.primary : const Color(0xffedb66f);
+        return TideDialogSurface(
+          child: TideDialogs.glassContent(
+            context: dialogContext,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Icon(
+                      asleep ? Icons.bedtime_rounded : Icons.wb_sunny_rounded,
+                      color: color),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Text('${e['state']}',
+                        style: TextStyle(
+                            color: theme.textStrong,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700))),
+              ]),
+              const SizedBox(height: 14),
+              Text('${e['reason'] ?? ''}',
+                  style: TextStyle(color: theme.textWeak, height: 1.5)),
+              const SizedBox(height: 12),
+              info('开始', '${vitalDate(e['start'])} ${vitalClock(e['start'])}'),
+              info('结束', '${vitalDate(e['end'])} ${vitalClock(e['end'])}'),
+              info(
+                  '持续时间',
+                  vitalDuration(
+                      (vitalInt(e['end']) - vitalInt(e['start'])) ~/ 60000)),
+              const SizedBox(height: 18),
+              SizedBox(
+                  width: double.infinity,
+                  child: TideDialogs.glassButton('完成',
+                      color: theme.primary,
+                      onTap: () => Navigator.pop(dialogContext))),
+            ],
+          ),
+        );
+      });
+
+  Widget _buildSleepTimeline(
+      TideTheme theme, List<Map<String, dynamic>> segments) {
+    if (segments.isEmpty) return const SizedBox.shrink();
+    final start = vitalInt(segments.first['start']);
+    final end = vitalInt(segments.last['end']);
+    final duration = max(1, end - start);
+    return Column(children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.surfaceVariant.withValues(alpha: .65),
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: LayoutBuilder(builder: (context, constraints) {
+          return SizedBox(
+              height: 44,
+              child: Stack(children: [
+                for (final segment in segments)
+                  Positioned(
+                    left: (vitalInt(segment['start']) - start) /
+                        duration *
+                        constraints.maxWidth,
+                    width: max(
+                        0.0,
+                        (vitalInt(segment['end']) -
+                                vitalInt(segment['start'])) /
+                            duration *
+                            constraints.maxWidth),
+                    top: 0,
+                    bottom: 0,
+                    child: Semantics(
+                      button: true,
+                      label:
+                          '${segment['state']}，${vitalClock(segment['start'])}至${vitalClock(segment['end'])}',
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => showSegment(segment),
+                        child: LayoutBuilder(builder: (context, slot) {
+                          final asleep = segment['state'] == '睡眠';
+                          final color =
+                              asleep ? theme.primary : const Color(0xffedb66f);
+                          return Center(
+                              child: Container(
+                            height: asleep ? 32 : 20,
+                            margin: EdgeInsets.symmetric(
+                                horizontal: min(1.5, slot.maxWidth / 4)),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Color.lerp(color, Colors.white, .25)!,
+                                  color
+                                ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: color.withValues(alpha: .20),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 3))
+                              ],
+                            ),
+                            child: slot.maxWidth > 32
+                                ? Center(
+                                    child: Icon(
+                                        asleep
+                                            ? Icons.bedtime_rounded
+                                            : Icons.wb_sunny_rounded,
+                                        size: asleep ? 14 : 12,
+                                        color: Colors.white))
+                                : null,
+                          ));
+                        }),
+                      ),
+                    ),
+                  ),
+              ]));
+        }),
+      ),
+      const SizedBox(height: 8),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        text(vitalClock(start), size: 11, color: theme.textFaint),
+        text(vitalClock(end), size: 11, color: theme.textFaint),
+      ]),
+    ]);
+  }
 }

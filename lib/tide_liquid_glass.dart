@@ -76,7 +76,7 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    if (!theme.hasGlobalBackground && widget.preset == TideGlassPreset.base) {
+    if (!theme.hasGlobalBackground || !theme.enableLiquidGlass) {
       return _content();
     }
     final settings = _settingsFor(theme);

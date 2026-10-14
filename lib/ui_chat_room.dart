@@ -1,3 +1,4 @@
+import 'chat_stream_pacing.dart';
 import 'chat_message_display.dart';
 import 'dart:io';
 import 'dart:convert';
@@ -1142,36 +1143,43 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
                     50)
                 .clamp(1, 100);
-        // 50 is deliberately readable: roughly 14 characters per second, not a full sentence in one second.
-        final interval = Duration(milliseconds: 8 + ((100 - speed) * 2));
-        final batch = (speed >= 85 ? 2 : 1);
 
-        // 缓冲设置：初始缓冲30字符，运行中最低保持10字符缓冲
-        const initialBufferSize = 30;
-        const minBufferSize = 10;
+        // One visible character per tick, regardless of provider throughput.
+        final interval = chatStreamInterval(speed);
+        const batch = 1;
+
+        // 缓冲设置：聊天软件需要足够缓冲避免卡顿感
+        const initialBufferSize = 15; // 初始15字后开始显示
+        const minBufferSize = 8; // 运行中最少保持8字
 
         _streamDisplayTimer?.cancel();
-        var displayMessage = streamingMessage; // 改为 var 以便重新赋值
+        var displayMessage = streamingMessage;
         _streamDisplayTimer = Timer.periodic(interval, (_) {
-          if (!mounted) return;
-
-          // 获取缓冲区内容
-          final pendingDisplay = pendingBuffer.join();
-
-          // 初始缓冲：积累足够内容后再开始显示
-          if (!streamState['streamStarted'] &&
-              pendingDisplay.length < initialBufferSize) {
+          if (!mounted || myGen != _requestGen) {
+            _streamDisplayTimer?.cancel();
+            _streamDisplayTimer = null;
             return;
           }
 
-          // 持续缓冲：显示过程中如果缓冲不足且流式未完成，暂停等待
+          final pendingDisplay = pendingBuffer.join();
+
+          // 初始缓冲：积累足够内容或提供商已完成后才开始
+          if (!streamState['streamStarted']) {
+            if (pendingDisplay.length < initialBufferSize &&
+                !streamState['streamComplete']) {
+              return;
+            }
+            streamState['streamStarted'] = true;
+          }
+
+          // 持续缓冲：缓冲不足且提供商未完成时，暂停等待补充
           if (streamState['streamStarted'] &&
               pendingDisplay.length < minBufferSize &&
               !streamState['streamComplete']) {
             return;
           }
 
-          // 缓冲区为空时停止Timer
+          // 缓冲区清空后结束
           if (pendingDisplay.isEmpty) {
             if (streamState['streamComplete']) {
               _streamDisplayTimer?.cancel();
@@ -1180,93 +1188,64 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             return;
           }
 
-          // 标记已开始显示
-          if (!streamState['streamStarted'])
-            streamState['streamStarted'] = true;
-
-          // 严格按照batch大小取出，保持匀速
-          final take =
-              pendingDisplay.length < batch ? pendingDisplay.length : batch;
-          final chunk = pendingDisplay.substring(0, take);
-
-          // 更新缓冲区：移除已取出的内容
-          final remaining = pendingDisplay.substring(take);
+          // 严格按batch取出，保持匀速
+          final (chunk, remaining) = takeChatStreamCharacter(pendingDisplay);
           pendingBuffer.clear();
           if (remaining.isNotEmpty) pendingBuffer.add(remaining);
 
-          // 处理内心独白标签：实时过滤，避免用户看到标签
-          var processedChunk = chunk;
+          // 实时标签处理和分段
           final currentContent = displayMessage['content'].toString();
           final combined = currentContent + chunk;
 
-          // 检测并移除开始标签
+          // 检测内心独白开始
           if (!streamState['insideInnerThought']) {
-            final startTagIndex = combined.indexOf('<inner_thought>');
-            if (startTagIndex >= 0) {
-              // 找到开头标签，切换为内心独白类型
+            final startIdx = combined.indexOf('<inner_thought>');
+            if (startIdx >= 0) {
               streamState['insideInnerThought'] = true;
               displayMessage['type'] = 'inner_thought';
-              // 移除标签前的所有内容和标签本身
-              final afterTag =
-                  combined.substring(startTagIndex + '<inner_thought>'.length);
+              final afterTag = combined.substring(startIdx + 15);
               displayMessage['content'] = '';
-              processedChunk = afterTag;
+              setState(() => displayMessage['content'] = afterTag);
+              return;
             }
           }
 
+          // 内心独白中
           if (streamState['insideInnerThought']) {
-            // 检测是否结束内心独白
-            final currentPlusChunk =
-                displayMessage['content'].toString() + processedChunk;
-            final endTagIndex = currentPlusChunk.indexOf('</inner_thought>');
-            if (endTagIndex >= 0) {
-              // 找到结尾标签，提取内心独白内容
-              final innerThoughtContent =
-                  currentPlusChunk.substring(0, endTagIndex);
-              final afterEndTag = currentPlusChunk
-                  .substring(endTagIndex + '</inner_thought>'.length);
+            final endIdx = combined.indexOf('</inner_thought>');
+            if (endIdx >= 0) {
+              final thoughtContent = combined.substring(0, endIdx);
+              final afterTag = combined.substring(endIdx + 16);
 
-              // 完成内心独白消息
-              displayMessage['content'] = innerThoughtContent;
+              displayMessage['content'] = thoughtContent;
               displayMessage.remove('is_streaming');
               streamState['insideInnerThought'] = false;
 
-              // 创建新的文本消息用于后续内容
-              if (afterEndTag.trim().isNotEmpty || pendingBuffer.isNotEmpty) {
-                final newTextMessage = <String, dynamic>{
+              if (afterTag.trim().isNotEmpty || pendingBuffer.isNotEmpty) {
+                final newMsg = <String, dynamic>{
                   'id': 'stream_text_${DateTime.now().millisecondsSinceEpoch}',
                   'bot_id': botId,
                   'role': 'assistant',
                   'type': 'text',
-                  'content': afterEndTag,
+                  'content': afterTag,
                   'timestamp': DateTime.now().millisecondsSinceEpoch + 1,
                   'is_streaming': true,
                 };
                 setState(() {
-                  _msgs.add(newTextMessage);
-                  displayMessage = newTextMessage;
+                  _msgs.add(newMsg);
+                  displayMessage = newMsg;
                 });
               }
               return;
-            } else {
-              // 仍在内心独白中，正常追加
-              setState(() => displayMessage['content'] = currentPlusChunk);
             }
+            setState(() => displayMessage['content'] = combined);
           } else {
-            // 普通文本，正常追加（但要过滤掉可能的标签片段）
-            // 如果chunk中包含'<'且缓冲区中有'inner_thought'相关字符，等待下一批
-            if (!combined.contains('<inner_thought>')) {
-              setState(() => displayMessage['content'] = combined);
-            } else {
-              // 标签在边界，等待完整标签
-              return;
-            }
+            // 普通文本直接追加
+            setState(() => displayMessage['content'] = combined);
           }
 
-          // Do not animate on every streamed chunk: repeated animateTo calls
-          // cause layout churn, dropped frames and heat during long replies.
-          if (pendingBuffer.isEmpty ||
-              displayMessage['content'].toString().length % 80 < batch) {
+          // 减少滚动频率避免卡顿
+          if (pendingBuffer.isEmpty || combined.length % 50 < batch) {
             _scrollDown(animated: false);
           }
         });
@@ -1372,6 +1351,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         return;
       }
 
+      // Upstream completion must not replace the partially displayed bubble
+      // with the full persisted answer. Drain at the same client-owned pace.
+      while (streamEnabled &&
+          _streamDisplayTimer != null &&
+          mounted &&
+          myGen == _requestGen) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+      if (!mounted || myGen != _requestGen) return;
       _streamDisplayTimer?.cancel();
       _streamDisplayTimer = null;
       if (mounted) {
@@ -1433,6 +1421,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
+      _streamDisplayTimer?.cancel();
+      _streamDisplayTimer = null;
       await _setTypingState(false);
       if (mounted) {
         setState(() => _loading = false);

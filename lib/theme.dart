@@ -119,6 +119,7 @@ class TideTheme extends ChangeNotifier {
   // the renderer before the user can remove it.
   static const _globalBackgroundSafetyKey = 'global_background_safe_v3';
   double _globalBackgroundOpacity = 0.38;
+  bool _enableLiquidGlass = true;
   Future<bool>? _backgroundPreparation;
   String _backgroundPreparationPath = '';
   Size _backgroundPreparationSize = Size.zero;
@@ -135,6 +136,7 @@ class TideTheme extends ChangeNotifier {
   bool get isGlobalBackgroundReady => _globalBackgroundReady;
   double get globalBackgroundOpacity => _globalBackgroundOpacity;
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
+  bool get enableLiquidGlass => _enableLiquidGlass;
 
   void _setGlobalBackgroundImage(String path) {
     _configuredBackgroundPath = '';
@@ -533,6 +535,10 @@ class TideTheme extends ChangeNotifier {
               ) ??
               _globalBackgroundOpacity)
           .clamp(0.18, 0.70);
+      final enableLiquidGlass = await db
+          .getKV('enable_liquid_glass')
+          .timeout(const Duration(seconds: 5));
+      _enableLiquidGlass = enableLiquidGlass != 'false';
     } catch (error) {
       debugPrint('[theme] using defaults after database load failure: $error');
     }
@@ -589,9 +595,11 @@ class TideTheme extends ChangeNotifier {
     String path, {
     required BuildContext context,
     double? opacity,
+    bool? enableLiquidGlass,
   }) async {
     final nextOpacity =
         opacity == null ? _globalBackgroundOpacity : opacity.clamp(0.18, 0.70);
+    final nextEnableLiquidGlass = enableLiquidGlass ?? _enableLiquidGlass;
 
     if (path.isEmpty) {
       await DBManager().insertKV('global_background_image', '');
@@ -600,7 +608,12 @@ class TideTheme extends ChangeNotifier {
         'global_background_opacity',
         nextOpacity.toStringAsFixed(2),
       );
+      await DBManager().insertKV(
+        'enable_liquid_glass',
+        nextEnableLiquidGlass.toString(),
+      );
       _globalBackgroundOpacity = nextOpacity;
+      _enableLiquidGlass = nextEnableLiquidGlass;
       _globalBackground = '';
       _setGlobalBackgroundImage('');
       notifyListeners();
@@ -641,7 +654,12 @@ class TideTheme extends ChangeNotifier {
         'global_background_opacity',
         nextOpacity.toStringAsFixed(2),
       );
+      await DBManager().insertKV(
+        'enable_liquid_glass',
+        nextEnableLiquidGlass.toString(),
+      );
       _globalBackgroundOpacity = nextOpacity;
+      _enableLiquidGlass = nextEnableLiquidGlass;
       _globalBackground = path;
       _setGlobalBackgroundImage(path);
       _globalBackgroundImage = candidate;
@@ -661,12 +679,14 @@ class TideTheme extends ChangeNotifier {
     _globalBackground = '';
     _setGlobalBackgroundImage('');
     _globalBackgroundOpacity = 0.38;
+    _enableLiquidGlass = true;
     _applyColors();
     await DBManager().insertKV('theme_color', _name);
     await DBManager().insertKV('theme_mode', 'system');
     await DBManager().insertKV('global_background_image', '');
     await DBManager().insertKV(_globalBackgroundSafetyKey, '');
     await DBManager().insertKV('global_background_opacity', '0.38');
+    await DBManager().insertKV('enable_liquid_glass', 'true');
     notifyListeners();
   }
 

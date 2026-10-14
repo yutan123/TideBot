@@ -17,6 +17,7 @@ class GlobalBackgroundPage extends StatefulWidget {
 class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
   late String _path;
   late double _opacity;
+  late bool _enableLiquidGlass;
   bool _ready = false;
 
   Future<void> _pick() async {
@@ -60,6 +61,7 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
         _path,
         context: context,
         opacity: _opacity,
+        enableLiquidGlass: _enableLiquidGlass,
       );
       // The candidate was precached before this page saves it; remove only the old
       // image after the new path has become the active theme value.
@@ -86,6 +88,7 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       _ready = true;
       _path = theme.globalBackground;
       _opacity = theme.globalBackgroundOpacity;
+      _enableLiquidGlass = theme.enableLiquidGlass;
     }
     final hasImage = _path.isNotEmpty && File(_path).existsSync();
     return TideBackground(
@@ -112,6 +115,7 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
                         hasImage: hasImage,
                         path: _path,
                         opacity: _opacity,
+                        enableLiquidGlass: _enableLiquidGlass,
                       ),
                     ),
                   ),
@@ -121,10 +125,13 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
                       theme: theme,
                       hasImage: hasImage,
                       opacity: _opacity,
+                      enableLiquidGlass: _enableLiquidGlass,
                       onPick: _pick,
                       onClear: () => setState(() => _path = ''),
                       onOpacityChanged: (value) =>
                           setState(() => _opacity = value),
+                      onLiquidGlassChanged: (value) =>
+                          setState(() => _enableLiquidGlass = value),
                     ),
                   ),
                 ],
@@ -143,18 +150,21 @@ class _BackgroundAppPreview extends StatelessWidget {
     required this.hasImage,
     required this.path,
     required this.opacity,
+    required this.enableLiquidGlass,
   });
 
   final TideTheme theme;
   final bool hasImage;
   final String path;
   final double opacity;
+  final bool enableLiquidGlass;
 
   @override
   Widget build(BuildContext context) {
     final text = hasImage ? theme.onBackgroundStrong : theme.textStrong;
     final muted = hasImage ? theme.onBackgroundWeak : theme.textWeak;
-    final card = hasImage
+    final useGlass = hasImage && enableLiquidGlass;
+    final card = useGlass
         ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
         : theme.surface.withValues(alpha: .92);
 
@@ -187,41 +197,15 @@ class _BackgroundAppPreview extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: theme.primary.withValues(alpha: .86),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.waves_rounded,
-                            size: 18,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 9),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'TideBot',
-                                style: TextStyle(
-                                  color: text,
-                                  fontWeight: FontWeight.w700,
-                                  fontFamily: 'TideFont',
-                                ),
-                              ),
-                              Text(
-                                '我的消息',
-                                style: TextStyle(
-                                  color: muted,
-                                  fontSize: 11,
-                                  fontFamily: 'TideFont',
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            '伊伊',
+                            style: TextStyle(
+                              color: text,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 22,
+                              fontFamily: 'TideFont',
+                            ),
                           ),
                         ),
                         Icon(Icons.more_horiz_rounded, color: text),
@@ -269,7 +253,7 @@ class _BackgroundAppPreview extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
                           color: Colors.white
-                              .withValues(alpha: hasImage ? .34 : .0),
+                              .withValues(alpha: useGlass ? .34 : .0),
                         ),
                       ),
                       child: Row(
@@ -302,7 +286,7 @@ class _BackgroundAppPreview extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: Colors.white
-                              .withValues(alpha: hasImage ? .34 : .0),
+                              .withValues(alpha: useGlass ? .34 : .0),
                         ),
                       ),
                       child: const Row(
@@ -403,17 +387,21 @@ class _ControlSurface extends StatelessWidget {
     required this.theme,
     required this.hasImage,
     required this.opacity,
+    required this.enableLiquidGlass,
     required this.onPick,
     required this.onClear,
     required this.onOpacityChanged,
+    required this.onLiquidGlassChanged,
   });
 
   final TideTheme theme;
   final bool hasImage;
   final double opacity;
+  final bool enableLiquidGlass;
   final VoidCallback onPick;
   final VoidCallback onClear;
   final ValueChanged<double> onOpacityChanged;
+  final ValueChanged<bool> onLiquidGlassChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -440,6 +428,14 @@ class _ControlSurface extends StatelessWidget {
                     color: Color(0xFFFF3B30)),
                 title: const Text('清除全局背景图'),
                 onTap: onClear,
+              ),
+            if (hasImage)
+              SwitchListTile(
+                secondary: Icon(Icons.blur_on_rounded, color: theme.primary),
+                title: const Text('启用液态玻璃'),
+                subtitle: const Text('毛玻璃半透明效果'),
+                value: enableLiquidGlass,
+                onChanged: onLiquidGlassChanged,
               ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),

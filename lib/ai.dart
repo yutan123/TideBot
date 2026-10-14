@@ -195,6 +195,7 @@ class AIManager {
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
+    bool allowStickers = true,
     bool forceSingleReply = false,
     bool notifyResponse = false,
     String extraSystemPrompt = '',
@@ -263,6 +264,7 @@ class AIManager {
             enableAutoSummary: enableAutoSummary,
             skipLifeState: skipLifeState,
             allowTools: allowTools,
+            allowStickers: allowStickers,
             forceSingleReply: forceSingleReply,
             notifyResponse: notifyResponse,
             extraSystemPrompt: extraSystemPrompt,
@@ -704,6 +706,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     bool enableAutoSummary = true,
     bool skipLifeState = false,
     bool allowTools = true,
+    bool allowStickers = true,
     bool forceSingleReply = false,
     bool notifyResponse = false,
     String extraSystemPrompt = '',
@@ -827,12 +830,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
       }
     }
-    final stickerPlan = allowTools
+    final stickerPlan = allowTools && allowStickers
         ? await _planStickerForTurn(db)
         : const _StickerPlan.disabled();
     final allowSticker = stickerPlan.required;
-    final stickerEmotions =
-        allowTools ? await _availableStickerEmotions(db) : const <String>[];
+    final stickerEmotions = allowTools && allowStickers
+        ? await _availableStickerEmotions(db)
+        : const <String>[];
     final effectiveImagePaths = imagePaths.isNotEmpty
         ? imagePaths
         : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
