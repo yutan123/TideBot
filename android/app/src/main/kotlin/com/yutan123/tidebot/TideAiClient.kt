@@ -2,6 +2,8 @@ package com.yutan123.tidebot
 
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlin.coroutines.resume
+
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -74,21 +76,30 @@ object TideAiClient {
             val remainingTime = TOTAL_TIMEOUT_MS - elapsedTime
             Log.d(TAG, "Attempt $attempt/${MAX_RETRIES + 1}, remaining time: ${remainingTime}ms")
 
-            try {
-                return@withContext withTimeout(remainingTime) {
-                    doRequest(request)
-                }
+            val result = try {
+                withTimeout(remainingTime) { doRequest(request) }
+            } catch (e: TimeoutCancellationException) {
+                Result.failure(TimeoutException("任务总超时 5 分钟已达到"))
+            } catch (e: CancellationException) {
+                // 外部取消（服务停止等）直接向上抛出，不重试
+                throw e
             } catch (e: Exception) {
-                lastError = e
-                Log.w(TAG, "Attempt $attempt failed", e)
+                Result.failure(e)
+            }
 
-                if (attempt <= MAX_RETRIES) {
-                    val backoffMs = minOf(1000L * (1 shl (attempt - 1)), 10000L)
-                    Log.d(TAG, "Retrying after ${backoffMs}ms...")
-                    delay(backoffMs)
-                } else {
-                    Log.e(TAG, "All attempts failed", e)
-                }
+            if (result.isSuccess) return@withContext result
+
+            val error = result.exceptionOrNull()
+            lastError = error as? Exception ?: IOException(error?.message ?: "Unknown error")
+            Log.w(TAG, "Attempt $attempt failed", error)
+            if (error is TimeoutException) break
+
+            if (attempt <= MAX_RETRIES) {
+                val backoffMs = minOf(1000L * (1 shl (attempt - 1)), 10000L)
+                Log.d(TAG, "Retrying after ${backoffMs}ms...")
+                delay(backoffMs)
+            } else {
+                Log.e(TAG, "All attempts failed", error)
             }
         }
 
@@ -100,8 +111,13 @@ object TideAiClient {
      */
     private suspend fun doRequest(req: AiRequest): Result<AiResponse> {
         val body = buildRequestBody(req)
+
+        // 规范化 URL：移除尾部 /v1，然后统一添加 /v1/chat/completions
+        val normalizedBase = req.baseUrl.trimEnd('/').removeSuffix("/v1")
+        val url = "$normalizedBase/v1/chat/completions"
+
         val httpRequest = Request.Builder()
-            .url(req.baseUrl.trimEnd('/') + "/v1/chat/completions")
+            .url(url)
             .addHeader("Authorization", "Bearer ${req.apiKey}")
             .addHeader("Content-Type", "application/json")
             .post(body.toRequestBody("application/json".toMediaType()))
@@ -113,14 +129,14 @@ object TideAiClient {
 
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    continuation.resumeWith(Result.failure(e))
+                    continuation.resume(Result.failure(e))
                 }
 
                 override fun onResponse(call: Call, response: Response) {
                     try {
                         if (!response.isSuccessful) {
                             val error = response.body?.string() ?: "HTTP ${response.code}"
-                            continuation.resumeWith(
+                            continuation.resume(
                                 Result.failure(IOException("API error: $error"))
                             )
                             return
@@ -130,9 +146,9 @@ object TideAiClient {
                             ?: throw IOException("Empty response body")
 
                         val result = parseResponse(responseBody, req.stream)
-                        continuation.resumeWith(Result.success(result))
+                        continuation.resume(Result.success(result))
                     } catch (e: Exception) {
-                        continuation.resumeWith(Result.failure(e))
+                        continuation.resume(Result.failure(e))
                     } finally {
                         response.close()
                     }

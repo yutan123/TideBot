@@ -112,6 +112,24 @@ object TideMasterScheduler {
     }
 
     /**
+     * 任务是否由 Kotlin 统一调度中心注册（否则为 Flutter 侧的普通定时任务）
+     */
+    fun isRegistered(context: Context, taskId: String): Boolean {
+        val db = openDatabase(context) ?: return false
+        return try {
+            db.rawQuery(
+                "SELECT 1 FROM background_tasks WHERE task_id = ? AND enabled = 1",
+                arrayOf(taskId)
+            ).use { it.moveToFirst() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query task: $taskId", e)
+            false
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
      * 获取所有待执行任务
      */
     fun getPendingTasks(context: Context): List<String> {

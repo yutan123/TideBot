@@ -272,7 +272,7 @@ class DBManager {
           "SELECT value FROM kv_store WHERE key = 'schema_repair_version'");
       if (result.isEmpty) return true;
       final stored = int.tryParse(result.first['value']?.toString() ?? '') ?? 0;
-      return stored < 34; // 当前数据库版本
+      return stored < 35; // 35：新增后台任务相关表
     } catch (_) {
       return true; // kv_store 不存在时需要修复
     }
@@ -287,7 +287,7 @@ class DBManager {
       ''');
       await db.insert(
         'kv_store',
-        {'key': 'schema_repair_version', 'value': '34'},
+        {'key': 'schema_repair_version', 'value': '35'},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (error) {

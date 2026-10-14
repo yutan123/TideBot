@@ -18,8 +18,13 @@ class TideAlarmReceiver : BroadcastReceiver() {
                 TideAlarmScheduler.rearmDaily(context, intent)
             }
             
-            // 启动前台服务执行任务
-            TideBackgroundService.startTask(context, taskId, scheduledTime)
+            if (TideMasterScheduler.isRegistered(context, taskId)) {
+                // Kotlin 注册的后台任务：由前台服务独立执行
+                TideBackgroundService.startTask(context, taskId, scheduledTime)
+            } else {
+                // Flutter 侧的普通定时任务：保持原有唤醒 Flutter 后台服务的行为
+                TideServiceWake.start(context, TideAlarmScheduler.taskAction)
+            }
         } catch (error: Exception) {
             Log.e("TideAlarmReceiver", "Failed to handle alarm", error)
         }

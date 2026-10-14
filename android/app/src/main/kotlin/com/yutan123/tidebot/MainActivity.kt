@@ -65,14 +65,10 @@ class MainActivity: FlutterActivity() {
         super.onCreate(savedInstanceState)
         // 使用增强版后台任务调度器
         TideEnhancedBackgroundWork.ensureScheduled(this)
-        // 注册电池监听器
-        TideBatteryMonitor.register(this)
     }
     
     override fun onDestroy() {
         super.onDestroy()
-        // 取消注册电池监听器
-        TideBatteryMonitor.unregister(this)
     }
 
     override fun onResume() {

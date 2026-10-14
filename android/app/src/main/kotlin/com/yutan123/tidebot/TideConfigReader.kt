@@ -37,26 +37,26 @@ object TideConfigReader {
      */
     fun getBotConfig(context: Context, botId: String): BotConfig? {
         val db = openDatabase(context) ?: return null
-        
+
         try {
             val cursor = db.rawQuery(
                 "SELECT name, prompt, chat_model, max_tokens, is_disabled FROM bots WHERE id = ?",
                 arrayOf(botId)
             )
-            
+
             cursor.use {
                 if (!it.moveToFirst()) return null
-                
+
                 val name = it.getString(0) ?: ""
                 val prompt = it.getString(1) ?: ""
                 val chatModelId = it.getString(2)
                 val maxTokens = it.getInt(3)
                 val isDisabled = it.getInt(4) == 1
-                
+
                 val chatModel = if (!chatModelId.isNullOrEmpty()) {
                     getModelConfig(context, db, chatModelId)
                 } else null
-                
+
                 return BotConfig(botId, name, prompt, chatModel, maxTokens, isDisabled)
             }
         } catch (e: Exception) {
@@ -69,32 +69,40 @@ object TideConfigReader {
 
     /**
      * 获取模型配置
+     *
+     * Flutter 把模型配置存在 kv_store 的 provider_list 键中，格式：
+     * [{"id":"...","name":"...","url":"...","key":"...","model":"..."},...]
      */
     private fun getModelConfig(context: Context, db: SQLiteDatabase, modelId: String): ModelConfig? {
         try {
-            // 先从 kv_store 读取 user_models
             val cursor = db.rawQuery(
                 "SELECT value FROM kv_store WHERE key = ?",
-                arrayOf("user_models")
+                arrayOf("provider_list")
             )
-            
+
             cursor.use {
                 if (!it.moveToFirst()) return null
-                
+
                 val json = it.getString(0) ?: return null
-                val models = JSONObject(json)
-                
-                if (!models.has(modelId)) return null
-                
-                val model = models.getJSONObject(modelId)
-                return ModelConfig(
-                    id = modelId,
-                    type = model.optString("type", "openai"),
-                    name = model.optString("name", ""),
-                    baseUrl = model.optString("base_url", ""),
-                    apiKey = model.optString("key", ""),
-                    model = model.optString("model", "")
-                )
+                val array = org.json.JSONArray(json)
+
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    val id = item.optString("id", "")
+
+                    if (id == modelId) {
+                        return ModelConfig(
+                            id = id,
+                            type = "chat",
+                            name = item.optString("name", ""),
+                            baseUrl = item.optString("url", ""),
+                            apiKey = item.optString("key", ""),
+                            model = item.optString("model", "")
+                        )
+                    }
+                }
+
+                return null
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get model config: $modelId", e)
@@ -107,13 +115,13 @@ object TideConfigReader {
      */
     fun getEnabledBotIds(context: Context): List<String> {
         val db = openDatabase(context) ?: return emptyList()
-        
+
         try {
             val cursor = db.rawQuery(
                 "SELECT id FROM bots WHERE is_disabled = 0 OR is_disabled IS NULL",
                 emptyArray()
             )
-            
+
             val ids = mutableListOf<String>()
             cursor.use {
                 while (it.moveToNext()) {
@@ -134,13 +142,13 @@ object TideConfigReader {
      */
     fun getKV(context: Context, key: String): String? {
         val db = openDatabase(context) ?: return null
-        
+
         try {
             val cursor = db.rawQuery(
                 "SELECT value FROM kv_store WHERE key = ?",
                 arrayOf(key)
             )
-            
+
             cursor.use {
                 return if (it.moveToFirst()) it.getString(0) else null
             }
@@ -157,7 +165,7 @@ object TideConfigReader {
      */
     fun setKV(context: Context, key: String, value: String) {
         val db = openDatabase(context) ?: return
-        
+
         try {
             db.execSQL(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",

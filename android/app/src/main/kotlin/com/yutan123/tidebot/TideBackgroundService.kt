@@ -19,6 +19,7 @@ class TideBackgroundService : Service() {
     private val binder = LocalBinder()
     private var wakeLock: PowerManager.WakeLock? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val activeTasks = java.util.concurrent.atomic.AtomicInteger(0)
 
     inner class LocalBinder : Binder() {
         fun getService(): TideBackgroundService = this@TideBackgroundService
@@ -63,25 +64,36 @@ class TideBackgroundService : Service() {
                 val scheduledTime = intent.getLongExtra(EXTRA_SCHEDULED_TIME, 0L)
                 
                 if (taskId.isNotEmpty()) {
+                    activeTasks.incrementAndGet()
                     updateNotification("执行任务: $taskId")
                     serviceScope.launch {
                         try {
                             TideTaskExecutor.executeTask(applicationContext, taskId, scheduledTime)
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e(TAG, "Task execution failed: $taskId", e)
                         } finally {
-                            // 任务完成后，如果没有其他任务，延迟停止服务
-                            delay(5000)
-                            if (!TideTaskExecutor.hasPendingTasks(applicationContext)) {
-                                stopSelf()
-                            }
+                            activeTasks.decrementAndGet()
+                            stopIfIdle()
                         }
                     }
+                } else {
+                    stopIfIdle()
                 }
             }
+            else -> stopIfIdle()
         }
-        
-        return START_STICKY
+
+        // 被系统回收后不自动以空 Intent 重启，任务由闹钟/WorkManager 重新触发
+        return START_NOT_STICKY
+    }
+
+    /** 没有正在执行的任务时才停止，避免并发任务被提前中断 */
+    private fun stopIfIdle() {
+        if (activeTasks.get() <= 0 && !TideTaskExecutor.hasPendingTasks(applicationContext)) {
+            stopSelf()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

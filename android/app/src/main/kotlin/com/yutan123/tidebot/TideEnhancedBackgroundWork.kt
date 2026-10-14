@@ -17,6 +17,7 @@ class TideEnhancedBackgroundWork(
     companion object {
         private const val TAG = "TideEnhancedBgWork"
         private const val UNIQUE_WORK_NAME = "tidebot_enhanced_background"
+        private const val LEGACY_WORK_NAME = "tidebot_background_queue"
         private const val NORMAL_INTERVAL_MINUTES = 15L
         private const val LOW_POWER_INTERVAL_MINUTES = 30L
 
@@ -24,6 +25,8 @@ class TideEnhancedBackgroundWork(
          * 确保后台任务已调度，默认使用正常频率（15 分钟）。
          */
         fun ensureScheduled(context: Context) {
+            // 旧版 TideBackgroundWork 已删除，取消老安装上残留的周期任务，避免 WorkManager 实例化失败
+            WorkManager.getInstance(context).cancelUniqueWork(LEGACY_WORK_NAME)
             val isLowPower = TideBatteryMonitor.isLowBattery(context)
             scheduleWork(context, isLowPower)
         }

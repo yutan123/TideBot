@@ -23,6 +23,7 @@ object TideAlarmScheduler {
             putExtra(EXTRA_ID, taskId)
             putExtra(EXTRA_TITLE, title)
             putExtra(EXTRA_REPEATING, repeating)
+            putExtra("scheduled_time", triggerAt)
         }
         val pending = PendingIntent.getBroadcast(
             context, taskId.hashCode(), intent,
