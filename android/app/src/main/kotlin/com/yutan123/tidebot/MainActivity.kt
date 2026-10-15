@@ -41,6 +41,19 @@ import java.io.File
 import java.io.FileOutputStream
 
 class MainActivity: FlutterActivity() {
+    private val backgroundCoordinator = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    private fun backgroundResult(result: MethodChannel.Result, code: String, action: () -> Any?) {
+        backgroundCoordinator.execute {
+            try {
+                val value = action()
+                runOnUiThread { result.success(value) }
+            } catch (e: Exception) {
+                val errorCode = if (code == "VITAL_FAILED" && e.message == "Vital state is busy") "VITAL_BUSY" else code
+                runOnUiThread { result.error(errorCode, e.message, null) }
+            }
+        }
+    }
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
     private var pendingInstallApk: File? = null
@@ -68,16 +81,23 @@ class MainActivity: FlutterActivity() {
     }
     
     override fun onDestroy() {
+        backgroundCoordinator.shutdown()
         super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
+        TideNativeNotifications.activityVisible = true
         val apk = pendingInstallApk ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
             pendingInstallApk = null
             openApkInstaller(apk)
         }
+    }
+
+    override fun onPause() {
+        TideNativeNotifications.activityVisible = false
+        super.onPause()
     }
 
     private fun openApkInstaller(apk: File) {
@@ -98,14 +118,41 @@ class MainActivity: FlutterActivity() {
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 // 悬浮窗待处理消息接口已移除。
+                "tickVitalSigns" -> {
+                    val id = call.argument<String>("botId").orEmpty()
+                    backgroundResult(result, "VITAL_FAILED") {
+                        require(id.isNotBlank()) { "Missing bot ID" }
+                        TideVitalSigns.tick(applicationContext, id).toString()
+                    }
+                }
+                "synchronizeBackgroundTasks" -> backgroundResult(result, "SYNC_FAILED") {
+                    TideFutureTasks.reconcile(applicationContext)
+                    for (id in TideConfigReader.getEnabledBotIds(applicationContext)) {
+                        runCatching { TideVitalSigns.tick(applicationContext, id) }
+                            .onFailure { android.util.Log.e("TideBackground", "Vital synchronization failed: $id", it) }
+                    }
+                    TideProactiveTasks.reconcile(applicationContext)
+                    TideEnhancedBackgroundWork.ensureScheduled(applicationContext)
+                    TideMasterScheduler.restoreAllTasks(applicationContext)
+                    null
+                }
                 "scheduleFutureTask" -> {
                     val taskId = call.argument<String>("taskId").orEmpty()
                     val triggerAt = call.argument<Number>("triggerAt")?.toLong() ?: 0L
                     val title = call.argument<String>("title") ?: "TideBot 提醒"
-                    result.success(TideAlarmScheduler.schedule(this, taskId, triggerAt, title, call.argument<Boolean>("repeating") == true))
+                    if (taskId.startsWith("vital:")) {
+                        result.success(TideAlarmScheduler.schedule(this, taskId, triggerAt, title, false))
+                    } else {
+                        try {
+                            TideFutureTasks.reconcile(this)
+                            result.success(TideMasterScheduler.isRegistered(this, taskId))
+                        } catch (e: Exception) {
+                            result.error("SCHEDULE_FAILED", e.message, null)
+                        }
+                    }
                 }
                 "cancelFutureTask" -> {
-                    TideAlarmScheduler.cancel(this, call.argument<String>("taskId").orEmpty())
+                    TideMasterScheduler.cancelTask(this, call.argument<String>("taskId").orEmpty())
                     result.success(null)
                 }
                 "setAlarmManager" -> {

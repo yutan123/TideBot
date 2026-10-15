@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'bot_state.dart';
@@ -13,6 +14,7 @@ class BotVitalSignsService {
   BotVitalSignsService._();
   static final instance = BotVitalSignsService._();
   final _rng = Random();
+  final Map<String, String> _leaseTokens = {};
   final Map<String, Future<void>> _locks = {};
   final Map<String, int> _active = {};
   final Set<String> _replying = {};
@@ -23,11 +25,96 @@ class BotVitalSignsService {
     final old = _locks[id] ?? Future<void>.value(), done = Completer<void>();
     _locks[id] = done.future;
     await old;
+    final native = defaultTargetPlatform == TargetPlatform.android;
+    final token =
+        '${DateTime.now().microsecondsSinceEpoch}:${_rng.nextDouble()}';
+    var acquired = false;
+    final stopRenewal = Completer<void>();
+    Future<void>? renewal;
     try {
+      if (native) {
+        final db = await DBManager().database;
+        for (var attempt = 0; attempt < 100 && !acquired; attempt++) {
+          acquired = await db.transaction((txn) async {
+            final rows = await txn.query('kv_store',
+                where: 'key = ?', whereArgs: ['vital_lock_$id']);
+            Map<String, dynamic> lease = {};
+            try {
+              if (rows.isNotEmpty)
+                lease = Map<String, dynamic>.from(
+                    jsonDecode('${rows.first['value']}') as Map);
+            } catch (_) {}
+            final now = DateTime.now().millisecondsSinceEpoch;
+            if (vitalInt(lease['until']) > now) return false;
+            await txn.rawInsert(
+                'INSERT OR REPLACE INTO kv_store(key,value) VALUES (?,?)', [
+              'vital_lock_$id',
+              jsonEncode({'token': token, 'until': now + 120000})
+            ]);
+            return true;
+          });
+          if (!acquired)
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        if (!acquired) {
+          throw StateError('生活状态正在更新，请稍后重试');
+        }
+        _leaseTokens[id] = token;
+        renewal = () async {
+          while (!stopRenewal.isCompleted) {
+            await Future.any([
+              stopRenewal.future,
+              Future<void>.delayed(const Duration(seconds: 30)),
+            ]);
+            if (stopRenewal.isCompleted) return;
+            try {
+              final renewed = await db.transaction((txn) async {
+                final rows = await txn.query('kv_store',
+                    where: 'key = ?', whereArgs: ['vital_lock_$id']);
+                if (rows.isEmpty) return false;
+                final lease = jsonDecode('${rows.first['value']}') as Map;
+                final now = DateTime.now().millisecondsSinceEpoch;
+                if (lease['token'] != token ||
+                    vitalInt(lease['until']) <= now) {
+                  return false;
+                }
+                await txn.rawUpdate('UPDATE kv_store SET value=? WHERE key=?', [
+                  jsonEncode({'token': token, 'until': now + 120000}),
+                  'vital_lock_$id',
+                ]);
+                return true;
+              });
+              if (!renewed) return;
+            } catch (error) {
+              debugPrint('Vital lease renewal failed: $error');
+              return;
+            }
+          }
+        }();
+      }
       return await fn();
     } finally {
-      done.complete();
-      if (identical(_locks[id], done.future)) _locks.remove(id);
+      try {
+        stopRenewal.complete();
+        await renewal;
+        if (native && acquired) {
+          final db = await DBManager().database;
+          await db.transaction((txn) async {
+            final rows = await txn.query('kv_store',
+                where: 'key = ?', whereArgs: ['vital_lock_$id']);
+            if (rows.isNotEmpty &&
+                (jsonDecode('${rows.first['value']}') as Map)['token'] ==
+                    token) {
+              await txn.delete('kv_store',
+                  where: 'key = ?', whereArgs: ['vital_lock_$id']);
+            }
+          });
+        }
+      } finally {
+        _leaseTokens.remove(id);
+        done.complete();
+        if (identical(_locks[id], done.future)) _locks.remove(id);
+      }
     }
   }
 
@@ -72,7 +159,31 @@ class BotVitalSignsService {
   }
 
   Future<void> _save(String id, Map<String, dynamic> s) async {
-    await DBManager().setKV('bot_vitals_v1_$id', jsonEncode(s));
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final db = await DBManager().database;
+      await db.transaction((txn) async {
+        final rows = await txn
+            .query('kv_store', where: 'key = ?', whereArgs: ['vital_lock_$id']);
+        final lease = rows.isEmpty
+            ? <String, dynamic>{}
+            : jsonDecode('${rows.first['value']}') as Map;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (lease['token'] != _leaseTokens[id] ||
+            vitalInt(lease['until']) <= now) {
+          throw StateError('生活状态更新已过期，请重试');
+        }
+        await txn.rawInsert(
+            'INSERT OR REPLACE INTO kv_store(key,value) VALUES (?,?)',
+            ['bot_vitals_v1_$id', jsonEncode(s)]);
+        await txn.rawInsert(
+            'INSERT OR REPLACE INTO kv_store(key,value) VALUES (?,?)', [
+          'vital_lock_$id',
+          jsonEncode({'token': _leaseTokens[id], 'until': now + 120000})
+        ]);
+      });
+    } else {
+      await DBManager().setKV('bot_vitals_v1_$id', jsonEncode(s));
+    }
     revision.value++;
   }
 
@@ -176,6 +287,18 @@ class BotVitalSignsService {
   }
 
   Future<void> tick(String id, {DateTime? at, bool replyPending = true}) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await const MethodChannel('tidebot.native.channel')
+            .invokeMethod<String>('tickVitalSigns', {'botId': id});
+        revision.value++;
+      } on MissingPluginException {
+        // Native Worker owns background advancement when this engine has no channel.
+      } on PlatformException catch (error) {
+        if (error.code != 'VITAL_BUSY') rethrow;
+      }
+      return;
+    }
     final now = (at ?? DateTime.now()).millisecondsSinceEpoch;
     String? reason;
     await _serial(id, () async {
@@ -573,7 +696,7 @@ class BotVitalSignsService {
     final steps = s['steps'] ?? 0;
     final activity = s['activity'] ?? '休息';
 
-    return '【你自己的生活状态】心情：$mood；压力 $stress/10；精力 $energy；健康：$health${illness.isNotEmpty ? " $illness" : ""}。$sleepInfo$bodyInfo今日步数${steps}步，当前活动：$activity。这些是角色生活状态。$sleepStatus';
+    return '【你自己的生活状态】心情：$mood；压力 $stress/10；精力 $energy；健康：$health${illness.isNotEmpty ? " $illness" : ""}。$sleepInfo$bodyInfo今日步数$steps步，当前活动：$activity。这些是角色生活状态。$sleepStatus';
   }
 
   Future<void> _pendingReply(String id, String reason) async {

@@ -18,6 +18,10 @@ class FutureTaskScheduler {
           false;
     } on PlatformException {
       return false;
+    } on MissingPluginException {
+      // 后台 isolate 的引擎未注册 tidebot.native.channel；
+      // SQLite 仍是任务来源，由 WorkManager 周期唤醒兜底执行。
+      return false;
     }
   }
 
@@ -27,6 +31,8 @@ class FutureTaskScheduler {
       await _channel.invokeMethod<void>('cancelFutureTask', {'taskId': taskId});
     } on PlatformException {
       // SQLite remains authoritative when native scheduling is unavailable.
+    } on MissingPluginException {
+      // 后台 isolate 中无原生通道，同上。
     }
   }
 

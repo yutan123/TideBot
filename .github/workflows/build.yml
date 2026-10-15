@@ -9,7 +9,9 @@ on:
       - 'android/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
-      - 'assets/images/**'
+      - 'assets/**'
+      - 'test/**'
+      - 'analysis_options.yaml'
       - '.github/workflows/build.yml'
 
 permissions:
@@ -46,8 +48,8 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" \
             "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
             "cmake;3.22.1" \
             "ndk;28.2.13676358"
 
@@ -59,6 +61,14 @@ jobs:
 
       - name: 检查 Dart 代码
         run: dart analyze --no-fatal-warnings
+
+      - name: 验证后台调度与消息回归测试
+        run: >-
+          flutter test --no-pub --concurrency=1
+          test/native_background_coordinator_test.dart
+          test/bot_vital_model_test.dart
+          test/future_task_scheduler_test.dart
+          test/message_delivery_test.dart
 
       - name: 编译已签名正式版 APK
         run: flutter build apk --release --no-pub

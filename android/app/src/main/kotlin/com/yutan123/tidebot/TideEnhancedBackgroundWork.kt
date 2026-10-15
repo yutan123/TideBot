@@ -89,23 +89,33 @@ class TideEnhancedBackgroundWork(
         Log.d(TAG, "doWork started, attempt ${runAttemptCount + 1}")
         
         return try {
-            // 检查是否需要继续执行任务
-            if (!shouldExecute()) {
-                Log.d(TAG, "Service disabled, skip execution")
-                return Result.success()
+            TideFutureTasks.reconcile(applicationContext)
+            TideProactiveTasks.reconcile(applicationContext)
+            for (id in TideConfigReader.getEnabledBotIds(applicationContext)) if (!TideMasterScheduler.isRegistered(applicationContext, "vitals:$id")) TideVitalSigns.tick(applicationContext,id)
+            val due = TideStore.open(applicationContext).use { db ->
+                TideStore.rows(db, "SELECT task_id,trigger_time FROM background_tasks WHERE enabled=1 AND trigger_time<=? ORDER BY trigger_time LIMIT 16", System.currentTimeMillis().toString())
             }
-
-            // 唤醒 Flutter 后台服务执行实际任务
-            TideServiceWake.start(
-                applicationContext,
-                "com.yutan123.tidebot.ACTION_PERIODIC_QUEUE_WAKE"
-            )
-
+            if (due.isNotEmpty()) {
+                setForeground(ForegroundInfo(998, TideNativeNotifications.workNotification(applicationContext), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+            }
+            val batchStarted = android.os.SystemClock.elapsedRealtime()
+            for (task in due) {
+                // Each model call has a five minute deadline; leave room within a worker run.
+                if (android.os.SystemClock.elapsedRealtime() - batchStarted >= 180_000L) {
+                    return Result.retry()
+                }
+                TideTaskExecutor.executeTask(applicationContext, task.getString("task_id"), task.getLong("trigger_time"))
+            }
+            TideNativeNotifications.deliverPending(applicationContext)
+            // Non-migrated Flutter features retain their existing wake path.
+            if (shouldExecute()) TideServiceWake.start(applicationContext, "com.yutan123.tidebot.ACTION_PERIODIC_QUEUE_WAKE")
             // 记录执行状态
             recordExecution(success = true)
             
             Log.d(TAG, "doWork completed successfully")
             Result.success()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "doWork failed", e)
             recordExecution(success = false, error = e.message)
@@ -120,15 +130,10 @@ class TideEnhancedBackgroundWork(
     }
 
     private fun shouldExecute(): Boolean {
-        val prefs = applicationContext.getSharedPreferences(
-            "FlutterSharedPreferences",
-            Context.MODE_PRIVATE
-        )
-        val persistentEnabled = prefs.getString("flutter.persistent_notification", null) == "true"
-        val externalApiEnabled = prefs.getString("flutter.external_api_enabled", null) == "true"
-        return persistentEnabled || externalApiEnabled
+        return TideStore.open(applicationContext).use { db ->
+            TideStore.kv(db, "persistent_notification") == "true" || TideStore.kv(db, "external_api_enabled") == "true"
+        }
     }
-
     private fun recordExecution(success: Boolean, error: String? = null) {
         val prefs = applicationContext.getSharedPreferences("TideBotNative", Context.MODE_PRIVATE)
         prefs.edit()

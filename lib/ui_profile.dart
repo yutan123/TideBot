@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'native_background_coordinator.dart';
 import 'bot_reference_images_page.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -2154,6 +2157,34 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(
                 children: [
+                  if (defaultTargetPlatform == TargetPlatform.android) ...[
+                    ListTile(
+                      leading: Icon(Icons.alarm_rounded, color: theme.primary),
+                      title: const Text('准时执行后台任务',
+                          style: TextStyle(fontFamily: 'TideFont')),
+                      subtitle: const Text('允许精确闹钟后，定时任务可在设定时间唤醒',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () async {
+                        await Permission.scheduleExactAlarm.request();
+                        await NativeBackgroundCoordinator.synchronize();
+                      },
+                    ),
+                    ListTile(
+                      leading: Icon(Icons.battery_saver_rounded,
+                          color: theme.primary),
+                      title: const Text('允许后台运行',
+                          style: TextStyle(fontFamily: 'TideFont')),
+                      subtitle: const Text('在系统设置中允许 TideBot 忽略电池优化',
+                          style:
+                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () async {
+                        await Permission.ignoreBatteryOptimizations.request();
+                      },
+                    ),
+                  ],
                   SwitchListTile(
                     title: const Text(
                       '机器人未读消息通知',

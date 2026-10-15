@@ -4,7 +4,6 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import org.json.JSONObject
-import java.io.File
 
 /**
  * 统一调度中心，管理所有任务的注册、取消、恢复。
@@ -29,19 +28,19 @@ object TideMasterScheduler {
         
         try {
             val now = System.currentTimeMillis()
-            db.execSQL(
-                """INSERT OR REPLACE INTO background_tasks 
-                   (task_id, task_type, bot_id, trigger_time, repeating, enabled, config_json, created_at, updated_at) 
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-                arrayOf(taskId, taskType, botId, triggerTime, if (repeating) 1 else 0, config?.toString(), now, now)
-            )
-            
-            // 调用 AlarmManager 设置精确闹钟
+            TideStore.transaction(db) {
+                db.execSQL("INSERT OR IGNORE INTO background_tasks (task_id,task_type,bot_id,trigger_time,repeating,enabled,config_json,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)",
+                    arrayOf(taskId,taskType,botId,triggerTime,if (repeating) 1 else 0,config?.toString(),now,now))
+                db.execSQL("UPDATE background_tasks SET task_type=?,bot_id=?,trigger_time=?,repeating=?,enabled=1,config_json=?,updated_at=? WHERE task_id=?",
+                    arrayOf(taskType,botId,triggerTime,if (repeating) 1 else 0,config?.toString(),now,taskId))
+            }
+
+            // AlarmManager is a delivery mechanism; SQLite remains authoritative.
             val title = config?.optString("title") ?: "TideBot 任务"
-            TideAlarmScheduler.schedule(context, taskId, triggerTime, title, repeating)
+            val scheduled = TideAlarmScheduler.schedule(context, taskId, triggerTime, title, repeating)
             
             Log.d(TAG, "Registered task: $taskId, type=$taskType, trigger=$triggerTime, repeating=$repeating")
-            return true
+            return scheduled
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register task: $taskId", e)
             return false
@@ -138,7 +137,7 @@ object TideMasterScheduler {
         try {
             val now = System.currentTimeMillis()
             val cursor = db.rawQuery(
-                "SELECT task_id FROM background_tasks WHERE enabled = 1 AND trigger_time > ?",
+                "SELECT task_id FROM background_tasks WHERE enabled = 1 AND trigger_time <= ?",
                 arrayOf(now.toString())
             )
             
@@ -157,13 +156,10 @@ object TideMasterScheduler {
         }
     }
 
-    private fun openDatabase(context: Context): SQLiteDatabase? {
-        return try {
-            val dbPath = File(context.getDatabasePath("tidebot.db").absolutePath)
-            SQLiteDatabase.openDatabase(dbPath.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open database", e)
-            null
-        }
+    private fun openDatabase(context: Context): SQLiteDatabase? = try {
+        TideStore.open(context)
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to open database", e)
+        null
     }
 }

@@ -1,3 +1,4 @@
+import 'native_background_coordinator.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1603,6 +1604,13 @@ class DBManager {
     final db = await database;
     await db.insert('kv_store', {'key': key, 'value': value},
         conflictAlgorithm: ConflictAlgorithm.replace);
+    if (key == 'proactive_reply' ||
+        key == 'proactive_min_minutes' ||
+        key == 'proactive_max_minutes' ||
+        key.startsWith('proactive_due_at_') ||
+        key.startsWith('proactive_unanswered_')) {
+      unawaited(NativeBackgroundCoordinator.synchronize());
+    }
   }
 
   Future<String?> getKV(String key) async {

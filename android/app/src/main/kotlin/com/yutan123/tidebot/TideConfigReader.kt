@@ -1,11 +1,9 @@
 package com.yutan123.tidebot
 
 import android.content.Context
-import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import org.json.JSONObject
-import java.io.File
 
 /**
  * 配置读取器，从 Flutter 保存的 SQLite 和 SharedPreferences 中读取配置。
@@ -50,12 +48,10 @@ object TideConfigReader {
                 val name = it.getString(0) ?: ""
                 val prompt = it.getString(1) ?: ""
                 val chatModelId = it.getString(2)
-                val maxTokens = it.getInt(3)
+                val maxTokens = (if (it.isNull(3) || it.getInt(3) <= 0) 10000 else it.getInt(3)).coerceIn(1000, 128000)
                 val isDisabled = it.getInt(4) == 1
 
-                val chatModel = if (!chatModelId.isNullOrEmpty()) {
-                    getModelConfig(context, db, chatModelId)
-                } else null
+                val chatModel = getModelConfig(context, db, chatModelId.orEmpty())
 
                 return BotConfig(botId, name, prompt, chatModel, maxTokens, isDisabled)
             }
@@ -88,16 +84,19 @@ object TideConfigReader {
 
                 for (i in 0 until array.length()) {
                     val item = array.getJSONObject(i)
-                    val id = item.optString("id", "")
+                    val name = item.optString("name", "")
+                    val url = item.optString("url", "")
+                    val rawModel = item.optString("model", "")
+                    val id = item.optString("id", "").ifBlank { "legacy_p_${name}_${url}_${rawModel}" }
 
-                    if (id == modelId) {
+                    if (id == modelId || (modelId.isBlank() && i == 0)) {
                         return ModelConfig(
                             id = id,
                             type = "chat",
                             name = item.optString("name", ""),
                             baseUrl = item.optString("url", ""),
                             apiKey = item.optString("key", ""),
-                            model = item.optString("model", "")
+                            model = rawModel.ifBlank { name }.substringBefore(",").trim()
                         )
                     }
                 }
@@ -183,16 +182,7 @@ object TideConfigReader {
      */
     private fun openDatabase(context: Context): SQLiteDatabase? {
         try {
-            val dbPath = File(context.getDatabasePath("tidebot.db").absolutePath)
-            if (!dbPath.exists()) {
-                Log.e(TAG, "Database not found: ${dbPath.absolutePath}")
-                return null
-            }
-            return SQLiteDatabase.openDatabase(
-                dbPath.absolutePath,
-                null,
-                SQLiteDatabase.OPEN_READWRITE
-            )
+return TideStore.open(context)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open database", e)
             return null

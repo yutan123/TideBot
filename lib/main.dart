@@ -1,9 +1,11 @@
+import 'native_background_coordinator.dart';
 import 'bot_vital_signs_service.dart';
 import 'built_in_skill_loader.dart';
 import 'dart:async';
 import 'dart:ui';
 import 'dart:math';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter/services.dart';
@@ -90,6 +92,7 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   if (externalApiEnabled == 'true') {
     debugPrint('[startup] 外部 API 服务将在后台 isolate 中启动');
   }
+  NativeBackgroundCoordinator.start();
   unawaited(CognitionReviewService.instance.runDue());
   Timer.periodic(const Duration(minutes: 1), (_) {
     unawaited(CognitionReviewService.instance.runDue());
@@ -440,6 +443,7 @@ void onStart(ServiceInstance service) async {
 }
 
 Future<void> _runDueFutureTasks() async {
+  if (defaultTargetPlatform == TargetPlatform.android) return;
   final db = DBManager();
   final recovered = await db.recoverExpiredFutureTasks(
     DateTime.now().millisecondsSinceEpoch,
@@ -599,6 +603,7 @@ Future<void> _runDeviceEventTriggeredReply() async {
 }
 
 Future<void> _runDueProactiveReplies() async {
+  if (defaultTargetPlatform == TargetPlatform.android) return;
   final db = DBManager();
   final now = DateTime.now().millisecondsSinceEpoch;
   if (await db.getKV('proactive_reply') == 'false') {

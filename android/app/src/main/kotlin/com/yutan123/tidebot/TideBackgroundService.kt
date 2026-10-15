@@ -13,13 +13,14 @@ import kotlinx.coroutines.*
 
 /**
  * 前台服务，承载长时间后台任务。
- * 持有 WakeLock，保证 AI 请求不被系统杀死。
+ * 持有有时限的 WakeLock，减少请求期间 CPU 休眠。
  */
 class TideBackgroundService : Service() {
     private val binder = LocalBinder()
     private var wakeLock: PowerManager.WakeLock? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val activeTasks = java.util.concurrent.atomic.AtomicInteger(0)
+    private var latestStartId = 0
 
     inner class LocalBinder : Binder() {
         fun getService(): TideBackgroundService = this@TideBackgroundService
@@ -58,6 +59,8 @@ class TideBackgroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}")
         
+        latestStartId = startId
+        acquireWakeLock()
         when (intent?.action) {
             ACTION_EXECUTE_TASK -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: ""
@@ -74,8 +77,10 @@ class TideBackgroundService : Service() {
                         } catch (e: Exception) {
                             Log.e(TAG, "Task execution failed: $taskId", e)
                         } finally {
-                            activeTasks.decrementAndGet()
-                            stopIfIdle()
+                            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                                activeTasks.decrementAndGet()
+                                stopIfIdle()
+                            }
                         }
                     }
                 } else {
@@ -91,9 +96,14 @@ class TideBackgroundService : Service() {
 
     /** 没有正在执行的任务时才停止，避免并发任务被提前中断 */
     private fun stopIfIdle() {
-        if (activeTasks.get() <= 0 && !TideTaskExecutor.hasPendingTasks(applicationContext)) {
-            stopSelf()
+        if (activeTasks.get() <= 0) {
+            stopSelfResult(latestStartId)
         }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        serviceScope.cancel()
+        stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -137,6 +147,7 @@ class TideBackgroundService : Service() {
 
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "$TAG::TaskLock"

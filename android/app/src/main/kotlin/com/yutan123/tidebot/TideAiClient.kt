@@ -30,7 +30,8 @@ object TideAiClient {
         val model: String,
         val messages: List<Message>,
         val maxTokens: Int = 2000,
-        val stream: Boolean = false
+        val stream: Boolean = true,
+        val allowSilence: Boolean = false
     )
 
     data class Message(
@@ -41,7 +42,8 @@ object TideAiClient {
     data class AiResponse(
         val content: String,
         val finishReason: String?,
-        val usage: Usage?
+        val usage: Usage?,
+        val silent: Boolean = false
     )
 
     data class Usage(
@@ -61,49 +63,23 @@ object TideAiClient {
      * 整个任务的总超时是 5 分钟，不是每次重试 5 分钟。
      */
     suspend fun sendRequest(request: AiRequest): Result<AiResponse> = withContext(Dispatchers.IO) {
-        val startTime = System.currentTimeMillis()
-        var lastError: Exception? = null
-
-        for (attempt in 1..MAX_RETRIES + 1) {
-            val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime >= TOTAL_TIMEOUT_MS) {
-                Log.w(TAG, "Total timeout exceeded: ${elapsedTime}ms")
-                return@withContext Result.failure(
-                    TimeoutException("任务总超时 5 分钟已达到")
-                )
+        try {
+            withTimeout(TOTAL_TIMEOUT_MS) {
+                var lastError: Throwable = IOException("Request failed")
+                for (attempt in 0..MAX_RETRIES) {
+                    ensureActive()
+                    val result = doRequest(request)
+                    if (result.isSuccess) return@withTimeout result
+                    lastError = result.exceptionOrNull() ?: lastError
+                    if (lastError is HttpException && !lastError.retryable) break
+                    if (attempt < MAX_RETRIES) delay(1000L shl attempt)
+                }
+                Result.failure<AiResponse>(lastError)
             }
-
-            val remainingTime = TOTAL_TIMEOUT_MS - elapsedTime
-            Log.d(TAG, "Attempt $attempt/${MAX_RETRIES + 1}, remaining time: ${remainingTime}ms")
-
-            val result = try {
-                withTimeout(remainingTime) { doRequest(request) }
-            } catch (e: TimeoutCancellationException) {
-                Result.failure(TimeoutException("任务总超时 5 分钟已达到"))
-            } catch (e: CancellationException) {
-                // 外部取消（服务停止等）直接向上抛出，不重试
-                throw e
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-
-            if (result.isSuccess) return@withContext result
-
-            val error = result.exceptionOrNull()
-            lastError = error as? Exception ?: IOException(error?.message ?: "Unknown error")
-            Log.w(TAG, "Attempt $attempt failed", error)
-            if (error is TimeoutException) break
-
-            if (attempt <= MAX_RETRIES) {
-                val backoffMs = minOf(1000L * (1 shl (attempt - 1)), 10000L)
-                Log.d(TAG, "Retrying after ${backoffMs}ms...")
-                delay(backoffMs)
-            } else {
-                Log.e(TAG, "All attempts failed", error)
-            }
+        } catch (e: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            Result.failure(TimeoutException("任务总超时 5 分钟已达到"))
         }
-
-        Result.failure(lastError ?: IOException("Unknown error"))
     }
 
     /**
@@ -113,8 +89,12 @@ object TideAiClient {
         val body = buildRequestBody(req)
 
         // 规范化 URL：移除尾部 /v1，然后统一添加 /v1/chat/completions
-        val normalizedBase = req.baseUrl.trimEnd('/').removeSuffix("/v1")
-        val url = "$normalizedBase/v1/chat/completions"
+        val root = req.baseUrl.trim().trimEnd('/')
+        val url = when {
+            root.endsWith("/chat/completions") -> root
+            root.endsWith("/v1") -> "$root/chat/completions"
+            else -> "$root/v1/chat/completions"
+        }
 
         val httpRequest = Request.Builder()
             .url(url)
@@ -133,25 +113,19 @@ object TideAiClient {
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    try {
-                        if (!response.isSuccessful) {
-                            val error = response.body?.string() ?: "HTTP ${response.code}"
-                            continuation.resume(
-                                Result.failure(IOException("API error: $error"))
+                    val result = try {
+                        response.use {
+                            if (!it.isSuccessful) Result.failure(HttpException(it.code))
+                            else Result.success(
+                                if (it.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
+                                    parseStream(it)
+                                } else parseChoice(JSONObject(it.body?.string() ?: throw IOException("Empty response")))
                             )
-                            return
                         }
-
-                        val responseBody = response.body?.string()
-                            ?: throw IOException("Empty response body")
-
-                        val result = parseResponse(responseBody, req.stream)
-                        continuation.resume(Result.success(result))
                     } catch (e: Exception) {
-                        continuation.resume(Result.failure(e))
-                    } finally {
-                        response.close()
+                        Result.failure<AiResponse>(e)
                     }
+                    continuation.resume(result)
                 }
             })
         }
@@ -174,6 +148,9 @@ object TideAiClient {
             messages.put(msgObj)
         }
         json.put("messages", messages)
+        if (req.allowSilence) json.put("tools", JSONArray().put(JSONObject().put("type", "function")
+            .put("function", JSONObject().put("name", "choose_silence").put("description", "不适合打扰时保持沉默")
+                .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject())))))
 
         return json.toString()
     }
@@ -181,20 +158,49 @@ object TideAiClient {
     /**
      * 解析响应
      */
-    private fun parseResponse(body: String, isStream: Boolean): AiResponse {
-        if (isStream) {
-            // 流式响应：解析最后一个 data: 块
-            val lines = body.lines().filter { it.startsWith("data: ") }
-            val lastData = lines.lastOrNull { !it.contains("[DONE]") }
-                ?: throw IOException("No valid data in stream")
-
-            val json = JSONObject(lastData.substring(6))
-            return parseChoice(json)
-        } else {
-            // 非流式响应
-            val json = JSONObject(body)
-            return parseChoice(json)
+    private fun parseStream(response: Response): AiResponse {
+        val source = response.body?.source() ?: throw IOException("Empty response")
+        val content = StringBuilder()
+        val names = mutableMapOf<Int, StringBuilder>()
+        var finish: String? = null
+        var usage: Usage? = null
+        val data = StringBuilder()
+        fun consume() {
+            val text = data.toString().trim()
+            data.setLength(0)
+            if (text.isEmpty() || text == "[DONE]") return
+            val json = JSONObject(text)
+            if (json.has("error")) throw IOException("Provider stream error")
+            json.optJSONObject("usage")?.let { usage = Usage(it.optInt("prompt_tokens"), it.optInt("completion_tokens"), it.optInt("total_tokens")) }
+            val choice = json.optJSONArray("choices")?.optJSONObject(0) ?: return
+            if (!choice.isNull("finish_reason")) finish = choice.optString("finish_reason")
+            val delta = choice.optJSONObject("delta") ?: choice.optJSONObject("message") ?: return
+            if (!delta.isNull("content")) content.append(delta.optString("content"))
+            val tools = delta.optJSONArray("tool_calls") ?: JSONArray()
+            for (i in 0 until tools.length()) {
+                val tool = tools.getJSONObject(i)
+                names.getOrPut(tool.optInt("index", i)) { StringBuilder() }
+                    .append(tool.optJSONObject("function")?.optString("name").orEmpty())
+            }
         }
+        var done = false
+        while (!done && !source.exhausted()) {
+            val line = source.readUtf8Line() ?: break
+            if (line.isEmpty()) {
+                done = data.toString().trim() == "[DONE]"
+                consume()
+            }
+            else if (line.startsWith("data:")) {
+                if (data.isNotEmpty()) data.append('\n')
+                data.append(line.substring(5).trimStart())
+            }
+        }
+        consume()
+        if (finish == null) throw IOException("Truncated stream")
+        if (names.values.any { it.toString() != "choose_silence" }) throw IOException("Unsupported tool")
+        val silent = names.values.any { it.toString() == "choose_silence" }
+        if (!silent && content.isBlank()) throw IOException("Empty reply")
+        return AiResponse(if (silent) "" else content.toString(), finish, usage, silent)
     }
 
     /**
@@ -213,7 +219,14 @@ object TideAiClient {
             ?: choice.optJSONObject("delta")
             ?: throw IOException("No message/delta in choice")
 
-        val content = message.optString("content", "")
+        val tools = message.optJSONArray("tool_calls") ?: JSONArray()
+        var silent = false
+        for (i in 0 until tools.length()) {
+            if (tools.getJSONObject(i).optJSONObject("function")?.optString("name") != "choose_silence") throw IOException("Unsupported tool")
+            silent = true
+        }
+        val content = if (silent || message.isNull("content")) "" else message.optString("content", "")
+        if (!silent && content.isBlank()) throw IOException("Empty reply")
         val finishReason = choice.optString("finish_reason")
 
         val usage = json.optJSONObject("usage")?.let {
@@ -224,7 +237,11 @@ object TideAiClient {
             )
         }
 
-        return AiResponse(content, finishReason, usage)
+        return AiResponse(content, finishReason, usage, silent)
+    }
+
+    private class HttpException(code: Int) : IOException("Provider HTTP $code") {
+        val retryable = code == 408 || code == 429 || code >= 500
     }
 
     class TimeoutException(message: String) : IOException(message)
