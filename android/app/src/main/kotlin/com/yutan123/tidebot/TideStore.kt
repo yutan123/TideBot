@@ -10,9 +10,20 @@ object TideStore {
     fun open(context: Context): SQLiteDatabase {
         val file = context.getDatabasePath("tidebot.db")
         check(file.exists()) { "Flutter database has not been initialized" }
-        return SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).apply {
-            execSQL("PRAGMA busy_timeout=10000")
-            setForeignKeyConstraintsEnabled(true)
+        val db = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            // busy_timeout returns a row even when assigning a value. Android rejects
+            // row-returning statements in execSQL, so execute and close a query instead.
+            db.rawQuery("PRAGMA busy_timeout=10000", null).use { cursor ->
+                check(cursor.moveToFirst() && cursor.getInt(0) == 10000) {
+                    "Failed to configure SQLite busy timeout"
+                }
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+            return db
+        } catch (error: Exception) {
+            db.close()
+            throw error
         }
     }
     fun rows(db: SQLiteDatabase, sql: String, vararg args: String): List<JSONObject> =
