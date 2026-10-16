@@ -35,12 +35,15 @@ object TideMasterScheduler {
                     arrayOf(taskType,botId,triggerTime,if (repeating) 1 else 0,config?.toString(),now,taskId))
             }
 
-            // AlarmManager is a delivery mechanism; SQLite remains authoritative.
+            // Enqueue a WorkManager delivery before attempting the alarm fast path.
+            // Inexact alarms do not grant permission to start a foreground service.
+            TideTaskWork.enqueue(context, taskId, triggerTime)
             val title = config?.optString("title") ?: "TideBot 任务"
             val scheduled = TideAlarmScheduler.schedule(context, taskId, triggerTime, title, repeating)
             
+            if (!scheduled) Log.w(TAG, "Alarm unavailable; WorkManager delivery registered: $taskId")
             Log.d(TAG, "Registered task: $taskId, type=$taskType, trigger=$triggerTime, repeating=$repeating")
-            return scheduled
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register task: $taskId", e)
             return false
@@ -61,6 +64,7 @@ object TideMasterScheduler {
             
             // 取消 AlarmManager
             TideAlarmScheduler.cancel(context, taskId)
+            TideTaskWork.cancel(context, taskId)
             
             Log.d(TAG, "Cancelled task: $taskId")
             return true
@@ -97,6 +101,7 @@ object TideMasterScheduler {
                     } else null
                     
                     val title = config?.optString("title") ?: "TideBot 任务"
+                    TideTaskWork.enqueue(context, taskId, triggerTime)
                     TideAlarmScheduler.schedule(context, taskId, triggerTime, title, repeating)
                     count++
                 }
