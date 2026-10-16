@@ -135,17 +135,21 @@ class DiaryService {
       botId: botId,
       priority: false,
       text:
-          '这是内部日记任务，不是与用户聊天。请以第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼。日程是安排，不能仅凭日程把计划写成已完成；没有聊天时不得虚构用户参与。主题名称如xx日只供内部了解，不直接写进正文，要写有依据的具体经历和感受；不要问候用户、不要解释任务、不要使用 Markdown。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n当天日程：$scheduleText\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
+          '这是内部日记任务，不是与用户聊天。请以第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼。日程是安排，不能仅凭日程把计划写成已完成；没有聊天时不得虚构用户参与。主题名称如xx日只供内部了解，不直接写进正文，要写有依据的具体经历和感受；不要问候用户、不要解释任务、不要使用 Markdown。只返回系统指定的 JSON，将完整日记正文放入 entry 字段，不输出内心独白、写作准备或任务规则分析。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n当天日程：$scheduleText\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
       skipLifeState: true,
+      diaryTask: true,
       allowTools: false,
     );
     final content = result['reply']?.toString().trim() ?? '';
     if (result['success'] == true && content.isNotEmpty) {
       await db.upsertDiary(botId: botId, dateKey: dateKey, content: content);
       AppLogService.instance.add('DIARY', '已补写 $botId $dateKey 日记');
+    } else {
+      AppLogService.instance
+          .add('DIARY', '$botId $dateKey 未保存：${result['error'] ?? '日记正文为空'}');
     }
   }
 }

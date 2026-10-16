@@ -1,5 +1,6 @@
 import 'ai.dart';
 import 'db.dart';
+import 'daily_quote_output.dart';
 
 /// Provides one locally cached quote per bot and local calendar day.
 class DailyQuoteService {
@@ -22,7 +23,9 @@ class DailyQuoteService {
       }
       try {
         final value = await AIManager().getDailyQuote(botId);
-        return value.trim().isEmpty ? await _recentOrFallback(botId) : value;
+        return value.trim().isEmpty
+            ? await _recentOrFallback(botId)
+            : singleDailyQuote(value);
       } catch (_) {
         return _recentOrFallback(botId);
       } finally {
@@ -35,11 +38,11 @@ class DailyQuoteService {
   Future<String> _recentOrFallback(String botId) async {
     final db = DBManager();
     final current = await db.getKV('quote_text_$botId');
-    if (current?.trim().isNotEmpty == true) return current!.trim();
+    if (current?.trim().isNotEmpty == true) return singleDailyQuote(current!);
     for (var offset = 1; offset <= 7; offset++) {
       final day = DateTime.now().subtract(Duration(days: offset));
       final value = await db.getKV('quote_text_${botId}_${_dateKey(day)}');
-      if (value?.trim().isNotEmpty == true) return value!.trim();
+      if (value?.trim().isNotEmpty == true) return singleDailyQuote(value!);
     }
     return _fallback;
   }

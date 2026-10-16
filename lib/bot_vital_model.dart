@@ -112,3 +112,29 @@ List<Map<String, dynamic>> stepPlan(
   }
   return result;
 }
+
+/// Simulated hourly mean, not a medical measurement. Smooth changes toward a
+/// role-specific resting baseline; activity, sleep, stress and fever modulate it.
+int hourlyMeanHeartRate(
+    {required double previous,
+    required double baseline,
+    required bool asleep,
+    required String activity,
+    required double stress,
+    required double sleepQuality,
+    required double temperature,
+    required double noise}) {
+  final exertion = RegExp('跑步|健身|运动|骑行|游泳|球').hasMatch(activity)
+      ? 24.0
+      : RegExp('散步|步行|逛街|通勤').hasMatch(activity)
+          ? 9.0
+          : 0.0;
+  final target = baseline.clamp(45, 110) +
+      (asleep ? -12 : exertion) +
+      (asleep ? 0 : (stress.clamp(0, 10) - 3) * 1.6) +
+      (sleepQuality < 60 && !asleep ? 4 : 0) +
+      max(0.0, temperature - 37) * 8 +
+      noise.clamp(-2, 2);
+  final desired = previous + (target - previous) * .65;
+  return desired.clamp(previous - 14, previous + 14).clamp(45, 135).round();
+}

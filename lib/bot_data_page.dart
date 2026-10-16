@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'bot_vital_model.dart';
 import 'bot_vital_signs_service.dart';
 import 'theme.dart';
+import 'sleep_timeline.dart';
 import 'ui_components.dart';
 
 const vitalTitles = ['睡眠状况', '心情趋势', '压力水平', '身体指标', '今日步数', '健康状况'];
@@ -114,7 +115,7 @@ List<Map<String, dynamic>> metricPoints(Map<String, dynamic> s, int index,
               : index == 4
                   ? 'steps'
                   : 'recovery';
-  if (index == 3 || (index == 4 && days > 1)) {
+  if ((index == 3 && body != 'heart') || (index == 4 && days > 1)) {
     final daily = <String, Map<String, dynamic>>{};
     for (final e in samples) {
       daily['${e['day']}'] = e;
@@ -122,7 +123,8 @@ List<Map<String, dynamic>> metricPoints(Map<String, dynamic> s, int index,
     return daily.values
         .map((e) => {
               'time': e['time'],
-              'value': vitalDouble(e[key]),
+              'value': vitalDouble(
+                  e[key], key == 'height' ? vitalDouble(s['height']) : 0),
               'note': index == 4 ? '${e['activity']}' : '${e['day']}'
             })
         .toList();
@@ -130,7 +132,8 @@ List<Map<String, dynamic>> metricPoints(Map<String, dynamic> s, int index,
   return samples
       .map((e) => {
             'time': e['time'],
-            'value': vitalDouble(e[key]),
+            'value': vitalDouble(
+                e[key], key == 'height' ? vitalDouble(s['height']) : 0),
             'note': index == 5 ? '${e['health']}' : '${e['activity']}'
           })
       .toList();
@@ -415,7 +418,7 @@ class _BotDataPageState extends State<BotDataPage> {
                           const SizedBox(height: 20),
                           FrostCard(
                               child: Text(
-                                  '睡眠、日程和心情共同构成TA的生活节奏。点击曲线可以查看具体记录。身体指标每日更新，心情、压力和步数每小时更新。',
+                                  '睡眠、日程和心情共同构成TA的生活节奏。点击曲线可以查看具体记录。身高保持稳定，体重与体温每日更新，平均心率、心情、压力和步数每小时更新。',
                                   style: TextStyle(
                                       color: theme.textWeak,
                                       height: 1.6,
@@ -446,10 +449,9 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   late final TextEditingController _heightCtrl,
       _weightCtrl,
       _temperatureCtrl,
-      _heartCtrl,
-      _systolicCtrl,
-      _diastolicCtrl;
-  final FocusNode _focusNode = FocusNode();
+      _heartCtrl;
+  final _bodyCardKey = GlobalKey();
+  bool _bodyLifted = false, _bodyEditing = false, _savingBody = false;
   @override
   void initState() {
     super.initState();
@@ -457,8 +459,6 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
     _weightCtrl = TextEditingController();
     _temperatureCtrl = TextEditingController();
     _heartCtrl = TextEditingController();
-    _systolicCtrl = TextEditingController();
-    _diastolicCtrl = TextEditingController();
     load();
     timer = Timer.periodic(const Duration(minutes: 1), (_) => load());
   }
@@ -470,9 +470,6 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
     _weightCtrl.dispose();
     _temperatureCtrl.dispose();
     _heartCtrl.dispose();
-    _systolicCtrl.dispose();
-    _diastolicCtrl.dispose();
-    _focusNode.dispose();
     super.dispose();
   }
 
@@ -575,11 +572,10 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                             padding: const EdgeInsets.only(top: 8),
                             child: Wrap(spacing: 6, children: [
                               for (final e in {
+                                'height': '身高',
                                 'weight': '体重',
                                 'temperature': '体温',
-                                'heart': '心率',
-                                'systolic': '收缩压',
-                                'diastolic': '舒张压'
+                                'heart': '平均心率'
                               }.entries)
                                 _buildPeriodChip(theme, e.value, body == e.key,
                                     () {
@@ -755,18 +751,6 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
         const SizedBox(height: 10),
         _buildSleepTimeline(theme, segments),
         const SizedBox(height: 12),
-        Row(children: [
-          Icon(Icons.bedtime_rounded, size: 14, color: theme.primary),
-          const SizedBox(width: 5),
-          text('睡眠', size: 11, color: theme.textWeak),
-          const SizedBox(width: 18),
-          const Icon(Icons.wb_sunny_rounded,
-              size: 14, color: Color(0xffedb66f)),
-          const SizedBox(width: 5),
-          text('清醒', size: 11, color: theme.textWeak),
-          const Spacer(),
-          text('点击查看时段', size: 11, color: theme.textFaint)
-        ])
       ])),
       const SizedBox(height: 16),
       for (final e in segments)
@@ -778,14 +762,11 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                 child: FrostCard(
                     padding: const EdgeInsets.all(13),
                     child: Row(children: [
-                      Icon(
-                          e['state'] == '睡眠'
-                              ? Icons.bedtime_rounded
-                              : Icons.wb_sunny_rounded,
+                      SleepStateMark(
+                          asleep: e['state'] == '睡眠',
                           color: e['state'] == '睡眠'
                               ? theme.primary
-                              : const Color(0xffedb66f),
-                          size: 19),
+                              : const Color(0xffc89e65)),
                       const SizedBox(width: 10),
                       Expanded(
                           child: Column(
@@ -837,139 +818,186 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                       fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                       color: selected ? Colors.white : theme.textStrong))));
 
+  Widget _bodyReadOnly(TideTheme theme) => FrostCard(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        info('身高', '${vitalDouble(data!['height']).toStringAsFixed(1)} cm'),
+        info('体重', '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
+        info(
+            '体温', '${vitalDouble(data!['temperature']).toStringAsFixed(1)} °C'),
+        info('平均心率', '${vitalInt(data!['heart'], 72)} 次/分'),
+      ]));
+
   Widget _buildDisplayBodyCard(TideTheme theme) => GestureDetector(
-      onLongPress: () {
-        _heightCtrl.text = vitalDouble(data!['height']).toStringAsFixed(1);
-        _weightCtrl.text = vitalDouble(data!['weight']).toStringAsFixed(1);
-        _temperatureCtrl.text =
-            vitalDouble(data!['temperature']).toStringAsFixed(1);
-        _heartCtrl.text = '${data!['heart']}';
-        _systolicCtrl.text = '${data!['systolic']}';
-        _diastolicCtrl.text = '${data!['diastolic']}';
-        _showBodyEditor();
-      },
-      child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-          transform: Matrix4.identity(),
-          child: FrostCard(
-              child: Column(children: [
-            info('身高', '${vitalDouble(data!['height']).toStringAsFixed(1)} cm'),
-            info('体重', '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
-            info('体温',
-                '${vitalDouble(data!['temperature']).toStringAsFixed(1)} °C'),
-            info('心率', '${data!['heart']} 次/分'),
-            info('血压', '${data!['systolic']}/${data!['diastolic']} mmHg'),
-            info('更新频率', '每日一次')
-          ]))));
+      onLongPressDown: (_) => setState(() => _bodyLifted = true),
+      onLongPressCancel: () => setState(() => _bodyLifted = false),
+      onLongPress: _showBodyEditor,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 480),
+        curve: Curves.easeOutCubic,
+        scale: _bodyLifted ? 1.025 : 1,
+        child: AnimatedSlide(
+          duration: const Duration(milliseconds: 480),
+          curve: Curves.easeOutCubic,
+          offset: _bodyLifted ? const Offset(0, -.025) : Offset.zero,
+          child: Opacity(
+            opacity: _bodyEditing ? 0 : 1,
+            child: AnimatedContainer(
+              key: _bodyCardKey,
+              duration: const Duration(milliseconds: 480),
+              curve: Curves.easeOutCubic,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color:
+                        Colors.black.withValues(alpha: _bodyLifted ? .10 : 0),
+                    blurRadius: _bodyLifted ? 28 : 0,
+                    offset: Offset(0, _bodyLifted ? 14 : 0),
+                  )
+                ],
+              ),
+              child: _bodyReadOnly(theme),
+            ),
+          ),
+        ),
+      ));
 
   Future<void> _showBodyEditor() async {
-    await showDialog<void>(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: .28),
-      builder: (dialogContext) {
-        final theme = TideTheme.of(dialogContext);
-        return AnimatedPadding(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 20 + MediaQuery.viewInsetsOf(dialogContext).bottom * .18,
-              bottom: 20 + MediaQuery.viewInsetsOf(dialogContext).bottom * .18),
-          child: Dialog(
-            insetPadding: EdgeInsets.zero,
-            backgroundColor: Colors.transparent,
-            child: SingleChildScrollView(child: _buildEditableBodyCard(theme)),
+    if (_bodyEditing) return;
+    final box = _bodyCardKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final origin = box.localToGlobal(Offset.zero) & box.size;
+    _heightCtrl.text = vitalDouble(data!['height']).toStringAsFixed(1);
+    _weightCtrl.text = vitalDouble(data!['weight']).toStringAsFixed(1);
+    _temperatureCtrl.text =
+        vitalDouble(data!['temperature']).toStringAsFixed(1);
+    _heartCtrl.text = '${vitalInt(data!['heart'], 72)}';
+    final preview = _bodyReadOnly(TideTheme.of(context));
+    setState(() {
+      _bodyEditing = true;
+      _bodyLifted = false;
+    });
+    try {
+      await showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: '关闭身体指标编辑',
+        barrierColor: Colors.black.withValues(alpha: .30),
+        transitionDuration: const Duration(milliseconds: 560),
+        pageBuilder: (dialogContext, _, __) => StatefulBuilder(
+          builder: (dialogContext, refresh) => Material(
+            color: Colors.transparent,
+            child: _buildEditableBodyCard(
+                TideTheme.of(dialogContext), dialogContext, refresh),
           ),
-        );
-      },
-    );
+        ),
+        transitionBuilder: (dialogContext, animation, _, child) {
+          final media = MediaQuery.of(dialogContext);
+          final top = media.padding.top + 20;
+          final available = max(
+              0.0,
+              media.size.height -
+                  top -
+                  max(media.viewInsets.bottom, media.padding.bottom) -
+                  20);
+          final height = min(390.0 * media.textScaler.scale(1), available);
+          final width = min(media.size.width - 32, 440.0);
+          final target = Rect.fromLTWH((media.size.width - width) / 2,
+              top + (available - height) / 2, width, height);
+          final progress =
+              Curves.easeInOutCubicEmphasized.transform(animation.value);
+          final rect = Rect.lerp(origin, target, progress)!;
+          return Stack(children: [
+            Positioned.fromRect(
+              rect: rect,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: SingleChildScrollView(
+                  child: Stack(children: [
+                    Opacity(opacity: 1 - progress, child: preview),
+                    Opacity(
+                        opacity: progress,
+                        child: IgnorePointer(
+                            ignoring: progress < .95, child: child)),
+                  ]),
+                ),
+              ),
+            ),
+          ]);
+        },
+      );
+    } finally {
+      if (mounted)
+        setState(() {
+          _bodyEditing = false;
+          _savingBody = false;
+        });
+    }
   }
 
-  Widget _buildEditableBodyCard(TideTheme theme) {
-    return AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-        transform: Matrix4.identity(),
-        child: FrostCard(
-            child: Focus(
-                focusNode: _focusNode,
-                child: Column(children: [
-                  _editField('身高', _heightCtrl, 'cm'),
-                  _editField('体重', _weightCtrl, 'kg'),
-                  _editField('体温', _temperatureCtrl, '°C'),
-                  _editField('心率', _heartCtrl, '次/分'),
-                  Row(children: [
-                    Expanded(child: text('血压', color: theme.textWeak)),
-                    SizedBox(
-                        width: 60,
-                        child: TextField(
-                            controller: _systolicCtrl,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 14, color: theme.textStrong),
-                            decoration: const InputDecoration(
-                                isDense: true, border: InputBorder.none))),
-                    text(' / ', size: 14),
-                    SizedBox(
-                        width: 60,
-                        child: TextField(
-                            controller: _diastolicCtrl,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 14, color: theme.textStrong),
-                            decoration: const InputDecoration(
-                                isDense: true, border: InputBorder.none))),
-                    text(' mmHg', size: 14)
-                  ]),
-                  const SizedBox(height: 12),
-                  Row(children: [
-                    Expanded(child: text('更新频率', color: theme.textWeak)),
-                    text('每日一次', size: 14, color: theme.textFaint)
-                  ]),
-                  const SizedBox(height: 8),
-                  BouncyTap(
-                      onTap: () async {
-                        final h = double.tryParse(_heightCtrl.text) ?? 0;
-                        final w = double.tryParse(_weightCtrl.text) ?? 0;
-                        final t = double.tryParse(_temperatureCtrl.text) ?? 0;
-                        final hr = int.tryParse(_heartCtrl.text) ?? 0;
-                        final s = int.tryParse(_systolicCtrl.text) ?? 0;
-                        final d = int.tryParse(_diastolicCtrl.text) ?? 0;
-                        if (h <= 0 ||
-                            w <= 0 ||
-                            t <= 0 ||
-                            hr <= 0 ||
-                            s <= 0 ||
-                            d <= 0) return;
-                        await BotVitalSignsService.instance.updateBodyMetrics(
-                            widget.botId,
-                            height: h,
-                            weight: w,
-                            temperature: t,
-                            heart: hr,
-                            systolic: s,
-                            diastolic: d);
-                        await load();
-                        if (mounted) Navigator.of(context).pop();
-                      },
-                      child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              color: theme.primary),
-                          child: const Text('更新',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600))))
-                ]))));
-  }
-
+  Widget _buildEditableBodyCard(
+          TideTheme theme, BuildContext dialogContext, StateSetter refresh) =>
+      FrostCard(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(children: [
+            Expanded(child: text('身体指标', size: 18)),
+            IconButton(
+                tooltip: '取消',
+                onPressed:
+                    _savingBody ? null : () => Navigator.pop(dialogContext),
+                icon:
+                    Icon(Icons.close_rounded, size: 20, color: theme.textWeak)),
+          ]),
+          _editField('身高', _heightCtrl, 'cm'),
+          _editField('体重', _weightCtrl, 'kg'),
+          _editField('体温', _temperatureCtrl, '°C'),
+          _editField('平均心率', _heartCtrl, '次/分'),
+          const SizedBox(height: 12),
+          SizedBox(
+              width: double.infinity,
+              child: TideDialogs.glassButton(_savingBody ? '保存中…' : '保存',
+                  color: theme.primary, onTap: () async {
+                if (_savingBody) return;
+                final h = double.tryParse(_heightCtrl.text);
+                final w = double.tryParse(_weightCtrl.text);
+                final t = double.tryParse(_temperatureCtrl.text);
+                final hr = int.tryParse(_heartCtrl.text);
+                if (h == null ||
+                    !h.isFinite ||
+                    h <= 0 ||
+                    w == null ||
+                    !w.isFinite ||
+                    w <= 0 ||
+                    t == null ||
+                    !t.isFinite ||
+                    t < 30 ||
+                    t > 45 ||
+                    hr == null ||
+                    hr < 45 ||
+                    hr > 135) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('请输入有效的身体指标，平均心率范围为 45–135')));
+                  return;
+                }
+                refresh(() => _savingBody = true);
+                try {
+                  await BotVitalSignsService.instance.updateBodyMetrics(
+                      widget.botId,
+                      height: h,
+                      weight: w,
+                      temperature: t,
+                      heart: hr);
+                  await load();
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } catch (_) {
+                  if (dialogContext.mounted) refresh(() => _savingBody = false);
+                  if (mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('保存失败，请稍后重试')));
+                }
+              })),
+        ]),
+      );
   Widget _editField(String label, TextEditingController ctrl, String unit) {
     final theme = TideTheme.of(context);
     return Padding(
@@ -980,7 +1008,8 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
               width: 80,
               child: TextField(
                   controller: ctrl,
-                  keyboardType: TextInputType.number,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   textAlign: TextAlign.right,
                   style: TextStyle(fontSize: 14, color: theme.textStrong),
                   decoration: const InputDecoration(
@@ -1006,9 +1035,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                     color: color.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Icon(
-                      asleep ? Icons.bedtime_rounded : Icons.wb_sunny_rounded,
-                      color: color),
+                  child: SleepStateMark(asleep: asleep, color: color),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1040,90 +1067,6 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
       });
 
   Widget _buildSleepTimeline(
-      TideTheme theme, List<Map<String, dynamic>> segments) {
-    if (segments.isEmpty) return const SizedBox.shrink();
-    final start = vitalInt(segments.first['start']);
-    final end = vitalInt(segments.last['end']);
-    final duration = max(1, end - start);
-    return Column(children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.surfaceVariant.withValues(alpha: .65),
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: LayoutBuilder(builder: (context, constraints) {
-          return SizedBox(
-              height: 44,
-              child: Stack(children: [
-                for (final segment in segments)
-                  Positioned(
-                    left: (vitalInt(segment['start']) - start) /
-                        duration *
-                        constraints.maxWidth,
-                    width: max(
-                        0.0,
-                        (vitalInt(segment['end']) -
-                                vitalInt(segment['start'])) /
-                            duration *
-                            constraints.maxWidth),
-                    top: 0,
-                    bottom: 0,
-                    child: Semantics(
-                      button: true,
-                      label:
-                          '${segment['state']}，${vitalClock(segment['start'])}至${vitalClock(segment['end'])}',
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => showSegment(segment),
-                        child: LayoutBuilder(builder: (context, slot) {
-                          final asleep = segment['state'] == '睡眠';
-                          final color =
-                              asleep ? theme.primary : const Color(0xffedb66f);
-                          return Center(
-                              child: Container(
-                            height: asleep ? 32 : 20,
-                            margin: EdgeInsets.symmetric(
-                                horizontal: min(1.5, slot.maxWidth / 4)),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Color.lerp(color, Colors.white, .25)!,
-                                  color
-                                ],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: color.withValues(alpha: .20),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 3))
-                              ],
-                            ),
-                            child: slot.maxWidth > 32
-                                ? Center(
-                                    child: Icon(
-                                        asleep
-                                            ? Icons.bedtime_rounded
-                                            : Icons.wb_sunny_rounded,
-                                        size: asleep ? 14 : 12,
-                                        color: Colors.white))
-                                : null,
-                          ));
-                        }),
-                      ),
-                    ),
-                  ),
-              ]));
-        }),
-      ),
-      const SizedBox(height: 8),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        text(vitalClock(start), size: 11, color: theme.textFaint),
-        text(vitalClock(end), size: 11, color: theme.textFaint),
-      ]),
-    ]);
-  }
+          TideTheme theme, List<Map<String, dynamic>> segments) =>
+      SleepTimeline(segments: segments, onSelect: showSegment);
 }

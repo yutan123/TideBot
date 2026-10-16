@@ -121,7 +121,17 @@ class BotVitalSignsService {
   Future<Map<String, dynamic>> _read(String id) async {
     try {
       final v = jsonDecode(await DBManager().getKV('bot_vitals_v1_$id') ?? '');
-      if (v is Map) return Map<String, dynamic>.from(v);
+      if (v is Map) {
+        final state = Map<String, dynamic>.from(v)
+          ..remove('systolic')
+          ..remove('diastolic');
+        state['samples'] = vitalList(state['samples'])
+            .map((sample) => sample
+              ..remove('systolic')
+              ..remove('diastolic'))
+            .toList();
+        return state;
+      }
     } catch (_) {}
     final bot = await DBManager().getBotById(id);
     final prompt = '${bot?['prompt'] ?? ''}';
@@ -139,8 +149,7 @@ class BotVitalSignsService {
       'base_weight': weight,
       'temperature': 36.5,
       'heart': 72,
-      'systolic': 118,
-      'diastolic': 78,
+      'base_heart': 72,
       'mood': 65.0,
       'stress': 3.0,
       'energy': 75.0,
@@ -231,9 +240,7 @@ class BotVitalSignsService {
             'height': [80.0, 240.0],
             'weight': [15.0, 250.0],
             'heart': [45.0, 100.0],
-            'temperature': [36.0, 37.2],
-            'systolic': [95.0, 135.0],
-            'diastolic': [60.0, 90.0]
+            'temperature': [36.0, 37.2]
           };
           for (final k in ranges.keys) {
             if (initial[k] is num)
@@ -241,6 +248,7 @@ class BotVitalSignsService {
                   vitalDouble(initial[k]).clamp(ranges[k]![0], ranges[k]![1]);
           }
           s['base_weight'] = s['weight'];
+          s['base_heart'] = s['heart'];
           s['initialized_by_model'] = true;
         }
         final entries =
@@ -524,12 +532,20 @@ class BotVitalSignsService {
           s['temperature'] = sick
               ? 37.3 + _rng.nextDouble() * .8
               : 36.3 + _rng.nextDouble() * .5;
-          s['heart'] =
-              68 + _rng.nextInt(13) + (stress > 7 ? 8 : 0) + (sick ? 10 : 0);
-          s['systolic'] = 112 + _rng.nextInt(15) + (stress > 7 ? 5 : 0);
-          s['diastolic'] = 72 + _rng.nextInt(10);
           s['body_day'] = date;
         }
+        // One settled hourly mean; reopening the page never rerolls the value.
+        s['base_heart'] ??= vitalDouble(s['heart'], 72).clamp(55, 90);
+        s['heart'] = hourlyMeanHeartRate(
+          previous: vitalDouble(s['heart'], 72),
+          baseline: vitalDouble(s['base_heart'], 72),
+          asleep: inSleep,
+          activity: activity,
+          stress: stress.toDouble(),
+          sleepQuality: quality,
+          temperature: vitalDouble(s['temperature'], 36.5),
+          noise: _rng.nextDouble() * 4 - 2,
+        );
         s['steps'] = max(0, steps);
         s['activity'] = activity;
         s['energy'] = (vitalDouble(s['energy']) +
@@ -543,11 +559,10 @@ class BotVitalSignsService {
           'mood': mood,
           'stress': stress,
           'steps': s['steps'],
+          'height': s['height'],
           'weight': s['weight'],
           'temperature': s['temperature'],
           'heart': s['heart'],
-          'systolic': s['systolic'],
-          'diastolic': s['diastolic'],
           'health': s['health'],
           'recovery': s['recovery'],
           'activity': activity
@@ -655,17 +670,25 @@ class BotVitalSignsService {
       {required double height,
       required double weight,
       required double temperature,
-      required int heart,
-      required int systolic,
-      required int diastolic}) async {
+      required int heart}) async {
     await _serial(id, () async {
       final s = await _read(id);
       s['height'] = height;
       s['weight'] = weight;
       s['temperature'] = temperature;
       s['heart'] = heart;
-      s['systolic'] = systolic;
-      s['diastolic'] = diastolic;
+      s['base_heart'] = heart;
+      s['base_weight'] = weight;
+      final samples = vitalList(s['samples']);
+      if (samples.isNotEmpty) {
+        samples.last.addAll({
+          'height': height,
+          'weight': weight,
+          'temperature': temperature,
+          'heart': heart,
+        });
+        s['samples'] = samples;
+      }
       await _save(id, s);
     });
   }
@@ -690,7 +713,7 @@ class BotVitalSignsService {
         : '今日尚未入睡；';
 
     final bodyInfo = latestSample != null
-        ? '体温${vitalDouble(latestSample['temperature']).toStringAsFixed(1)}°C，心率${latestSample['heart']}次/分，血压${latestSample['systolic']}/${latestSample['diastolic']}；'
+        ? '体温${vitalDouble(latestSample['temperature']).toStringAsFixed(1)}°C，平均心率${latestSample['heart']}次/分；'
         : '';
 
     final steps = s['steps'] ?? 0;

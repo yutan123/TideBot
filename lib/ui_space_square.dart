@@ -11,6 +11,7 @@ import 'global_notice.dart';
 import 'message_delivery_service.dart';
 import 'db.dart';
 import 'theme.dart';
+import 'world_book_preview_window.dart';
 import 'ai.dart';
 import 'game_arena_page.dart';
 import 'memory_manager_page.dart';
@@ -230,77 +231,11 @@ class _SpacePageState extends State<SpacePage> {
 
   // 记忆窗口：从短期→长期合并列表中，取 _diaryVisibleStart 开始的 3 条（循环取模），
   // 配合 AnimatedSwitcher 做淡入滚动观感。显示不足 3 条时按实际数量铺开。
-  Widget _buildDiaryWindow(TideTheme theme) {
-    final count = _memories.length;
-    if (count == 0) return const SizedBox.shrink();
-    final window = <Map<String, dynamic>>[];
-    final visible = count < 3 ? count : 3;
-    for (var i = 0; i < visible; i++) {
-      window.add(_memories[(_diaryVisibleStart + i) % count]);
-    }
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 320),
-      switchInCurve: Curves.easeOut,
-      switchOutCurve: Curves.easeIn,
-      transitionBuilder: (child, anim) => FadeTransition(
-        opacity: anim,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.06),
-            end: Offset.zero,
-          ).animate(anim),
-          child: child,
-        ),
-      ),
-      child: Column(
-        key: ValueKey<int>(_diaryVisibleStart),
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < window.length; i++) ...[
-            if (i > 0) Divider(height: 1, thickness: 0.5, color: theme.divider),
-            Expanded(
-              child: BouncyTap(
-                onTap: () => _showMemoryDetail(window[i]),
-                child: Container(
-                  width: double.infinity,
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        window[i]['content'] ?? '',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.4,
-                          color: theme.textStrong,
-                          fontFamily: 'TideFont',
-                        ),
-                      ),
-                      if (window[i]['timestamp'] != null) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          formatTime(window[i]['timestamp']),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.textFaint,
-                            fontFamily: 'TideFont',
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  Widget _buildDiaryWindow(TideTheme theme) => WorldBookPreviewWindow(
+      memories: _memories,
+      startIndex: _diaryVisibleStart,
+      onSelect: _showMemoryDetail,
+      formatTimestamp: formatTime);
 
   @override
   Widget build(BuildContext context) {
@@ -369,17 +304,14 @@ class _SpacePageState extends State<SpacePage> {
                           ),
                         )
                       else
-                        SizedBox(
-                          height: 196,
-                          child: GestureDetector(
-                            onTap: _toggleDiaryAutoScroll,
-                            onPanDown: (_) {
-                              if (_diaryTimer != null) _toggleDiaryAutoScroll();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: _buildDiaryWindow(theme),
-                            ),
+                        GestureDetector(
+                          onTap: _toggleDiaryAutoScroll,
+                          onPanDown: (_) {
+                            if (_diaryTimer != null) _toggleDiaryAutoScroll();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: _buildDiaryWindow(theme),
                           ),
                         ),
                       const SizedBox(height: 24),

@@ -369,7 +369,7 @@ ${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snap
 - 根据活动类型合理分配：睡觉0步、宅家200-500步、外出1000-3000步、运动3000-6000步
 - 全天总步数建议在 5000-12000 区间
 
-首次生成时请同时给出 body 对象，依据人设已有身高体重，缺失则生成适合角色且无需性别判断的稳定初始数据；字段 height(cm)、weight(kg)、heart、temperature、systolic、diastolic。
+首次生成时请同时给出 body 对象，依据人设已有身高体重，缺失则生成适合角色且无需性别判断的稳定初始数据；字段 height(cm)、weight(kg)、heart(静息平均心率)、temperature；不要生成血压字段。
 输出格式：
 {"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","sleep_plan_start":"23:30","sleep_plan_end":"次日07:00","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","steps":800,"rigid":false}]}
 从你决定的起床时间安排当天生活，直到下一次睡觉结束。不要使用固定的09:00或23:00。按任务实际耗时自由安排足够多的连续时段，短任务不要虚构为一小时，不能重叠，不能留出不合理的大空档；每条都必须提供晚于开始时间的 end_time。必须包含一条睡觉时段（从入睡到起床）。刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',

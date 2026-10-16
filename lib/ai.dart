@@ -1,3 +1,5 @@
+import 'diary_output.dart';
+import 'daily_quote_output.dart';
 import 'bot_vital_signs_service.dart';
 import 'skill_context.dart';
 import 'assistant_output_guard.dart';
@@ -195,6 +197,8 @@ class AIManager {
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
+    bool diaryTask = false,
+    bool quoteTask = false,
     bool allowTools = true,
     bool allowStickers = true,
     bool forceSingleReply = false,
@@ -205,6 +209,18 @@ class AIManager {
     void Function(String delta)? onDelta,
   }) async {
     cancellationToken?.throwIfCancelled();
+    if (diaryTask || quoteTask) {
+      persistResponse = false;
+      includeChatHistory = false;
+      requestHistory = null;
+      enableAutoSummary = false;
+      skipLifeState = true;
+      allowTools = false;
+      allowStickers = false;
+      useJarvis = false;
+      activeGame = null;
+      onDelta = null;
+    }
     final prefs = await SharedPreferences.getInstance();
     const primaryLocal = '';
     const backupLocal = '';
@@ -264,6 +280,8 @@ class AIManager {
             requestHistory: requestHistory,
             enableAutoSummary: enableAutoSummary,
             skipLifeState: skipLifeState,
+            diaryTask: diaryTask,
+            quoteTask: quoteTask,
             allowTools: allowTools,
             allowStickers: allowStickers,
             forceSingleReply: forceSingleReply,
@@ -706,6 +724,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
+    bool diaryTask = false,
+    bool quoteTask = false,
     bool allowTools = true,
     bool allowStickers = true,
     bool forceSingleReply = false,
@@ -803,7 +823,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         '【你们的关系】\n当前暂未记录。你可在明确与对方的关系定位后，调用工具填入世界书的"关系"类别。',
     ].join('\n\n');
 
-    final profileContext = '\n$coreSettings';
+    final profileContext = (diaryTask || quoteTask)
+        ? [
+            if (botViewOfUser?.isNotEmpty == true) '角色对用户的了解：$botViewOfUser',
+            if (selfCognition?.isNotEmpty == true) '角色自我认知：$selfCognition',
+            if (relationship?.isNotEmpty == true) '双方关系：$relationship',
+          ].join('\n')
+        : '\n$coreSettings';
 
     // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
     final conversationForMatch =
@@ -952,7 +978,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     );
 
     // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
-    final innerThoughtEnabled =
+    final innerThoughtEnabled = !diaryTask &&
+        !quoteTask &&
         await db.getKV('inner_thought_enabled') == 'true';
     String recentThoughtsContext = '';
     if (innerThoughtEnabled && history.isNotEmpty) {
@@ -968,19 +995,23 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
     // 构建分层系统提示
     // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
-    final stableSystemPrompt = _buildSystemPrompt(bot, activeGame) +
-        presetCategoryContext +
-        (innerThoughtEnabled
-            ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
-            : '');
+    final stableSystemPrompt = diaryTask
+        ? buildDiarySystemPrompt(bot)
+        : quoteTask
+            ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
+            : _buildSystemPrompt(bot, activeGame) +
+                presetCategoryContext +
+                (innerThoughtEnabled
+                    ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
+                    : '');
 
     // 可更新身份档案随动态上下文放在历史之后，保持历史前缀稳定。
 
     // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
     final dynamicContext = [
       profileContext,
-      skillContext,
-      toolContext,
+      if (!diaryTask && !quoteTask) skillContext,
+      if (!diaryTask && !quoteTask) toolContext,
       if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
       if (allowTools && !allowSticker) '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
       if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
@@ -988,9 +1019,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         '【当前会话约束】${extraSystemPrompt.trim()}',
       _safetyContext(text),
       lifeContext,
-      deviceContextPrompt,
-      emotionContext,
-      recentThoughtsContext,
+      if (!diaryTask && !quoteTask) deviceContextPrompt,
+      if (!diaryTask && !quoteTask) emotionContext,
+      if (!diaryTask && !quoteTask) recentThoughtsContext,
       memoryContextHint, // 第三层增强：记忆库候选列表
     ].where((item) => item.trim().isNotEmpty).join('\n\n');
 
@@ -1491,12 +1522,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (statusCode == 200 && errorBody.isNotEmpty) {
         final json = jsonDecode(errorBody);
         final message = json['choices']?[0]?['message'];
-        replyText = _extractChatContent(json);
+        replyText = (diaryTask || quoteTask)
+            ? diaryResponseContent(message)
+            : _extractChatContent(json);
 
         // 提取内心独白（支持 <inner_thought> 和旧的 <think> 标签）
         final rawContent =
             message is Map ? message['content']?.toString() : null;
-        if (rawContent != null) {
+        if (!diaryTask && !quoteTask && rawContent != null) {
           // 优先检测新格式 <inner_thought>
           if (rawContent.contains('<inner_thought>')) {
             final startTag = rawContent.indexOf('<inner_thought>');
@@ -1653,6 +1686,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         // to drive new state transitions.
         String mood =
             toolMood ?? await EmotionStateService.instance.currentMood(botId);
+        if (diaryTask) {
+          final diary = parseDiaryResponse(replyText);
+          if (diary == null) {
+            return {
+              'success': false,
+              'error': '日记响应缺少有效正文，未保存任务分析或内心独白',
+              'error_code': 'invalid_diary_response',
+            };
+          }
+          return {'success': true, 'reply': diary, 'usage': usage};
+        }
         final rawReply = replyText;
         replyText = _cleanVisibleReply(rawReply);
         final wantsSources = _userExplicitlyRequestedSources(text);
@@ -2824,7 +2868,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final lastDate = await db.getKV('quote_date_$botId');
     final lastQuote = await db.getKV('quote_text_$botId');
 
-    if (lastDate == todayStr && lastQuote != null) return lastQuote;
+    if (lastDate == todayStr && lastQuote != null)
+      return singleDailyQuote(lastQuote);
 
     final bots = await db.getAllBots();
     final bot = bots.firstWhere((b) => b['id'] == botId, orElse: () => {});
@@ -2844,20 +2889,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final res = await sendMessage(
       botId: botId,
       priority: false,
+      quoteTask: true,
       text:
-          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成一句全天通用的「今日一言」。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何"正好X个字"等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。\n\n【近三天已用文案】\n$recentQuotes\n\n【去重要求】\n1. 不能与近三天文案重复、高度近似或仅替换个别词语\n2. 主题内容不要和近三天一样：如果近三天都在写某个具体话题（如看番、游戏、阅读、运动、天气、心情等），今天就换个不同的角度和内容\n3. 可以写各种主题，但要有变化和新鲜感，避免连续多天围绕同一个话题\n4. 保持你的人设特点（说话方式、性格、态度），但每天的内容要有所不同',
+          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成且仅生成一条、一个句子、单行的「今日一言」。绝对禁止一次生成两条、多条、备选文案、编号列表或追加第二句话。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何"正好X个字"等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。\n\n【近三天已用文案】\n$recentQuotes\n\n【去重要求】\n1. 不能与近三天文案重复、高度近似或仅替换个别词语\n2. 主题内容不要和近三天一样：如果近三天都在写某个具体话题（如看番、游戏、阅读、运动、天气、心情等），今天就换个不同的角度和内容\n3. 可以写各种主题，但要有变化和新鲜感，避免连续多天围绕同一个话题\n4. 保持你的人设特点（说话方式、性格、态度），但每天的内容要有所不同',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
+      allowTools: false,
+      allowStickers: false,
+      forceSingleReply: true,
+      extraSystemPrompt: '这是独立的今日一言任务：只返回一个句子，且只能一条；禁止备选、列表、第二条和任何分析。',
     );
     if (res['success'] == true) {
-      var quote = res['reply']?.toString().trim() ?? '';
-      // 即便模型仍然自带“今日一言：”前缀，也只保留最终内容，杜绝界面重复显示标题。
-      quote = quote
-          .replaceFirst(RegExp(r'^今日一言\s*[:：]\s*'), '')
-          .replaceAll(RegExp(r'^[「『]|今日一言', caseSensitive: false), '')
-          .trim();
-      final normalized = quote.isEmpty ? '今天也要开心度过哦。' : quote;
+      final normalized = singleDailyQuote(res['reply']?.toString() ?? '');
       await db.setKV('quote_date_$botId', todayStr);
       await db.setKV('quote_text_$botId', normalized);
       // 同时写入带日期后缀的 key，供“近三天去重”按日期查询命中，

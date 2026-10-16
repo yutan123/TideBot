@@ -1,3 +1,5 @@
+import 'send_voice_cooldown.dart';
+import 'chat_typing_state.dart';
 import 'chat_stream_pacing.dart';
 import 'chat_message_display.dart';
 import 'dart:io';
@@ -121,6 +123,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   final ScrollController _scrollC = ScrollController();
   List<Map<String, dynamic>> _msgs = [];
   bool _isRecording = false;
+  final _sendVoiceCooldown = SendVoiceCooldown();
   bool _loading = false;
   bool _typing = false;
   bool _msgsLoading = true;
@@ -172,18 +175,35 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String _queuedText = '';
   bool _queued = false;
 
-  Future<void> _setTypingState(bool value) async {
+  ChatTypingLease? _typingLease;
+  void _setTypingState(bool value) {
     final botId = _bot['id']?.toString() ?? '';
     if (botId.isEmpty) return;
-    if (mounted) setState(() => _typing = value);
-    await DBManager().setKV('chat_typing_$botId', value ? 'true' : 'false');
+    if (value) {
+      if (_typingLease == null || _typingLease!.isClosed) {
+        _typingLease = ChatTypingState.instance.begin(botId);
+      }
+    } else {
+      _typingLease?.close();
+      _typingLease = null;
+    }
+    _refreshTypingState();
   }
 
-  Future<void> _restoreTypingState() async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-    final active = await DBManager().getKV('chat_typing_$botId') == 'true';
-    if (mounted && active) setState(() => _typing = true);
+  void _refreshTypingState() {
+    final active =
+        ChatTypingState.instance.isTyping(_bot['id']?.toString() ?? '');
+    if (mounted && _typing != active) setState(() => _typing = active);
+  }
+
+  void _refreshVoiceCooldown() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _sendFromComposer() async {
+    // Arm before _send clears the composer and swaps Send for the microphone.
+    _sendVoiceCooldown.markSend();
+    await _send();
   }
 
   void _msgChanged() {
@@ -195,6 +215,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _bot = Map.from(widget.botData);
+    _sendVoiceCooldown.addListener(_refreshVoiceCooldown);
     _highlightedMessageId = widget.initialMessageId;
     unawaited(
         MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
@@ -222,7 +243,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
     _chatEvents = ChatEventBus.instance.events.listen(_onChatEvent);
     _loadMsgs();
-    unawaited(_restoreTypingState());
+    ChatTypingState.instance.addListener(_refreshTypingState);
+    _refreshTypingState();
     _loadBg();
     _loadChatPreferences();
     // Proactive replies are scheduled by the persistent background service.
@@ -246,6 +268,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
+    _sendVoiceCooldown.removeListener(_refreshVoiceCooldown);
+    _sendVoiceCooldown.dispose();
+    ChatTypingState.instance.removeListener(_refreshTypingState);
+    // A real request may still finish and persist its reply after navigation.
+    // Its finally block releases the lease; a new process never inherits it.
+    if (!_loading) {
+      _typingLease?.close();
+      _typingLease = null;
+    }
     unawaited(
         MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     WidgetsBinding.instance.removeObserver(this);
@@ -1120,7 +1151,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final streamSpeed =
           (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
               .clamp(1, 100);
-      await _setTypingState(true);
+      _setTypingState(true);
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
@@ -1276,7 +1307,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       for (final message in _msgs) {
         message.remove('is_streaming');
       }
-      await _setTypingState(false);
+      _setTypingState(false);
       if (mounted) {
         setState(() => _loading = false);
         _scrollDown();
@@ -1408,7 +1439,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       setState(() => _loading = true);
       _scrollDown();
     }
-    await _setTypingState(true);
+    _setTypingState(true);
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1450,17 +1481,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         forceSingleReply: true,
       );
     } finally {
-      // _send owns the typing marker after the transcription handoff. If
-      // transcription fails before that handoff, clear the persisted state here.
-      if (_loading) {
-        await _setTypingState(false);
-        if (mounted) setState(() => _loading = false);
-      }
+      // Always release, including an early return/failed handoff to _send.
+      // Closing an already released lease is safe and never clears another owner.
+      _setTypingState(false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   // ========== 录音 ==========
   Future<void> _toggleRec() async {
+    if (!_isRecording && _sendVoiceCooldown.isBlocked) return;
     try {
       if (_isRecording) {
         _recTimer?.cancel();
@@ -1512,6 +1542,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       if (!await AppPermissions.microphone(context)) return;
+      // Permission dialogs can outlive a Send tap; recheck before starting.
+      if (!mounted || _sendVoiceCooldown.isBlocked) return;
 
       final dir = await getApplicationDocumentsDirectory();
       final path =
@@ -4091,7 +4123,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                               key: const ValueKey('send'),
                               tooltip: '发送',
                               splashRadius: 22,
-                              onPressed: _send,
+                              onPressed: _sendFromComposer,
                               icon: Container(
                                 width: 34,
                                 height: 34,
@@ -4106,7 +4138,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           : IconButton(
                               key: const ValueKey('record'),
                               tooltip: _isRecording ? '结束录音' : '录音',
-                              onPressed: _toggleRec,
+                              onPressed:
+                                  !_isRecording && _sendVoiceCooldown.isBlocked
+                                      ? null
+                                      : _toggleRec,
                               icon: Icon(Icons.mic_rounded,
                                   size: 22,
                                   color: _isRecording
