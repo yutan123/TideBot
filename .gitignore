@@ -49,3 +49,19 @@ app.*.map.json
 /android/app/release
 .analysis-result
 .test-result
+
+# Downloaded reference projects and retired Android bootstrap files
+/.reference/
+/custom_android/
+/.github/workflows/generate_flutter_shell.yml
+
+# Temporary files and locally generated Android packages
+/tmp/
+/temp/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.apk
+*.aab
