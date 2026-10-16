@@ -166,7 +166,7 @@ class _BackgroundAppPreview extends StatelessWidget {
     final useGlass = hasImage && enableLiquidGlass;
     final card = useGlass
         ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
-        : theme.surface.withValues(alpha: .92);
+        : theme.glass.withValues(alpha: .7);
 
     return AspectRatio(
       aspectRatio: .72,
@@ -433,7 +433,7 @@ class _ControlSurface extends StatelessWidget {
               SwitchListTile(
                 secondary: Icon(Icons.blur_on_rounded, color: theme.primary),
                 title: const Text('启用液态玻璃'),
-                subtitle: const Text('毛玻璃半透明效果'),
+                subtitle: const Text('开启流光折射；关闭后保留常规卡片和按钮样式'),
                 value: enableLiquidGlass,
                 onChanged: onLiquidGlassChanged,
               ),

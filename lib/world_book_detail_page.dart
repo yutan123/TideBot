@@ -1362,7 +1362,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     return Container(
       height: 44,
       decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
+        color: theme.useLiquidGlass
             ? theme.glass.withValues(alpha: theme.isDark ? .34 : .50)
             : theme.surfaceVariant.withValues(alpha: .72),
         borderRadius: BorderRadius.circular(16),
@@ -1683,7 +1683,7 @@ class _GlassPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final glass = theme.hasGlobalBackground;
+    final glass = theme.useLiquidGlass;
     final content = Container(
       padding: padding,
       decoration: BoxDecoration(

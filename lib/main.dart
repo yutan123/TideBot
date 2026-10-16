@@ -841,6 +841,15 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
           theme: ThemeData(
             fontFamily: 'TideFont',
             brightness: Brightness.light,
+            pageTransitionsTheme: tidePageTransitionsTheme,
+            colorScheme: ColorScheme.light(
+              primary: tideTheme.primary,
+              secondary: tideTheme.primaryLight,
+              surface: tideTheme.surface,
+              onSurface: tideTheme.textStrong,
+              surfaceContainerHighest: tideTheme.surfaceVariant,
+              onSurfaceVariant: tideTheme.textWeak,
+            ),
             scaffoldBackgroundColor: Colors.transparent,
             appBarTheme: const AppBarTheme(
               backgroundColor: Colors.transparent,
@@ -854,6 +863,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
           darkTheme: ThemeData(
             fontFamily: 'TideFont',
             brightness: Brightness.dark,
+            pageTransitionsTheme: tidePageTransitionsTheme,
             scaffoldBackgroundColor: Colors.transparent,
             colorScheme: ColorScheme.dark(
               primary: tideTheme.primary,
@@ -1241,13 +1251,13 @@ class _JellyDockState extends State<JellyDock>
       clipBehavior: Clip.none,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
-        color: theme.hasGlobalBackground
+        color: theme.useLiquidGlass
             ? Colors.transparent
             : (isDark
                 ? const Color(0xB9172A31)
                 : Colors.white.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(28),
-        border: theme.hasGlobalBackground
+        border: theme.useLiquidGlass
             ? null
             : Border.all(
                 color: isDark
@@ -1255,7 +1265,7 @@ class _JellyDockState extends State<JellyDock>
                     : Colors.white.withValues(alpha: 0.25),
                 width: 0.5,
               ),
-        boxShadow: theme.hasGlobalBackground
+        boxShadow: theme.useLiquidGlass
             ? null
             : [
                 BoxShadow(
@@ -1281,7 +1291,7 @@ class _JellyDockState extends State<JellyDock>
                     width: _width.value,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: theme.hasGlobalBackground
+                      color: theme.useLiquidGlass
                           ? (theme.isDark
                               ? const Color(0x261D2C33)
                               : const Color(0x24FFFFFF))
@@ -1289,11 +1299,11 @@ class _JellyDockState extends State<JellyDock>
                               alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
                             ),
                       borderRadius: BorderRadius.circular(20),
-                      border: theme.hasGlobalBackground
+                      border: theme.useLiquidGlass
                           ? Border.all(
                               color: Colors.white.withValues(alpha: .34))
                           : null,
-                      boxShadow: theme.hasGlobalBackground
+                      boxShadow: theme.useLiquidGlass
                           ? [
                               BoxShadow(
                                 color: Colors.black.withValues(alpha: .12),
@@ -1315,7 +1325,7 @@ class _JellyDockState extends State<JellyDock>
                               : null),
                     ),
                   );
-                  final selectedPill = theme.hasGlobalBackground
+                  final selectedPill = theme.useLiquidGlass
                       ? TideLiquidGlass.accentCapsule(
                           radius: 20,
                           child: pill,

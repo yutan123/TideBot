@@ -4,6 +4,7 @@ import 'assistant_output_guard.dart';
 import 'model_image.dart';
 import 'bot_image_tool.dart';
 import 'bot_image_request.dart';
+import 'user_image_edit_tool.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -840,6 +841,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final effectiveImagePaths = imagePaths.isNotEmpty
         ? imagePaths
         : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
+    // Number spaces are explicit: current attachments start at 1 independently
+    // of the existing historical image numbers. Both maps live for one request.
+    final currentImages = <int, String>{
+      for (var i = 0; i < effectiveImagePaths.length; i++)
+        i + 1: effectiveImagePaths[i],
+    };
+    final currentImageNumbers = currentImages.keys.toList();
     final inspectableImages = <int, String>{};
     final imageNumberByPath = <String, int>{};
     void registerHistoricalImage(String path) {
@@ -907,6 +915,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             requireSticker: allowSticker,
             stickerEmotions: stickerEmotions,
             inspectableImageNumbers: inspectableImageNumbers,
+            currentImageNumbers: currentImageNumbers,
           )
         : '';
     final skillSections = <String>[];
@@ -1073,7 +1082,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (effectiveImagePaths.isNotEmpty) {
         final chunks = <String>[
           for (var index = 0; index < effectiveImagePaths.length; index++)
-            '[本轮图片${effectiveImagePaths.length > 1 ? ' ${index + 1}' : ''}]',
+            '[本轮图片#${index + 1}]（edit_user_image: source=current, image_number=${index + 1}）',
         ];
         final caption = text.trim();
         final content = [
@@ -1201,6 +1210,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               allowSticker: stickerEmotions.isNotEmpty,
               stickerTypes: stickerEmotions.toSet(),
               inspectableImageNumbers: inspectableImageNumbers,
+              currentImageNumbers: currentImageNumbers,
             )
           : const <Map<String, dynamic>>[];
       _logRequestPrefix('$botId|$providerId|$modelName', messages, tools);
@@ -1464,6 +1474,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             allowedStickerTypes:
                 allowSticker ? stickerEmotions.toSet() : const {},
             inspectableImages: inspectableImages,
+            currentImages: currentImages,
           );
         }
       } else {
@@ -1585,6 +1596,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               allowedStickerTypes:
                   allowSticker ? stickerEmotions.toSet() : const {},
               inspectableImages: inspectableImages,
+              currentImages: currentImages,
             );
           }
         }
@@ -1707,7 +1719,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final hasInnerThought = innerThought?.isNotEmpty == true;
         final segmented = !forceSingleReply &&
             audioPath == null &&
-            !hasInnerThought &&
             (await db.getKV('segmented_reply_enabled')) != 'false';
         final segments =
             segmented ? _replySegments(replyText) : <String>[replyText];
@@ -3147,6 +3158,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String prompt,
     bool force = false,
     bool usePortraitReference = false,
+    UserImageEditSelection? userImageEdit,
   }) async {
     if ((!force && !_needsImageGeneration(prompt)) ||
         await db.getKV('bot_image_generation_enabled') == 'false') return null;
@@ -3171,24 +3183,30 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       AppLogService.instance.add('IMAGE_GEN', '生图模型 baseUrl 为空');
       return null;
     }
-    final styleRaw = (await db.getKV('bot_image_style') ?? '').trim();
-    final imagePrompt = _imagePromptWithStyle(prompt, styleRaw);
+    // Temporary edits send the model-authored prompt byte-for-byte. Do not
+    // read bot style, outfit or portrait reference settings in this branch.
+    final imagePrompt = userImageEdit?.prompt ??
+        _imagePromptWithStyle(
+            prompt, (await db.getKV('bot_image_style') ?? '').trim());
+    final isImageEdit = userImageEdit != null || usePortraitReference;
     try {
-      final referencePath = usePortraitReference
-          ? (await db.getKV('bot_image_reference_$botId') ?? '').trim()
-          : '';
-      if (usePortraitReference && referencePath.isEmpty) {
+      final referencePath = userImageEdit?.path ??
+          (usePortraitReference
+              ? (await db.getKV('bot_image_reference_$botId') ?? '').trim()
+              : '');
+      if (isImageEdit && referencePath.isEmpty) {
         AppLogService.instance.add('IMAGE_GEN', '已选择图改，但未设置人像参考图，取消请求');
         return null;
       }
       final reference =
-          usePortraitReference ? await modelImageBytes(referencePath) : null;
+          isImageEdit ? await modelImageBytes(referencePath) : null;
       AppLogService.instance.addJson('IMAGE_GEN', '开始请求生图', {
         'bot_id': botId,
-        'mode': usePortraitReference ? 'image_edit' : 'text_to_image',
-        'use_portrait_reference': usePortraitReference,
-        'endpoint':
-            '$baseUrl/images/${usePortraitReference ? 'edits' : 'generations'}',
+        'mode': userImageEdit != null
+            ? 'temporary_image_edit'
+            : (usePortraitReference ? 'image_edit' : 'text_to_image'),
+        'use_portrait_reference': userImageEdit == null && usePortraitReference,
+        'endpoint': '$baseUrl/images/${isImageEdit ? 'edits' : 'generations'}',
         'model': provider['model'],
         'prompt': imagePrompt,
       });
@@ -3198,6 +3216,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         apiKey: provider['api_key']?.toString() ?? '',
         prompt: imagePrompt,
         reference: reference,
+        applyPortraitInstructions: userImageEdit == null,
       );
       final client = http.Client();
       late http.Response response;
@@ -3293,6 +3312,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     Set<String> requiredToolNames = const {},
     Set<String> allowedStickerTypes = const {},
     Map<int, String> inspectableImages = const {},
+    Map<int, String> currentImages = const {},
   }) async {
     final completedTools = <String>{};
 
@@ -3356,6 +3376,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           call: call,
           allowedStickerTypes: allowedStickerTypes,
           inspectableImages: inspectableImages,
+          currentImages: currentImages,
         );
       } on AICancelledException {
         rethrow;
@@ -3526,6 +3547,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     bool allowSilence = true,
     Set<String> stickerTypes = const {},
     List<int> inspectableImageNumbers = const [],
+    List<int> currentImageNumbers = const [],
   }) async {
     final tools = <Map<String, dynamic>>[];
     if (requireEmotion) {
@@ -3561,6 +3583,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               .trim()
               .isNotEmpty;
       tools.add(botImageToolSchema(hasPortraitReference: hasPortraitReference));
+      if (currentImageNumbers.isNotEmpty ||
+          inspectableImageNumbers.isNotEmpty) {
+        tools.add(userImageEditToolSchema(
+          currentImageNumbers: currentImageNumbers,
+          historyImageNumbers: inspectableImageNumbers,
+        ));
+      }
     }
     tools.add({
       'type': 'function',
@@ -4147,6 +4176,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required Map<String, dynamic> call,
     Set<String> allowedStickerTypes = const {},
     Map<int, String> inspectableImages = const {},
+    Map<int, String> currentImages = const {},
   }) async {
     final function = call['function'];
     if (function is! Map)
@@ -4500,6 +4530,47 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         },
       };
     }
+    if (name == 'edit_user_image') {
+      try {
+        final selection = resolveUserImageEdit(
+          args,
+          currentImages: currentImages,
+          historyImages: inspectableImages,
+        );
+        if (!await File(selection.path).exists()) {
+          return {
+            'result': {
+              'ok': false,
+              'error':
+                  '所选 ${selection.source} 图片#${selection.imageNumber} 文件不存在或已失效，图片未修改，请让用户重新发送。',
+            },
+          };
+        }
+        final path = await _generateImageIfAuthorized(
+          db: db,
+          botId: botId,
+          prompt: selection.prompt,
+          force: true,
+          userImageEdit: selection,
+        );
+        return {
+          'result': {
+            'ok': path != null,
+            'source': selection.source,
+            'image_number': selection.imageNumber,
+            'mode': 'temporary_image_edit',
+            if (path != null) 'image_path': path,
+            'message': path == null
+                ? '原图修改失败：请检查生图开关、模型配置及提供商图生图支持；图片未发送，禁止声称已修改，不得退回文生图冒充结果。'
+                : '原图修改成功，将作为聊天图片发送。临时参考仅用于本次请求，永久参考图未变更。',
+          },
+        };
+      } on FormatException catch (error) {
+        return {
+          'result': {'ok': false, 'error': error.message},
+        };
+      }
+    }
     if (name == 'generate_image') {
       var prompt = args['prompt']?.toString().trim() ?? '';
       if (prompt.isEmpty) {
@@ -4642,13 +4713,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     bool requireSticker = false,
     List<String> stickerEmotions = const [],
     List<int> inspectableImageNumbers = const [],
+    List<int> currentImageNumbers = const [],
   }) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
       final style = (await db.getKV('bot_image_style') ?? '写实').trim();
       final styleRule = style.isEmpty || style == '不选择'
           ? '图片风格由你根据用户需求自行决定。'
-          : '所有图片必须采用“$style”风格。';
+          : '使用 generate_image 生成的图片必须采用“$style”风格；此设置不适用于 edit_user_image。';
       final hasPortraitReference =
           (await db.getKV('bot_image_reference_$botId') ?? '')
               .trim()
@@ -4656,8 +4728,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final referenceRule =
           hasPortraitReference ? portraitReferenceRule : '当前未设置人像参考图，使用文生图。';
       parts.add(
-        '【已授权工具：生图】当用户明确需要照片、图片、插画、绘制或创作视觉内容时，必须调用 generate_image，不得只用文字描述代替；当图片能明显帮助当前回答时也可以主动调用。$styleRule $referenceRule 不要声称已生成不存在的图片。',
+        '【已授权工具：生图】创作新图片或机器人人像使用 generate_image；编辑用户已有图片必须使用 edit_user_image，禁止用 generate_image 代替原图修改。不得只用文字描述代替实际生图；当图片能明显帮助当前回答时也可以主动调用 generate_image。以下画风和人像参考规则仅适用于 generate_image：$styleRule $referenceRule 不要声称已生成不存在的图片。',
       );
+    }
+    if (await db.getKV('bot_image_generation_enabled') != 'false' &&
+        (currentImageNumbers.isNotEmpty ||
+            inspectableImageNumbers.isNotEmpty)) {
+      parts.add(userImageEditContext(
+        currentImageNumbers: currentImageNumbers,
+        historyImageNumbers: inspectableImageNumbers,
+      ));
     }
     if (await db.getKV('web_search_enabled') == 'true') {
       final provider = _normalizeSearchProvider(

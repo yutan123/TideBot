@@ -250,7 +250,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     WidgetsBinding.instance.removeObserver(this);
     _chatEvents?.cancel();
-    _streamDisplayTimer?.cancel();
     _deferredPersistedMessageIds.clear();
     _msgC.removeListener(_msgChanged);
     _inputFocus.removeListener(_handleInputFocus);
@@ -283,6 +282,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         : Map<String, dynamic>.from(event.message!);
     final id = event.messageId ?? row?['id']?.toString() ?? '';
     if (row == null || id.isEmpty) return;
+    // Persistence events arrive before sendMessage returns its final segments.
+    // Foreground replies belong to the display queue until it finishes.
+    if (_loading && row['role'] == 'assistant') return;
     final index =
         _msgs.indexWhere((message) => message['id']?.toString() == id);
     if (index < 0 && event.type != ChatEventType.inserted) return;
@@ -333,7 +335,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 触发大量顺序数据库查询并造成列表首帧卡顿。
       print('_loadMsgs success: got ${msgs.length} messages');
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
-      if (mounted && revision == _messagesRevision) {
+      if (mounted && !_loading && revision == _messagesRevision) {
         setState(() {
           final normalized = msgs;
           final byId = <String, Map<String, dynamic>>{
@@ -452,7 +454,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     });
   }
 
-  Timer? _streamDisplayTimer;
   int _messagesRevision = 0;
   // IDs already persisted for the current foreground reply but not yet owned by
   // a visible bubble. The periodic database refresh must not append them early.
@@ -465,7 +466,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (botId.isEmpty) return;
       final revision = _messagesRevision;
       final fresh = await DBManager().queryMessages(botId);
-      if (!mounted || revision != _messagesRevision) return;
+      if (!mounted || _loading || revision != _messagesRevision) return;
       final freshById = <String, Map<String, dynamic>>{
         for (final message in fresh) message['id']?.toString() ?? '': message,
       };
@@ -1111,146 +1112,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ? preparedContext
               : '${_emojiToModelText(text)}\n$preparedContext');
 
-      // AIManager reads persisted, role-typed chat_history itself. _msgs contains
-      // stream placeholders and animation-only segments, so it must not be reused
-      // as a model transcript.
+      // AIManager reads persisted, role-typed history. Partially revealed UI
+      // rows must never be reused as a model transcript.
       debugPrint('[send] request start bot=$botId model=$cm');
       final db = DBManager();
-      final streamEnabled =
-          !forceSingleReply && (await db.getKV('streaming_output')) != 'false';
+      final streamEnabled = (await db.getKV('streaming_output')) != 'false';
+      final streamSpeed =
+          (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
+              .clamp(1, 100);
       await _setTypingState(true);
-      Map<String, dynamic>? streamingMessage;
-
-      // 使用 List<String> 作为可变缓冲区，解决闭包内字符串不可变问题
-      final pendingBuffer = <String>[];
-      final streamState = <String, dynamic>{
-        'insideInnerThought': false,
-        'streamStarted': false,
-        'streamComplete': false,
-      };
-
-      if (streamEnabled && mounted) {
-        streamingMessage = <String, dynamic>{
-          'id': 'stream_${DateTime.now().millisecondsSinceEpoch}',
-          'bot_id': botId,
-          'role': 'assistant',
-          'type': 'text',
-          'content': '',
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-          'is_streaming': true,
-        };
-        final speed =
-            (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ??
-                    50)
-                .clamp(1, 100);
-
-        // One visible character per tick, regardless of provider throughput.
-        final interval = chatStreamInterval(speed);
-        const batch = 1;
-
-        // 缓冲设置：聊天软件需要足够缓冲避免卡顿感
-        const initialBufferSize = 15; // 初始15字后开始显示
-        const minBufferSize = 8; // 运行中最少保持8字
-
-        _streamDisplayTimer?.cancel();
-        var displayMessage = streamingMessage;
-        _streamDisplayTimer = Timer.periodic(interval, (_) {
-          if (!mounted || myGen != _requestGen) {
-            _streamDisplayTimer?.cancel();
-            _streamDisplayTimer = null;
-            return;
-          }
-
-          final pendingDisplay = pendingBuffer.join();
-
-          // 初始缓冲：积累足够内容或提供商已完成后才开始
-          if (!streamState['streamStarted']) {
-            if (pendingDisplay.length < initialBufferSize &&
-                !streamState['streamComplete']) {
-              return;
-            }
-            streamState['streamStarted'] = true;
-          }
-
-          // 持续缓冲：缓冲不足且提供商未完成时，暂停等待补充
-          if (streamState['streamStarted'] &&
-              pendingDisplay.length < minBufferSize &&
-              !streamState['streamComplete']) {
-            return;
-          }
-
-          // 缓冲区清空后结束
-          if (pendingDisplay.isEmpty) {
-            if (streamState['streamComplete']) {
-              _streamDisplayTimer?.cancel();
-              _streamDisplayTimer = null;
-            }
-            return;
-          }
-
-          // 严格按batch取出，保持匀速
-          final (chunk, remaining) = takeChatStreamCharacter(pendingDisplay);
-          pendingBuffer.clear();
-          if (remaining.isNotEmpty) pendingBuffer.add(remaining);
-
-          // 实时标签处理和分段
-          final currentContent = displayMessage['content'].toString();
-          final combined = currentContent + chunk;
-
-          // 检测内心独白开始
-          if (!streamState['insideInnerThought']) {
-            final startIdx = combined.indexOf('<inner_thought>');
-            if (startIdx >= 0) {
-              streamState['insideInnerThought'] = true;
-              displayMessage['type'] = 'inner_thought';
-              final afterTag = combined.substring(startIdx + 15);
-              displayMessage['content'] = '';
-              setState(() => displayMessage['content'] = afterTag);
-              return;
-            }
-          }
-
-          // 内心独白中
-          if (streamState['insideInnerThought']) {
-            final endIdx = combined.indexOf('</inner_thought>');
-            if (endIdx >= 0) {
-              final thoughtContent = combined.substring(0, endIdx);
-              final afterTag = combined.substring(endIdx + 16);
-
-              displayMessage['content'] = thoughtContent;
-              displayMessage.remove('is_streaming');
-              streamState['insideInnerThought'] = false;
-
-              if (afterTag.trim().isNotEmpty || pendingBuffer.isNotEmpty) {
-                final newMsg = <String, dynamic>{
-                  'id': 'stream_text_${DateTime.now().millisecondsSinceEpoch}',
-                  'bot_id': botId,
-                  'role': 'assistant',
-                  'type': 'text',
-                  'content': afterTag,
-                  'timestamp': DateTime.now().millisecondsSinceEpoch + 1,
-                  'is_streaming': true,
-                };
-                setState(() {
-                  _msgs.add(newMsg);
-                  displayMessage = newMsg;
-                });
-              }
-              return;
-            }
-            setState(() => displayMessage['content'] = combined);
-          } else {
-            // 普通文本直接追加
-            setState(() => displayMessage['content'] = combined);
-          }
-
-          // 减少滚动频率避免卡顿
-          if (pendingBuffer.isEmpty || combined.length % 50 < batch) {
-            _scrollDown(animated: false);
-          }
-        });
-        setState(() => _msgs.add(streamingMessage!));
-      }
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
@@ -1264,21 +1134,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         forceSingleReply: forceSingleReply,
         useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
         cancellationToken: requestToken,
-        onDelta: streamEnabled
-            ? (delta) {
-                pendingBuffer.add(delta);
-              }
-            : null,
+        // Display timing is client-owned, including non-SSE providers and tools.
       )
           .timeout(requestTimeout, onTimeout: () {
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
       });
-
-      // 标记流式完成，让缓冲区能够完全清空
-      if (streamEnabled) {
-        streamState['streamComplete'] = true;
-      }
 
       if (result['success'] == true) {
         for (final item in userMessages) {
@@ -1286,11 +1147,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       }
       if (result['success'] != true) {
-        _streamDisplayTimer?.cancel();
-        _streamDisplayTimer = null;
-        if (streamingMessage != null && mounted) {
-          setState(() => _msgs.remove(streamingMessage));
-        }
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
         if (!noUserBubble || retryTarget != null) {
@@ -1318,10 +1174,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
 
       if (result['silent'] == true) {
-        _streamDisplayTimer?.cancel();
-        _streamDisplayTimer = null;
-        if (streamingMessage != null && mounted)
-          setState(() => _msgs.remove(streamingMessage));
         return;
       }
       if (retryTarget != null) {
@@ -1345,34 +1197,24 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _deferredPersistedMessageIds.addAll(persistedIds);
       if (myGen != _requestGen || requestToken.isCancelled) {
         _deferredPersistedMessageIds.removeAll(persistedIds);
-        if (streamingMessage != null && mounted) {
-          setState(() => _msgs.remove(streamingMessage));
-        }
         return;
       }
 
-      // Upstream completion must not replace the partially displayed bubble
-      // with the full persisted answer. Drain at the same client-owned pace.
-      while (streamEnabled &&
-          _streamDisplayTimer != null &&
-          mounted &&
-          myGen == _requestGen) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-      }
       if (!mounted || myGen != _requestGen) return;
-      _streamDisplayTimer?.cancel();
-      _streamDisplayTimer = null;
-      if (mounted) {
-        setState(() => _msgs.removeWhere((m) =>
-            m['id'] == streamingMessage?['id'] ||
-            m['id']?.toString().startsWith('stream_text_') == true));
-      }
       for (var index = 0; index < persisted.length; index++) {
         if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
         }
         if (!mounted || myGen != _requestGen) break;
         final row = persisted[index];
+        final fullContent = row['content']?.toString() ?? '';
+        final reveal = streamEnabled &&
+            (row['type'] == 'text' || row['type'] == 'inner_thought') &&
+            fullContent.isNotEmpty;
+        if (reveal) {
+          row['content'] = '';
+          row['is_streaming'] = true;
+        }
         setState(() {
           final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
           if (existing >= 0) {
@@ -1384,6 +1226,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _msgs = normalizeChatMessages(_msgs);
         });
         _scrollDown();
+        if (reveal) {
+          await for (final content
+              in chatStreamText(fullContent, streamSpeed)) {
+            if (!mounted || myGen != _requestGen) break;
+            setState(() => row['content'] = content);
+            _scrollDown(animated: false);
+          }
+          if (!mounted || myGen != _requestGen) return;
+          setState(() => row.remove('is_streaming'));
+        }
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
       await _syncLatestMessages();
@@ -1421,8 +1273,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
-      _streamDisplayTimer?.cancel();
-      _streamDisplayTimer = null;
+      for (final message in _msgs) {
+        message.remove('is_streaming');
+      }
       await _setTypingState(false);
       if (mounted) {
         setState(() => _loading = false);
@@ -3102,7 +2955,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Widget _chatHeader() {
     final theme = TideTheme.of(context);
-    final frosted = _hasBg || theme.hasGlobalBackground;
+    final frosted = _hasBg || theme.useLiquidGlass;
     return ClipRRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),

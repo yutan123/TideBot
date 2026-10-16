@@ -2,8 +2,31 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'db.dart';
+
+// Keep route transitions transparent so the app-wide background remains
+// visible while pages fade or move. Material's default surface scrim would
+// otherwise briefly cover it on both push and pop.
+const tidePageTransitionsTheme = PageTransitionsTheme(
+  builders: {
+    TargetPlatform.android: PredictiveBackPageTransitionsBuilder(
+      fallbackColor: Colors.transparent,
+    ),
+    TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+    TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+    TargetPlatform.windows: ZoomPageTransitionsBuilder(
+      backgroundColor: Colors.transparent,
+    ),
+    TargetPlatform.linux: ZoomPageTransitionsBuilder(
+      backgroundColor: Colors.transparent,
+    ),
+    TargetPlatform.fuchsia: FadeForwardsPageTransitionsBuilder(
+      backgroundColor: Colors.transparent,
+    ),
+  },
+);
 
 // ================= 全局主题系统 =================
 // 每个主题含日/夜两套主色，夜间更沉静、更护眼。
@@ -137,6 +160,7 @@ class TideTheme extends ChangeNotifier {
   double get globalBackgroundOpacity => _globalBackgroundOpacity;
   bool get hasGlobalBackground => _globalBackground.isNotEmpty;
   bool get enableLiquidGlass => _enableLiquidGlass;
+  bool get useLiquidGlass => hasGlobalBackground && enableLiquidGlass;
 
   void _setGlobalBackgroundImage(String path) {
     _configuredBackgroundPath = '';
@@ -338,7 +362,7 @@ class TideTheme extends ChangeNotifier {
       _backgroundLightness[region] ?? !isDark;
 
   Color _onBackgroundFor(_BackgroundRegion region, {bool weak = false}) {
-    if (!hasGlobalBackground) {
+    if (!useLiquidGlass) {
       return weak
           ? (isDark ? const Color(0xFF8A8F98) : const Color(0xFF636366))
           : (isDark ? const Color(0xFFECEDF0) : const Color(0xFF1C1C1E));

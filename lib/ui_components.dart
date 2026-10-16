@@ -303,14 +303,14 @@ class TideDialogs {
       width: MediaQuery.of(context).size.width * maxWidth,
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: theme.surface
-            .withValues(alpha: theme.hasGlobalBackground ? 0.96 : 0.94),
+        color:
+            theme.surface.withValues(alpha: theme.useLiquidGlass ? 0.96 : 0.94),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: theme.border, width: 0.5),
         boxShadow: [
           BoxShadow(
             color: Colors.black
-                .withValues(alpha: theme.hasGlobalBackground ? 0.30 : 0.16),
+                .withValues(alpha: theme.useLiquidGlass ? 0.30 : 0.16),
             blurRadius: 28,
             offset: const Offset(0, 12),
           ),
@@ -385,7 +385,7 @@ Future<T?> showTideSheet<T>(
                   width: double.infinity,
                   decoration: BoxDecoration(
                     color: theme.surface.withValues(
-                      alpha: theme.hasGlobalBackground ? 0.97 : 0.96,
+                      alpha: theme.useLiquidGlass ? 0.97 : 0.96,
                     ),
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(24),
@@ -406,7 +406,7 @@ Future<T?> showTideSheet<T>(
                         width: 40,
                         height: 4,
                         decoration: BoxDecoration(
-                          color: theme.hasGlobalBackground
+                          color: theme.useLiquidGlass
                               ? Colors.white.withValues(alpha: 0.55)
                               : Colors.grey.shade300,
                           borderRadius: BorderRadius.circular(2),
@@ -569,9 +569,7 @@ class GlassCard extends StatelessWidget {
         child: child,
       ),
     );
-    if (!liquid ||
-        !TideTheme.of(context).hasGlobalBackground ||
-        !TideTheme.of(context).enableLiquidGlass) return content;
+    if (!liquid || !TideTheme.of(context).useLiquidGlass) return content;
     return TideLiquidGlass(
       radius: radius,
       child: GestureDetector(
@@ -615,7 +613,7 @@ class FrostCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: transparent
                 ? Colors.transparent
-                : theme.hasGlobalBackground
+                : theme.useLiquidGlass
                     ? theme.glass.withValues(
                         alpha: theme.isDark ? 0.36 : 0.48,
                       )
@@ -634,9 +632,7 @@ class FrostCard extends StatelessWidget {
         ),
       ),
     );
-    if (!liquid ||
-        !TideTheme.of(context).hasGlobalBackground ||
-        !TideTheme.of(context).enableLiquidGlass) return card;
+    if (!liquid || !TideTheme.of(context).useLiquidGlass) return card;
     return Padding(
       padding: margin,
       child: TideLiquidGlass(

@@ -10,3 +10,14 @@ Duration chatStreamInterval(int speed) => Duration(
   final first = pending.characters.first;
   return (first, pending.substring(first.length));
 }
+
+/// Reveal a parsed segment at the user's pace, independently of provider chunks.
+Stream<String> chatStreamText(String text, int speed) async* {
+  final interval = chatStreamInterval(speed);
+  final visible = StringBuffer();
+  for (final character in text.characters) {
+    await Future<void>.delayed(interval);
+    visible.write(character);
+    yield visible.toString();
+  }
+}

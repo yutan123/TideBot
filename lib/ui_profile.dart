@@ -202,7 +202,7 @@ class _ProfilePageState extends State<ProfilePage> {
       ],
     );
     // 全局背景图下不显示卡片，直接返回内容
-    if (theme.hasGlobalBackground) {
+    if (theme.useLiquidGlass) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
         child: content,
@@ -239,7 +239,7 @@ class _ProfilePageState extends State<ProfilePage> {
       ],
     );
     // 全局背景图下不显示卡片
-    if (theme.hasGlobalBackground) {
+    if (theme.useLiquidGlass) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15)
             .copyWith(bottom: 10),
@@ -1617,7 +1617,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   _settingSwitch(
                     theme: theme,
                     title: '流式输出',
-                    help: '模型支持时逐步呈现回复；速度仅影响界面显示，不影响模型生成。',
+                    help: '按设定速度逐字呈现每段回复，不受提供商返回速度或流式支持影响。',
                     value: _streaming,
                     onChanged: (v) {
                       setState(() => _streaming = v);

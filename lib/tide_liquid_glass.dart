@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
@@ -60,7 +62,37 @@ class TideLiquidGlass extends StatefulWidget {
 }
 
 class _TideLiquidGlassState extends State<TideLiquidGlass>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+  late final AnimationController _flow = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 8),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncFlow();
+  }
+
+  @override
+  void didUpdateWidget(covariant TideLiquidGlass oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncFlow();
+  }
+
+  void _syncFlow() {
+    final enabled = widget.preset == TideGlassPreset.dock &&
+        TideTheme.of(context).useLiquidGlass &&
+        !MediaQuery.disableAnimationsOf(context) &&
+        TickerMode.valuesOf(context).enabled;
+    if (enabled && !_flow.isAnimating) {
+      _flow.repeat();
+    } else if (!enabled) {
+      _flow.stop();
+      _flow.value = 0;
+    }
+  }
+
   late final AnimationController _press = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 140),
@@ -69,6 +101,7 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
 
   @override
   void dispose() {
+    _flow.dispose();
     _press.dispose();
     super.dispose();
   }
@@ -76,20 +109,25 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    if (!theme.hasGlobalBackground || !theme.enableLiquidGlass) {
+    if (!theme.useLiquidGlass) {
       return _content();
     }
-    final settings = _settingsFor(theme);
     final isPremium = widget.premium || widget.preset != TideGlassPreset.base;
-    final glass = AdaptiveGlass(
-      shape: LiquidRoundedRectangle(borderRadius: widget.radius),
-      settings: settings,
-      quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
-      useOwnLayer: true,
-      allowElevation: isPremium,
-      isInteractive: widget.interactive,
-      clipExpansion: widget.clipExpansion,
+    // Animate the actual glass lighting, keeping navigation content out of
+    // per-frame rebuilds. The rotating light also moves the refracted rim.
+    final glass = AnimatedBuilder(
+      animation: _flow,
       child: _content(),
+      builder: (context, child) => AdaptiveGlass(
+        shape: LiquidRoundedRectangle(borderRadius: widget.radius),
+        settings: _settingsFor(theme),
+        quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
+        useOwnLayer: true,
+        allowElevation: isPremium,
+        isInteractive: widget.interactive,
+        clipExpansion: widget.clipExpansion,
+        child: child!,
+      ),
     );
     if (!widget.interactive) return glass;
     return GestureDetector(
@@ -135,7 +173,7 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
       blur: isPremium ? blur : 2.2,
       refractiveIndex: isPremium ? refractiveIndex : 1.06,
       chromaticAberration: isPremium ? chromaticAberration : .002,
-      lightAngle: 5.35,
+      lightAngle: 5.35 + _flow.value * math.pi * 2,
       lightIntensity: isPremium ? lightIntensity : .28,
       fresnelStrength: isPremium ? fresnelStrength : .34,
       saturation: 1.08,
