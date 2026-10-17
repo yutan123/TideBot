@@ -1,5 +1,7 @@
 import 'send_voice_cooldown.dart';
 import 'chat_typing_state.dart';
+import 'default_chat_background.dart';
+import 'app_log_service.dart';
 import 'chat_stream_pacing.dart';
 import 'chat_message_display.dart';
 import 'dart:io';
@@ -335,9 +337,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _loadBg() async {
-    final prefs = await SharedPreferences.getInstance();
-    final bg = prefs.getString('chat_bg_${_bot['id']}');
-    if (mounted) setState(() => _customBg = bg);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bg = prefs.getString('chat_bg_${_bot['id']}');
+      final exists = bg != null && bg.isNotEmpty && await File(bg).exists();
+      if (mounted) setState(() => _customBg = exists ? bg : null);
+    } catch (error) {
+      AppLogService.instance.add('ERROR', '读取聊天背景失败：$error');
+    }
   }
 
   void _loadChatPreferences() async {
@@ -2918,55 +2925,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         children: [
           Positioned.fill(
             child: effBg != null
-                ? Image.file(File(effBg), fit: BoxFit.cover)
+                ? Image.file(
+                    File(effBg),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => theme.hasGlobalBackground
+                        ? const SizedBox.expand()
+                        : const DefaultChatBackground(),
+                  )
                 : theme.hasGlobalBackground
                     ? const SizedBox.expand()
-                    : DecoratedBox(
-                        decoration: BoxDecoration(color: theme.bgColor),
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              left: -80,
-                              top: -60,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: 240,
-                                  height: 240,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      colors: [
-                                        theme.primaryLight
-                                            .withValues(alpha: 0.25),
-                                        Colors.transparent,
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              right: -60,
-                              bottom: 120,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: 260,
-                                  height: 260,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      colors: [
-                                        theme.primary.withValues(alpha: 0.15),
-                                        Colors.transparent,
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    : const DefaultChatBackground(),
           ),
           Column(
             children: [
@@ -2994,7 +2962,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         child: Container(
           color: frosted
               ? theme.glass.withValues(alpha: 0.15)
-              : theme.glass.withValues(alpha: 0.55),
+              : theme.hasGlobalBackground
+                  ? theme.glass.withValues(alpha: 0.55)
+                  : Colors.transparent,
           child: SafeArea(
             bottom: false,
             child: Container(

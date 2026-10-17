@@ -14,6 +14,9 @@ dependencies:
   # 本地存储与极密底座
   sqflite: ^2.3.0
   shared_preferences: ^2.2.3
+  # Keep the pre-migration Android bridge: newer Kotlin/JNI getAll bindings
+  # can fail at runtime before any saved preferences can be read.
+  shared_preferences_android: 2.4.25
   package_info_plus: ^8.3.0
   flutter_secure_storage: ^9.2.2
   path_provider: ^2.1.3
