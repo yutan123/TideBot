@@ -703,7 +703,8 @@ class BotVitalSignsService {
     final illness = s['illness'] ?? '';
 
     final sleepStatus = sleeping(s)
-        ? '\n【睡眠期间】现在是你的睡觉时间。对方发来了消息，你可以直接自然回复，也可以不回复；不回复必须调用 choose_silence，不输出正文。回复后短暂清醒，之后继续睡。不需要解释系统规则。'
+        ? sleepReplyGuidance(Map<String, dynamic>.from(s['sleep'] as Map),
+            now: DateTime.now().millisecondsSinceEpoch)
         : '';
 
     final sleepHistory = vitalList(s['sleep_history']);

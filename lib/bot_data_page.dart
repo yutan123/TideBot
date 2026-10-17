@@ -382,6 +382,7 @@ class _BotDataPageState extends State<BotDataPage> {
                 : RefreshIndicator(
                     onRefresh: load,
                     child: ListView(
+                        addRepaintBoundaries: false,
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                         children: [
                           Text('${widget.botName} 的生活轨迹',
@@ -396,6 +397,7 @@ class _BotDataPageState extends State<BotDataPage> {
                                   color: theme.textWeak, fontSize: 12)),
                           const SizedBox(height: 20),
                           GridView.builder(
+                              addRepaintBoundaries: false,
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
                               itemCount: 6,
@@ -411,6 +413,7 @@ class _BotDataPageState extends State<BotDataPage> {
                                   onTap: () => Navigator.push(
                                       context,
                                       MaterialPageRoute(
+                                          allowSnapshotting: false,
                                           builder: (_) => VitalDetailPage(
                                               botId: widget.botId,
                                               botName: widget.botName,

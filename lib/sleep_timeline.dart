@@ -69,7 +69,7 @@ class SleepTimeline extends StatelessWidget {
                 child: Semantics(
                   label: '睡眠时间线，${_clock(start)}至${_clock(end)}，点击查看时段',
                   child: CustomPaint(
-                    size: Size(constraints.maxWidth, 66),
+                    size: Size(constraints.maxWidth, 104),
                     painter: _SleepTrackPainter(
                         segments, theme.primary, awake, theme.divider),
                   ),
@@ -98,7 +98,9 @@ class _SleepTrackPainter extends CustomPainter {
     final duration = math.max(1, vitalInt(segments.last['end']) - start);
     final width = math.max(0.0, size.width - 8);
     final paint = Paint()..strokeCap = StrokeCap.round;
-    for (final y in [14.0, 48.0]) {
+    final awakeY = size.height * .17;
+    final sleepY = size.height * .80;
+    for (final y in [awakeY, sleepY]) {
       canvas.drawLine(
           Offset(4, y),
           Offset(size.width - 4, y),
@@ -111,14 +113,17 @@ class _SleepTrackPainter extends CustomPainter {
       final asleep = segment['state'] == '睡眠';
       final x1 = 4 + (vitalInt(segment['start']) - start) / duration * width;
       final x2 = 4 + (vitalInt(segment['end']) - start) / duration * width;
-      final y = asleep ? 48.0 : 14.0;
+      final y = asleep ? sleepY : awakeY;
       if (previousY != null && previousY != y) {
-        canvas.drawLine(
-            Offset(x1, previousY),
-            Offset(x1, y),
-            paint
-              ..color = sleepColor.withValues(alpha: .22)
-              ..strokeWidth = 1.3);
+        final connector = Paint()
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = 4.5
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [awakeColor, sleepColor],
+          ).createShader(Rect.fromLTRB(x1 - 3, awakeY, x1 + 3, sleepY));
+        canvas.drawLine(Offset(x1, previousY), Offset(x1, y), connector);
       }
       canvas.drawLine(
           Offset(x1, y),

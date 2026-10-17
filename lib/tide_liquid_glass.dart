@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'glass_motion_repaint.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'theme.dart';
@@ -80,9 +81,16 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
     _syncFlow();
   }
 
+  bool get _glassEnabled {
+    final theme = TideTheme.of(context);
+    return widget.preset == TideGlassPreset.dock
+        ? theme.useDockLiquidGlass
+        : theme.useLiquidGlass;
+  }
+
   void _syncFlow() {
     final enabled = widget.preset == TideGlassPreset.dock &&
-        TideTheme.of(context).useLiquidGlass &&
+        _glassEnabled &&
         !MediaQuery.disableAnimationsOf(context) &&
         TickerMode.valuesOf(context).enabled;
     if (enabled && !_flow.isAnimating) {
@@ -109,24 +117,45 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    if (!theme.useLiquidGlass) {
+    if (!_glassEnabled) {
       return _content();
     }
     final isPremium = widget.premium || widget.preset != TideGlassPreset.base;
     // Animate the actual glass lighting, keeping navigation content out of
     // per-frame rebuilds. The rotating light also moves the refracted rim.
-    final glass = AnimatedBuilder(
-      animation: _flow,
-      child: _content(),
-      builder: (context, child) => AdaptiveGlass(
-        shape: LiquidRoundedRectangle(borderRadius: widget.radius),
-        settings: _settingsFor(theme),
-        quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
-        useOwnLayer: true,
-        allowElevation: isPremium,
-        isInteractive: widget.interactive,
-        clipExpansion: widget.clipExpansion,
-        child: child!,
+    final route = ModalRoute.of(context);
+    final motion = <Listenable>[
+      if (route?.animation != null) route!.animation!,
+      if (route?.secondaryAnimation != null) route!.secondaryAnimation!,
+    ];
+    // Include outer scrolling too: a shrink-wrapped grid has its own idle position.
+    context.visitAncestorElements((element) {
+      if (element is StatefulElement && element.state is ScrollableState) {
+        motion.add((element.state as ScrollableState).position);
+      }
+      return true;
+    });
+    final glass = GlassMotionRepaint(
+      motion: Listenable.merge(motion),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(widget.radius),
+        clipBehavior: widget.clipExpansion == EdgeInsets.zero
+            ? Clip.antiAlias
+            : Clip.none,
+        child: AnimatedBuilder(
+          animation: _flow,
+          child: _content(),
+          builder: (context, child) => AdaptiveGlass(
+            shape: LiquidRoundedRectangle(borderRadius: widget.radius),
+            settings: _settingsFor(theme),
+            quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
+            useOwnLayer: true,
+            allowElevation: isPremium,
+            isInteractive: widget.interactive,
+            clipExpansion: widget.clipExpansion,
+            child: child!,
+          ),
+        ),
       ),
     );
     if (!widget.interactive) return glass;

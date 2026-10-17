@@ -553,6 +553,7 @@ class _SpacePageState extends State<SpacePage> {
               await Navigator.push(
                   context,
                   MaterialPageRoute(
+                      allowSnapshotting: false,
                       builder: (_) =>
                           BotDataPage(botId: _botId, botName: _botName)));
               if (mounted) await _refreshVitals();

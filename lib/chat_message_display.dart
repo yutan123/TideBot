@@ -1,3 +1,5 @@
+import 'chat_content.dart';
+
 /// Reconcile persisted thought rows with legacy thoughts attached to text rows.
 /// A reply group owns one thought; identical thoughts in different turns survive.
 List<Map<String, dynamic>> normalizeChatMessages(
@@ -21,7 +23,19 @@ List<Map<String, dynamic>> normalizeChatMessages(
   final explicit = rows.where((m) => m['type'] == 'inner_thought').toList();
   final result = <Map<String, dynamic>>[];
   final thoughtGroups = <String>{};
-  for (final row in rows) {
+  for (final original in rows) {
+    var row = original;
+    if (row['role'] == 'assistant' && row['type'] == 'text') {
+      final parsed = parseChatReply(row['content']?.toString() ?? '');
+      if (parsed.text.isEmpty) continue;
+      row = {
+        ...row,
+        'content': parsed.text,
+        if ((row['inner_thought']?.toString().trim() ?? '').isEmpty &&
+            parsed.innerThought != null)
+          'inner_thought': parsed.innerThought,
+      };
+    }
     final group = row['reply_group_id']?.toString() ?? '';
     if (row['type'] == 'inner_thought') {
       if (group.isNotEmpty && !thoughtGroups.add(group)) continue;

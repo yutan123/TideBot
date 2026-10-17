@@ -1,52 +1,157 @@
-// 流式渲染时的内心独白状态跟踪（用于非流式场景的 cleanChatContent）
-bool _insideInnerThought = false;
+class ChatReplyContent {
+  const ChatReplyContent(this.text, {this.innerThought});
+  final String text;
+  final String? innerThought;
+}
 
-String cleanChatContent(String value) {
-  // 先移除前缀
-  var cleaned = value.replaceFirst(
-    RegExp(r'^\s*(?:(?:data|event)\s*:\s*)?response\s*[:：]\s*',
+// Match task-planning openings with response-planning cues, not all English.
+const _planningOpenings = [
+  'given the ',
+  'considering the ',
+  'need to ',
+  'i need to ',
+  'we need to ',
+  'let me ',
+  'the user',
+  'analysis:',
+  'reasoning:',
+  'thinking:',
+  '分析：',
+  '思考：',
+  '用户的',
+  '用户问',
+  '我需要',
+  '首先需要',
+];
+
+bool _isPlanning(String text) {
+  final value = text.trimLeft().toLowerCase();
+  if (!_planningOpenings.any(value.startsWith)) return false;
+  final hasPlanning = RegExp(
+    r'\b(?:appropriate|suitable|should|must|need to|how to|craft|generate|formulate|ensure|considering)\b|(?:需要|应该|应当|分析|考虑|如何)',
+    caseSensitive: false,
+  ).hasMatch(value);
+  final hasMeta = RegExp(
+    r'\b(?:the user|user.s (?:query|request|message)|persona|character|system prompt|instructions?|(?:appropriate|suitable) response|(?:craft|generate|formulate) (?:a |the )?(?:reply|response))\b|(?:用户.{0,12}(?:问|消息|意图|要求)|角色|系统指令|回复策略|输出格式)',
+    caseSensitive: false,
+  ).hasMatch(value);
+  return hasPlanning && hasMeta;
+}
+
+String _replySource(String raw) => raw
+    .replaceFirst(
+      RegExp(r'^\s*(?:(?:data|event)\s*:\s*)?response\s*[:：]\s*',
+          caseSensitive: false),
+      '',
+    )
+    .replaceFirst(
+      RegExp(r'^\s*\[心情\s*[:：][^\]\n]*\]\s*'),
+      '',
+    )
+    .trim();
+
+/// Parse one complete/cumulative reply. No state is shared between requests.
+ChatReplyContent parseChatReply(String raw) {
+  var text = _replySource(raw);
+  // Keep examples of internal tags inside a real source-code block intact.
+  if (RegExp(r'^```(?!text\b|plaintext\b)[a-z][\w+-]*\s*\n',
+          caseSensitive: false)
+      .hasMatch(text)) {
+    return ChatReplyContent(text);
+  }
+  if (_isPlanning(text)) {
+    // Require an explicit final boundary instead of guessing where prose ends.
+    final boundary = RegExp(
+      r'<inner_thought\b|```(?:text|plaintext)?\s*\n|^(?:final(?: answer)?|answer|最终回答|正文)\s*[:：]\s*',
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(text);
+    if (boundary == null) return const ChatReplyContent('');
+    text = text.substring(boundary.start).replaceFirst(
+          RegExp(r'^(?:final(?: answer)?|answer|最终回答|正文)\s*[:：]\s*',
+              caseSensitive: false),
+          '',
+        );
+  }
+  // Unwrap presentation fences; keep actual source-code fences.
+  final fence = RegExp(r'^```(?:text|plaintext)?\s*\n([\s\S]*?)\n```\s*$',
+          caseSensitive: false)
+      .firstMatch(text);
+  if (fence != null) text = fence.group(1)!;
+  String? thought;
+  text = text.replaceAllMapped(
+    RegExp(
+        r'<(inner_thought|think|analysis|reasoning|tool_call)\b[^>]*>([\s\S]*?)</\1\s*>',
+        caseSensitive: false),
+    (match) {
+      if (match.group(1)!.toLowerCase() == 'inner_thought') {
+        final value = match.group(2)!.trim();
+        if (value.isNotEmpty && !_isPlanning(value)) thought = value;
+      }
+      return '';
+    },
+  );
+  text = text.replaceFirst(
+    RegExp(r'<(?:inner_thought|think|analysis|reasoning|tool_call)\b[\s\S]*$',
         caseSensitive: false),
     '',
   );
-
-  // 移除完整闭合的 tool_call 标签
-  cleaned = cleaned.replaceAll(
-    RegExp(r'<tool_call>.*?</tool_call>', dotAll: true),
-    '',
-  );
-
-  // 处理内心独白：状态跟踪，识别到开头标签就进入缓冲模式，直到闭合标签才清空
-  final buffer = StringBuffer();
-  var index = 0;
-
-  while (index < cleaned.length) {
-    if (_insideInnerThought) {
-      // 正在缓冲内心独白，寻找闭合标签
-      final endTag = cleaned.indexOf('</inner_thought>', index);
-      if (endTag >= 0) {
-        // 找到闭合标签，退出内心独白模式
-        _insideInnerThought = false;
-        index = endTag + '</inner_thought>'.length;
-      } else {
-        // 未找到闭合标签，剩余内容全部属于内心独白（等待下次流式片段）
-        break;
-      }
-    } else {
-      // 寻找开头标签
-      final startTag = cleaned.indexOf('<inner_thought>', index);
-      if (startTag >= 0) {
-        // 找到开头标签，先输出之前的正常内容
-        buffer.write(cleaned.substring(index, startTag));
-        // 进入内心独白模式
-        _insideInnerThought = true;
-        index = startTag + '<inner_thought>'.length;
-      } else {
-        // 没有开头标签，输出剩余所有内容
-        buffer.write(cleaned.substring(index));
-        break;
-      }
+  final partialTag = RegExp(r'<[^>]*$').firstMatch(text);
+  if (partialTag != null) {
+    final suffix = partialTag.group(0)!.toLowerCase();
+    if (['<inner_thought', '<think', '<analysis', '<reasoning', '<tool_call']
+        .any((tag) => tag.startsWith(suffix))) {
+      text = text.substring(0, partialTag.start);
     }
   }
+  text = text.replaceAll(
+      RegExp(r'<tool_call>[\s\S]*?</tool_call>', caseSensitive: false), '');
+  text = text.trim();
+  if (_isPlanning(text)) {
+    final finalReply = parseChatReply(text);
+    return ChatReplyContent(finalReply.text,
+        innerThought: thought ?? finalReply.innerThought);
+  }
+  return ChatReplyContent(text, innerThought: thought);
+}
 
-  return buffer.toString().trim();
+String cleanChatContent(String value) => parseChatReply(value).text;
+
+/// Hold ambiguous openings before they reach the UI; ordinary text streams.
+class ChatReplyStream {
+  final _raw = StringBuffer();
+  String _sent = '';
+  ChatReplyContent get content => parseChatReply(_raw.toString());
+
+  String add(String delta) {
+    _raw.write(delta);
+    final raw = _replySource(_raw.toString()).toLowerCase();
+    final visible = content.text.toLowerCase();
+    if (_planningOpenings.any((prefix) =>
+            prefix.startsWith(raw) ||
+            raw.startsWith(prefix) ||
+            prefix.startsWith(visible) ||
+            visible.startsWith(prefix)) ||
+        '[心情'.startsWith(raw) ||
+        raw.startsWith('[心情') ||
+        raw.startsWith('```') ||
+        '```'.startsWith(raw) ||
+        'response:'.startsWith(raw) ||
+        raw.startsWith('response:') ||
+        'data:'.startsWith(raw) ||
+        raw.startsWith('data:') ||
+        'event:'.startsWith(raw) ||
+        raw.startsWith('event:')) return '';
+    return _takeVisible();
+  }
+
+  String finish() => _takeVisible();
+
+  String _takeVisible() {
+    final visible = content.text;
+    if (!visible.startsWith(_sent)) return '';
+    final delta = visible.substring(_sent.length);
+    _sent = visible;
+    return delta;
+  }
 }

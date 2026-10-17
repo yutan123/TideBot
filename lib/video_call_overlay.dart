@@ -28,6 +28,15 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
   int _cameraIndex = 0;
   bool _busy = false;
   String? _error;
+  bool _suspended = false;
+  Future<void> _operations = Future<void>.value();
+
+  Future<T> _serialize<T>(Future<T> Function() operation) {
+    final result = _operations.then((_) => operation());
+    _operations =
+        result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
+  }
 
   bool get canSwitchCamera => _cameras.length > 1 && !_busy;
 
@@ -35,29 +44,35 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_initCameras());
+    unawaited(_serialize(_initCameras));
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
-      // 后台时释放摄像头，避免持续占用。
-      if (controller != null) {
+      _suspended = true;
+      unawaited(_serialize(() async {
+        final controller = _controller;
         _controller = null;
-        unawaited(controller.dispose());
         if (mounted) setState(() {});
-      }
-    } else if (state == AppLifecycleState.resumed &&
-        _controller == null &&
-        !_busy &&
-        _cameras.isNotEmpty) {
-      unawaited(_startCamera(_cameraIndex));
+        await controller?.dispose();
+      }));
+    } else if (state == AppLifecycleState.resumed) {
+      _suspended = false;
+      unawaited(_serialize(() async {
+        if (mounted &&
+            !_suspended &&
+            _controller == null &&
+            _cameras.isNotEmpty) {
+          await _startCamera(_cameraIndex);
+        }
+      }));
     }
   }
 
   Future<void> _initCameras() async {
+    if (!mounted) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -75,7 +90,8 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
       }
       final front = _cameras.indexWhere(
           (camera) => camera.lensDirection == CameraLensDirection.front);
-      await _startCamera(front == -1 ? 0 : front);
+      _cameraIndex = front == -1 ? 0 : front;
+      await _startCamera(_cameraIndex);
     } catch (error) {
       AppLogService.instance.add('VIDEO_CALL', '摄像头初始化失败：$error');
       if (mounted) {
@@ -88,50 +104,58 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
   }
 
   Future<void> _startCamera(int index) async {
-    if (index < 0 || index >= _cameras.length) return;
+    if (!mounted || _suspended || index < 0 || index >= _cameras.length) return;
     _busy = true;
     final previous = _controller;
     _controller = null;
-    if (mounted) setState(() {});
-    await previous?.dispose();
-    final controller = CameraController(
-      _cameras[index],
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.jpeg,
-    );
+    setState(() {});
+    CameraController? candidate;
     try {
+      await previous?.dispose();
+      if (!mounted || _suspended) return;
+      final controller = candidate = CameraController(
+        _cameras[index],
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
       await controller.initialize();
-      if (!mounted) {
+      if (!mounted || _suspended) {
         await controller.dispose();
         return;
       }
       setState(() {
         _controller = controller;
         _cameraIndex = index;
-        _busy = false;
         _error = null;
       });
     } catch (error) {
-      await controller.dispose();
+      await candidate?.dispose();
       AppLogService.instance.add('VIDEO_CALL', '摄像头启动失败：$error');
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = '摄像头启动失败';
-        });
-      }
+      if (mounted) setState(() => _error = '摄像头启动失败');
+    } finally {
+      _busy = false;
+      if (mounted) setState(() {});
     }
   }
 
-  /// 切换前后摄像头。
-  Future<void> switchCamera() async {
-    if (!canSwitchCamera) return;
-    await _startCamera((_cameraIndex + 1) % _cameras.length);
-  }
+  /// Serialize switching with capture and always select the opposite lens direction.
+  Future<void> switchCamera() => _serialize(() async {
+        if (!mounted || _suspended || _cameras.length < 2) return;
+        final direction = _cameras[_cameraIndex].lensDirection;
+        final target = direction == CameraLensDirection.front
+            ? CameraLensDirection.back
+            : CameraLensDirection.front;
+        final index =
+            _cameras.indexWhere((camera) => camera.lensDirection == target);
+        if (index >= 0) await _startCamera(index);
+      });
 
   /// 截取当前摄像头画面并保存为 JPEG，失败时返回 null。
-  Future<String?> captureFrame() async {
+  Future<String?> captureFrame() => _serialize(_captureFrame);
+
+  Future<String?> _captureFrame() async {
+    if (!mounted || _suspended) return null;
     final controller = _controller;
     if (_busy ||
         controller == null ||
@@ -160,9 +184,12 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    final controller = _controller;
-    _controller = null;
-    unawaited(controller?.dispose());
+    _suspended = true;
+    unawaited(_serialize(() async {
+      final controller = _controller;
+      _controller = null;
+      await controller?.dispose();
+    }));
     super.dispose();
   }
 
@@ -207,7 +234,8 @@ class VideoCallOverlayState extends State<VideoCallOverlay>
           fit: StackFit.expand,
           children: [
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 280),
+              // Do not retain a disposed camera texture during a cross-fade.
+              duration: Duration.zero,
               child: ready
                   ? KeyedSubtree(
                       key: ValueKey(_cameraIndex),

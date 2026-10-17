@@ -45,6 +45,37 @@ void main() {
     final segments = sleepSegments(night([]), until: start + 3600000);
     expect(segments.single['end'], start + 3600000);
   });
+  test('sleep reply guidance changes at the second overnight awakening', () {
+    final sleep = night([
+      {'start': start + 600000, 'end': start + 1200000},
+      {'start': start + 3600000, 'end': start + 4200000},
+      {'start': start + 7200000, 'end': start + 7800000},
+    ]);
+    for (final offset in [0, 600000, 1800000]) {
+      expect(sleepReplyGuidance(sleep, now: start + offset),
+          isNot(contains('当晚清醒次数过多')));
+    }
+    // The second waking begins after midnight, still within the same night.
+    for (final offset in [3600000, 5000000, 7200000]) {
+      final prompt = sleepReplyGuidance(sleep, now: start + offset);
+      expect(prompt, contains('当晚清醒次数过多'));
+      expect(prompt, contains('choose_silence'));
+      expect(prompt, contains('危机与紧急求助仍应及时回应'));
+    }
+    expect(sleepReplyGuidance(night([]), now: start + 5000000),
+        isNot(contains('当晚清醒次数过多')));
+  });
+  test('overlapping awakenings and future windows do not inflate guidance', () {
+    final prompt = sleepReplyGuidance(
+        night([
+          {'start': start + 600000, 'end': start + 1800000},
+          {'start': start + 900000, 'end': start + 2100000},
+          {'start': start + 3600000, 'end': start + 4200000},
+        ]),
+        now: start + 2400000);
+    expect(prompt, contains('当晚已清醒1次'));
+    expect(prompt, isNot(contains('当晚清醒次数过多')));
+  });
   test('step plans stay within 200 steps and keep sleep at zero', () {
     for (var seed = 0; seed < 100; seed++) {
       final plan = stepPlan(

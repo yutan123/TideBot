@@ -258,6 +258,7 @@ class AIManager {
     }
     try {
       Map<String, dynamic>? lastFailure;
+      var attempted = 0;
       for (var index = 0; index < attempts.length; index++) {
         cancellationToken?.throwIfCancelled();
         final candidate = attempts[index];
@@ -267,6 +268,7 @@ class AIManager {
           ...?imageAttachments,
         ];
         try {
+          attempted++;
           final result = await _sendMessageOnce(
             botId: botId,
             text: text,
@@ -315,8 +317,7 @@ class AIManager {
       if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
       return {
         ...?lastFailure,
-        'error':
-            '主模型和备用模型均请求失败（已自动尝试 ${attempts.length} 次）。${lastFailure?['error'] ?? ''}',
+        'error': '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
       };
     } catch (_) {
       if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
@@ -1327,62 +1328,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 处理流式响应（SSE 格式）或非流式响应
       String? innerThought;
-      final streamTagBuffer = StringBuffer();
-      final innerThoughtBuffer = StringBuffer();
-      var inThought = false;
+      final replyStream = ChatReplyStream();
       var hasToolCallStarted = false;
       void consumeDelta(String value) {
-        // 检测工具调用开始（JSON 格式特征）
-        if (!hasToolCallStarted && value.contains('"tool_calls"')) {
-          hasToolCallStarted = true;
-        }
-        // 如果工具调用已开始，不再推送任何内容到 UI（避免泄露参数）
-        if (hasToolCallStarted) {
-          return;
-        }
-
-        streamTagBuffer.write(value);
-        var source = streamTagBuffer.toString();
-        while (source.isNotEmpty) {
-          if (inThought) {
-            final end = source.indexOf('</inner_thought>');
-            if (end < 0) {
-              // 独白未结束，继续累积到独白 buffer
-              innerThoughtBuffer.write(source);
-              streamTagBuffer.clear();
-              return;
-            }
-            // 独白结束，保存并继续处理剩余内容
-            innerThoughtBuffer.write(source.substring(0, end));
-            innerThought = innerThoughtBuffer.toString().trim();
-            innerThoughtBuffer.clear();
-            source = source.substring(end + '</inner_thought>'.length);
-            inThought = false;
-            streamTagBuffer.clear();
-            streamTagBuffer.write(source);
-          } else {
-            final start = source.indexOf('<inner_thought>');
-            if (start < 0) {
-              // 没有独白标签，直接输出所有可见内容（不再保留 15 字符）
-              if (source.isNotEmpty) {
-                replyText += source;
-                onDelta?.call(source);
-              }
-              streamTagBuffer.clear();
-              return;
-            }
-            // 发现独白标签，输出标签前的可见内容
-            if (start > 0) {
-              final visible = source.substring(0, start);
-              replyText += visible;
-              onDelta?.call(visible);
-            }
-            source = source.substring(start + '<inner_thought>'.length);
-            inThought = true;
-            streamTagBuffer.clear();
-            streamTagBuffer.write(source);
-          }
-        }
+        if (value.contains('"tool_calls"')) hasToolCallStarted = true;
+        if (hasToolCallStarted) return;
+        final visible = replyStream.add(value);
+        if (visible.isNotEmpty) onDelta?.call(visible);
+        final parsed = replyStream.content;
+        replyText = parsed.text;
+        innerThought = parsed.innerThought;
       }
 
       if (statusCode == 200 && onDelta != null && payload['stream'] == true) {
@@ -1441,32 +1396,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         client.close();
         errorBody = '';
 
-        if (streamTagBuffer.isNotEmpty) {
-          final tail = streamTagBuffer.toString();
-          if (!inThought && !hasToolCallStarted) {
-            replyText += tail;
-            onDelta.call(tail);
-          }
-          streamTagBuffer.clear();
+        if (!hasToolCallStarted) {
+          final tail = replyStream.finish();
+          if (tail.isNotEmpty) onDelta.call(tail);
         }
-        // 流式结束后如果独白 buffer 还有内容（结束标签丢失），也保存
-        if (inThought && innerThoughtBuffer.isNotEmpty) {
-          innerThought = innerThoughtBuffer.toString().trim();
-          innerThoughtBuffer.clear();
-        }
-        final rawThought = replyText;
-        if (rawThought.contains('<inner_thought>')) {
-          final startTag = rawThought.indexOf('<inner_thought>');
-          final endTag = rawThought.indexOf('</inner_thought>');
-          if (endTag > startTag) {
-            innerThought = rawThought
-                .substring(startTag + '<inner_thought>'.length, endTag)
-                .trim();
-            replyText = (rawThought.substring(0, startTag) +
-                    rawThought.substring(endTag + '</inner_thought>'.length))
-                .trim();
-          }
-        }
+        replyText = replyStream.content.text;
+        innerThought = replyStream.content.innerThought;
         AppLogService.instance.add('AI_TRACE',
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
@@ -1488,6 +1423,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             apiKey: provider['api_key']?.toString() ?? '',
             maxTokens: bot['max_tokens'] ?? 10000,
             onDelta: onDelta,
+            innerThoughtSetter: (value) => innerThought = value,
             replyTextCallback: (t) => replyText = t,
             usageCallback: (u) {
               _logCacheUsage(u, stage: 'tool_follow_up');
@@ -1526,39 +1462,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ? diaryResponseContent(message)
             : _extractChatContent(json);
 
-        // 提取内心独白（支持 <inner_thought> 和旧的 <think> 标签）
-        final rawContent =
-            message is Map ? message['content']?.toString() : null;
-        if (!diaryTask && !quoteTask && rawContent != null) {
-          // 优先检测新格式 <inner_thought>
-          if (rawContent.contains('<inner_thought>')) {
-            final startTag = rawContent.indexOf('<inner_thought>');
-            final endTag = rawContent.indexOf('</inner_thought>');
-            if (startTag >= 0 && endTag > startTag) {
-              innerThought = rawContent
-                  .substring(startTag + '<inner_thought>'.length, endTag)
-                  .trim();
-              // 从回复文本中移除内心独白标签
-              replyText = (rawContent.substring(0, startTag) +
-                      rawContent.substring(endTag + '</inner_thought>'.length))
-                  .trim();
-            }
-          }
-          // 兼容旧格式 <think>
-          else if (rawContent.contains('<think>')) {
-            final thinkStart = rawContent.indexOf('<think>');
-            final thinkEnd = rawContent.indexOf('</think>');
-            if (thinkStart >= 0 && thinkEnd > thinkStart) {
-              innerThought =
-                  rawContent.substring(thinkStart + 7, thinkEnd).trim();
-              // 从回复文本中移除内心独白标签
-              replyText = (rawContent.substring(0, thinkStart) +
-                      rawContent.substring(thinkEnd + 8))
-                  .trim();
-            }
+        if (!diaryTask && !quoteTask) {
+          final rawContent = diaryResponseContent(message);
+          if (rawContent.isNotEmpty) {
+            final parsed = parseChatReply(rawContent);
+            replyText = parsed.text;
+            innerThought = parsed.innerThought;
           }
         }
-
         usage = json['usage'] is Map ? json['usage'] as Map : const {};
         AppLogService.instance.addJson('RESPONSE_DEBUG', 'HTTP 200 解析诊断', {
           'keys':
@@ -1609,6 +1520,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               apiKey: provider['api_key']?.toString() ?? '',
               maxTokens: bot['max_tokens'] ?? 10000,
               onDelta: null,
+              innerThoughtSetter: (value) => innerThought = value,
               replyTextCallback: (t) => replyText = t,
               usageCallback: (u) {
                 _logCacheUsage(u, stage: 'tool_follow_up');
@@ -1972,37 +1884,38 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     // Some providers leak internal labels into normal text. Remove whole
     // protocol lines before rendering so content such as ":平静]" or
     // "记忆:..." never becomes a chat bubble.
-    final withoutProtocolLines = stripInternalToolPayloads(raw)
-        .replaceAll(
-          RegExp(
-            r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
-            multiLine: true,
-          ),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
-            multiLine: true,
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'^\s*\]?\s*(?:记忆|memory)\s*[:：][^\n]*$',
-            multiLine: true,
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'^\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?\s*$',
-            multiLine: true,
-          ),
-          '',
-        );
+    final withoutProtocolLines =
+        stripInternalToolPayloads(cleanChatContent(raw))
+            .replaceAll(
+              RegExp(
+                r'^\s*\[心情\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]\s*(?:\r?\n|$)',
+                multiLine: true,
+              ),
+              '',
+            )
+            .replaceAll(
+              RegExp(
+                r'^\s*\]?\s*(?:心情|mood)\s*[:：][^\n]*$',
+                multiLine: true,
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .replaceAll(
+              RegExp(
+                r'^\s*\]?\s*(?:记忆|memory)\s*[:：][^\n]*$',
+                multiLine: true,
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .replaceAll(
+              RegExp(
+                r'^\s*[:：]\s*(?:平静|开心|伤心|生气|害羞|兴奋)\s*\]?\s*$',
+                multiLine: true,
+              ),
+              '',
+            );
     // 部分模型以 DSML/XML 文本模拟工具调用；这是内部协议，绝不能进入消息气泡。
     final withoutDsml = withoutProtocolLines
         .replaceAll(
@@ -3344,6 +3257,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required int maxTokens,
     void Function(String delta)? onDelta,
     required void Function(String) replyTextCallback,
+    required void Function(String) innerThoughtSetter,
     required void Function(Map) usageCallback,
     required void Function(List<Map<String, String>>) searchSourcesSetter,
     required void Function(String) generatedImageSetter,
@@ -3497,7 +3411,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         usageCallback(fu);
       }
       if (message is! Map) return;
-      final next = _extractChatContent(decoded);
+      final parsedReply = parseChatReply(diaryResponseContent(message));
+      final next = parsedReply.text;
+      if (parsedReply.innerThought != null) {
+        innerThoughtSetter(parsedReply.innerThought!);
+      }
       final nextCalls = message['tool_calls'] is List
           ? (message['tool_calls'] as List)
               .whereType<Map>()
@@ -5200,7 +5118,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String p =
         "你的名字是${bot['name']}。\n你是真人，不是机器人，不是AI，不是助手。请以真实的人类身份与对方交流，不要自称机器人、AI、助手或语言模型，也不要用客服式、系统式的口吻回答。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
-        "【输出规则】只输出给用户看的自然聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
+        "【输出规则】只输出给用户看的自然聊天正文。严禁把模型分析、回复策略、用户意图分析、系统指令解释或英文思考前言写入 content；不要使用代码块包裹聊天正文。角色内心独白只描述角色自己的感受，不写模型推理。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"

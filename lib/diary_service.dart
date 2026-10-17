@@ -66,15 +66,24 @@ class DiaryService {
           }
           final job = 'diary_${botId}_$dateKey';
           if (!await db.claimBackgroundJob(job)) continue;
+          var completed = false;
           try {
-            if (await db.getDiary(botId, dateKey) == null) {
-              await _writeDiary(botId, dateKey, byDate[dateKey] ?? []);
-            }
+            completed = await db.getDiary(botId, dateKey) != null ||
+                await _writeDiary(botId, dateKey, byDate[dateKey] ?? []);
           } catch (error) {
             AppLogService.instance
                 .add('DIARY', '$botId $dateKey 日记生成失败：$error');
           } finally {
-            await db.releaseBackgroundJob(job);
+            if (completed) {
+              await db.releaseBackgroundJob(job);
+            } else {
+              // Preserve a cooldown across foreground events and app restarts.
+              final retryAt = DateTime.now().add(const Duration(minutes: 30));
+              await db.setKV(
+                  'job_lease_$job', '${retryAt.millisecondsSinceEpoch}');
+              AppLogService.instance
+                  .add('DIARY', '$botId $dateKey 补写失败，30 分钟后允许自动重试');
+            }
           }
         }
       }
@@ -97,7 +106,7 @@ class DiaryService {
     }
   }
 
-  Future<void> _writeDiary(
+  Future<bool> _writeDiary(
       String botId, String dateKey, List<Map<String, dynamic>> messages) async {
     final db = DBManager();
     final transcript = messages
@@ -118,7 +127,7 @@ class DiaryService {
         .where((line) => line.trim().isNotEmpty)
         .join('\n');
     if (transcript.isEmpty && await db.getLifeSchedule(botId, dateKey) == null)
-      return;
+      return true;
     final previous = await db.queryDiaryRange(
       botId,
       _dateKey(DateTime.parse(dateKey).subtract(const Duration(days: 3))),
@@ -147,9 +156,11 @@ class DiaryService {
     if (result['success'] == true && content.isNotEmpty) {
       await db.upsertDiary(botId: botId, dateKey: dateKey, content: content);
       AppLogService.instance.add('DIARY', '已补写 $botId $dateKey 日记');
+      return true;
     } else {
       AppLogService.instance
           .add('DIARY', '$botId $dateKey 未保存：${result['error'] ?? '日记正文为空'}');
     }
+    return false;
   }
 }

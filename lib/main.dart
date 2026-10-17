@@ -1246,18 +1246,19 @@ class _JellyDockState extends State<JellyDock>
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final isDark = theme.isDark;
+    final useDockGlass = theme.useDockLiquidGlass;
     final dock = Container(
       height: 56,
       clipBehavior: Clip.none,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
-        color: theme.useLiquidGlass
+        color: useDockGlass
             ? Colors.transparent
             : (isDark
                 ? const Color(0xB9172A31)
                 : Colors.white.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(28),
-        border: theme.useLiquidGlass
+        border: useDockGlass
             ? null
             : Border.all(
                 color: isDark
@@ -1265,7 +1266,7 @@ class _JellyDockState extends State<JellyDock>
                     : Colors.white.withValues(alpha: 0.25),
                 width: 0.5,
               ),
-        boxShadow: theme.useLiquidGlass
+        boxShadow: useDockGlass
             ? null
             : [
                 BoxShadow(

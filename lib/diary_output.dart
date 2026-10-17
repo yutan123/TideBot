@@ -41,20 +41,67 @@ String? parseDiaryResponse(String raw) {
       RegExp(r'^```(?:json)?\s*([\s\S]*?)\s*```$', caseSensitive: false)
           .firstMatch(text);
   if (fence != null) text = fence.group(1)!;
-  try {
-    final value = jsonDecode(text);
-    if (value is! Map || value.length != 1 || value['entry'] is! String) {
-      return null;
+  // Extract only complete structured output, never surrounding task analysis.
+  if (RegExp(r'</?(?:think|inner_thought)\b', caseSensitive: false)
+      .hasMatch(text)) return null;
+  String? diary;
+  var count = 0;
+  for (final object in _diaryJsonObjects(text)) {
+    try {
+      final value = jsonDecode(object);
+      if (value is! Map || value.length != 1 || value['entry'] is! String) {
+        continue;
+      }
+      final entry = (value['entry'] as String).trim();
+      if (entry.isEmpty ||
+          RegExp(r'</?(?:think|inner_thought)\b|\[心情\s*[:：]',
+                  caseSensitive: false)
+              .hasMatch(entry)) {
+        continue;
+      }
+      diary = entry;
+      count++;
+    } on FormatException {
+      // Never use malformed JSON as diary prose.
     }
-    final entry = (value['entry'] as String).trim();
-    if (entry.isEmpty ||
-        RegExp(r'</?(?:think|inner_thought)\b|\[心情\s*[:：]',
-                caseSensitive: false)
-            .hasMatch(entry)) {
-      return null;
+  }
+  return count == 1 ? diary : null;
+}
+
+/// Consume nested containers with their parent, respecting quoted JSON text.
+Iterable<String> _diaryJsonObjects(String text) sync* {
+  var start = -1;
+  var depth = 0;
+  var quoted = false;
+  var escaped = false;
+  for (var i = 0; i < text.length; i++) {
+    final char = text[i];
+    if (start < 0) {
+      if (char != '{' && char != '[') continue;
+      start = i;
+      depth = 1;
+      quoted = false;
+      escaped = false;
+      continue;
     }
-    return entry;
-  } on FormatException {
-    return null;
+    if (quoted) {
+      if (escaped) {
+        escaped = false;
+      } else if (char == '\\') {
+        escaped = true;
+      } else if (char == '"') {
+        quoted = false;
+      }
+    } else if (char == '"') {
+      quoted = true;
+    } else if (char == '{' || char == '[') {
+      depth++;
+    } else if (char == '}' || char == ']') {
+      depth--;
+      if (depth == 0) {
+        yield text.substring(start, i + 1);
+        start = -1;
+      }
+    }
   }
 }
