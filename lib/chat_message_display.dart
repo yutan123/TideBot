@@ -25,7 +25,11 @@ List<Map<String, dynamic>> normalizeChatMessages(
   final thoughtGroups = <String>{};
   for (final original in rows) {
     var row = original;
-    if (row['role'] == 'assistant' && row['type'] == 'text') {
+    // Streaming text was parsed before entering the reveal queue. Preserve
+    // both the empty placeholder and its identity for in-place frame updates.
+    if (row['role'] == 'assistant' &&
+        row['type'] == 'text' &&
+        row['is_streaming'] != true) {
       final parsed = parseChatReply(row['content']?.toString() ?? '');
       if (parsed.text.isEmpty) continue;
       row = {

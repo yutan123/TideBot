@@ -336,12 +336,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _scrollDown();
   }
 
+  bool _chatBackgroundCleared = false;
   void _loadBg() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final bg = prefs.getString('chat_bg_${_bot['id']}');
       final exists = bg != null && bg.isNotEmpty && await File(bg).exists();
-      if (mounted) setState(() => _customBg = exists ? bg : null);
+      if (mounted)
+        setState(() {
+          _customBg = exists ? bg : null;
+          _chatBackgroundCleared = bg == '';
+        });
     } catch (error) {
       AppLogService.instance.add('ERROR', '读取聊天背景失败：$error');
     }
@@ -1023,11 +1028,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final farewellWords = ['再见', '拜拜', '晚安', '早点休息', 'bye', 'goodbye', '886'];
     final isFarewell =
         farewellWords.any((word) => text.toLowerCase().contains(word));
-    if (isFarewell) {
-      unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
-    } else {
-      WorldBookService.instance.resetConversationTimer(botId);
-    }
+    // Keep the idle fallback; farewell review runs after this reply is persisted.
+    WorldBookService.instance.resetConversationTimer(botId);
 
     // ===== 防抖/合并 =====
     // 上一条请求还在飞（机器人尚未回完）时再发消息：不再像旧实现那样直接丢弃，
@@ -1177,9 +1179,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           .timeout(requestTimeout, onTimeout: () {
         requestToken.cancel();
         throw TimeoutException('请求超过5分钟，已停止');
-      });
+      }).whenComplete(() => _setTypingState(false));
 
       if (result['success'] == true) {
+        if (isFarewell && myGen == _requestGen && persistThisReply) {
+          unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
+        }
         for (final item in userMessages) {
           item['send_status'] = 'sent';
         }
@@ -2932,7 +2937,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         ? const SizedBox.expand()
                         : const DefaultChatBackground(),
                   )
-                : theme.hasGlobalBackground
+                : theme.hasGlobalBackground && !_chatBackgroundCleared
                     ? const SizedBox.expand()
                     : const DefaultChatBackground(),
           ),

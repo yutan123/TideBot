@@ -47,7 +47,6 @@ String cognitionReviewPrompt({
       '仅输出严格 JSON：{"角色眼中的你":{"modify":false},"角色的自我认知":{"modify":false},"关系":{"modify":false}}。'
       '需要修改的项必须填写 {"modify":true,"content":"完整新内容"}。\n'
       '复核时间：${now.toIso8601String()}\n'
-      '角色名字：${bot['name'] ?? ''}\n人设：${bot['desc'] ?? ''}\n说话方式与人设指令：${bot['prompt'] ?? ''}\n'
       '当前三项认知：${jsonEncode(current)}\n最近8条世界书条目：${jsonEncode(recent.map((r) => {
             'category': r['category'],
             'title': r['title'],

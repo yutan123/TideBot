@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'diary_output.dart';
 import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
@@ -98,9 +100,7 @@ class DiaryService {
     try {
       if (!await LifeScheduleService.instance.enabled()) return '当天未启用日程';
       final row = await DBManager().getLifeSchedule(botId, dateKey);
-      return row == null
-          ? '当天暂无已生成日程'
-          : LifeScheduleService.instance.compactContext(row);
+      return row == null ? '当天暂无已生成日程' : '以下只是计划，不作为完成证据：${jsonEncode(row)}';
     } catch (_) {
       return '当天日程暂时不可用';
     }
@@ -133,8 +133,10 @@ class DiaryService {
       _dateKey(DateTime.parse(dateKey).subtract(const Duration(days: 3))),
       dateKey,
     );
-    final priorText =
-        previous.map((d) => '${d['date_key']}：${d['content']}').join('\n');
+    final priorText = previous
+        .where((d) => !containsInternalTaskLeak(d['content']?.toString() ?? ''))
+        .map((d) => '${d['date_key']}：${d['content']}')
+        .join('\n');
     final dayStart = DateTime.parse(dateKey);
     final eventStart = DateTime(dayStart.year, dayStart.month, dayStart.day);
     final eventEnd = eventStart.add(const Duration(days: 1));
@@ -144,12 +146,12 @@ class DiaryService {
       botId: botId,
       priority: false,
       text:
-          '这是内部日记任务，不是与用户聊天。请以第一人称写一篇简洁、真实、不可编造的日记。不仅要记录与用户的对话内容，还要写自己的事情、感受、想法和经历。只根据事件时间范围内实际发生的内容提炼。日程是安排，不能仅凭日程把计划写成已完成；没有聊天时不得虚构用户参与。主题名称如xx日只供内部了解，不直接写进正文，要写有依据的具体经历和感受；不要问候用户、不要解释任务、不要使用 Markdown。只返回系统指定的 JSON，将完整日记正文放入 entry 字段，不输出内心独白、写作准备或任务规则分析。\n日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n当天日程：$scheduleText\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
+          '日记日期：$dateKey\n当前本地时间：${generatedAt.toIso8601String()}\n事件时间范围：${eventStart.toIso8601String()} 至 ${eventEnd.toIso8601String()}\n当天日程：$scheduleText\n当天对话：\n$transcript\n\n最近三天日记：\n$priorText',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
       skipLifeState: true,
-      diaryTask: true,
+      task: AIRequestTask.diary,
       allowTools: false,
     );
     final content = result['reply']?.toString().trim() ?? '';

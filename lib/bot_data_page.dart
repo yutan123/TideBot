@@ -560,7 +560,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                       text(metricNote(data!, i),
                           size: 13, color: theme.textWeak),
                       const SizedBox(height: 18),
-                      Wrap(spacing: 8, children: [
+                      Wrap(spacing: 8, runSpacing: 10, children: [
                         for (final d in [1, 7, 30])
                           _buildPeriodChip(
                               theme, d == 1 ? '今天' : '近$d天', days == d, () {
@@ -572,8 +572,8 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                       ]),
                       if (i == 3)
                         Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Wrap(spacing: 6, children: [
+                            padding: const EdgeInsets.only(top: 14),
+                            child: Wrap(spacing: 8, runSpacing: 10, children: [
                               for (final e in {
                                 'height': '身高',
                                 'weight': '体重',
@@ -727,7 +727,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
       const SizedBox(height: 18),
       text('睡眠时间线', size: 18),
       const SizedBox(height: 10),
-      Wrap(spacing: 8, children: [
+      Wrap(spacing: 8, runSpacing: 10, children: [
         for (final e in sleeps.where((e) =>
             vitalInt(e['end'], vitalInt(e['planned_end'])) >=
             (days == 1

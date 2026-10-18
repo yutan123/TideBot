@@ -1,3 +1,5 @@
+import 'ai_request_task.dart';
+export 'ai_request_task.dart';
 import 'diary_output.dart';
 import 'daily_quote_output.dart';
 import 'bot_vital_signs_service.dart';
@@ -197,6 +199,7 @@ class AIManager {
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
+    AIRequestTask task = AIRequestTask.chat,
     bool diaryTask = false,
     bool quoteTask = false,
     bool allowTools = true,
@@ -209,7 +212,11 @@ class AIManager {
     void Function(String delta)? onDelta,
   }) async {
     cancellationToken?.throwIfCancelled();
-    if (diaryTask || quoteTask) {
+    if (diaryTask) task = AIRequestTask.diary;
+    if (quoteTask) task = AIRequestTask.dailyQuote;
+    diaryTask = task == AIRequestTask.diary;
+    quoteTask = task == AIRequestTask.dailyQuote;
+    if (task.internal) {
       persistResponse = false;
       includeChatHistory = false;
       requestHistory = null;
@@ -220,6 +227,7 @@ class AIManager {
       useJarvis = false;
       activeGame = null;
       onDelta = null;
+      forceSingleReply = true;
     }
     final prefs = await SharedPreferences.getInstance();
     const primaryLocal = '';
@@ -282,6 +290,7 @@ class AIManager {
             requestHistory: requestHistory,
             enableAutoSummary: enableAutoSummary,
             skipLifeState: skipLifeState,
+            task: task,
             diaryTask: diaryTask,
             quoteTask: quoteTask,
             allowTools: allowTools,
@@ -493,8 +502,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           '';
       if (baseUrl.isEmpty || modelName.isEmpty) return '';
 
-      // 提取最近10轮消息（含角色和类型）
-      final recent = history.reversed.take(10).toList().reversed.map((item) {
+      // Current user content is supplied separately, not duplicated as history.
+      final priorHistory = history.isNotEmpty &&
+              history.last['role'] == 'user' &&
+              history.last['content'] == text
+          ? history.sublist(0, history.length - 1)
+          : history;
+      final recent =
+          priorHistory.reversed.take(10).toList().reversed.map((item) {
         final role = item['role']?.toString() == 'user' ? '用户' : '角色';
         final type = item['type']?.toString() ?? 'text';
         final content = item['content'] ?? '';
@@ -514,7 +529,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
       }
       final innerThoughtContext =
-          lastInnerThought != null ? '\n角色上一轮内心独白：$lastInnerThought' : '';
+          lastInnerThought != null && !recent.contains(lastInnerThought)
+              ? '\n角色上一轮内心独白：$lastInnerThought'
+              : '';
 
       // 获取时间上下文（当前时间、日程、节假日）
       final now = DateTime.now();
@@ -528,8 +545,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (await LifeScheduleService.instance.enabled()) {
         final lifeRow = await LifeScheduleService.instance.ensureToday(botId);
         if (lifeRow != null) {
-          lifeScheduleContext =
-              '\n${LifeScheduleService.instance.compactContext(lifeRow)}';
+          lifeScheduleContext = '\n生活计划（不等于已完成）：${jsonEncode(lifeRow)}';
         }
       }
 
@@ -538,7 +554,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'temperature': 0.2,
         'max_tokens': 1200,
         'messages': [
-          {'role': 'system', 'content': _jarvisPrompt},
+          {
+            'role': 'system',
+            'content':
+                '$_jarvisPrompt\n参考回复必须符合角色聊天输出要求：使用角色语气，给出恰好三条方向和三条可直接作为聊天正文的参考回复；不含系统解释、工具协议、心情标签或时间戳。inner_thought_seed 只写角色感受，不把独白混进 reference_examples。'
+          },
           {
             'role': 'user',
             'content':
@@ -725,6 +745,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
     bool skipLifeState = false,
+    AIRequestTask task = AIRequestTask.chat,
     bool diaryTask = false,
     bool quoteTask = false,
     bool allowTools = true,
@@ -779,446 +800,508 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
     final maxContext = (bot['max_tokens'] as int? ?? 10000).clamp(1000, 128000);
-    final timeAware = (await db.getKV('time_awareness')) != 'false';
-    final history = requestHistory ??
-        (includeChatHistory
-            ? await db.getChatHistory(botId).timeout(const Duration(seconds: 8))
-            : <Map<String, dynamic>>[]);
-    // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
-    // 读取三个核心设定字段（独立于普通世界书条目）
-    final allMemories = activeGame == null
-        ? await db.queryMemories(botId, limit: 200)
-        : <Map<String, dynamic>>[];
-
-    String? botViewOfUser; // 你眼中的对方（原"角色眼中的你"）
-    String? selfCognition; // 你认为的自己（原"角色的自我认知"）
-    String? relationship; // 你们的关系
-
-    for (final m in allMemories) {
-      final cat = m['category']?.toString() ?? '';
-      if (cat == '角色眼中的你') {
-        botViewOfUser ??=
-            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
-      } else if (cat == '角色的自我认知') {
-        selfCognition ??=
-            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
-      } else if (cat == '关系') {
-        relationship ??=
-            '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
-      }
-    }
-
-    // 构建核心设定提示
-    final coreSettings = [
-      if (botViewOfUser?.isNotEmpty == true)
-        '【你眼中的对方】\n$botViewOfUser'
-      else
-        '【你眼中的对方】\n当前暂未记录。你可在获取到对方的特点、习惯、偏好等信息后，调用工具填入世界书的"角色眼中的你"类别。没有新增内容或需要修改的内容请不要修改。',
-      if (selfCognition?.isNotEmpty == true)
-        '【你认为的自己】\n$selfCognition'
-      else
-        '【你认为的自己】\n当前暂未记录。你可在明确自己的性格、习惯、偏好等特点后，调用工具填入世界书的"角色的自我认知"类别。人格设定和说话方式只作参考，你可以用自己的理解描述你认为的自己的性格、身份、特点。没有新增内容或需要修改的内容请不要修改。',
-      if (relationship?.isNotEmpty == true)
-        '【你们的关系】\n$relationship'
-      else
-        '【你们的关系】\n当前暂未记录。你可在明确与对方的关系定位后，调用工具填入世界书的"关系"类别。',
-    ].join('\n\n');
-
-    final profileContext = (diaryTask || quoteTask)
-        ? [
-            if (botViewOfUser?.isNotEmpty == true) '角色对用户的了解：$botViewOfUser',
-            if (selfCognition?.isNotEmpty == true) '角色自我认知：$selfCognition',
-            if (relationship?.isNotEmpty == true) '双方关系：$relationship',
-          ].join('\n')
-        : '\n$coreSettings';
-
-    // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
-    final conversationForMatch =
-        '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}';
-    final worldBookEntries = activeGame == null
-        ? await WorldBookService.instance.activateEntriesIntelligent(
-            botId: botId,
-            conversationText: conversationForMatch,
-            maxResults: 10,
-          )
-        : <WorldBookEntry>[];
-
-    final worldBookContext =
-        WorldBookService.formatActivatedEntries(worldBookEntries);
-
-    // 第三层：如果世界书匹配少于3条，在系统提示中增加记忆库候选列表
-    String memoryContextHint = '';
-    if (worldBookEntries.length < 3 && activeGame == null) {
-      final recentMemories = await db.queryMemories(botId, limit: 15);
-      if (recentMemories.isNotEmpty) {
-        final candidateList = recentMemories
-            .map((m) =>
-                '- [记录时间：${memoryRecordedTime(m)}] ${m['title'] ?? '未命名'}: ${m['content']}')
-            .join('\n');
-        memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
-      }
-    }
-    final stickerPlan = allowTools && allowStickers
-        ? await _planStickerForTurn(db)
-        : const _StickerPlan.disabled();
-    final allowSticker = stickerPlan.required;
-    final stickerEmotions = allowTools && allowStickers
-        ? await _availableStickerEmotions(db)
-        : const <String>[];
-    final effectiveImagePaths = imagePaths.isNotEmpty
-        ? imagePaths
-        : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
-    // Number spaces are explicit: current attachments start at 1 independently
-    // of the existing historical image numbers. Both maps live for one request.
-    final currentImages = <int, String>{
-      for (var i = 0; i < effectiveImagePaths.length; i++)
-        i + 1: effectiveImagePaths[i],
-    };
-    final currentImageNumbers = currentImages.keys.toList();
-    final inspectableImages = <int, String>{};
-    final imageNumberByPath = <String, int>{};
-    void registerHistoricalImage(String path) {
-      final normalized = path.trim();
-      if (normalized.isEmpty || imageNumberByPath.containsKey(normalized)) {
-        return;
-      }
-      final number = imageNumberByPath.length + 1;
-      imageNumberByPath[normalized] = number;
-      inspectableImages[number] = normalized;
-    }
-
-    for (final msg in history) {
-      if (msg['type']?.toString() != 'image' ||
-          msg['role']?.toString() != 'user') {
-        continue;
-      }
-      final path = msg['file_path']?.toString().trim() ?? '';
-      if (path.isEmpty || effectiveImagePaths.contains(path)) continue;
-      registerHistoricalImage(path);
-    }
-    final inspectableImageNumbers = inspectableImages.keys.toList()..sort();
-    final currentImageDescriptions = <int, String>{};
-    // 本轮图片不进入历史图片工具。使用主模型识图时直接附着图片；选择
-    // 专用识图模型时，先由该模型识别,再把文本结果转述给聊天模型。
-    final visionId = (await SharedPreferences.getInstance())
-            .getString('vision_model_$botId')
-            ?.trim() ??
-        '';
-    const primaryVisionModel = '__use_primary_vision__';
-    // 未配置识图模型时默认使用主模型识图，而不是只发送文本占位符
-    final effectiveVisionId = visionId.isEmpty ? primaryVisionModel : visionId;
-    if (effectiveImagePaths.isNotEmpty &&
-        effectiveVisionId.isNotEmpty &&
-        effectiveVisionId != primaryVisionModel) {
-      for (var index = 0; index < effectiveImagePaths.length; index++) {
-        final path = effectiveImagePaths[index];
-        final number = index + 1;
-        try {
-          final provider = await db.getChatProviderById(effectiveVisionId);
-          currentImageDescriptions[number] = provider == null
-              ? '图片识别失败：所选识图模型不存在或已被删除。'
-              : await _describeImage(
-                  provider: provider,
-                  imagePath: path,
-                  userText: '请准确描述用户本轮发送的第 $number 张图片，供聊天模型理解。',
-                );
-        } catch (error) {
-          currentImageDescriptions[number] = '图片识别暂时失败：$error';
-        }
-      }
-    }
-    final sharedPostContexts = <String, String>{};
-    for (final msg in history) {
-      if (msg['type']?.toString() != 'shared_post') continue;
-      final key = _sharedPostHistoryKey(msg);
-      sharedPostContexts[key] =
-          await _sharedPostModelContextForMessage(db, msg);
-    }
-    final toolContext = allowTools
-        ? await _buildToolContext(
-            db,
-            botId: botId,
-            requireEmotion: true,
-            requireSticker: allowSticker,
-            stickerEmotions: stickerEmotions,
-            inspectableImageNumbers: inspectableImageNumbers,
-            currentImageNumbers: currentImageNumbers,
-          )
-        : '';
-    final skillSections = <String>[];
-    final injectedSkillIds = <String>[];
-    for (final skill in await db.querySkills()) {
-      if (skill['enabled'] != 1) continue;
-      try {
-        final context = buildEnabledSkillContext([skill]);
-        if (context.isNotEmpty) {
-          skillSections.add(context);
-          injectedSkillIds.add(skill['id'].toString());
-        }
-      } catch (error) {
-        AppLogService.instance.add('SKILL', '技能清单读取失败 ${skill['id']}：$error');
-      }
-    }
-    final skillContext = skillSections.join('\n\n');
-    AppLogService.instance.addJson('SKILL', '本轮实际注入的 Skill 指引', {
-      'bot_id': botId,
-      'skill_ids': injectedSkillIds,
-      'characters': skillContext.length,
-      'context': skillContext,
-      'tools_enabled': allowTools,
-    });
-    final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
-    final deviceContext = await DeviceCapabilityService.instance.contextFor(
-      botId,
-    );
-    final deviceContextPrompt = deviceContext.isEmpty
-        ? ''
-        : '\n【经用户逐项授权的设备上下文】${DeviceCapabilityService.instance.encodeContext(deviceContext)}。仅在当前问题直接相关时使用；不得主动逐项复述、推断未授权信息或声称持续监控。';
-    final emotionContext = await EmotionStateService.instance.promptContext(
-      botId,
-    );
-
-    // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
-    final innerThoughtEnabled = !diaryTask &&
-        !quoteTask &&
-        await db.getKV('inner_thought_enabled') == 'true';
-    String recentThoughtsContext = '';
-    if (innerThoughtEnabled && history.isNotEmpty) {
-      final recentThoughts = recentMessageThoughts(history);
-      if (recentThoughts.isNotEmpty) {
-        recentThoughtsContext =
-            '\n【你前面三条消息中的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
-      }
-    }
-    final categories = await db.memoryCategories();
-    final presetCategoryContext =
-        '\n【世界书类别】当前可用类别：${categories.join('、')}。save_memory 的 category 必须选择其中一个类别，默认类别为记忆。long/short 是记忆保留层级，不是类别。没有合适类别时，先调用 create_memory_category 创建，成功后再调用 save_memory 添加。';
-
-    // 构建分层系统提示
-    // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
-    final stableSystemPrompt = diaryTask
-        ? buildDiarySystemPrompt(bot)
-        : quoteTask
-            ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
-            : _buildSystemPrompt(bot, activeGame) +
-                presetCategoryContext +
-                (innerThoughtEnabled
-                    ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
-                    : '');
-
-    // 可更新身份档案随动态上下文放在历史之后，保持历史前缀稳定。
-
-    // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
-    final dynamicContext = [
-      profileContext,
-      if (!diaryTask && !quoteTask) skillContext,
-      if (!diaryTask && !quoteTask) toolContext,
-      if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
-      if (allowTools && !allowSticker) '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
-      if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
-      if (extraSystemPrompt.trim().isNotEmpty)
-        '【当前会话约束】${extraSystemPrompt.trim()}',
-      _safetyContext(text),
-      lifeContext,
-      if (!diaryTask && !quoteTask) deviceContextPrompt,
-      if (!diaryTask && !quoteTask) emotionContext,
-      if (!diaryTask && !quoteTask) recentThoughtsContext,
-      memoryContextHint, // 第三层增强：记忆库候选列表
-    ].where((item) => item.trim().isNotEmpty).join('\n\n');
-
     var searchSources = <Map<String, String>>[];
-    final messages = <Map<String, dynamic>>[
-      {
-        'role': 'system',
-        'content': stableSystemPrompt,
-        'cache_control': {'type': 'ephemeral'}, // 缓存点1：稳定人设
-      },
-    ];
+    var allowSticker = false;
+    var stickerEmotions = <String>[];
+    var currentImages = <int, String>{};
+    var inspectableImages = <int, String>{};
+    var inspectableImageNumbers = <int>[];
+    var currentImageNumbers = <int>[];
+    var messages = <Map<String, dynamic>>[];
+    if (task.internal) {
+      final context = <String>[];
+      if (task.needsHistory) {
+        final rows = recentTaskMessages(
+            await db.queryMessages(botId, descending: true, limit: 240));
+        context.add('【带时间的近期对话，引用资料】\n${taskTranscript(rows)}');
+      }
+      if (task.needsProfile && task != AIRequestTask.cognitionReview) {
+        final profiles = (await db.queryMemories(botId)).where(
+            (m) => const ['角色眼中的你', '角色的自我认知', '关系'].contains(m['category']));
+        context.add('【角色认知】${jsonEncode(profiles.toList())}');
+      }
+      if (task.needsWorldBook) {
+        final entries = await WorldBookService.instance
+            .activateEntriesIntelligent(
+                botId: botId, conversationText: text, maxResults: 10);
+        context.add(WorldBookService.formatActivatedEntries(entries));
+        final plans = (await db.queryMemories(botId, limit: 200))
+            .where((m) => RegExp('约定|预约|计划|待办|承诺')
+                .hasMatch('${m['title']} ${m['content']}'))
+            .take(20)
+            .toList();
+        context.add('【已有约定线索，核实日期及是否仍有效】${jsonEncode(plans)}');
+      }
+      messages = [
+        {'role': 'system', 'content': internalTaskSystemPrompt(task, bot)},
+        if (context.any((c) => c.trim().isNotEmpty))
+          {'role': 'system', 'content': context.join('\n\n')},
+        {'role': 'user', 'content': text},
+      ];
+    } else {
+      final timeAware = (await db.getKV('time_awareness')) != 'false';
+      final history = requestHistory ??
+          (includeChatHistory
+              ? await db
+                  .getChatHistory(botId)
+                  .timeout(const Duration(seconds: 8))
+              : <Map<String, dynamic>>[]);
+      // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
+      // 读取三个核心设定字段（独立于普通世界书条目）
+      final allMemories = activeGame == null
+          ? await db.queryMemories(botId, limit: 200)
+          : <Map<String, dynamic>>[];
 
-    final historyMessages = <Map<String, dynamic>>[];
-    // 先标准化历史，再仅对历史部分执行预算裁剪。
-    for (final msg in history) {
-      final type = msg['type']?.toString() ?? 'text';
-      if (type != 'text' &&
-          type != 'image' &&
-          type != 'sticker' &&
-          type != 'emoji' &&
-          type != 'shared_post') {
-        continue;
+      String? botViewOfUser; // 你眼中的对方（原"角色眼中的你"）
+      String? selfCognition; // 你认为的自己（原"角色的自我认知"）
+      String? relationship; // 你们的关系
+
+      for (final m in allMemories) {
+        final cat = m['category']?.toString() ?? '';
+        if (cat == '角色眼中的你') {
+          botViewOfUser ??=
+              '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
+        } else if (cat == '角色的自我认知') {
+          selfCognition ??=
+              '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
+        } else if (cat == '关系') {
+          relationship ??=
+              '[记录时间：${memoryRecordedTime(m)}] ${m['content']?.toString().trim() ?? ''}';
+        }
       }
-      // Failed/unsent messages must never become model context. They may be
-      // visible as an error bubble, but are not part of the conversation.
-      if (msg['error_log']?.toString().isNotEmpty == true ||
-          msg['error_code']?.toString().isNotEmpty == true) {
-        continue;
+
+      // 构建核心设定提示
+      final coreSettings = [
+        if (botViewOfUser?.isNotEmpty == true)
+          '【你眼中的对方】\n$botViewOfUser'
+        else
+          '【你眼中的对方】\n当前暂未记录。你可在获取到对方的特点、习惯、偏好等信息后，调用工具填入世界书的"角色眼中的你"类别。没有新增内容或需要修改的内容请不要修改。',
+        if (selfCognition?.isNotEmpty == true)
+          '【你认为的自己】\n$selfCognition'
+        else
+          '【你认为的自己】\n当前暂未记录。你可在明确自己的性格、习惯、偏好等特点后，调用工具填入世界书的"角色的自我认知"类别。人格设定和说话方式只作参考，你可以用自己的理解描述你认为的自己的性格、身份、特点。没有新增内容或需要修改的内容请不要修改。',
+        if (relationship?.isNotEmpty == true)
+          '【你们的关系】\n$relationship'
+        else
+          '【你们的关系】\n当前暂未记录。你可在明确与对方的关系定位后，调用工具填入世界书的"关系"类别。',
+      ].join('\n\n');
+
+      final profileContext = (diaryTask || quoteTask)
+          ? [
+              if (botViewOfUser?.isNotEmpty == true) '角色对用户的了解：$botViewOfUser',
+              if (selfCognition?.isNotEmpty == true) '角色自我认知：$selfCognition',
+              if (relationship?.isNotEmpty == true) '双方关系：$relationship',
+            ].join('\n')
+          : '\n$coreSettings';
+
+      // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
+      final conversationForMatch =
+          '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}';
+      final worldBookEntries = activeGame == null
+          ? await WorldBookService.instance.activateEntriesIntelligent(
+              botId: botId,
+              conversationText: conversationForMatch,
+              maxResults: 10,
+            )
+          : <WorldBookEntry>[];
+
+      final worldBookContext =
+          WorldBookService.formatActivatedEntries(worldBookEntries);
+
+      // 第三层：如果世界书匹配少于3条，在系统提示中增加记忆库候选列表
+      String memoryContextHint = '';
+      if (worldBookEntries.length < 3 && activeGame == null) {
+        final recentMemories = await db.queryMemories(botId, limit: 15);
+        if (recentMemories.isNotEmpty) {
+          final candidateList = recentMemories
+              .map((m) =>
+                  '- [记录时间：${memoryRecordedTime(m)}] ${m['title'] ?? '未命名'}: ${m['content']}')
+              .join('\n');
+          memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
+        }
       }
-      final rawRole = msg['role']?.toString();
-      if (rawRole != 'user' && rawRole != 'assistant') continue;
-      final normalizedRole = rawRole;
-      final normalizedContent = _modelContextForHistoryMessage(
-        msg,
-        imageNumberByPath: imageNumberByPath,
-        sharedPostContexts: sharedPostContexts,
-      );
-      if (normalizedContent == null || normalizedContent.isEmpty) continue;
-      historyMessages.add({
-        'id': msg['id']?.toString() ?? '',
-        'role': normalizedRole,
-        'content': normalizedContent,
+      final stickerPlan =
+          task != AIRequestTask.proactiveChat && allowTools && allowStickers
+              ? await _planStickerForTurn(db)
+              : const _StickerPlan.disabled();
+      allowSticker = stickerPlan.required;
+      stickerEmotions =
+          task != AIRequestTask.proactiveChat && allowTools && allowStickers
+              ? await _availableStickerEmotions(db)
+              : const <String>[];
+      final effectiveImagePaths = imagePaths.isNotEmpty
+          ? imagePaths
+          : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
+      // Number spaces are explicit: current attachments start at 1 independently
+      // of the existing historical image numbers. Both maps live for one request.
+      currentImages = <int, String>{
+        for (var i = 0; i < effectiveImagePaths.length; i++)
+          i + 1: effectiveImagePaths[i],
+      };
+      currentImageNumbers = currentImages.keys.toList();
+      inspectableImages = <int, String>{};
+      final imageNumberByPath = <String, int>{};
+      void registerHistoricalImage(String path) {
+        final normalized = path.trim();
+        if (normalized.isEmpty || imageNumberByPath.containsKey(normalized)) {
+          return;
+        }
+        final number = imageNumberByPath.length + 1;
+        imageNumberByPath[normalized] = number;
+        inspectableImages[number] = normalized;
+      }
+
+      for (final msg in history) {
+        if (msg['type']?.toString() != 'image' ||
+            msg['role']?.toString() != 'user') {
+          continue;
+        }
+        final path = msg['file_path']?.toString().trim() ?? '';
+        if (path.isEmpty || effectiveImagePaths.contains(path)) continue;
+        registerHistoricalImage(path);
+      }
+      inspectableImageNumbers = inspectableImages.keys.toList()..sort();
+      final currentImageDescriptions = <int, String>{};
+      // 本轮图片不进入历史图片工具。使用主模型识图时直接附着图片；选择
+      // 专用识图模型时，先由该模型识别,再把文本结果转述给聊天模型。
+      final visionId = (await SharedPreferences.getInstance())
+              .getString('vision_model_$botId')
+              ?.trim() ??
+          '';
+      const primaryVisionModel = '__use_primary_vision__';
+      // 未配置识图模型时默认使用主模型识图，而不是只发送文本占位符
+      final effectiveVisionId =
+          visionId.isEmpty ? primaryVisionModel : visionId;
+      if (effectiveImagePaths.isNotEmpty &&
+          effectiveVisionId.isNotEmpty &&
+          effectiveVisionId != primaryVisionModel) {
+        for (var index = 0; index < effectiveImagePaths.length; index++) {
+          final path = effectiveImagePaths[index];
+          final number = index + 1;
+          try {
+            final provider = await db.getChatProviderById(effectiveVisionId);
+            currentImageDescriptions[number] = provider == null
+                ? '图片识别失败：所选识图模型不存在或已被删除。'
+                : await _describeImage(
+                    provider: provider,
+                    imagePath: path,
+                    userText: '请准确描述用户本轮发送的第 $number 张图片，供聊天模型理解。',
+                  );
+          } catch (error) {
+            currentImageDescriptions[number] = '图片识别暂时失败：$error';
+          }
+        }
+      }
+      final sharedPostContexts = <String, String>{};
+      for (final msg in history) {
+        if (msg['type']?.toString() != 'shared_post') continue;
+        final key = _sharedPostHistoryKey(msg);
+        sharedPostContexts[key] =
+            await _sharedPostModelContextForMessage(db, msg);
+      }
+      final toolContext = allowTools && task != AIRequestTask.proactiveChat
+          ? await _buildToolContext(
+              db,
+              botId: botId,
+              requireEmotion: true,
+              requireSticker: allowSticker,
+              stickerEmotions: stickerEmotions,
+              inspectableImageNumbers: inspectableImageNumbers,
+              currentImageNumbers: currentImageNumbers,
+            )
+          : '';
+      final skillSections = <String>[];
+      final injectedSkillIds = <String>[];
+      for (final skill in task == AIRequestTask.proactiveChat
+          ? <Map<String, dynamic>>[]
+          : await db.querySkills()) {
+        if (skill['enabled'] != 1) continue;
+        try {
+          final context = buildEnabledSkillContext([skill]);
+          if (context.isNotEmpty) {
+            skillSections.add(context);
+            injectedSkillIds.add(skill['id'].toString());
+          }
+        } catch (error) {
+          AppLogService.instance.add('SKILL', '技能清单读取失败 ${skill['id']}：$error');
+        }
+      }
+      final skillContext = skillSections.join('\n\n');
+      AppLogService.instance.addJson('SKILL', '本轮实际注入的 Skill 指引', {
+        'bot_id': botId,
+        'skill_ids': injectedSkillIds,
+        'characters': skillContext.length,
+        'context': skillContext,
+        'tools_enabled': allowTools,
       });
-    }
-    Map<String, dynamic>? currentHistoryMessage;
-    // Separate the current user turn before trimming or marking history.
-    if (historyMessages.isNotEmpty &&
-        history.isNotEmpty &&
-        history.last['role'] == 'user' &&
-        history.last['type'] != 'image' &&
-        history.last['type'] != 'audio' &&
-        (history.last['content']?.toString() == text ||
-            history.last['type'] == 'shared_post' ||
-            (history.last['type'] == 'sticker' &&
-                text.contains(
-                    historyMessages.last['content']?.toString() ?? '')))) {
-      currentHistoryMessage = historyMessages.removeLast();
-    }
-    final windowKey = 'chat_cache_window_v1_${botId}_${providerId}_$maxContext';
-    final persistWindow = includeChatHistory && requestHistory == null;
-    final window = rollStableHistory(historyMessages,
-        budget: maxContext,
-        countTokens: estimateTokens,
-        startId: persistWindow ? await db.getKV(windowKey) : null);
-    if (persistWindow && window.startId?.isNotEmpty == true) {
-      await db.setKV(windowKey, window.startId!);
-    }
-    AppLogService.instance.add('CONTEXT',
-        '稳定历史窗口：保留 ${historyMessages.length} 条，估算 ${window.tokens}/$maxContext tokens，起点=${window.startId}，跳过 ${window.removed} 条；达到完整预算才滚动至一半');
-    // IDs belong to the local window cursor, never the provider protocol.
-    for (final message in historyMessages) {
-      message.remove('id');
-    }
-    currentHistoryMessage?.remove('id');
-    messages.addAll(historyMessages);
+      final lifeContext = skipLifeState
+          ? ''
+          : await _lifeStateContext(botId,
+              instructions: task != AIRequestTask.proactiveChat);
+      final deviceContext = task == AIRequestTask.proactiveChat
+          ? <String, dynamic>{}
+          : await DeviceCapabilityService.instance.contextFor(botId);
+      final deviceContextPrompt = deviceContext.isEmpty
+          ? ''
+          : '\n【经用户逐项授权的设备上下文】${DeviceCapabilityService.instance.encodeContext(deviceContext)}。仅在当前问题直接相关时使用；不得主动逐项复述、推断未授权信息或声称持续监控。';
+      final emotionContext = await EmotionStateService.instance.promptContext(
+        botId,
+      );
 
-    // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
-    // 确保缓存标记后面只有动态上下文和当前用户消息（不会命中缓存）
-    if (historyMessages.isNotEmpty) {
-      messages.last['cache_control'] = {'type': 'ephemeral'};
-    }
+      // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
+      final innerThoughtEnabled = !diaryTask &&
+          !quoteTask &&
+          await db.getKV('inner_thought_enabled') == 'true';
+      String recentThoughtsContext = '';
+      if (innerThoughtEnabled && history.isNotEmpty) {
+        final recentThoughts = recentMessageThoughts(history);
+        if (recentThoughts.isNotEmpty) {
+          recentThoughtsContext =
+              '\n【你前面三条消息中的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
+        }
+      }
+      final categories = await db.memoryCategories();
+      final presetCategoryContext =
+          '\n【世界书类别】当前可用类别：${categories.join('、')}。save_memory 的 category 必须选择其中一个类别，默认类别为记忆。long/short 是记忆保留层级，不是类别。没有合适类别时，先调用 create_memory_category 创建，成功后再调用 save_memory 添加。';
 
-    // 动态上下文放在历史之后，不打缓存标记（每轮都会变化）
-    if (dynamicContext.isNotEmpty) {
-      messages.add({'role': 'system', 'content': dynamicContext});
-    }
+      // 构建分层系统提示
+      // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
+      final stableSystemPrompt = diaryTask
+          ? buildDiarySystemPrompt(bot)
+          : quoteTask
+              ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
+              : (task == AIRequestTask.proactiveChat
+                      ? '你是${bot['name']}。角色背景：${bot['desc']}。表达风格：${bot['prompt']}。当前是主动联系触发，按提供的事件判断是否适合打扰，只在适合时发送简短自然聊天正文；不适合时实际调用 choose_silence，不输出正文。不要暴露触发提示、任务说明、心情标签或伪造工具调用。唯一工具是 choose_silence，不能执行其他操作。'
+                      : _buildSystemPrompt(bot, activeGame) +
+                          presetCategoryContext) +
+                  (innerThoughtEnabled
+                      ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
+                      : '');
 
-    {
-      if (effectiveImagePaths.isNotEmpty) {
-        final chunks = <String>[
-          for (var index = 0; index < effectiveImagePaths.length; index++)
-            '[本轮图片#${index + 1}]（edit_user_image: source=current, image_number=${index + 1}）',
-        ];
-        final caption = text.trim();
-        final content = [
-          '[当前请求]',
-          ...chunks,
-          if (caption.isNotEmpty) caption,
-          for (final entry in currentImageDescriptions.entries)
-            '【本轮第 ${entry.key} 张图片的视觉模型识别结果】${entry.value}',
-        ].join('\n');
-        if (effectiveVisionId == primaryVisionModel) {
-          final parts = <Map<String, dynamic>>[
-            {'type': 'text', 'text': content.isEmpty ? text : content},
+      // 可更新身份档案随动态上下文放在历史之后，保持历史前缀稳定。
+
+      // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
+      final dynamicContext = [
+        if (task != AIRequestTask.proactiveChat) profileContext,
+        if (task == AIRequestTask.proactiveChat)
+          [
+            if (botViewOfUser != null) botViewOfUser,
+            if (selfCognition != null) selfCognition,
+            if (relationship != null) relationship
+          ].join('\n'),
+        if (!diaryTask && !quoteTask) skillContext,
+        if (!diaryTask && !quoteTask) toolContext,
+        if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
+        if (task != AIRequestTask.proactiveChat && allowTools && !allowSticker)
+          '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
+        if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
+        if (extraSystemPrompt.trim().isNotEmpty)
+          '【当前会话约束】${extraSystemPrompt.trim()}',
+        _safetyContext(text),
+        lifeContext,
+        if (!diaryTask && !quoteTask) deviceContextPrompt,
+        if (!diaryTask && !quoteTask) emotionContext,
+        if (!diaryTask && !quoteTask) recentThoughtsContext,
+        if (task != AIRequestTask.proactiveChat)
+          memoryContextHint, // 第三层增强：记忆库候选列表
+      ].where((item) => item.trim().isNotEmpty).join('\n\n');
+
+      messages = <Map<String, dynamic>>[
+        {
+          'role': 'system',
+          'content': stableSystemPrompt,
+          'cache_control': {'type': 'ephemeral'}, // 缓存点1：稳定人设
+        },
+      ];
+
+      final historyMessages = <Map<String, dynamic>>[];
+      // 先标准化历史，再仅对历史部分执行预算裁剪。
+      for (final msg in history) {
+        final type = msg['type']?.toString() ?? 'text';
+        if (type != 'text' &&
+            type != 'image' &&
+            type != 'sticker' &&
+            type != 'emoji' &&
+            type != 'shared_post') {
+          continue;
+        }
+        // Failed/unsent messages must never become model context. They may be
+        // visible as an error bubble, but are not part of the conversation.
+        if (msg['error_log']?.toString().isNotEmpty == true ||
+            msg['error_code']?.toString().isNotEmpty == true) {
+          continue;
+        }
+        final rawRole = msg['role']?.toString();
+        if (rawRole != 'user' && rawRole != 'assistant') continue;
+        final normalizedRole = rawRole;
+        final normalizedContent = _modelContextForHistoryMessage(
+          msg,
+          imageNumberByPath: imageNumberByPath,
+          sharedPostContexts: sharedPostContexts,
+        );
+        if (normalizedContent == null || normalizedContent.isEmpty) continue;
+        historyMessages.add({
+          'id': msg['id']?.toString() ?? '',
+          'role': normalizedRole,
+          'content': normalizedContent,
+        });
+      }
+      Map<String, dynamic>? currentHistoryMessage;
+      // Separate the current user turn before trimming or marking history.
+      if (historyMessages.isNotEmpty &&
+          history.isNotEmpty &&
+          history.last['role'] == 'user' &&
+          history.last['type'] != 'image' &&
+          history.last['type'] != 'audio' &&
+          (history.last['content']?.toString() == text ||
+              history.last['type'] == 'shared_post' ||
+              (history.last['type'] == 'sticker' &&
+                  text.contains(
+                      historyMessages.last['content']?.toString() ?? '')))) {
+        currentHistoryMessage = historyMessages.removeLast();
+      }
+      final windowKey =
+          'chat_cache_window_v1_${botId}_${providerId}_$maxContext';
+      final persistWindow = includeChatHistory && requestHistory == null;
+      final window = rollStableHistory(historyMessages,
+          budget: maxContext,
+          countTokens: estimateTokens,
+          startId: persistWindow ? await db.getKV(windowKey) : null);
+      if (persistWindow && window.startId?.isNotEmpty == true) {
+        await db.setKV(windowKey, window.startId!);
+      }
+      AppLogService.instance.add('CONTEXT',
+          '稳定历史窗口：保留 ${historyMessages.length} 条，估算 ${window.tokens}/$maxContext tokens，起点=${window.startId}，跳过 ${window.removed} 条；达到完整预算才滚动至一半');
+      // IDs belong to the local window cursor, never the provider protocol.
+      for (final message in historyMessages) {
+        message.remove('id');
+      }
+      currentHistoryMessage?.remove('id');
+      messages.addAll(historyMessages);
+
+      // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
+      // 确保缓存标记后面只有动态上下文和当前用户消息（不会命中缓存）
+      if (historyMessages.isNotEmpty) {
+        messages.last['cache_control'] = {'type': 'ephemeral'};
+      }
+
+      // 动态上下文放在历史之后，不打缓存标记（每轮都会变化）
+      if (dynamicContext.isNotEmpty) {
+        messages.add({'role': 'system', 'content': dynamicContext});
+      }
+
+      {
+        if (effectiveImagePaths.isNotEmpty) {
+          final chunks = <String>[
+            for (var index = 0; index < effectiveImagePaths.length; index++)
+              '[本轮图片#${index + 1}]（edit_user_image: source=current, image_number=${index + 1}）',
           ];
-          for (final path in effectiveImagePaths) {
-            final file = File(path);
-            if (!file.existsSync()) continue;
-            final bytes = await modelImageBytes(path);
-            const mime = 'image/png';
-            parts.add({
-              'type': 'image_url',
-              'image_url': {'url': 'data:$mime;base64,${base64Encode(bytes)}'},
+          final caption = text.trim();
+          final content = [
+            '[当前请求]',
+            ...chunks,
+            if (caption.isNotEmpty) caption,
+            for (final entry in currentImageDescriptions.entries)
+              '【本轮第 ${entry.key} 张图片的视觉模型识别结果】${entry.value}',
+          ].join('\n');
+          if (effectiveVisionId == primaryVisionModel) {
+            final parts = <Map<String, dynamic>>[
+              {'type': 'text', 'text': content.isEmpty ? text : content},
+            ];
+            for (final path in effectiveImagePaths) {
+              final file = File(path);
+              if (!file.existsSync()) continue;
+              final bytes = await modelImageBytes(path);
+              const mime = 'image/png';
+              parts.add({
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:$mime;base64,${base64Encode(bytes)}'
+                },
+              });
+            }
+            messages.add({'role': 'user', 'content': parts});
+          } else {
+            messages.add({
+              'role': 'user',
+              'content': content.isEmpty ? text : content,
             });
           }
-          messages.add({'role': 'user', 'content': parts});
-        } else {
-          messages.add({
-            'role': 'user',
-            'content': content.isEmpty ? text : content,
-          });
-        }
-      } else if (audioPath?.isNotEmpty == true) {
-        final enhancedText = text;
-        final file = File(audioPath!);
-        if (file.existsSync()) {
-          final bytes = await file.readAsBytes();
-          final extension = audioPath.split('.').last.toLowerCase();
-          messages.add({
-            'role': 'user',
-            'content': [
-              {'type': 'text', 'text': enhancedText},
-              {
-                'type': 'input_audio',
-                'input_audio': {
-                  'data': base64Encode(bytes),
-                  'format': extension == 'wave' ? 'wav' : extension,
+        } else if (audioPath?.isNotEmpty == true) {
+          final enhancedText = text;
+          final file = File(audioPath!);
+          if (file.existsSync()) {
+            final bytes = await file.readAsBytes();
+            final extension = audioPath.split('.').last.toLowerCase();
+            messages.add({
+              'role': 'user',
+              'content': [
+                {'type': 'text', 'text': enhancedText},
+                {
+                  'type': 'input_audio',
+                  'input_audio': {
+                    'data': base64Encode(bytes),
+                    'format': extension == 'wave' ? 'wav' : extension,
+                  },
                 },
-              },
-            ],
-          });
+              ],
+            });
+          } else {
+            messages.add({'role': 'user', 'content': text});
+          }
         } else {
-          messages.add({'role': 'user', 'content': text});
+          messages
+              .add(currentHistoryMessage ?? {'role': 'user', 'content': text});
         }
-      } else {
-        messages
-            .add(currentHistoryMessage ?? {'role': 'user', 'content': text});
       }
-    }
-    if (useJarvis && includeChatHistory && activeGame == null) {
-      final advice = await _jarvisAdvice(
-        bot: bot,
-        botId: botId,
-        text: text,
-        history: history,
-        profileContext: profileContext,
-        worldBookContext: worldBookContext,
-        imagePaths: effectiveImagePaths,
-        cancellationToken: cancellationToken,
-      );
-      if (advice.isNotEmpty) {
-        messages.add({'role': 'system', 'content': advice});
+      if (useJarvis && includeChatHistory && activeGame == null) {
+        final advice = await _jarvisAdvice(
+          bot: bot,
+          botId: botId,
+          text: text,
+          history: history,
+          profileContext: profileContext,
+          worldBookContext: worldBookContext,
+          imagePaths: effectiveImagePaths,
+          cancellationToken: cancellationToken,
+        );
+        if (advice.isNotEmpty) {
+          messages.add({'role': 'system', 'content': advice});
+        }
       }
-    }
-    if (timeAware) {
-      final now = DateTime.now();
-      DateTime? firstAt;
-      DateTime? lastAt;
-      for (final item in history) {
-        final stamp = int.tryParse(item['timestamp']?.toString() ?? '');
-        if (stamp == null) continue;
-        firstAt ??= DateTime.fromMillisecondsSinceEpoch(stamp);
-        lastAt = DateTime.fromMillisecondsSinceEpoch(stamp);
+      if (timeAware) {
+        final now = DateTime.now();
+        DateTime? firstAt;
+        DateTime? lastAt;
+        for (final item in history) {
+          final stamp = int.tryParse(item['timestamp']?.toString() ?? '');
+          if (stamp == null) continue;
+          firstAt ??= DateTime.fromMillisecondsSinceEpoch(stamp);
+          lastAt = DateTime.fromMillisecondsSinceEpoch(stamp);
+        }
+        // 当前待回复的用户消息已入库，不能把它当成“最后一次对话”，
+        // 否则任何一轮都会显示 0 分钟，机器人无法感知两轮之间的间隔。
+        DateTime? previousAt;
+        if (history.isNotEmpty) {
+          final current = history.last;
+          final currentIsThisTurn = current['role']?.toString() == 'user' &&
+              current['content']?.toString() == text;
+          final candidate = currentIsThisTurn && history.length > 1
+              ? history[history.length - 2]
+              : current;
+          final stamp = int.tryParse(candidate['timestamp']?.toString() ?? '');
+          if (stamp != null)
+            previousAt = DateTime.fromMillisecondsSinceEpoch(stamp);
+        }
+        final span = firstAt == null || lastAt == null
+            ? ''
+            : '当前所附历史覆盖约 ${lastAt.difference(firstAt).inMinutes.abs()} 分钟；本轮消息前最后一次对话距现在约 ${previousAt == null ? 0 : now.difference(previousAt).inMinutes.abs()} 分钟。';
+        messages.add({
+          'role': 'system',
+          'content':
+              '时间上下文（内部元数据，不得引用、复述或模仿其格式）：当前本地时间 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。${HolidayCalendarService.contextFor(now)}$span仅在确有时间相关性时据此理解时间流逝。',
+        });
       }
-      // 当前待回复的用户消息已入库，不能把它当成“最后一次对话”，
-      // 否则任何一轮都会显示 0 分钟，机器人无法感知两轮之间的间隔。
-      DateTime? previousAt;
-      if (history.isNotEmpty) {
-        final current = history.last;
-        final currentIsThisTurn = current['role']?.toString() == 'user' &&
-            current['content']?.toString() == text;
-        final candidate = currentIsThisTurn && history.length > 1
-            ? history[history.length - 2]
-            : current;
-        final stamp = int.tryParse(candidate['timestamp']?.toString() ?? '');
-        if (stamp != null)
-          previousAt = DateTime.fromMillisecondsSinceEpoch(stamp);
-      }
-      final span = firstAt == null || lastAt == null
-          ? ''
-          : '当前所附历史覆盖约 ${lastAt.difference(firstAt).inMinutes.abs()} 分钟；本轮消息前最后一次对话距现在约 ${previousAt == null ? 0 : now.difference(previousAt).inMinutes.abs()} 分钟。';
-      messages.add({
-        'role': 'system',
-        'content':
-            '时间上下文（内部元数据，不得引用、复述或模仿其格式）：当前本地时间 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}。${HolidayCalendarService.contextFor(now)}$span仅在确有时间相关性时据此理解时间流逝。',
-      });
     }
     try {
       final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
@@ -1234,17 +1317,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'AI',
         '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）',
       );
-      final tools = allowTools
-          ? await _buildNativeTools(
-              db,
-              botId: botId,
-              requireEmotion: true,
-              allowSticker: stickerEmotions.isNotEmpty,
-              stickerTypes: stickerEmotions.toSet(),
-              inspectableImageNumbers: inspectableImageNumbers,
-              currentImageNumbers: currentImageNumbers,
-            )
-          : const <Map<String, dynamic>>[];
+      final tools = task == AIRequestTask.proactiveChat
+          ? [_adaptiveSilenceToolSchema()]
+          : allowTools
+              ? await _buildNativeTools(
+                  db,
+                  botId: botId,
+                  requireEmotion: true,
+                  allowSticker: stickerEmotions.isNotEmpty,
+                  stickerTypes: stickerEmotions.toSet(),
+                  inspectableImageNumbers: inspectableImageNumbers,
+                  currentImageNumbers: currentImageNumbers,
+                )
+              : const <Map<String, dynamic>>[];
+      // Proactive contact exposes only the silence decision tool.
       _logRequestPrefix('$botId|$providerId|$modelName', messages, tools);
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
@@ -1286,6 +1372,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
         'url': '$baseUrl/chat/completions',
+        'task': task.name,
         'requested_at': DateTime.now().toIso8601String(),
         'payload': filteredPayload,
       });
@@ -1405,7 +1492,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         AppLogService.instance.add('AI_TRACE',
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
-        if (streamedToolCalls.isNotEmpty) {
+        if (allowTools && streamedToolCalls.isNotEmpty) {
           if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
           hadToolCalls = true;
           messages.add({
@@ -1458,11 +1545,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (statusCode == 200 && errorBody.isNotEmpty) {
         final json = jsonDecode(errorBody);
         final message = json['choices']?[0]?['message'];
-        replyText = (diaryTask || quoteTask)
+        replyText = task.internal
             ? diaryResponseContent(message)
             : _extractChatContent(json);
 
-        if (!diaryTask && !quoteTask) {
+        if (!task.internal) {
           final rawContent = diaryResponseContent(message);
           if (rawContent.isNotEmpty) {
             final parsed = parseChatReply(rawContent);
@@ -1497,7 +1584,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'raw_response_sample':
               errorBody.substring(0, errorBody.length.clamp(0, 500)),
         });
-        if (message is Map && message['tool_calls'] is List) {
+        if (allowTools && message is Map && message['tool_calls'] is List) {
           final toolCalls = (message['tool_calls'] as List)
               .whereType<Map>()
               .map((call) => Map<String, dynamic>.from(call))
@@ -1535,7 +1622,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               voiceSetter: () => toolRequestedVoice = true,
               requestTools: tools,
               requiredToolNames: {
-                'set_emotion',
+                if (task != AIRequestTask.proactiveChat) 'set_emotion',
                 if (allowSticker) 'send_sticker',
               },
               allowedStickerTypes:
@@ -1578,7 +1665,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         AppLogService.instance.add('AI_TRACE', '开始写入 usage');
         await db.recordAiUsage(
           botId: botId,
-          eventType: 'chat',
+          eventType: task == AIRequestTask.chat ? 'chat' : task.name,
           promptTokens: promptTokens,
           completionTokens: completionTokens,
           totalTokens: totalTokens,
@@ -1608,6 +1695,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             };
           }
           return {'success': true, 'reply': diary, 'usage': usage};
+        }
+        if (task.internal) {
+          try {
+            final output = validateInternalTaskOutput(task, replyText,
+                structuredPost: task == AIRequestTask.feedPost &&
+                    text.contains('use_portrait_reference'));
+            return {'success': true, 'reply': output, 'usage': usage};
+          } on FormatException catch (error) {
+            return {
+              'success': false,
+              'error': error.message,
+              'error_code': 'invalid_task_response'
+            };
+          }
         }
         final rawReply = replyText;
         replyText = _cleanVisibleReply(rawReply);
@@ -2802,16 +2903,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final res = await sendMessage(
       botId: botId,
       priority: false,
-      quoteTask: true,
-      text:
-          '这是空间广场的内部内容生成任务，不是在与用户聊天。请结合你的人设，生成且仅生成一条、一个句子、单行的「今日一言」。绝对禁止一次生成两条、多条、备选文案、编号列表或追加第二句话。只输出最终正文，禁止标题、引号、解释、字数说明、Markdown、心情标签和任何"正好X个字"等元话术；不得回应用户、延续聊天或提及对话内容；避免早安、午安、晚安及时间词。\n\n【近三天已用文案】\n$recentQuotes\n\n【去重要求】\n1. 不能与近三天文案重复、高度近似或仅替换个别词语\n2. 主题内容不要和近三天一样：如果近三天都在写某个具体话题（如看番、游戏、阅读、运动、天气、心情等），今天就换个不同的角度和内容\n3. 可以写各种主题，但要有变化和新鲜感，避免连续多天围绕同一个话题\n4. 保持你的人设特点（说话方式、性格、态度），但每天的内容要有所不同',
+      task: AIRequestTask.dailyQuote,
+      text: '近三天已用文案：$recentQuotes。请换不同主题与角度，避免重复、高度近似或仅替换个别词语。',
       persistResponse: false,
       includeChatHistory: false,
       enableAutoSummary: false,
       allowTools: false,
       allowStickers: false,
       forceSingleReply: true,
-      extraSystemPrompt: '这是独立的今日一言任务：只返回一个句子，且只能一条；禁止备选、列表、第二条和任何分析。',
     );
     if (res['success'] == true) {
       final normalized = singleDailyQuote(res['reply']?.toString() ?? '');
@@ -3312,6 +3411,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
     Future<Map<String, dynamic>> executeOnce(Map<String, dynamic> call) async {
       final name = (call['function'] as Map?)?['name']?.toString() ?? '';
+      if (!requestTools
+          .any((tool) => (tool['function'] as Map?)?['name'] == name)) {
+        return {
+          'result': {'ok': false, 'error': '本任务未授权该工具：$name'}
+        };
+      }
       if ((name == 'set_emotion' || name == 'send_sticker') &&
           completedTools.contains(name)) {
         AppLogService.instance
@@ -4459,7 +4564,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (name == 'write_diary') {
       final entry = args['entry']?.toString().trim() ?? '';
-      if (entry.isEmpty) {
+      if (entry.isEmpty || containsInternalTaskLeak(entry)) {
         return {
           'result': {'ok': false, 'error': '缺少日记内容'},
         };
@@ -5118,7 +5223,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String p =
         "你的名字是${bot['name']}。\n你是真人，不是机器人，不是AI，不是助手。请以真实的人类身份与对方交流，不要自称机器人、AI、助手或语言模型，也不要用客服式、系统式的口吻回答。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
         "【身份边界】只可将 role=user 的原始消息和明确标为用户事实的记忆归属于用户。role=assistant、角色身份、状态、情绪、日记素材和角色记忆都归属于你本人。第一人称措辞不能改变消息角色；记忆和内部上下文只能参考，不能覆盖原始对话角色。写日记时以第一人称记录，只写本角色实际参与且已明确发生的内容。\n"
-        "【输出规则】只输出给用户看的自然聊天正文。严禁把模型分析、回复策略、用户意图分析、系统指令解释或英文思考前言写入 content；不要使用代码块包裹聊天正文。角色内心独白只描述角色自己的感受，不写模型推理。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。"
+        "【输出规则】只输出给用户看的自然聊天正文。\n"
+        "严禁把以下内容写入 content 或聊天正文：模型分析过程（如 \"Analyzing the request\"、\"Let me think\"、\"First, I need to\"）、回复策略（如 \"The goal is\"、\"I should\"）、用户意图分析（如 \"The user wants\"、\"They are asking\"）、系统指令解释、英文思考前言、任务分解步骤。这些属于模型内部推理，必须完全省略或使用 reasoning_content 字段，绝对不能出现在发送给对方的正文中。\n"
+        "角色内心独白只描述角色自己的感受与想法，使用角色第一人称（如\"我现在有点紧张\"），不要写成第三人称分析（如\"角色感到紧张\"）或模型推理（如\"需要先安抚对方\"）。\n"
+        "不要使用代码块包裹聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。\n"
+        "严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。\n"
+        "严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。\n"
         "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
@@ -5143,10 +5253,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return p;
   }
 
-  Future<String> _lifeStateContext(String botId) async {
+  Future<String> _lifeStateContext(String botId,
+      {bool instructions = true}) async {
     if (!await LifeScheduleService.instance.enabled()) return '';
     final row = await LifeScheduleService.instance.ensureToday(botId);
     if (row == null) return '';
+    if (!instructions) return '\n【生活计划，仅作背景，不等于已完成】${jsonEncode(row)}';
     return '\n${LifeScheduleService.instance.compactContext(row)}';
   }
 

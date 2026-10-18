@@ -101,15 +101,14 @@ class _CallPageState extends State<CallPage>
   final List<String> _capturedFrames = [];
   final GlobalKey<VideoCallOverlayState> _videoOverlayKey =
       GlobalKey<VideoCallOverlayState>();
-
-  // Keep the gate tolerant of Android devices whose amplitude reporting is
+// Keep the gate tolerant of Android devices whose amplitude reporting is
   // conservative. A user can always finish the current turn explicitly.
-  static const int _speechStartTicks = 3; // 提高到3（600ms），降低误判
-  static const int _silentStopTicks = 8; // 提高到8（1.6秒静音），避免截断
-  static const double _minimumVoiceLevel = -55; // 提高到-55（真人说话才够响）
-  static const double _speechOverNoise = 8; // 提高到8dB（避免把机器人声音当成插话）
+  static const int _speechStartTicks = 2; // 降低到2（400ms），更快响应
+  static const int _silentStopTicks = 7; // 降低到7（1.4秒静音），更快自动停止
+  static const double _minimumVoiceLevel = -60; // 降低到-60（更敏感）
+  static const double _speechOverNoise = 6; // 降低到6dB（更易触发）
   static const Duration _minimumRecordingDuration =
-      Duration(milliseconds: 300); // 降低到300ms
+      Duration(milliseconds: 300);
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   static const String _videoCallSystemPrompt =
@@ -297,6 +296,13 @@ class _CallPageState extends State<CallPage>
     }
     final gate = (_noiseFloor ?? floor) + _speechOverNoise;
     final isVoice = level >= _minimumVoiceLevel && level >= gate;
+
+    // 调试日志：监控振幅回调和语音检测
+    if (_recording && !_processing && !_finishingRecording) {
+      AppLogService.instance.add('VOICE_CALL_AMP',
+          'level=$level gate=$gate isVoice=$isVoice speechDetected=$_speechDetected voiceTicks=$_voiceTicks silentTicks=$_silentTicks');
+    }
+
     if (_vadActive) {
       if (isVoice) {
         _vadActive = false;
@@ -330,13 +336,20 @@ class _CallPageState extends State<CallPage>
         }
       } else {
         _voiceTicks = 0;
-        if (_speechDetected) {
-          _silentTicks++;
-          if (_silentTicks >= _silentStopTicks) {
-            AppLogService.instance
-                .add('VOICE_CALL', '连续静音${_silentTicks}个tick，自动结束录音');
-            unawaited(_finishListening());
-          }
+        _silentTicks++;
+        // 兜底逻辑：即使未检测到明显语音，只要已录制足够时长且持续静音，也自动结束
+        final recordingDuration = _recordingStartedAt == null
+            ? Duration.zero
+            : DateTime.now().difference(_recordingStartedAt!);
+        if (recordingDuration.inSeconds >= 3 &&
+            _silentTicks >= _silentStopTicks) {
+          AppLogService.instance.add('VOICE_CALL',
+              '录制${recordingDuration.inSeconds}秒后持续静音，自动结束录音（兜底）');
+          unawaited(_finishListening());
+        } else if (_speechDetected && _silentTicks >= _silentStopTicks) {
+          AppLogService.instance
+              .add('VOICE_CALL', '连续静音$_silentTicks个tick，自动结束录音');
+          unawaited(_finishListening());
         }
       }
     }
@@ -347,8 +360,10 @@ class _CallPageState extends State<CallPage>
     _autoStopTimer?.cancel();
     // Amplitude callbacks are authoritative. This only prevents an abandoned
     // recording from running forever on devices that do not emit amplitudes.
-    _autoStopTimer = Timer(const Duration(seconds: 30), () {
+    _autoStopTimer = Timer(const Duration(seconds: 10), () {
       if (_recording && !_processing && !_muted && !_vadActive) {
+        AppLogService.instance
+            .add('VOICE_CALL', '兜底定时器触发，10秒超时自动结束录音');
         unawaited(_finishListening());
       }
     });
@@ -832,14 +847,15 @@ class _CallPageState extends State<CallPage>
     if (transcript.isNotEmpty) {
       try {
         final result = await AIManager().sendMessage(
+          task: AIRequestTask.callSummary,
           botId: botId,
           text:
-              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。如果需要记忆可以调用工具。只输出摘要正文。\n\n${transcript.join('\n')}',
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
           persistResponse: false,
           includeChatHistory: false,
           enableAutoSummary: false,
           skipLifeState: true,
-          allowTools: true, // 允许调用工具（如记忆）
+          allowTools: false,
           forceSingleReply: true,
         );
         final generated = result['reply']?.toString().trim() ?? '';

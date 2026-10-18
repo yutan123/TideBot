@@ -32,6 +32,7 @@ class CognitionReviewService {
           await db.setKV(key, 'pending');
           final memories = await db.queryMemories(id);
           final result = await AIManager().sendMessage(
+            task: AIRequestTask.cognitionReview,
             botId: id,
             text: cognitionReviewPrompt(bot: bot, memories: memories, now: now),
             priority: false,

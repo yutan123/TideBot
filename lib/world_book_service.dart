@@ -146,146 +146,70 @@ class WorldBookService {
       // 取消计时器
       cancelConversationTimer(botId);
 
-      // 获取最近的对话历史（最多20条）
-      final messages = await db.queryMessages(botId, limit: 20);
-      if (messages.length < 2) {
-        debugPrint('[WorldBook] 对话太短，跳过记忆判断');
-        return;
-      }
-
-      // 构建对话摘要
-      final conversationSummary = messages
-          .map((m) => '${m['role'] == 'user' ? '用户' : '机器人'}: ${m['content']}')
-          .join('\n');
-
-      // 调用AI判断是否需要更新世界书
-      final prompt = '''
-请分析这段对话，判断是否需要更新世界书（机器人的记忆系统）。
-
-【对话内容】
-$conversationSummary
-
-【判断规则】
-值得记录的信息：
-- 重要的个人信息（姓名、生日、职业、爱好等）
-- 情感变化和重要事件
-- 约定、承诺、待办事项
-- 新学到的知识
-- 用户的喜好和习惯
-
-不值得记录的信息：
-- 日常寒暄
-- 重复的已知信息
-- 过于琐碎的细节
-
-【输出格式】
-请返回JSON格式，包含以下字段：
-{
-  "needUpdate": true/false,
-  "actions": [
-    {
-      "type": "create|update|delete",
-      "title": "记忆标题",
-      "content": "记忆内容",
-      "keys": ["关键词1", "关键词2"],
-      "priority": 50,
-      "comment": "为什么记录这条"
-    }
-  ]
-}
-
-如果不需要更新，返回 {"needUpdate": false, "actions": []}
-没有新信息或需要修改的内容时，judgment['needUpdate'] 填写 false。
-''';
-
-      debugPrint('[WorldBook] 开始AI记忆判断...');
+      // SQL must select the newest records before limiting, then restore order.
+      final messages = recentTaskMessages(
+          await db.queryMessages(botId, limit: 160, descending: true),
+          limit: 40);
+      if (messages.length < 2) return;
+      final cursorKey = 'memory_review_cursor_$botId';
+      final lastId = await db.getKV(cursorKey);
+      final previous = messages.indexWhere((m) => m['id'] == lastId);
+      final fresh =
+          previous >= 0 ? messages.skip(previous + 1).toList() : messages;
+      if (fresh.isEmpty) return;
+      final existing = (await db.queryMemories(botId, limit: 200))
+          .where((m) => m['category'] == '记忆')
+          .toList();
+      final prompt = '请判断以下新增真实对话是否有值得保留的信息；寒暄、重复事实和琐碎细节不记。'
+          '区分用户和角色，禁止把内部任务提示、引用记录、分析或工具协议写成记忆。'
+          '未来约定以计划状态记录。输出 JSON：'
+          '{"needUpdate":false,"actions":[]}；需要变更时 actions 中每项为 '
+          '{"type":"create|update|delete","id":"更新或删除时的已有id",'
+          '"title":"标题","content":"事实正文","keys":["关键词"],"priority":50}。'
+          '\n当前本地时间：${DateTime.now().toIso8601String()}'
+          '\n新增对话：${taskTranscript(fresh)}'
+          '\n已有记忆（只用于去重和更正）：${jsonEncode(existing)}';
       final result = await AIManager().sendMessage(
-        botId: botId,
-        text: prompt,
-        persistResponse: false,
-        forceSingleReply: true,
-      );
-
-      if (result['success'] != true) {
-        debugPrint('[WorldBook] AI记忆判断失败: ${result['error']}');
-        return;
-      }
-
-      // 解析AI返回的JSON
-      final response = result['text']?.toString() ?? '';
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(response);
-      if (jsonMatch == null) {
-        debugPrint('[WorldBook] AI返回格式错误');
-        return;
-      }
-
-      final judgment = jsonDecode(jsonMatch.group(0)!);
-      if (judgment['needUpdate'] != true) {
-        debugPrint('[WorldBook] AI判断：无需更新世界书');
-        return;
-      }
-
-      // 执行更新操作
-      final actions =
-          (judgment['actions'] as List? ?? []).cast<Map<String, dynamic>>();
-      for (final action in actions) {
-        final type = action['type']?.toString() ?? 'create';
-        final title = action['title']?.toString() ?? '';
-        final content = action['content']?.toString() ?? '';
-        final keys = (action['keys'] as List? ?? []).cast<String>();
-        final priority = action['priority'] as int? ?? 50;
-
-        if (title.isEmpty || content.isEmpty || keys.isEmpty) continue;
-
-        if (type == 'create') {
-          // 创建新条目（存入memories表，兼容现有系统）
+          botId: botId,
+          task: AIRequestTask.memoryReview,
+          text: prompt,
+          priority: false,
+          persistResponse: false);
+      if (result['success'] != true) return;
+      final judgment = jsonDecode(result['reply'] as String);
+      final actions = validateMemoryReview(judgment, existing);
+      final database = await db.database;
+      await database.transaction((txn) async {
+        for (var i = 0; i < actions.length; i++) {
+          final action = actions[i];
+          final type = action['type'];
           final now = DateTime.now().millisecondsSinceEpoch;
-          await (await db.database).insert('memories', {
-            'id': 'mem_${now}_${title.hashCode.abs()}',
-            'bot_id': botId,
-            'title': title,
-            'content': content,
-            'category': '记忆',
-            'keys': jsonEncode(keys),
-            'key_mode': 'plain',
-            'priority': priority,
-            'created_at': now,
-            'updated_at': now,
-          });
-          debugPrint('[WorldBook] 创建记忆: $title');
-        } else if (type == 'update') {
-          // 查找并更新现有条目
-          final existing = await (await db.database).query(
-            'memories',
-            where: 'bot_id = ? AND title = ?',
-            whereArgs: [botId, title],
-            limit: 1,
-          );
-          if (existing.isNotEmpty) {
-            await (await db.database).update(
-              'memories',
-              {
-                'content': content,
-                'keys': jsonEncode(keys),
-                'priority': priority,
-                'updated_at': DateTime.now().millisecondsSinceEpoch,
-              },
-              where: 'id = ?',
-              whereArgs: [existing.first['id']],
-            );
-            debugPrint('[WorldBook] 更新记忆: $title');
+          if (type == 'delete') {
+            await txn.delete('memories',
+                where: 'bot_id = ? AND id = ? AND category = ?',
+                whereArgs: [botId, action['id'], '记忆']);
+            continue;
           }
-        } else if (type == 'delete') {
-          // 删除条目
-          await (await db.database).delete(
-            'memories',
-            where: 'bot_id = ? AND title = ?',
-            whereArgs: [botId, title],
-          );
-          debugPrint('[WorldBook] 删除记忆: $title');
+          final values = memoryReviewValues(action, now);
+          if (type == 'create') {
+            if (existing.any((m) => m['content'] == action['content']))
+              continue;
+            await txn.insert('memories', {
+              ...values,
+              'id': 'mem_${now}_$i',
+              'bot_id': botId,
+              'category': '记忆',
+              'type': 'short',
+              'timestamp': now,
+            });
+          } else {
+            await txn.update('memories', values,
+                where: 'bot_id = ? AND id = ? AND category = ?',
+                whereArgs: [botId, action['id'], '记忆']);
+          }
         }
-      }
-
+      });
+      await db.setKV(cursorKey, fresh.last['id'].toString());
       debugPrint('[WorldBook] 记忆判断完成，执行了 ${actions.length} 个操作');
     } catch (e, st) {
       debugPrint('[WorldBook] 记忆判断异常: $e');

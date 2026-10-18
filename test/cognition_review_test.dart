@@ -1,3 +1,4 @@
+import 'package:tide_bot/ai_request_task.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tide_bot/cognition_review.dart';
@@ -50,8 +51,11 @@ void main() {
       memories: rows,
       now: DateTime(2026, 1, 1),
     );
-    expect(prompt, contains('小潮'));
-    expect(prompt, contains('温柔简洁'));
+    final system = internalTaskSystemPrompt(
+        AIRequestTask.cognitionReview, {'name': '小潮', 'prompt': '温柔简洁'});
+    expect(system, contains('小潮'));
+    expect(system, contains('温柔简洁'));
+    expect(prompt, isNot(contains('温柔简洁')));
     expect(prompt, contains('条目0'));
     expect(prompt, isNot(contains('第九条')));
   });

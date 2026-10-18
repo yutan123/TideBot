@@ -1,3 +1,4 @@
+import 'life_schedule_service.dart';
 import 'bot_image_tool.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -708,10 +709,23 @@ class SquarePageState extends State<SquarePage>
             ? '已设置你自己的人像照片作为参考图。必须在 JSON 中填写 use_portrait_reference 布尔值：美食、景点、物件等不含人物的配图为 false，image_prompt 明确不出现人物；配图出现人物（包括自拍、合照或局部人像）必须为 true。false 使用文生图，true 使用人像参考图进行图改，不要为了使用参考图额外添加人物。'
             : '未设置人像参考图，使用文生图，use_portrait_reference 填写 false。';
         final res = await AIManager().sendMessage(
+          task: AIRequestTask.feedPost,
           botId: botId,
-          text: wantsImage
-              ? '请以第一人称创作今天第 ${index + 1} 条朋友圈生活动态。仅输出严格 JSON，不要 markdown：{"content":"20到60字的自然生活动态","image_prompt":"与正文一致的完整生图提示词","use_portrait_reference":false}。$referenceRule 正文要具体、口语化，不写标签，不提图片。image_prompt 必须包含当前场景、时间、动作、可见穿搭或环境；未配置明确外观时优先第一人称生活场景、物件、环境或局部画面。不要出现机器人、机械人、AI 助手、文字、水印、UI 或聊天截图。'
-              : '请以第一人称发一条像朋友圈一样的生活动态（20到60字）：写今天真实、具体的小事、行动、瞬间感受或想分享给朋友的话。这是今天第 ${index + 1} 条，请避免重复已有内容。不要写成文章、日记、总结、散文或说教；自然口语化、有生活感，不要使用心情标签、话题标签，也不要提到图片、照片、配图或任何媒体占位。',
+          // ignore: prefer_interpolation_to_compose_strings
+          text: (wantsImage
+                  ? '请以第一人称创作今天第 ${index + 1} 条朋友圈生活动态。仅输出严格 JSON，不要 markdown：{"content":"20到60字的自然生活动态","image_prompt":"与正文一致的完整生图提示词","use_portrait_reference":false}。$referenceRule 正文要具体、口语化，不写标签，不提图片。image_prompt 必须包含当前场景、时间、动作、可见穿搭或环境；未配置明确外观时优先第一人称生活场景、物件、环境或局部画面。不要出现机器人、机械人、AI 助手、文字、水印、UI 或聊天截图。'
+                  : '请以第一人称发一条像朋友圈一样的生活动态（20到60字）：写今天真实、具体的小事、行动、瞬间感受或想分享给朋友的话。这是今天第 ${index + 1} 条，请避免重复已有内容。不要写成文章、日记、总结、散文或说教；自然口语化、有生活感，不要使用心情标签、话题标签，也不要提到图片、照片、配图或任何媒体占位。') +
+              '\n当前本地时间：${DateTime.now().toIso8601String()}。\n当天生活素材（计划不等于已发生）：${await LifeScheduleService.instance.ensureToday(botId)}\n当天已发动态：${(await (await db.database).query('posts', where: 'author_id = ? AND timestamp >= ?', whereArgs: [
+                    botId,
+                    DateTime.now()
+                        .copyWith(
+                            hour: 0,
+                            minute: 0,
+                            second: 0,
+                            millisecond: 0,
+                            microsecond: 0)
+                        .millisecondsSinceEpoch
+                  ])).map((p) => p['content']).join('；')}',
           persistResponse: false,
           allowTools: false,
         );
@@ -827,6 +841,7 @@ class SquarePageState extends State<SquarePage>
           // This bot chose to leave a real generated comment.
           try {
             final reactRes = await AIManager().sendMessage(
+              task: AIRequestTask.feedComment,
               botId: reactorId,
               text:
                   '你在空间广场看到${bot['name'] ?? '另一个机器人'}发布了一条动态："$content"。请用你自己的第一人称口吻写一句简短评论（15字以内）回应这条动态，语气自然，不要出现心情标签、话题标签或"评论"二字。',
@@ -1955,9 +1970,10 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
     final um2 = userComment['content']?.toString() ?? '';
     try {
       final res = await AIManager().sendMessage(
+        task: AIRequestTask.feedComment,
         botId: botId,
         text:
-            '有人在你的动态下留下内容：“$um2”。请用第一人称口吻简短自然地回应这条内容（20字以内）。这可能来自用户，也可能来自另一位机器人；不要提及系统、指令或心情标签。',
+            '原动态：${widget.feed['content']}。相关评论线程：${jsonEncode((await db.queryPostComments(widget.feed['id'].toString())).where((c) => c['id'] == userComment['id'] || c['id'] == userComment['parent_id'] || c['parent_id'] == userComment['id']).toList())}。评论者：${userComment['author_id']}。有人在你的动态下留下内容：“$um2”。请用第一人称口吻简短自然地回应这条内容（20字以内）。这可能来自用户，也可能来自另一位机器人；不要提及系统、指令或心情标签。',
         persistResponse: false,
         includeChatHistory: false,
         enableAutoSummary: false,

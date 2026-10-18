@@ -5,6 +5,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app_permissions.dart';
+import 'chat_background_defaults.dart';
+import 'db.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
 
 class GlobalBackgroundPage extends StatefulWidget {
@@ -63,6 +66,16 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
         opacity: _opacity,
         enableLiquidGlass: _enableLiquidGlass,
       );
+      if (_path.isNotEmpty) {
+        final documents = await getApplicationDocumentsDirectory();
+        final bots = await DBManager().queryBots();
+        await copyGlobalToUnsetChatBackgrounds(
+          sourcePath: _path,
+          botIds: bots.map((bot) => bot['id']?.toString() ?? ''),
+          directory: Directory('${documents.path}/chat_backgrounds'),
+          prefs: await SharedPreferences.getInstance(),
+        );
+      }
       // The candidate was precached before this page saves it; remove only the old
       // image after the new path has become the active theme value.
       if (old.isNotEmpty &&

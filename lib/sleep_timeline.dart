@@ -96,43 +96,93 @@ class _SleepTrackPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final start = vitalInt(segments.first['start']);
     final duration = math.max(1, vitalInt(segments.last['end']) - start);
-    final width = math.max(0.0, size.width - 8);
-    final paint = Paint()..strokeCap = StrokeCap.round;
-    final awakeY = size.height * .17;
-    final sleepY = size.height * .80;
-    for (final y in [awakeY, sleepY]) {
-      canvas.drawLine(
-          Offset(4, y),
-          Offset(size.width - 4, y),
-          paint
-            ..color = divider.withValues(alpha: .45)
-            ..strokeWidth = 1);
-    }
-    double? previousY;
+    final trackHeight = 14.0;
+    final centerY = size.height / 2;
+    final trackRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(4, centerY - trackHeight / 2, size.width - 8, trackHeight),
+      const Radius.circular(7),
+    );
+    canvas.drawRRect(
+      trackRect,
+      Paint()..color = divider.withValues(alpha: .2),
+    );
+    final path = Path();
+    final points = <Offset>[];
     for (final segment in segments) {
       final asleep = segment['state'] == '睡眠';
-      final x1 = 4 + (vitalInt(segment['start']) - start) / duration * width;
-      final x2 = 4 + (vitalInt(segment['end']) - start) / duration * width;
-      final y = asleep ? sleepY : awakeY;
-      if (previousY != null && previousY != y) {
-        final connector = Paint()
-          ..strokeCap = StrokeCap.round
-          ..strokeWidth = 4.5
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [awakeColor, sleepColor],
-          ).createShader(Rect.fromLTRB(x1 - 3, awakeY, x1 + 3, sleepY));
-        canvas.drawLine(Offset(x1, previousY), Offset(x1, y), connector);
-      }
-      canvas.drawLine(
-          Offset(x1, y),
-          Offset(x2, y),
-          paint
-            ..color = asleep ? sleepColor : awakeColor
-            ..strokeWidth = asleep ? 9 : 5);
-      previousY = y;
+      final x1 = 4 +
+          (vitalInt(segment['start']) - start) / duration * (size.width - 8);
+      final x2 =
+          4 + (vitalInt(segment['end']) - start) / duration * (size.width - 8);
+      points.add(Offset(x1, asleep ? 1.0 : 0.0));
+      points.add(Offset(x2, asleep ? 1.0 : 0.0));
     }
+    if (points.isEmpty) return;
+    path.moveTo(points.first.dx, centerY);
+    for (var i = 0; i < points.length - 1; i++) {
+      final current = points[i];
+      final next = points[i + 1];
+      final currentY = centerY + (current.dy - 0.5) * 0;
+      final nextY = centerY + (next.dy - 0.5) * 0;
+      if (current.dy != next.dy) {
+        final transitionWidth = math.min(12.0, (next.dx - current.dx) / 2);
+        path.lineTo(current.dx, currentY);
+        path.cubicTo(
+          current.dx + transitionWidth / 2,
+          currentY,
+          next.dx - transitionWidth / 2,
+          nextY,
+          next.dx,
+          nextY,
+        );
+      } else {
+        path.lineTo(next.dx, nextY);
+      }
+    }
+    canvas.save();
+    canvas.clipRRect(trackRect);
+    final gradientPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = trackHeight
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    for (final segment in segments) {
+      final asleep = segment['state'] == '睡眠';
+      final x1 = 4 +
+          (vitalInt(segment['start']) - start) / duration * (size.width - 8);
+      final x2 =
+          4 + (vitalInt(segment['end']) - start) / duration * (size.width - 8);
+      if (x2 - x1 < 0.5) continue;
+      final segmentPath = Path()
+        ..moveTo(x1, centerY)
+        ..lineTo(x2, centerY);
+      gradientPaint.color = asleep ? sleepColor : awakeColor;
+      canvas.drawPath(segmentPath, gradientPaint);
+    }
+    for (var i = 0; i < segments.length - 1; i++) {
+      final current = segments[i];
+      final next = segments[i + 1];
+      if (current['state'] != next['state']) {
+        final x = 4 +
+            (vitalInt(current['end']) - start) / duration * (size.width - 8);
+        final transitionWidth = 16.0;
+        final transitionRect = Rect.fromLTWH(
+          x - transitionWidth / 2,
+          centerY - trackHeight / 2,
+          transitionWidth,
+          trackHeight,
+        );
+        final isToSleep = next['state'] == '睡眠';
+        gradientPaint.shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors:
+              isToSleep ? [awakeColor, sleepColor] : [sleepColor, awakeColor],
+        ).createShader(transitionRect);
+        canvas.drawRect(transitionRect, gradientPaint);
+      }
+    }
+    canvas.restore();
   }
 
   @override

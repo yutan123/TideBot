@@ -126,7 +126,7 @@ class _ChatBackgroundPageState extends State<ChatBackgroundPage> {
     final prefs = await SharedPreferences.getInstance();
     for (final id in _selected) {
       final old = _backgrounds[id];
-      await prefs.remove('chat_bg_$id');
+      await prefs.setString('chat_bg_$id', '');
       if (old != null) await _deleteIfUnused(old, prefs);
     }
     if (!mounted) return;

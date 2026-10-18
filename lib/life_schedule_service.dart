@@ -349,9 +349,10 @@ class LifeScheduleService {
     final scheduleType = choose('types');
     final weatherPool = (all['weather'] ?? const <String>[]).join('、');
     final result = await AIManager().sendMessage(
+      task: AIRequestTask.lifeSchedule,
       botId: botId,
       text: '''这是内部日程任务，不要和用户聊天。请只输出 JSON。
-今天是 $key。为自己生成真实连续的拟人化生活状态。
+今天是 $key。当前本地时间：${DateTime.now().toIso8601String()}。为自己生成真实连续的拟人化生活状态。\n已有日程（保留刚性事项）：${jsonEncode(old)}
 ${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snapshot(botId))}
 主题：$theme；心情：$mood；穿搭风格：$outfitStyle；日程类型：$scheduleType。
 可用天气池：$weatherPool。你必须根据全天时间合理选择天气，并让相邻时段天气平缓变化；无需使用全部天气，禁止无理由的大幅跳变。
@@ -370,8 +371,8 @@ ${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snap
 - 全天总步数建议在 5000-12000 区间
 
 首次生成时请同时给出 body 对象，依据人设已有身高体重，缺失则生成适合角色且无需性别判断的稳定初始数据；字段 height(cm)、weight(kg)、heart(静息平均心率)、temperature；不要生成血压字段。
-输出格式：
-{"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","sleep_plan_start":"23:30","sleep_plan_end":"次日07:00","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","steps":800,"rigid":false}]}
+输出格式（首次 body 必填；已有身体数据时不要重新生成身高）：
+{"body":{"height":170,"weight":60,"heart":70,"temperature":36.5},"theme":"...","mood":"...","outfit_style":"$outfitStyle","outfit":"详细完整的从头到脚穿搭、鞋袜、材质、配饰、发型与整体氛围","sleep_plan_start":"23:30","sleep_plan_end":"次日07:00","timeline":[{"time":"09:00","end_time":"10:30","activity":"...","weather":"晴","steps":800,"rigid":false}]}
 从你决定的起床时间安排当天生活，直到下一次睡觉结束。不要使用固定的09:00或23:00。按任务实际耗时自由安排足够多的连续时段，短任务不要虚构为一小时，不能重叠，不能留出不合理的大空档；每条都必须提供晚于开始时间的 end_time。必须包含一条睡觉时段（从入睡到起床）。刚性事项仅限上班、已预约、就医、重要工作等不可随意改变的事情。$extra''',
       persistResponse: false,
       includeChatHistory: false,
@@ -411,6 +412,13 @@ ${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snap
               (e['activity']?.toString().isNotEmpty ?? false))
           .toList();
       _normalizeTimeline(timeline, all['weather'] ?? const <String>[]);
+      if (old != null &&
+          _timeline(old).where((e) => e['rigid'] == true).any((e) =>
+              !timeline.any((n) =>
+                  n['rigid'] == true &&
+                  n['time'] == e['time'] &&
+                  n['end_time'] == e['end_time'] &&
+                  n['activity'] == e['activity']))) return old;
       final sleepEntries =
           timeline.where((e) => '${e['activity']}'.contains('睡')).toList();
       if (sleepEntries.isEmpty) return old;
@@ -541,6 +549,7 @@ ${BotVitalSignsService.instance.context(await BotVitalSignsService.instance.snap
           final activity = item['activity']?.toString() ?? '';
           final result = await AIManager()
               .sendMessage(
+                task: AIRequestTask.proactiveChat,
                 botId: botId,
                 text:
                     '【日程结束事件】你今天从 ${item['time']} 到 $endTime 的“$activity”刚刚结束。根据人格、当前心情和最近聊天，自然决定是否想告诉用户；没有分享欲或会打扰时必须保持沉默。若发送，仅发 1-3 句自然短消息，不要提及日程、系统或指令。',
