@@ -526,19 +526,18 @@ class BotVitalSignsService {
                   (_rng.nextDouble() - .5) * .25 +
                   (s['health'] == '生病' ? -.08 : 0) +
                   (steps > 8000 ? -.03 : 0))
-              .clamp(vitalDouble(s['base_weight']) - 5,
-                  vitalDouble(s['base_weight']) + 5);
+              .clamp(15, 250);
           final sick = s['health'] == '生病';
-          s['temperature'] = sick
-              ? 37.3 + _rng.nextDouble() * .8
-              : 36.3 + _rng.nextDouble() * .5;
+          s['temperature'] = nextBodyTemperature(
+            vitalDouble(s['temperature'], 36.5),
+            sick: sick,
+            noise: _rng.nextDouble() * 2 - 1,
+          );
           s['body_day'] = date;
         }
         // One settled hourly mean; reopening the page never rerolls the value.
-        s['base_heart'] ??= vitalDouble(s['heart'], 72).clamp(55, 90);
         s['heart'] = hourlyMeanHeartRate(
           previous: vitalDouble(s['heart'], 72),
-          baseline: vitalDouble(s['base_heart'], 72),
           asleep: inSleep,
           activity: activity,
           stress: stress.toDouble(),
@@ -679,6 +678,8 @@ class BotVitalSignsService {
       s['heart'] = heart;
       s['base_heart'] = heart;
       s['base_weight'] = weight;
+      // Manual values also prevent first-schedule initialization from replacing them.
+      s['initialized_by_model'] = true;
       final samples = vitalList(s['samples']);
       if (samples.isNotEmpty) {
         samples.last.addAll({

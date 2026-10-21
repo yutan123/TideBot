@@ -1637,6 +1637,10 @@ class DBManager {
     final db = await database;
     await db.insert('kv_store', {'key': key, 'value': value},
         conflictAlgorithm: ConflictAlgorithm.replace);
+    if (key == 'proactive_min_minutes' || key == 'proactive_max_minutes') {
+      await db.rawUpdate(
+          "UPDATE kv_store SET value = '0' WHERE key GLOB 'proactive_due_at_*'");
+    }
     if (key == 'proactive_reply' ||
         key == 'proactive_min_minutes' ||
         key == 'proactive_max_minutes' ||
@@ -3085,6 +3089,8 @@ class DBManager {
         'summary': summary,
         'start_time': startTime.millisecondsSinceEpoch,
         'end_time': endTime.millisecondsSinceEpoch,
+        'timestamp': endTime.millisecondsSinceEpoch,
+        'duration': endTime.difference(startTime).inSeconds,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,

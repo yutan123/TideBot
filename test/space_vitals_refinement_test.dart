@@ -33,7 +33,6 @@ void main() {
             double previous = 72}) =>
         hourlyMeanHeartRate(
             previous: previous,
-            baseline: 72,
             asleep: asleep,
             activity: activity,
             stress: stress,
@@ -62,6 +61,22 @@ void main() {
         expect((next - previous).abs(), lessThanOrEqualTo(14));
         previous = next.toDouble();
       }
+    });
+    test('edited heart rate does not revert to defaults', () {
+      for (final initial in [48.0, 95.0, 120.0, 132.0]) {
+        var current = initial;
+        for (var hour = 0; hour < 48; hour++) {
+          current = rate(previous: current).toDouble();
+        }
+        expect(current, initial);
+      }
+    });
+    test('temperature continues from the saved value', () {
+      expect(nextBodyTemperature(38.5, sick: false, noise: 0), 38.5);
+      expect(nextBodyTemperature(35.5, sick: false, noise: 1),
+          closeTo(35.6, .001));
+      expect(
+          nextBodyTemperature(38.5, sick: true, noise: 0), closeTo(38.6, .001));
     });
     test('heart charts retain each hourly sample, weight stays daily', () {
       final now = DateTime.now();

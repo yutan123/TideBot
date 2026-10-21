@@ -32,6 +32,16 @@
   );
 }
 
+String messageTimeContext(String content, Object? timestamp) {
+  final stamp =
+      timestamp is num ? timestamp.toInt() : int.tryParse('$timestamp');
+  if (stamp == null) return '[发送时间:未知]\n$content';
+  final time = DateTime.fromMillisecondsSinceEpoch(stamp);
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '[发送时间:${time.year}-${two(time.month)}-${two(time.day)} '
+      '${two(time.hour)}:${two(time.minute)}:${two(time.second)}]\n$content';
+}
+
 String stickerModelContext({required String role, required String type}) {
   final actor = role == 'assistant' ? '你' : '对方';
   final label = type.trim().isEmpty ? '未分类' : type.trim();

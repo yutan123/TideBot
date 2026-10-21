@@ -125,6 +125,7 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
     // per-frame rebuilds. The rotating light also moves the refracted rim.
     final route = ModalRoute.of(context);
     final motion = <Listenable>[
+      _press,
       if (route?.animation != null) route!.animation!,
       if (route?.secondaryAnimation != null) route!.secondaryAnimation!,
     ];
@@ -139,9 +140,8 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
       motion: Listenable.merge(motion),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(widget.radius),
-        clipBehavior: widget.clipExpansion == EdgeInsets.zero
-            ? Clip.antiAlias
-            : Clip.none,
+        clipBehavior:
+            widget.clipExpansion == EdgeInsets.zero ? Clip.hardEdge : Clip.none,
         child: AnimatedBuilder(
           animation: _flow,
           child: _content(),

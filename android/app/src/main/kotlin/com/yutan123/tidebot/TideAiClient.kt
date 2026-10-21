@@ -36,7 +36,8 @@ object TideAiClient {
 
     data class Message(
         val role: String,
-        val content: String
+        val content: String,
+        val sentAt: Long = System.currentTimeMillis()
     )
 
     data class AiResponse(
@@ -144,7 +145,8 @@ object TideAiClient {
         req.messages.forEach { msg ->
             val msgObj = JSONObject()
             msgObj.put("role", msg.role)
-            msgObj.put("content", msg.content)
+            val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(msg.sentAt))
+            msgObj.put("content", if (msg.role == "user" || msg.role == "assistant") "[发送时间:$time]\n${msg.content}" else msg.content)
             messages.put(msgObj)
         }
         json.put("messages", messages)
@@ -199,8 +201,9 @@ object TideAiClient {
         if (finish == null) throw IOException("Truncated stream")
         if (names.values.any { it.toString() != "choose_silence" }) throw IOException("Unsupported tool")
         val silent = names.values.any { it.toString() == "choose_silence" }
-        if (!silent && content.isBlank()) throw IOException("Empty reply")
-        return AiResponse(if (silent) "" else content.toString(), finish, usage, silent)
+        val visible = stripMetadata(content.toString())
+        if (!silent && visible.isBlank()) throw IOException("Empty reply")
+        return AiResponse(if (silent) "" else visible, finish, usage, silent)
     }
 
     /**
@@ -225,7 +228,7 @@ object TideAiClient {
             if (tools.getJSONObject(i).optJSONObject("function")?.optString("name") != "choose_silence") throw IOException("Unsupported tool")
             silent = true
         }
-        val content = if (silent || message.isNull("content")) "" else message.optString("content", "")
+        val content = if (silent || message.isNull("content")) "" else stripMetadata(message.optString("content", ""))
         if (!silent && content.isBlank()) throw IOException("Empty reply")
         val finishReason = choice.optString("finish_reason")
 
@@ -239,6 +242,9 @@ object TideAiClient {
 
         return AiResponse(content, finishReason, usage, silent)
     }
+
+    private fun stripMetadata(text: String): String = text.replace(
+        Regex("""\[(?:(?:你|对方)发送了一个表情包，表情包类型|发送时间)\s*[:：][^\]]*(?:\]|$)"""), "").trim()
 
     private class HttpException(code: Int) : IOException("Provider HTTP $code") {
         val retryable = code == 408 || code == 429 || code >= 500

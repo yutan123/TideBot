@@ -126,11 +126,9 @@ List<Map<String, dynamic>> stepPlan(
   return result;
 }
 
-/// Simulated hourly mean, not a medical measurement. Smooth changes toward a
-/// role-specific resting baseline; activity, sleep, stress and fever modulate it.
+/// Continue from the latest value without reverting to an initial baseline.
 int hourlyMeanHeartRate(
     {required double previous,
-    required double baseline,
     required bool asleep,
     required String activity,
     required double stress,
@@ -142,12 +140,17 @@ int hourlyMeanHeartRate(
       : RegExp('散步|步行|逛街|通勤').hasMatch(activity)
           ? 9.0
           : 0.0;
-  final target = baseline.clamp(45, 110) +
-      (asleep ? -12 : exertion) +
-      (asleep ? 0 : (stress.clamp(0, 10) - 3) * 1.6) +
-      (sleepQuality < 60 && !asleep ? 4 : 0) +
-      max(0.0, temperature - 37) * 8 +
+  final change = (asleep ? -1.0 : exertion / 12) +
+      (asleep ? 0 : (stress.clamp(0, 10) - 3) * .25) +
+      (sleepQuality < 60 && !asleep ? 1 : 0) +
+      max(0.0, temperature - 37) * .8 +
       noise.clamp(-2, 2);
-  final desired = previous + (target - previous) * .65;
-  return desired.clamp(previous - 14, previous + 14).clamp(45, 135).round();
+  return (previous + change.clamp(-4, 4)).clamp(45, 135).round();
 }
+
+/// Daily temperature continues from the saved value with small changes.
+double nextBodyTemperature(double previous,
+        {required bool sick, required double noise}) =>
+    (previous + noise.clamp(-1, 1) * .1 + (sick ? .1 : 0))
+        .clamp(34, 42)
+        .toDouble();

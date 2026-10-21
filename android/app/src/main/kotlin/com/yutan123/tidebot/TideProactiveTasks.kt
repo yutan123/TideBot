@@ -12,7 +12,18 @@ object TideProactiveTasks {
             for (bot in TideStore.rows(db, "SELECT id,is_disabled FROM bots")) {
                 val id = bot.getString("id")
                 val sleeping = runCatching { JSONObject(TideStore.kv(db, "bot_vitals_v1_$id") ?: "{}").optJSONObject("sleep") != null }.getOrDefault(false)
-                if (!enabled || sleeping || bot.optInt("is_disabled") == 1 || (TideStore.kv(db, "proactive_unanswered_$id")?.toIntOrNull() ?: 0) >= 3) {
+                val reason = when {
+                    !enabled -> "disabled"
+                    sleeping -> "sleeping"
+                    bot.optInt("is_disabled") == 1 -> "bot_disabled"
+                    (TideStore.kv(db, "proactive_unanswered_$id")?.toIntOrNull() ?: 0) >= 3 -> "unanswered_limit"
+                    else -> null
+                }
+                if (reason != null) {
+                    if (TideStore.kv(db, "proactive_last_result_$id") != reason) {
+                        TideBackgroundLog.add(context, "主动回复暂停：bot=$id，reason=$reason")
+                        TideStore.put(db, "proactive_last_result_$id", reason)
+                    }
                     db.execSQL("UPDATE background_tasks SET enabled=0 WHERE task_id=?", arrayOf("proactive:$id"))
                     TideAlarmScheduler.cancel(context, "proactive:$id")
                     continue
@@ -22,6 +33,7 @@ object TideProactiveTasks {
                     if (existing > 0) existing else {
                         val next = nextDeadline(db, false)
                         TideStore.put(db, "proactive_due_at_$id", next.toString())
+                        TideBackgroundLog.add(context, "主动回复已安排：bot=$id，到期时间=$next")
                         next
                     }
                 }

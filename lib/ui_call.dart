@@ -7,6 +7,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'call_message.dart';
+import 'call_speech_endpoint.dart';
 import 'app_permissions.dart';
 import 'package:flutter/material.dart';
 
@@ -64,7 +65,7 @@ class _CallPageState extends State<CallPage>
   bool _finishingRecording = false;
   bool _botSpeaking = false;
   bool _speechDetected = false;
-  double? _noiseFloor;
+  final _endpoint = CallSpeechEndpoint();
   StreamSubscription<Amplitude>? _ampSub;
 
   /// 机器人语音播放完成（或被分贝打断）的状态门闩；每次播放前重置。
@@ -102,19 +103,11 @@ class _CallPageState extends State<CallPage>
   final List<String> _capturedFrames = [];
   final GlobalKey<VideoCallOverlayState> _videoOverlayKey =
       GlobalKey<VideoCallOverlayState>();
-// Keep the gate tolerant of Android devices whose amplitude reporting is
-  // conservative. A user can always finish the current turn explicitly.
-  static const int _speechStartTicks = 2; // 2 tick = 400ms 触发语音检测
-  static const int _silentStopTicks = 4; // 4 tick = 800ms 静音后自动停止
-  static const double _minimumVoiceLevel = -60; // 更敏感的音量门槛
-  static const double _speechOverNoise = 6; // 降低噪音差要求
   static const Duration _minimumRecordingDuration = Duration(milliseconds: 300);
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   static const String _videoCallSystemPrompt =
-      '当前正在进行实时视频通话，对方可以看到你。如果对话涉及视觉内容、需要展示画面或你认为图片会有帮助，请调用 generate_image 工具生成图片。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
-  int _silentTicks = 0;
-  int _voiceTicks = 0;
+      '当前正在进行实时视频通话。本轮附带的图片是用户摄像头刚刚拍到的真实画面；用户问“这是什么”“你看”等问题时，应以本轮摄像头图片或其视觉识别结果为依据，不要用历史图片、人设或想象代替。看不清或图片识别失败时直接说明，不编造画面内容。只有用户明确要求你生成或展示图片时才调用 generate_image，识别用户展示的物品不需要生成图片。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   DateTime? _recordingStartedAt;
   Timer? _autoStopTimer;
 
@@ -289,22 +282,12 @@ class _CallPageState extends State<CallPage>
   /// - 监听用户期间：累积静默计数，连续静默一段时间后自动结束录音并进入识别。
   void _onAmplitudeChanged(Amplitude amp) {
     if (_muted) return;
-    final level = amp.current.clamp(-80.0, 0.0).toDouble();
-    final floor = _noiseFloor ?? level;
-    if (!_speechDetected && !_vadActive) {
-      _noiseFloor = floor * .86 + level * .14;
-    }
-    final gate = (_noiseFloor ?? floor) + _speechOverNoise;
-    final isVoice = level >= _minimumVoiceLevel && level >= gate;
-
-    // 调试日志：监控振幅回调和语音检测
-    if (_recording && !_processing && !_finishingRecording) {
-      AppLogService.instance.add('VOICE_CALL_AMP',
-          'level=$level gate=$gate isVoice=$isVoice speechDetected=$_speechDetected voiceTicks=$_voiceTicks silentTicks=$_silentTicks');
-    }
-
+    final started = _recordingStartedAt;
+    final elapsed =
+        started == null ? 0 : DateTime.now().difference(started).inMilliseconds;
+    final isVoice = _endpoint.add(amp.current, elapsed);
     if (_vadActive) {
-      if (isVoice) {
+      if (isVoice && _endpoint.speechDetected) {
         _vadActive = false;
         _playSub?.cancel();
         _playSub = null;
@@ -321,50 +304,37 @@ class _CallPageState extends State<CallPage>
       return;
     }
     if (_recording && !_processing && !_finishingRecording) {
-      if (isVoice) {
-        _voiceTicks++;
-        _silentTicks = 0;
-        if (!_speechDetected && _voiceTicks >= _speechStartTicks) {
-          if (mounted) {
-            setState(() {
-              _speechDetected = true;
-              _flowState = CallFlowState.speechDetected;
-              _caption = '已识别到你的声音';
-            });
-          }
-          AppLogService.instance.add('VOICE_CALL', '已检测到用户语音');
+      if (_endpoint.speechDetected && !_speechDetected) {
+        _speechDetected = true;
+        if (mounted) {
+          setState(() {
+            _flowState = CallFlowState.speechDetected;
+            _caption = '已识别到你的声音';
+          });
         }
-      } else {
-        _voiceTicks = 0;
-        _silentTicks++;
-        // 兜底逻辑：即使未检测到明显语音，只要已录制足够时长且持续静音，也自动结束
-        final recordingDuration = _recordingStartedAt == null
-            ? Duration.zero
-            : DateTime.now().difference(_recordingStartedAt!);
-        if (recordingDuration.inSeconds >= 2 &&
-            _silentTicks >= _silentStopTicks) {
-          AppLogService.instance.add('VOICE_CALL',
-              '录制${recordingDuration.inSeconds}秒后持续静音，自动结束录音（兜底）');
-          unawaited(_finishListening());
-        } else if (_speechDetected && _silentTicks >= _silentStopTicks) {
-          AppLogService.instance.add('VOICE_CALL',
-              '连续静音$_silentTicks个tick（${_silentTicks * 200}ms），自动结束录音');
-          unawaited(_finishListening());
-        }
+        AppLogService.instance.add('VOICE_CALL', '已检测到持续语音');
       }
     }
   }
 
-  /// 监听时的兜底定时器：保证 amplitude 回调不触发时也能自动结束。
+  /// Check elapsed silence independently of amplitude callback frequency.
   void _ensureAutoStopTimer() {
     _autoStopTimer?.cancel();
-    // Amplitude callbacks are authoritative. This only prevents an abandoned
-    // recording from running forever on devices that do not emit amplitudes.
-    _autoStopTimer = Timer(const Duration(seconds: 10), () {
-      if (_recording && !_processing && !_muted && !_vadActive) {
-        AppLogService.instance.add('VOICE_CALL', '兜底定时器触发，10秒超时自动结束录音');
-        unawaited(_finishListening());
+    _autoStopTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      final started = _recordingStartedAt;
+      if (!_recording ||
+          _processing ||
+          _muted ||
+          _vadActive ||
+          started == null) {
+        return;
       }
+      final elapsed = DateTime.now().difference(started).inMilliseconds;
+      final reason = _endpoint.stopReason(elapsed);
+      if (reason == null) return;
+      AppLogService.instance.add('VOICE_CALL',
+          '结束录音 reason=$reason elapsedMs=$elapsed floor=${_endpoint.noiseFloor} gate=${_endpoint.gate}');
+      unawaited(_finishListening());
     });
   }
 
@@ -407,10 +377,8 @@ class _CallPageState extends State<CallPage>
         path: path,
       );
       _startAmpMonitor();
-      _silentTicks = 0;
-      _voiceTicks = 0;
       _speechDetected = false;
-      _noiseFloor = null;
+      _endpoint.reset();
       _recordingStartedAt = DateTime.now();
       _ensureAutoStopTimer();
       AppLogService.instance.add('VOICE_CALL', '录音已启动：$path');
@@ -551,6 +519,9 @@ class _CallPageState extends State<CallPage>
     AppLogService.instance.add('VOICE_CALL', 'STT 开始：${_recordingPath!}');
     try {
       final token = _beginTurn();
+      // Freeze what the caller is showing before waiting for remote STT.
+      final frame = _videoEnabled ? await _captureVideoFrame() : null;
+      if (_ending) return;
       AppLogService.instance
           .add('VOICE_CALL', '调用 AIManager.transcribeAudio，超时45秒');
       final text = await AIManager()
@@ -581,8 +552,6 @@ class _CallPageState extends State<CallPage>
       _transcript.add('用户：${text.trim()}');
       _appendMessage(text, isUser: true);
 
-      // 视频通话：用户说完话后自动截取一帧摄像头画面随本轮发送
-      final frame = _videoEnabled ? await _captureVideoFrame() : null;
       if (_ending) return;
 
       if (mounted) setState(() => _caption = text);
@@ -846,6 +815,36 @@ class _CallPageState extends State<CallPage>
     final durationText = _formatDuration(duration);
     var summary = '本次通话未获取到有用信息。';
     var failed = false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final callId = 'call_${botId}_$now';
+    try {
+      await DBManager().insertVoiceCallRecord(
+        callId: callId,
+        botId: botId,
+        initiator: 'user',
+        status: 'ended',
+        transcript: transcript.join('\n'),
+        summary: transcript.isEmpty ? summary : '通话摘要正在生成。',
+        startTime:
+            DateTime.fromMillisecondsSinceEpoch(now - duration.inMilliseconds),
+        endTime: DateTime.fromMillisecondsSinceEpoch(now),
+      );
+      await MessageDeliveryService.instance.insert({
+        'id': 'card_$callId',
+        'bot_id': botId,
+        'role': 'user',
+        'type': 'voice_call_card',
+        'content': '[语音通话，通话时长$durationText]',
+        'call_id': callId,
+        'call_status': 'ended',
+        'call_duration': duration.inSeconds,
+        'timestamp': now,
+      });
+      AppLogService.instance.add('VOICE_CALL', '通话结束卡片已保存：$callId');
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '保存通话结束卡片失败：$error');
+      return;
+    }
     if (transcript.isNotEmpty) {
       try {
         final result = await AIManager().sendMessage(
@@ -873,42 +872,16 @@ class _CallPageState extends State<CallPage>
       }
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final callId = 'call_${botId}_$now';
-    final durationSeconds = duration.inSeconds;
-    final transcriptText = transcript.join('\n');
-
     try {
-      // 保存通话记录到数据库
-      await DBManager().insertVoiceCallRecord(
-        callId: callId,
-        botId: botId,
-        initiator: 'user',
-        status: 'ended',
-        transcript: transcriptText,
-        summary: summary,
-        startTime:
-            DateTime.fromMillisecondsSinceEpoch(now - duration.inMilliseconds),
-        endTime: DateTime.fromMillisecondsSinceEpoch(now),
+      await DBManager().updateVoiceCallRecord(callId, summary: summary);
+      await DBManager().updateMessageContent(
+        'card_$callId',
+        '[语音通话，通话时长$durationText，通话摘要：$summary]',
       );
-
-      // 插入通话卡片到聊天记录（用户发起的通话）
-      await MessageDeliveryService.instance.insert({
-        'id': 'card_$callId',
-        'bot_id': botId,
-        'role': 'user',
-        'type': 'voice_call_card',
-        'content':
-            '[语音通话，通话时长${_formatDuration(Duration(seconds: durationSeconds))}，通话摘要：$summary]',
-        'call_id': callId,
-        'call_status': 'ended',
-        'call_duration': durationSeconds,
-        'timestamp': now,
-      });
-
-      AppLogService.instance.add('VOICE_CALL', '通话记录已保存：$callId');
+      AppLogService.instance
+          .add('VOICE_CALL', '通话摘要已更新：$callId，failed=$failed');
     } catch (error) {
-      AppLogService.instance.add('VOICE_CALL', '保存通话记录失败：$error');
+      AppLogService.instance.add('VOICE_CALL', '更新通话摘要失败：$error');
     }
   }
 
@@ -1006,16 +979,28 @@ class _CallPageState extends State<CallPage>
     }
   }
 
-  /// 截取当前摄像头画面；摄像头未就绪时返回 null，本轮仅发送文字。
+  /// A video turn must not silently degrade to a text-only request.
   Future<String?> _captureVideoFrame() async {
-    final path = await _videoOverlayKey.currentState?.captureFrame();
-    if (path != null) {
-      _capturedFrames.add(path);
-      AppLogService.instance.add('VOICE_CALL', '已截取视频帧');
-    } else {
-      AppLogService.instance.add('VOICE_CALL', '视频帧截取失败，本轮仅发送文字');
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (_ending || !_videoEnabled) {
+        throw StateError('视频画面已关闭，请重新发送');
+      }
+      final path = await _videoOverlayKey.currentState?.captureFrame();
+      if (path != null) {
+        final file = File(path);
+        _capturedFrames.add(path);
+        if (await file.exists() && await file.length() > 0) {
+          AppLogService.instance
+              .add('VOICE_CALL', '已截取本轮用户摄像头画面 bytes=${await file.length()}');
+          return path;
+        }
+      }
+      if (attempt < 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
     }
-    return path;
+    AppLogService.instance.add('VOICE_CALL', '视频帧截取失败，已停止本轮请求');
+    throw StateError('未获取到摄像头画面，请等待预览正常后重试');
   }
 
   /// 机器人通过 generate_image 生成图片后更新视频主画面，保留到下一张出现。
@@ -1036,7 +1021,6 @@ class _CallPageState extends State<CallPage>
     _vadActive = false;
     _autoStopTimer?.cancel();
     _stopAmpMonitor();
-    _silentTicks = 0;
     if (_recording) await _recorder.stop();
     _recordingStartedAt = null;
     if (!mounted) return;
@@ -1862,8 +1846,6 @@ class _CallPageState extends State<CallPage>
     _recordingPath = null;
     _recordingStartedAt = null;
     _speechDetected = false;
-    _silentTicks = 0;
-    _voiceTicks = 0;
     if (mounted) {
       setState(() {
         _flowState = CallFlowState.idle;

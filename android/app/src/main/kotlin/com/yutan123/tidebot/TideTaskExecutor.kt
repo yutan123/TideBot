@@ -24,6 +24,7 @@ object TideTaskExecutor {
         Log.d(TAG, "Executing task: $taskId at $scheduledTime")
 
         val executionId = claimExecution(context, taskId, scheduledTime) ?: return@withContext
+        TideBackgroundLog.add(context, "任务开始：$taskId，到期时间=$scheduledTime")
 
         try {
             // 读取任务配置
@@ -57,6 +58,7 @@ object TideTaskExecutor {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Task execution failed: $taskId", e)
+            TideBackgroundLog.add(context, "任务异常：$taskId，类型=${e.javaClass.simpleName}")
             markExecutionFinished(context, executionId, "failed", null, e.message)
         }
     }
@@ -118,14 +120,17 @@ object TideTaskExecutor {
             ) + recentMessages.map {
                 TideAiClient.Message(
                     role = it.optString("role", "user"),
-                    content = it.optString("content", "")
+                    content = it.optString("content", ""),
+                    sentAt = it.optLong("timestamp")
                 )
             },
             maxTokens = botConfig.maxTokens,
             allowSilence = true
         )
 
+        TideBackgroundLog.add(context, "主动回复请求开始：bot=$botId，model=${model.model}")
         val result = TideAiClient.sendRequest(request)
+        TideBackgroundLog.add(context, "主动回复请求结束：bot=$botId，结果=${if (result.isFailure) "request_failed" else if (result.getOrNull()?.silent == true) "model_silence" else "reply_received"}")
 
         TideStore.open(context).use { db ->
             TideStore.transaction(db) {
@@ -136,6 +141,7 @@ object TideTaskExecutor {
                 if (disabled || currentUser != latestUser || (TideStore.kv(db, "proactive_unanswered_$botId")?.toIntOrNull() ?: 0) >= 3 || TideStore.kv(db, "proactive_due_at_$botId") != initialDue ||
                     TideStore.kv(db, "proactive_reply") == "false" || state.optJSONObject("sleep") != null) {
                     db.execSQL("UPDATE background_task_executions SET status='skipped',finished_at=?,error_message='Context changed during request' WHERE execution_id=?", arrayOf(System.currentTimeMillis(),executionId))
+                    TideBackgroundLog.add(context, "主动回复丢弃：bot=$botId，请求期间对话或设置已改变")
                     return@transaction
                 }
                 val response = result.getOrNull()
@@ -149,6 +155,7 @@ object TideTaskExecutor {
                         arrayOf(if (response != null) "success" else "failed", System.currentTimeMillis(), result.exceptionOrNull()?.message, executionId))
                 }
                 TideStore.put(db, "proactive_last_result_$botId", if (sent) "sent" else if (response != null) "model_silence" else "request_failed")
+                TideBackgroundLog.add(context, "主动回复结果：bot=$botId，${if (sent) "sent" else if (response != null) "model_silence" else "request_failed"}")
                 TideStore.put(db, "proactive_due_at_$botId", TideProactiveTasks.nextDeadline(db, !sent).toString())
             }
         }
@@ -251,6 +258,7 @@ object TideTaskExecutor {
         result: String?,
         error: String?
     ) {
+        TideBackgroundLog.add(context, "任务结束：execution=$executionId，status=$status")
         val db = openDatabase(context) ?: return
         try {
             db.execSQL(
@@ -299,7 +307,7 @@ object TideTaskExecutor {
         val db = openDatabase(context) ?: return emptyList()
         try {
             val cursor = db.rawQuery(
-                """SELECT role, content FROM chat_history 
+                """SELECT role, content, timestamp FROM chat_history
                    WHERE bot_id = ? AND type = 'text' 
                    ORDER BY timestamp DESC LIMIT ?""",
                 arrayOf(botId, limit.toString())
@@ -310,6 +318,7 @@ object TideTaskExecutor {
                     val msg = JSONObject()
                     msg.put("role", it.getString(0))
                     msg.put("content", it.getString(1))
+                    msg.put("timestamp", it.getLong(2))
                     messages.add(0, msg) // 倒序插入，保持时间正序
                 }
             }

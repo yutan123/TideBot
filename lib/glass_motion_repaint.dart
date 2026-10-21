@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+// The public API does not expose shape-transform invalidation. Keep this
+// adapter tied to the locked renderer version until an upstream API exists.
+// ignore: implementation_imports
+import 'package:liquid_glass_widgets/src/renderer/liquid_glass.dart'
+    show RenderLiquidGlass;
 
 /// Glass shaders cache geometry inside their own repaint boundaries. Scrolling
 /// and route transforms must invalidate those boundaries as well as the parent.
@@ -32,6 +37,10 @@ class _GlassMotionRenderObject extends RenderProxyBox {
 
   void _invalidate() {
     void invalidate(RenderObject object) {
+      // Painting alone leaves the renderer's shape-to-layer transform cached.
+      // Notify the owning glass group before the next paint, not after scene
+      // composition (the package's default transform tracker is a frame late).
+      if (object is RenderLiquidGlass) object.onTransformChanged();
       object.markNeedsPaint();
       object.visitChildren(invalidate);
     }

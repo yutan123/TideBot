@@ -125,6 +125,7 @@ class MainActivity: FlutterActivity() {
                         TideVitalSigns.tick(applicationContext, id).toString()
                     }
                 }
+                "drainBackgroundLogs" -> backgroundResult(result, "LOG_FAILED") { TideBackgroundLog.drain(applicationContext) }
                 "synchronizeBackgroundTasks" -> backgroundResult(result, "SYNC_FAILED") {
                     TideFutureTasks.reconcile(applicationContext)
                     for (id in TideConfigReader.getEnabledBotIds(applicationContext)) {
@@ -134,6 +135,12 @@ class MainActivity: FlutterActivity() {
                     TideProactiveTasks.reconcile(applicationContext)
                     TideEnhancedBackgroundWork.ensureScheduled(applicationContext)
                     TideMasterScheduler.restoreAllTasks(applicationContext)
+                    val due = TideStore.open(applicationContext).use { db ->
+                        TideStore.rows(db, "SELECT task_id,trigger_time FROM background_tasks WHERE enabled=1 AND task_type='PROACTIVE_REPLY' AND trigger_time<=?", System.currentTimeMillis().toString())
+                    }
+                    for (task in due) {
+                        TideBackgroundService.startTask(applicationContext, task.getString("task_id"), task.getLong("trigger_time"))
+                    }
                     null
                 }
                 "scheduleFutureTask" -> {

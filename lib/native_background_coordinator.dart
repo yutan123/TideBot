@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'app_log_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -56,6 +58,20 @@ class NativeBackgroundCoordinator {
         const Duration(seconds: 2), (_) => unawaited(refreshMessages()));
   }
 
+  static Future<void> refreshLogs() async {
+    if (!AppLogService.instance.enabled) return;
+    try {
+      final raw = await _channel.invokeMethod<String>('drainBackgroundLogs');
+      for (final row in (jsonDecode(raw ?? '[]') as List).whereType<Map>()) {
+        final at = DateTime.fromMillisecondsSinceEpoch(row['time'] as int);
+        AppLogService.instance
+            .add('PROACTIVE_NATIVE', '[$at] ${row['message']}');
+      }
+    } catch (error) {
+      AppLogService.instance.add('ERROR', '原生后台日志读取失败：$error');
+    }
+  }
+
   static Future<void> refreshMessages() async {
     if (_refreshing ||
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
@@ -63,6 +79,7 @@ class NativeBackgroundCoordinator {
     }
     _refreshing = true;
     try {
+      await refreshLogs();
       final db = await DBManager().database;
       final rows = await db.query('background_messages',
           where: 'synced_to_chat = 1 AND displayed = 0',

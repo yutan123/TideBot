@@ -50,9 +50,32 @@ String _replySource(String raw) => raw
     )
     .trim();
 
+/// Protocol metadata is model context, never visible chat text.
+String stripChatMetadata(String raw) {
+  var text = raw.replaceAll(
+    RegExp(r'\[(?:(?:你|对方)发送了一个表情包，表情包类型|发送时间)\s*[:：][^\]]*\]'),
+    '',
+  );
+  // Hold a split opening anywhere in a cumulative stream, including mid-sentence.
+  final start = text.lastIndexOf('[');
+  if (start >= 0 && !text.substring(start).contains(']')) {
+    final tail = text.substring(start);
+    const prefixes = [
+      '[你发送了一个表情包，表情包类型',
+      '[对方发送了一个表情包，表情包类型',
+      '[发送时间',
+    ];
+    if (prefixes
+        .any((prefix) => prefix.startsWith(tail) || tail.startsWith(prefix))) {
+      text = text.substring(0, start);
+    }
+  }
+  return text;
+}
+
 /// Parse one complete/cumulative reply. No state is shared between requests.
 ChatReplyContent parseChatReply(String raw) {
-  var text = _replySource(raw);
+  var text = _replySource(stripChatMetadata(raw));
   // Keep examples of internal tags inside a real source-code block intact.
   if (RegExp(r'^```(?!text\b|plaintext\b)[a-z][\w+-]*\s*\n',
           caseSensitive: false)

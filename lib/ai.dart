@@ -1151,6 +1151,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'id': msg['id']?.toString() ?? '',
           'role': normalizedRole,
           'content': normalizedContent,
+          'local_timestamp': msg['timestamp'],
         });
       }
       Map<String, dynamic>? currentHistoryMessage;
@@ -1166,6 +1167,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                   text.contains(
                       historyMessages.last['content']?.toString() ?? '')))) {
         currentHistoryMessage = historyMessages.removeLast();
+      }
+      for (final message in historyMessages) {
+        message['content'] = messageTimeContext(
+            message['content'].toString(), message.remove('local_timestamp'));
       }
       final windowKey =
           'chat_cache_window_v1_${botId}_${providerId}_$maxContext';
@@ -1184,6 +1189,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         message.remove('id');
       }
       currentHistoryMessage?.remove('id');
+      final currentTimestamp =
+          currentHistoryMessage?.remove('local_timestamp') ??
+              DateTime.now().millisecondsSinceEpoch;
       messages.addAll(historyMessages);
 
       // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
@@ -1259,6 +1267,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         } else {
           messages
               .add(currentHistoryMessage ?? {'role': 'user', 'content': text});
+        }
+      }
+      if (!task.internal &&
+          messages.isNotEmpty &&
+          messages.last['role'] == 'user') {
+        final current = messages.last;
+        final body = current['content'];
+        if (body is String) {
+          current['content'] = messageTimeContext(body, currentTimestamp);
+        } else if (body is List) {
+          body.insert(0, {
+            'type': 'text',
+            'text': messageTimeContext('', currentTimestamp)
+          });
         }
       }
       if (useJarvis && includeChatHistory && activeGame == null) {
