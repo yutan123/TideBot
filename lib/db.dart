@@ -246,6 +246,25 @@ class DBManager {
         UNIQUE(bot_id, date_key)
       )
     ''');
+
+    // 语音通话记录表
+    await _execSql(db, '''
+      CREATE TABLE IF NOT EXISTS voice_call_records (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        initiator TEXT NOT NULL,
+        status TEXT NOT NULL,
+        duration INTEGER DEFAULT 0,
+        summary TEXT DEFAULT '',
+        transcript TEXT DEFAULT '',
+        timestamp INTEGER NOT NULL,
+        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+      )
+    ''');
+    await _execSql(db, '''
+      CREATE INDEX IF NOT EXISTS idx_voice_call_records_bot 
+      ON voice_call_records(bot_id, timestamp DESC)
+    ''');
     await _execSql(db, '''
       CREATE TABLE IF NOT EXISTS bot_life_schedules (
         id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
@@ -365,6 +384,9 @@ class DBManager {
         'sources_json': 'TEXT',
         'timestamp': 'INTEGER',
         'inner_thought': 'TEXT',
+        'call_id': 'TEXT',
+        'call_status': 'TEXT',
+        'call_duration': 'INTEGER',
       });
       await _ensureColumns(db, 'posts', const {
         'author_id': 'TEXT',
@@ -425,6 +447,17 @@ class DBManager {
       await _ensureColumns(db, 'skill_tools', const {
         'risk_level': "TEXT NOT NULL DEFAULT 'normal'",
         'authorized': 'INTEGER NOT NULL DEFAULT 0',
+      });
+      await _ensureColumns(db, 'voice_call_records', const {
+        'id': 'TEXT PRIMARY KEY',
+        'bot_id': 'TEXT NOT NULL',
+        'initiator': "TEXT NOT NULL DEFAULT 'user'",
+        'status': "TEXT NOT NULL DEFAULT 'ended'",
+        'transcript': "TEXT DEFAULT ''",
+        'summary': "TEXT DEFAULT ''",
+        'start_time': 'INTEGER NOT NULL',
+        'end_time': 'INTEGER NOT NULL',
+        'created_at': 'INTEGER NOT NULL',
       });
       for (final sql in const [
         'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)',
@@ -2355,6 +2388,52 @@ class DBManager {
         orderBy: 'date_key ASC');
   }
 
+  // ========== 语音通话记录 ==========
+
+  /// 保存通话记录
+  Future<void> saveVoiceCallRecord(Map<String, dynamic> record) async {
+    final db = await database;
+    await db.insert('voice_call_records', record,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 获取通话记录
+  Future<Map<String, dynamic>?> getVoiceCallRecord(String callId) async {
+    final db = await database;
+    final rows = await db.query('voice_call_records',
+        where: 'id = ?', whereArgs: [callId], limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// 查询机器人的通话记录列表
+  Future<List<Map<String, dynamic>>> queryVoiceCallRecords(String botId,
+      {int limit = 50}) async {
+    final db = await database;
+    return db.query('voice_call_records',
+        where: 'bot_id = ?',
+        whereArgs: [botId],
+        orderBy: 'timestamp DESC',
+        limit: limit);
+  }
+
+  /// 更新通话记录状态
+  Future<void> updateVoiceCallStatus(
+      String callId, String status, int duration) async {
+    final db = await database;
+    await db.update(
+        'voice_call_records', {'status': status, 'duration': duration},
+        where: 'id = ?', whereArgs: [callId]);
+  }
+
+  /// 更新通话摘要
+  Future<void> updateVoiceCallSummary(
+      String callId, String summary, String transcript) async {
+    final db = await database;
+    await db.update(
+        'voice_call_records', {'summary': summary, 'transcript': transcript},
+        where: 'id = ?', whereArgs: [callId]);
+  }
+
   Future<bool> claimBackgroundJob(String key,
       {Duration lease = const Duration(minutes: 30)}) async {
     final db = await database;
@@ -2970,5 +3049,94 @@ class DBManager {
     final db = await database;
     await db.update('bots', {'is_pinned': isPinned},
         where: 'id = ?', whereArgs: [botId]);
+  }
+
+  // ========== 语音通话记录 ==========
+
+  /// 插入语音通话记录
+  Future<void> insertVoiceCallRecord({
+    required String callId,
+    required String botId,
+    required String initiator,
+    required String status,
+    required String transcript,
+    required String summary,
+    required DateTime startTime,
+    required DateTime endTime,
+  }) async {
+    final db = await database;
+    await db.insert(
+      'voice_call_records',
+      {
+        'id': callId,
+        'bot_id': botId,
+        'initiator': initiator,
+        'status': status,
+        'transcript': transcript,
+        'summary': summary,
+        'start_time': startTime.millisecondsSinceEpoch,
+        'end_time': endTime.millisecondsSinceEpoch,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 更新语音通话记录
+  Future<void> updateVoiceCallRecord(
+    String callId, {
+    String? status,
+    String? transcript,
+    String? summary,
+    DateTime? endTime,
+  }) async {
+    final db = await database;
+    final updates = <String, dynamic>{};
+    if (status != null) updates['status'] = status;
+    if (transcript != null) updates['transcript'] = transcript;
+    if (summary != null) updates['summary'] = summary;
+    if (endTime != null) updates['end_time'] = endTime.millisecondsSinceEpoch;
+
+    if (updates.isNotEmpty) {
+      await db.update(
+        'voice_call_records',
+        updates,
+        where: 'id = ?',
+        whereArgs: [callId],
+      );
+    }
+  }
+
+  /// 更新聊天消息
+  Future<void> updateChatMessage(
+    String messageId, {
+    String? content,
+    String? callStatus,
+  }) async {
+    final db = await database;
+    final updates = <String, dynamic>{};
+    if (content != null) updates['content'] = content;
+    if (callStatus != null) updates['call_status'] = callStatus;
+
+    if (updates.isNotEmpty) {
+      await db.update(
+        'chat_history',
+        updates,
+        where: 'id = ?',
+        whereArgs: [messageId],
+      );
+    }
+  }
+
+  /// 获取机器人数据（用于工具调用）
+  Future<Map<String, dynamic>?> getBotData(String botId) async {
+    final db = await database;
+    final results = await db.query(
+      'bots',
+      where: 'id = ?',
+      whereArgs: [botId],
+      limit: 1,
+    );
+    return results.isNotEmpty ? results.first : null;
   }
 }

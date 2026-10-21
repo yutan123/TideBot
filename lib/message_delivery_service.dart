@@ -45,4 +45,21 @@ class MessageDeliveryService {
   Future<void> markRead(String botId) async {
     await _db.markBotRead(botId);
   }
+
+  Future<void> sendNotification({
+    required String title,
+    required String body,
+    Map<String, dynamic>? payload,
+  }) async {
+    if (AppState.isForeground.value) return;
+    if (await _db.getKV('unread_notifications') == 'false') return;
+
+    await OpsManager().showSystemNotification(
+      id: DateTime.now().millisecondsSinceEpoch.hashCode,
+      title: title,
+      body: body,
+      botId: payload?['bot_id']?.toString(),
+      messageId: payload?['call_id']?.toString(),
+    );
+  }
 }

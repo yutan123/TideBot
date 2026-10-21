@@ -36,6 +36,7 @@ import 'skill_package.dart';
 import 'world_book_service.dart';
 import 'tool_call_accumulator.dart';
 import 'chat_request_context.dart';
+import 'voice_call_state_service.dart';
 
 class AICancellationToken {
   bool _cancelled = false;
@@ -1879,7 +1880,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 'bot_id': botId,
                 'role': 'assistant',
                 'type': 'sticker',
-                'content': '',
+                'content': sticker['emotion']?.toString() ?? '',
                 'file_path': sticker['file_path']?.toString(),
                 'mood': mood,
                 'reply_group_id': replyGroupId,
@@ -3729,6 +3730,22 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
     }
     tools.addAll(await _buildExternalTools(db));
+
+    // 发起语音通话工具
+    tools.add({
+      'type': 'function',
+      'function': {
+        'name': 'initiate_voice_call',
+        'description':
+            '给用户发起语音通话。只在真实需要实时交流、讨论复杂话题或用户明确表示希望通话时调用。调用后会给用户发送通知，用户可以接听或拒接。',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+          'additionalProperties': false,
+        },
+      },
+    });
+
     return tools;
   }
 
@@ -4694,6 +4711,61 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               : '图片已生成并将作为聊天图片发送。',
         },
       };
+    }
+    if (name == 'initiate_voice_call') {
+      try {
+        final now = DateTime.now();
+        final callId = '${now.millisecondsSinceEpoch}_$botId';
+
+        // 保存通话记录
+        await db.insertVoiceCallRecord(
+          callId: callId,
+          botId: botId,
+          initiator: 'assistant',
+          status: 'ringing',
+          transcript: '',
+          summary: '',
+          startTime: now,
+          endTime: now,
+        );
+
+        // 插入通话卡片到聊天记录
+        final cardMessage = {
+          'id': callId,
+          'bot_id': botId,
+          'role': 'assistant',
+          'content': '[语音通话]',
+          'type': 'voice_call_card',
+          'call_id': callId,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        await db.insertChatMessage(cardMessage);
+
+        // 更新通话状态
+        VoiceCallStateService.instance
+            .startRinging(callId, botId, isIncoming: true);
+
+        // 发送通知
+        await MessageDeliveryService.instance.sendNotification(
+          title: (await db.getBotData(botId))?['name'] ?? '机器人',
+          body: '给你发起了语音通话',
+          payload: {'type': 'voice_call', 'bot_id': botId, 'call_id': callId},
+        );
+
+        AppLogService.instance.add('VOICE_CALL', '机器人发起语音通话：$callId');
+
+        return {
+          'result': {
+            'ok': true,
+            'message': '语音通话已发起，等待用户接听。不要在聊天中说"已发起通话"，用户会收到通知。',
+          },
+        };
+      } catch (error) {
+        AppLogService.instance.add('VOICE_CALL', '发起通话失败：$error');
+        return {
+          'result': {'ok': false, 'error': '发起通话失败：$error'},
+        };
+      }
     }
     if (name == 'create_future_task') {
       final title = args['title']?.toString().trim() ?? '';

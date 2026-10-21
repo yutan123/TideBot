@@ -16,6 +16,7 @@ import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
 import 'video_call_overlay.dart';
+import 'message_delivery_service.dart';
 
 enum CallFlowState {
   idle,
@@ -103,12 +104,11 @@ class _CallPageState extends State<CallPage>
       GlobalKey<VideoCallOverlayState>();
 // Keep the gate tolerant of Android devices whose amplitude reporting is
   // conservative. A user can always finish the current turn explicitly.
-  static const int _speechStartTicks = 2; // 降低到2（400ms），更快响应
-  static const int _silentStopTicks = 7; // 降低到7（1.4秒静音），更快自动停止
-  static const double _minimumVoiceLevel = -60; // 降低到-60（更敏感）
-  static const double _speechOverNoise = 6; // 降低到6dB（更易触发）
-  static const Duration _minimumRecordingDuration =
-      Duration(milliseconds: 300);
+  static const int _speechStartTicks = 2; // 2 tick = 400ms 触发语音检测
+  static const int _silentStopTicks = 4; // 4 tick = 800ms 静音后自动停止
+  static const double _minimumVoiceLevel = -60; // 更敏感的音量门槛
+  static const double _speechOverNoise = 6; // 降低噪音差要求
+  static const Duration _minimumRecordingDuration = Duration(milliseconds: 300);
   static const String _callSystemPrompt =
       '当前正在进行实时语音通话。只给出简短、自然、适合直接朗读的口语回复；不要使用 Markdown、标题、列表、协议标签或冗长说明。';
   static const String _videoCallSystemPrompt =
@@ -341,14 +341,14 @@ class _CallPageState extends State<CallPage>
         final recordingDuration = _recordingStartedAt == null
             ? Duration.zero
             : DateTime.now().difference(_recordingStartedAt!);
-        if (recordingDuration.inSeconds >= 3 &&
+        if (recordingDuration.inSeconds >= 2 &&
             _silentTicks >= _silentStopTicks) {
           AppLogService.instance.add('VOICE_CALL',
               '录制${recordingDuration.inSeconds}秒后持续静音，自动结束录音（兜底）');
           unawaited(_finishListening());
         } else if (_speechDetected && _silentTicks >= _silentStopTicks) {
-          AppLogService.instance
-              .add('VOICE_CALL', '连续静音$_silentTicks个tick，自动结束录音');
+          AppLogService.instance.add('VOICE_CALL',
+              '连续静音$_silentTicks个tick（${_silentTicks * 200}ms），自动结束录音');
           unawaited(_finishListening());
         }
       }
@@ -362,8 +362,7 @@ class _CallPageState extends State<CallPage>
     // recording from running forever on devices that do not emit amplitudes.
     _autoStopTimer = Timer(const Duration(seconds: 10), () {
       if (_recording && !_processing && !_muted && !_vadActive) {
-        AppLogService.instance
-            .add('VOICE_CALL', '兜底定时器触发，10秒超时自动结束录音');
+        AppLogService.instance.add('VOICE_CALL', '兜底定时器触发，10秒超时自动结束录音');
         unawaited(_finishListening());
       }
     });
@@ -598,6 +597,8 @@ class _CallPageState extends State<CallPage>
       String streamingReply = '';
       final systemPrompt =
           _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
+      final callSystemPrompt =
+          '$systemPrompt\n重要：语音通话中不要输出内心独白，不使用 <inner_thought> 标签。';
       final reply = await AIManager()
           .sendMessage(
             botId: widget.bot['id'].toString(),
@@ -606,8 +607,9 @@ class _CallPageState extends State<CallPage>
             allowTools: _videoEnabled,
             allowStickers: false,
             forceSingleReply: true,
+            persistResponse: false,
             cancellationToken: token,
-            extraSystemPrompt: systemPrompt,
+            extraSystemPrompt: callSystemPrompt,
             includeChatHistory: true,
             onDelta: (delta) {
               if (mounted) {
@@ -850,12 +852,12 @@ class _CallPageState extends State<CallPage>
           task: AIRequestTask.callSummary,
           botId: botId,
           text:
-              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。\n\n${transcript.join('\n')}',
+              '这是内部通话总结任务，不要和用户聊天。通话时长：$durationText。根据以下真实通话记录，以机器人第一人称写一份详细、自然的摘要，保留双方重点、结论、待办和未解决问题；不得编造。只输出摘要正文。通话期间如发现有需要记录的重要信息（如约定、计划、重要事实），可以调用 update_memory 工具记录到世界书，但不要把通话摘要本身记录进去。\n\n${transcript.join('\n')}',
           persistResponse: false,
           includeChatHistory: false,
           enableAutoSummary: false,
           skipLifeState: true,
-          allowTools: false,
+          allowTools: true,
           forceSingleReply: true,
         );
         final generated = result['reply']?.toString().trim() ?? '';
@@ -870,56 +872,44 @@ class _CallPageState extends State<CallPage>
         summary = '通话摘要生成失败：$error';
       }
     }
+
     final now = DateTime.now().millisecondsSinceEpoch;
-    final sessionId = 'call_$now';
-    // 通话记录保存到独立的 call_messages 表，不插入到聊天历史
-    final messages = <Map<String, dynamic>>[];
-    for (var index = 0; index < transcript.length; index++) {
-      final line = transcript[index];
-      final isUser = line.startsWith('用户：');
-      final content = line.replaceFirst(RegExp(r'^(用户|机器人)：'), '').trim();
-      if (content.isEmpty) continue;
-      messages.add({
-        'id': '${sessionId}_$index',
-        'session_id': sessionId,
-        'role': isUser ? 'user' : 'assistant',
-        'content': content,
-        'timestamp': now + index,
-      });
-    }
-    await DBManager().insertCallSession(
-      session: {
-        'id': sessionId,
-        'bot_id': botId,
-        'summary': summary,
-        'duration': duration.inSeconds,
-        'status': failed ? 'failed' : 'complete',
-        'created_at': now,
-      },
-      messages: messages,
-    );
-    if (!failed && summary.isNotEmpty) {
-      await DBManager().upsertMemoryItem(
+    final callId = 'call_${botId}_$now';
+    final durationSeconds = duration.inSeconds;
+    final transcriptText = transcript.join('\n');
+
+    try {
+      // 保存通话记录到数据库
+      await DBManager().insertVoiceCallRecord(
+        callId: callId,
         botId: botId,
-        type: 'call_summary',
-        title: '通话摘要',
-        content: summary,
-        category: 'event',
-        importance: 4,
-        timestamp: now,
+        initiator: 'user',
+        status: 'ended',
+        transcript: transcriptText,
+        summary: summary,
+        startTime:
+            DateTime.fromMillisecondsSinceEpoch(now - duration.inMilliseconds),
+        endTime: DateTime.fromMillisecondsSinceEpoch(now),
       );
-      // 插入通话摘要到聊天室
-      await DBManager().insertMessage({
-        'id': '${sessionId}_summary',
+
+      // 插入通话卡片到聊天记录（用户发起的通话）
+      await MessageDeliveryService.instance.insert({
+        'id': 'card_$callId',
         'bot_id': botId,
-        'role': 'assistant',
-        'content': summary,
-        'type': 'call_summary',
+        'role': 'user',
+        'type': 'voice_call_card',
+        'content':
+            '[语音通话，通话时长${_formatDuration(Duration(seconds: durationSeconds))}，通话摘要：$summary]',
+        'call_id': callId,
+        'call_status': 'ended',
+        'call_duration': durationSeconds,
         'timestamp': now,
       });
+
+      AppLogService.instance.add('VOICE_CALL', '通话记录已保存：$callId');
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '保存通话记录失败：$error');
     }
-    AppLogService.instance
-        .add('VOICE_CALL', '通话结束：$durationText，摘要${failed ? '失败' : '已保存'}');
   }
 
   String _formatDuration(Duration value) {

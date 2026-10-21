@@ -32,6 +32,8 @@ import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
 import 'media_preprocessor.dart';
+import 'voice_call_card.dart';
+import 'incoming_call_banner.dart';
 // Device control has been removed; device context remains in the AI layer.
 import 'emotion_state_service.dart';
 import 'chat_protocol.dart';
@@ -1258,6 +1260,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           row['content'] = '';
           row['is_streaming'] = true;
         }
+
+        // 内心独白流式输出开始时自动展开
+        final thoughtId = row['id']?.toString() ?? '';
+        final isInnerThought = row['type'] == 'inner_thought';
+        if (isInnerThought && reveal && thoughtId.isNotEmpty) {
+          _expandedThoughtIds.add(thoughtId);
+        }
+
         setState(() {
           final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
           if (existing >= 0) {
@@ -1278,6 +1288,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           }
           if (!mounted || myGen != _requestGen) return;
           setState(() => row.remove('is_streaming'));
+
+          // 内心独白流式输出完成后自动折叠
+          if (isInnerThought && thoughtId.isNotEmpty) {
+            setState(() => _expandedThoughtIds.remove(thoughtId));
+          }
         }
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
@@ -1316,26 +1331,37 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
+      // 在释放 _loading 锁之前，完成所有清理和排队重发逻辑，避免竞态条件。
       for (final message in _msgs) {
         message.remove('is_streaming');
       }
       _setTypingState(false);
-      if (mounted) {
-        setState(() => _loading = false);
-        _scrollDown();
-      }
       _deferredPersistedMessageIds.clear();
       await _syncLatestMessages();
+
       // ===== 防抖/合并：统一重发 =====
       // 请求期间用户又发了消息被并入 _queuedText。等待队列后，用合并后的完整
       // 文本向模型统一请求一次，不再新增用户气泡（用户消息已各自上屏入库）。
-      if (_queued && _queuedText.trim().isNotEmpty && mounted) {
+      final shouldResend = _queued && _queuedText.trim().isNotEmpty && mounted;
+      if (shouldResend) {
         final mergedText = _queuedText;
         _queuedText = '';
         _queued = false;
-        _msgC.text = mergedText;
         _requestGen++; // 维持最新代次，使本次重发为唯一有效请求
+        // 重发时不污染用户输入框，直接用内部变量传递文本
+        final savedText = _msgC.text;
+        _msgC.text = mergedText;
         await _send(noUserBubble: true);
+        // 恢复用户可能正在输入的内容
+        if (mounted && _msgC.text == mergedText) {
+          _msgC.text = savedText;
+        }
+      }
+
+      // 所有清理和重发完成后，最后释放 _loading 锁
+      if (mounted) {
+        setState(() => _loading = false);
+        _scrollDown();
       }
     }
   }
@@ -2943,6 +2969,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ),
           Column(
             children: [
+              IncomingCallBanner(botId: _bot['id']?.toString() ?? ''),
               _chatHeader(),
               Expanded(
                 child: AnimatedBuilder(
@@ -3221,6 +3248,23 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildInnerThoughtBubble(theme, m),
+              ],
+            ),
+          );
+        }
+
+        // 语音通话卡片单独处理
+        if (type == 'voice_call_card') {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment:
+                  isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+              children: [
+                VoiceCallCard(
+                  message: m,
+                  botName: _bot['name']?.toString() ?? '',
+                ),
               ],
             ),
           );

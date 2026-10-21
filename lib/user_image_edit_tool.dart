@@ -18,8 +18,7 @@ Map<String, dynamic> userImageEditToolSchema({
       'function': {
         'name': 'edit_user_image',
         'description': '$userImageEditRule '
-            '本轮可用编号：${currentImageNumbers.join('、')}；'
-            '历史可用编号：${historyImageNumbers.join('、')}。',
+            '可用编号参见当前上下文。',
         'parameters': {
           'type': 'object',
           'properties': {
