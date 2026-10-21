@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'db.dart';
 import 'ai.dart';
+import 'memory_prompt_policy.dart';
 
 /// 世界书条目模型
 class WorldBookEntry {
@@ -157,10 +158,16 @@ class WorldBookService {
       final fresh =
           previous >= 0 ? messages.skip(previous + 1).toList() : messages;
       if (fresh.isEmpty) return;
-      final existing = (await db.queryMemories(botId, limit: 200))
-          .where((m) => m['category'] == '记忆')
-          .toList();
+      final recentWorldBook = await db.queryMemories(botId, limit: 200);
+      final existing =
+          recentWorldBook.where((m) => m['category'] == '记忆').toList();
       final prompt = '请判断以下新增真实对话是否有值得保留的信息；寒暄、重复事实和琐碎细节不记。'
+          '$memoryCategoryPolicy'
+          '本任务只维护“记忆”事件条目，不得修改、删除或覆盖人物画像、自我认知和关系。'
+          '先阅读最近世界书条目与已有记忆，再逐项比较人物、事件、核心事实；同一件事换标题、措辞、叙述角度或情绪描写都不算新事实。'
+          '已经记录且没有新进展的内容不创建、不更新；补充已有记忆的信息，或同一事件有明确的新进展、更正时，直接用 update 和原 id 修改即可，无需 create 新条目；合并完整内容并保留仍有效事实。'
+          '同一批 actions 也必须互相去重，不得将同一件事拆成多条近义记忆。'
+          '不得为了整理旧条目删除无关内容；没有新增事实时返回 {"needUpdate":false,"actions":[]}。'
           '区分用户和角色，禁止把内部任务提示、引用记录、分析或工具协议写成记忆。'
           '未来约定以计划状态记录。输出 JSON：'
           '{"needUpdate":false,"actions":[]}；需要变更时 actions 中每项为 '
@@ -168,6 +175,7 @@ class WorldBookService {
           '"title":"标题","content":"事实正文","keys":["关键词"],"priority":50}。'
           '\n当前本地时间：${DateTime.now().toIso8601String()}'
           '\n新增对话：${taskTranscript(fresh)}'
+          '\n${recentMemoryReference(recentWorldBook)}'
           '\n已有记忆（只用于去重和更正）：${jsonEncode(existing)}';
       final result = await AIManager().sendMessage(
           botId: botId,
@@ -709,6 +717,24 @@ class WorldBookService {
     try {
       debugPrint('[WorldBook] 机器人主动搜索记忆：$query');
 
+      // Include the same memories table save_memory writes to, with writable IDs.
+      final saved = await db.queryMemoriesRelevant(botId, query, limit: limit);
+      if (saved.isNotEmpty) {
+        return {
+          'success': true,
+          'found': true,
+          'count': saved.length,
+          'results': saved
+              .map((row) => {
+                    'id': row['id'],
+                    'category': row['category'],
+                    'title': row['title'],
+                    'content': row['content'],
+                    'type': row['type'],
+                  })
+              .toList(),
+        };
+      }
       // 使用智能激活（关键词 + N-gram）
       final results = await activateEntriesIntelligent(
         botId: botId,

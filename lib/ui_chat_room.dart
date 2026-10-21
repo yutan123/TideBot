@@ -382,7 +382,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // 初始数据库查询可能在用户已发送消息后才返回。不能直接覆盖 _msgs，      // 否则刚刚上屏的用户气泡会被旧查询结果抹掉，界面只剩“正在输入中”。
       if (mounted && !_loading && revision == _messagesRevision) {
         setState(() {
-          final normalized = msgs;
+          final normalized = editableChatHistory(msgs);
           final byId = <String, Map<String, dynamic>>{
             for (final m in normalized)
               m['id']?.toString() ?? 'db_${m['timestamp']}': m,
@@ -510,7 +510,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final botId = _bot['id']?.toString() ?? '';
       if (botId.isEmpty) return;
       final revision = _messagesRevision;
-      final fresh = await DBManager().queryMessages(botId);
+      final fresh = editableChatHistory(await DBManager().queryMessages(botId));
       if (!mounted || _loading || revision != _messagesRevision) return;
       final freshById = <String, Map<String, dynamic>>{
         for (final message in fresh) message['id']?.toString() ?? '': message,
@@ -571,8 +571,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           DateTime.now().microsecond.remainder(extraMax - extraMin + 1);
       totalMs += extraDelay;
     }
-    if (totalMs > 0) {
-      await Future<void>.delayed(Duration(milliseconds: totalMs));
+    final generation = _requestGen;
+    for (var elapsed = 0; elapsed < totalMs; elapsed += 50) {
+      if (!mounted || generation != _requestGen) return;
+      final remaining = totalMs - elapsed;
+      await Future<void>.delayed(
+        Duration(milliseconds: remaining < 50 ? remaining : 50),
+      );
     }
   }
 
@@ -982,9 +987,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     bool forceSingleReply = false,
     // 合并防抖重发时置 true：不再新增用户气泡/入库，仅用当前文本向模型统一请求。
     bool noUserBubble = false,
+    String? queuedText,
     Map<String, dynamic>? retryTarget,
   }) async {
-    final text = _msgC.text.trim();
+    final text = queuedText ?? _msgC.text.trim();
+    AppLogService.instance.add('AI_TRACE',
+        '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
     images ??= List<String>.from(_pendingImages);
     documents ??= List<String>.from(_pendingDocuments);
     mediaContext ??= _pendingMediaContext;
@@ -1106,8 +1114,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       setState(() {
         _loading = true;
         _msgsLoading = false;
-        _msgC.clear();
-        _hasText = false;
+        if (queuedText == null) {
+          _msgC.clear();
+          _hasText = false;
+        }
       });
     }
     _scrollDown();
@@ -1247,6 +1257,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       if (!mounted || myGen != _requestGen) return;
       for (var index = 0; index < persisted.length; index++) {
+        if (!mounted || myGen != _requestGen) break;
         if (index > 0 && persisted[index]['reply_group_id'] != null) {
           await _applyRandomReplyDelay(db);
         }
@@ -1331,37 +1342,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
-      // 在释放 _loading 锁之前，完成所有清理和排队重发逻辑，避免竞态条件。
+      // Release synchronously, even if UI cleanup throws. No old request may
+      // clear a lock owned by the queued request after the handoff.
+      _loading = false;
+      AppLogService.instance.add(
+          'AI_TRACE', '发送流程释放 bot=$botId generation=$myGen queued=$_queued');
       for (final message in _msgs) {
         message.remove('is_streaming');
       }
       _setTypingState(false);
       _deferredPersistedMessageIds.clear();
-      await _syncLatestMessages();
-
-      // ===== 防抖/合并：统一重发 =====
-      // 请求期间用户又发了消息被并入 _queuedText。等待队列后，用合并后的完整
-      // 文本向模型统一请求一次，不再新增用户气泡（用户消息已各自上屏入库）。
+      if (mounted) setState(() {});
       final shouldResend = _queued && _queuedText.trim().isNotEmpty && mounted;
       if (shouldResend) {
         final mergedText = _queuedText;
         _queuedText = '';
         _queued = false;
-        _requestGen++; // 维持最新代次，使本次重发为唯一有效请求
-        // 重发时不污染用户输入框，直接用内部变量传递文本
-        final savedText = _msgC.text;
-        _msgC.text = mergedText;
-        await _send(noUserBubble: true);
-        // 恢复用户可能正在输入的内容
-        if (mounted && _msgC.text == mergedText) {
-          _msgC.text = savedText;
-        }
-      }
-
-      // 所有清理和重发完成后，最后释放 _loading 锁
-      if (mounted) {
-        setState(() => _loading = false);
-        _scrollDown();
+        _requestGen++;
+        await _send(
+          noUserBubble: true,
+          queuedText: mergedText,
+          images: const [],
+          documents: const [],
+        );
+      } else {
+        await _syncLatestMessages();
+        if (mounted) _scrollDown();
       }
     }
   }

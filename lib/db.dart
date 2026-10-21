@@ -2503,6 +2503,9 @@ class DBManager {
     final existing = await queryMemories(botId, type: type, limit: 80);
     Map<String, dynamic>? duplicate;
     for (final item in existing) {
+      // Similar wording in a profile and an event does not make them the same
+      // entry. Never move or overwrite another category during deduplication.
+      if (item['category'] != category) continue;
       final old = (item['content']?.toString() ?? '')
           .replaceAll(RegExp(r'\s+'), '')
           .trim();
@@ -2532,6 +2535,9 @@ class DBManager {
       // Exact duplicates are a no-op. In particular, do not refresh updated_at:
       // a repeated model memory tag is not a meaningful memory modification.
       final previous = duplicate['content']?.toString().trim() ?? '';
+      if (previous.replaceAll(RegExp(r'\s+'), '').contains(normalized)) {
+        return; // Repeating a shorter excerpt must not erase older details.
+      }
       if (previous != content.trim()) {
         await updateMemory(duplicate['id'].toString(), {
           'title': title.isEmpty ? duplicate['title'] : title,
@@ -2559,7 +2565,10 @@ class DBManager {
     }
     const caps = {'long': 60, 'short': 100};
     final cap = caps[type] ?? 80;
-    final rows = await queryMemories(botId, type: type);
+    final rows = (await queryMemories(botId, type: type))
+        .where((row) => !const ['角色眼中的你', '角色的自我认知', '关系', '角色档案']
+            .contains(row['category']))
+        .toList();
     if (rows.length > cap) {
       for (final item in rows.skip(cap)) {
         await deleteMemory(item['id'].toString());

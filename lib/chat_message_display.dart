@@ -1,5 +1,10 @@
 import 'chat_content.dart';
 
+/// SQLite rows are read-only; the chat UI owns writable copies for local flags.
+List<Map<String, dynamic>> editableChatHistory(
+        Iterable<Map<String, dynamic>> rows) =>
+    rows.map((row) => Map<String, dynamic>.from(row)).toList();
+
 /// Reconcile persisted thought rows with legacy thoughts attached to text rows.
 /// A reply group owns one thought; identical thoughts in different turns survive.
 List<Map<String, dynamic>> normalizeChatMessages(

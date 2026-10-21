@@ -1,4 +1,5 @@
 import 'ai_request_task.dart';
+import 'memory_prompt_policy.dart';
 export 'ai_request_task.dart';
 import 'diary_output.dart';
 import 'daily_quote_output.dart';
@@ -261,8 +262,10 @@ class AIManager {
         persistResponse && !skipLifeState && activeGame == null;
     final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
     if (vitalTracked) {
+      AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
       final vitalContext =
           await BotVitalSignsService.instance.beforeRequest(botId);
+      AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
       extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
     }
     try {
@@ -873,6 +876,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 构建核心设定提示
       final coreSettings = [
+        memoryCategoryPolicy,
+        memoryDeduplicationPolicy,
+        if (activeGame == null) recentMemoryReference(allMemories),
         if (botViewOfUser?.isNotEmpty == true)
           '【你眼中的对方】\n$botViewOfUser'
         else
@@ -3844,11 +3850,18 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'function': {
           'name': 'save_memory',
           'description':
-              '当用户明确要求记住某事，或本轮出现已发生的用户事实、事件、偏好或状态变化时调用。只保存已明确发生或由用户确认的内容；不得猜测、编造、记录未来计划或保存敏感隐私。相同事实会去重，事实变化会更新既有记忆。只有工具返回 ok:true 后，才能对用户说已记住。',
+              '当用户明确要求记住某事，或出现值得保留的新事实时调用。先检查最近世界书条目，必要时 search_memory；同一件事仅改写措辞、标题或角度不算新记忆，不得重复保存。事件归入记忆，角色眼中的你仅描述对方的身份、性格、特点、优缺点、印象与想法，不记录事件。修改画像须保留原有仍有效内容。补充已有记忆的信息时，直接传 memory_id 修改原条目，无需新增；提交保留旧有效信息并合入补充内容的完整新版。不得猜测、编造或保存敏感隐私。只有工具返回 ok:true 后才能说已记住。',
           'parameters': {
             'type': 'object',
             'properties': {
-              'content': {'type': 'string', 'description': '简洁、具体、可复用的记忆内容'},
+              'content': {
+                'type': 'string',
+                'description': '新增条目写具体事实；更新条目写保留旧有效信息后的完整内容'
+              },
+              'memory_id': {
+                'type': 'string',
+                'description': '更新已有条目时填写最近世界书或搜索结果中的 id；新建时省略。不得跨类别覆盖。'
+              },
               'category': {
                 'type': 'string',
                 'description': '从当前世界书类别中选择；默认记忆，新类别须先创建'
@@ -4481,8 +4494,31 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         };
       }
       try {
+        final memoryId = args['memory_id']?.toString().trim() ?? '';
+        Map<String, dynamic>? previous;
+        if (memoryId.isNotEmpty) {
+          final rows = await db.queryMemories(botId);
+          for (final row in rows) {
+            if (row['id'] == memoryId && row['category'] == category) {
+              previous = row;
+              break;
+            }
+          }
+          if (previous == null) {
+            return {
+              'result': {'ok': false, 'error': '更新目标不存在或类别不一致，禁止跨类别覆盖'}
+            };
+          }
+        }
         await db.upsertMemoryItem(
-            botId: botId, type: type, content: content, category: category);
+            botId: botId,
+            id: memoryId.isEmpty ? null : memoryId,
+            title: previous?['title']?.toString() ?? '',
+            importance: (previous?['importance'] as num?)?.toInt() ?? 3,
+            expiresAt: (previous?['expires_at'] as num?)?.toInt(),
+            type: previous?['type']?.toString() ?? type,
+            content: content,
+            category: category);
         AppLogService.instance.add(
           'MEMORY',
           '机器人通过 save_memory 工具写入$type 记忆：${content.length} 字',
@@ -5301,7 +5337,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         "不要使用代码块包裹聊天正文。若系统需要心情，请且只能把 [心情:平静]、[心情:开心]、[心情:伤心]、[心情:生气]、[心情:害羞] 或 [心情:兴奋] 之一放在回复的独占第一行，后面换行再写正文；不要在任何其他位置输出心情标签。\n"
         "严禁输出图片 Markdown、表情包类型、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。\n"
         "严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。\n"
-        "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮请求时先评估是否需要记忆或更新，如需要则必须调用 save_memory 工具。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
+        "【记忆】对于已经明确发生的用户事实、事件、偏好或状态变化，每轮先对照最近世界书条目评估是否有值得保留的新信息。同一事件只换措辞、标题或角度不算新增，不要重复保存；补充已有记忆的信息或有新进展时，直接用 save_memory 的 memory_id 修改原条目即可，无需新增，并保留旧有效信息。事件只写入记忆，不能写入角色眼中的你；人物画像更新须保留原有仍有效内容。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
         "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
         "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n"

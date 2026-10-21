@@ -23,6 +23,28 @@ Map<String, dynamic> thought() => {
     };
 
 void main() {
+  test('read-only history remains writable during reply cleanup', () {
+    final history = [
+      for (final type in ['text', 'inner_thought', 'sticker', 'image', 'audio'])
+        Map<String, dynamic>.unmodifiable({
+          'id': type,
+          'role': type == 'text' ? 'user' : 'assistant',
+          'type': type,
+          'content': type,
+          'timestamp': 1,
+        }),
+    ];
+    expect(() => history.first.remove('is_streaming'), throwsUnsupportedError);
+    final rows = normalizeChatMessages(editableChatHistory(history));
+    expect(rows, hasLength(history.length));
+    expect(() {
+      for (final row in rows) {
+        row.remove('is_streaming');
+        row['send_status'] = 'sent';
+      }
+    }, returnsNormally);
+    expect(history.every((row) => !row.containsKey('send_status')), isTrue);
+  });
   test('empty streamed body remains attached beside its thought', () {
     final message = body('m', 2);
     var rows = normalizeChatMessages([thought(), message]);
