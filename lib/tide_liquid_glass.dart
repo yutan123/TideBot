@@ -148,7 +148,10 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
           builder: (context, child) => AdaptiveGlass(
             shape: LiquidRoundedRectangle(borderRadius: widget.radius),
             settings: _settingsFor(theme),
-            quality: isPremium ? GlassQuality.premium : GlassQuality.minimal,
+            // Minimal uses nested backdrop filters for blur and saturation;
+            // their moving clips can desynchronise during scroll/back gestures.
+            // Standard combines the backdrop filter and paints its rim locally.
+            quality: isPremium ? GlassQuality.premium : GlassQuality.standard,
             useOwnLayer: true,
             allowElevation: isPremium,
             isInteractive: widget.interactive,

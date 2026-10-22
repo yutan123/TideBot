@@ -12,14 +12,14 @@ class TideTaskWork(context: Context, params: WorkerParameters) : CoroutineWorker
     companion object {
         private fun tag(taskId: String) = "tidebot_task:$taskId"
 
-        fun enqueue(context: Context, taskId: String, scheduledTime: Long) {
+        fun enqueue(context: Context, taskId: String, scheduledTime: Long): Operation {
             val request = OneTimeWorkRequestBuilder<TideTaskWork>()
                 .setInputData(workDataOf("task_id" to taskId, "scheduled_time" to scheduledTime))
                 .setInitialDelay((scheduledTime - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 60, TimeUnit.SECONDS)
                 .addTag(tag(taskId))
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            return WorkManager.getInstance(context).enqueueUniqueWork(
                 "${tag(taskId)}:$scheduledTime", ExistingWorkPolicy.KEEP, request
             )
         }
@@ -40,8 +40,16 @@ class TideTaskWork(context: Context, params: WorkerParameters) : CoroutineWorker
             // A reschedule/cancel invalidates deliveries for the old deadline.
             if (current != scheduledTime) return Result.success()
             if (scheduledTime > System.currentTimeMillis()) return Result.retry()
-            setForeground(ForegroundInfo(998, TideNativeNotifications.workNotification(applicationContext),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+            try {
+                setForeground(ForegroundInfo(998, TideNativeNotifications.workNotification(applicationContext),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IllegalStateException) {
+                // Android 12+/15 can reject FGS starts/quotas. A regular Worker
+                // still has a wakelock and a 10-minute window for this 5-minute request.
+                Log.w("TideTaskWork", "Foreground promotion unavailable; using Worker execution", error)
+            }
             TideTaskExecutor.executeTask(applicationContext, taskId, scheduledTime)
             val status = TideStore.open(applicationContext).use { db ->
                 TideStore.rows(db, "SELECT status FROM background_task_executions WHERE task_id=? AND scheduled_time=?",

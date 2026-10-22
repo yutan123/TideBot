@@ -21,7 +21,7 @@ object TideProactiveTasks {
                 }
                 if (reason != null) {
                     if (TideStore.kv(db, "proactive_last_result_$id") != reason) {
-                        TideBackgroundLog.add(context, "主动回复暂停：bot=$id，reason=$reason")
+
                         TideStore.put(db, "proactive_last_result_$id", reason)
                     }
                     db.execSQL("UPDATE background_tasks SET enabled=0 WHERE task_id=?", arrayOf("proactive:$id"))
@@ -33,7 +33,7 @@ object TideProactiveTasks {
                     if (existing > 0) existing else {
                         val next = nextDeadline(db, false)
                         TideStore.put(db, "proactive_due_at_$id", next.toString())
-                        TideBackgroundLog.add(context, "主动回复已安排：bot=$id，到期时间=$next")
+
                         next
                     }
                 }

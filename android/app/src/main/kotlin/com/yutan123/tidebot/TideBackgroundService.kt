@@ -27,6 +27,30 @@ class TideBackgroundService : Service() {
     }
 
     companion object {
+        private val requestLeases = TideRequestLeases { android.os.SystemClock.elapsedRealtime() }
+        @Volatile private var running: TideBackgroundService? = null
+        private val handoffLocks = mutableListOf<PowerManager.WakeLock>()
+        private fun releaseHandoffs() = synchronized(handoffLocks) {
+            handoffLocks.forEach { if (it.isHeld) it.release() }
+            handoffLocks.clear()
+        }
+        private const val ACTION_PROTECT_REQUEST = "com.yutan123.tidebot.PROTECT_REQUEST"
+        fun beginRequest(context: Context, id: String) {
+            requestLeases.begin(id)
+            try {
+                val intent = Intent(context, TideBackgroundService::class.java).setAction(ACTION_PROTECT_REQUEST)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+                else context.startService(intent)
+            } catch (error: Exception) {
+                requestLeases.end(id)
+                throw error
+            }
+        }
+        fun renewRequest(id: String) { requestLeases.renew(id) }
+        fun endRequest(id: String) {
+            requestLeases.end(id)
+            running?.stopIfIdle()
+        }
         private const val TAG = "TideBackgroundService"
         private const val CHANNEL_ID = "tide_bot_background"
         private const val NOTIFICATION_ID = 999
@@ -35,15 +59,24 @@ class TideBackgroundService : Service() {
         const val EXTRA_SCHEDULED_TIME = "scheduled_time"
 
         fun startTask(context: Context, taskId: String, scheduledTime: Long) {
+            val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val handoff = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TideBot:ServiceHandoff")
+                .apply { setReferenceCounted(false); acquire(15_000L) }
+            synchronized(handoffLocks) { handoffLocks.add(handoff) }
             val intent = Intent(context, TideBackgroundService::class.java).apply {
                 action = ACTION_EXECUTE_TASK
                 putExtra(EXTRA_TASK_ID, taskId)
                 putExtra(EXTRA_SCHEDULED_TIME, scheduledTime)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+                else context.startService(intent)
+            } catch (error: Exception) {
+                synchronized(handoffLocks) {
+                    handoffLocks.remove(handoff)
+                    if (handoff.isHeld) handoff.release()
+                }
+                throw error
             }
         }
     }
@@ -53,6 +86,16 @@ class TideBackgroundService : Service() {
         Log.d(TAG, "onCreate")
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("初始化中..."))
+        running = this
+        serviceScope.launch {
+            while (isActive) {
+                delay(60_000)
+                withContext(Dispatchers.Main.immediate) {
+                    if (activeTasks.get() > 0 || requestLeases.hasActive()) acquireWakeLock()
+                    stopIfIdle()
+                }
+            }
+        }
         acquireWakeLock()
     }
 
@@ -61,7 +104,12 @@ class TideBackgroundService : Service() {
         
         latestStartId = startId
         acquireWakeLock()
+        releaseHandoffs()
         when (intent?.action) {
+            ACTION_PROTECT_REQUEST -> {
+                updateNotification("正在接收回复，可切换到后台")
+                stopIfIdle()
+            }
             ACTION_EXECUTE_TASK -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: ""
                 val scheduledTime = intent.getLongExtra(EXTRA_SCHEDULED_TIME, 0L)
@@ -90,13 +138,14 @@ class TideBackgroundService : Service() {
             else -> stopIfIdle()
         }
 
-        // 被系统回收后不自动以空 Intent 重启，任务由闹钟/WorkManager 重新触发
-        return START_NOT_STICKY
+        // Native deliveries are durable and deduplicated; let Android redeliver
+        // an interrupted task. UI requests remain bounded to their engine lifetime.
+        return if (activeTasks.get() > 0) START_REDELIVER_INTENT else START_NOT_STICKY
     }
 
     /** 没有正在执行的任务时才停止，避免并发任务被提前中断 */
     private fun stopIfIdle() {
-        if (activeTasks.get() <= 0) {
+        if (activeTasks.get() <= 0 && !requestLeases.hasActive()) {
             stopSelfResult(latestStartId)
         }
     }
@@ -111,6 +160,7 @@ class TideBackgroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy")
+        if (running === this) running = null
         serviceScope.cancel()
         releaseWakeLock()
     }

@@ -24,7 +24,7 @@ object TideTaskExecutor {
         Log.d(TAG, "Executing task: $taskId at $scheduledTime")
 
         val executionId = claimExecution(context, taskId, scheduledTime) ?: return@withContext
-        TideBackgroundLog.add(context, "任务开始：$taskId，到期时间=$scheduledTime")
+
 
         try {
             // 读取任务配置
@@ -36,7 +36,7 @@ object TideTaskExecutor {
             // 根据任务类型执行
             when (taskConfig.optString("task_type")) {
                 "FUTURE_TASK" -> TideFutureTasks.execute(context, taskId, executionId)
-                "PROACTIVE_REPLY" -> executeProactiveReply(context, taskConfig, executionId)
+                "PROACTIVE_REPLY" -> executeProactiveReply(context, taskConfig.put("scheduled_time", scheduledTime), executionId)
                 "VITAL_SIGNS" -> {
                     executeVitalSigns(context, taskConfig, executionId)
                     TideStore.open(context).use { db ->
@@ -128,9 +128,14 @@ object TideTaskExecutor {
             allowSilence = true
         )
 
-        TideBackgroundLog.add(context, "主动回复请求开始：bot=$botId，model=${model.model}")
+        val requestStarted = android.os.SystemClock.elapsedRealtime()
+        val lateMs = (System.currentTimeMillis() - taskConfig.optLong("scheduled_time", System.currentTimeMillis())).coerceAtLeast(0)
+        val detail = if (TideBackgroundLog.enabled(context)) {
+            "\n发往模型提供商的完整请求（已脱敏）：\n" + JSONObject(TideAiClient.buildRequestBody(request)).toString(2)
+        } else ""
+        TideBackgroundLog.add(context, "主动回复到期请求：bot=$botId，execution=$executionId，model=${model.model}，延迟=${lateMs}ms$detail", "PROACTIVE_REQUEST")
         val result = TideAiClient.sendRequest(request)
-        TideBackgroundLog.add(context, "主动回复请求结束：bot=$botId，结果=${if (result.isFailure) "request_failed" else if (result.getOrNull()?.silent == true) "model_silence" else "reply_received"}")
+
 
         TideStore.open(context).use { db ->
             TideStore.transaction(db) {
@@ -155,7 +160,9 @@ object TideTaskExecutor {
                         arrayOf(if (response != null) "success" else "failed", System.currentTimeMillis(), result.exceptionOrNull()?.message, executionId))
                 }
                 TideStore.put(db, "proactive_last_result_$botId", if (sent) "sent" else if (response != null) "model_silence" else "request_failed")
-                TideBackgroundLog.add(context, "主动回复结果：bot=$botId，${if (sent) "sent" else if (response != null) "model_silence" else "request_failed"}")
+                TideBackgroundLog.add(context, "主动回复结束：bot=$botId，execution=$executionId，结果=${if (sent) "sent" else if (response != null) "model_silence" else "request_failed"}，耗时=${android.os.SystemClock.elapsedRealtime() - requestStarted}ms" +
+                    (if (TideBackgroundLog.enabled(context)) "\n响应：${response?.content.orEmpty()}\n错误：${result.exceptionOrNull()?.message.orEmpty()}" else ""),
+                    if (result.isFailure) "PROACTIVE_ERROR" else "PROACTIVE_NATIVE")
                 TideStore.put(db, "proactive_due_at_$botId", TideProactiveTasks.nextDeadline(db, !sent).toString())
             }
         }
@@ -258,7 +265,7 @@ object TideTaskExecutor {
         result: String?,
         error: String?
     ) {
-        TideBackgroundLog.add(context, "任务结束：execution=$executionId，status=$status")
+
         val db = openDatabase(context) ?: return
         try {
             db.execSQL(

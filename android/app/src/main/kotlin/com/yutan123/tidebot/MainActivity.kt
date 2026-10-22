@@ -56,6 +56,7 @@ class MainActivity: FlutterActivity() {
     }
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
+    private val requestExecutionIds = mutableSetOf<String>()
     private var pendingInstallApk: File? = null
     // 悬浮窗消息转发已移除。
 
@@ -81,6 +82,8 @@ class MainActivity: FlutterActivity() {
     }
     
     override fun onDestroy() {
+        requestExecutionIds.forEach { TideBackgroundService.endRequest(it) }
+        requestExecutionIds.clear()
         backgroundCoordinator.shutdown()
         super.onDestroy()
     }
@@ -97,6 +100,15 @@ class MainActivity: FlutterActivity() {
 
     override fun onPause() {
         TideNativeNotifications.activityVisible = false
+        // Persist deadlines natively before Flutter's UI timers can be suspended.
+        backgroundCoordinator.execute {
+            runCatching {
+                TideFutureTasks.reconcile(applicationContext)
+                TideProactiveTasks.reconcile(applicationContext)
+                TideEnhancedBackgroundWork.ensureScheduled(applicationContext)
+                TideMasterScheduler.restoreAllTasks(applicationContext)
+            }.onFailure { android.util.Log.e("TideBackground", "Background handoff failed", it) }
+        }
         super.onPause()
     }
 
@@ -117,6 +129,27 @@ class MainActivity: FlutterActivity() {
         nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "beginRequestExecution" -> {
+                    val id = call.argument<String>("id").orEmpty()
+                    try {
+                        require(id.isNotBlank())
+                        TideBackgroundService.beginRequest(applicationContext, id)
+                        requestExecutionIds.add(id)
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("REQUEST_PROTECTION_FAILED", error.javaClass.simpleName, null)
+                    }
+                }
+                "renewRequestExecution" -> {
+                    val id = call.argument<String>("id").orEmpty()
+                    if (id in requestExecutionIds) TideBackgroundService.renewRequest(id)
+                    result.success(null)
+                }
+                "endRequestExecution" -> {
+                    val id = call.argument<String>("id").orEmpty()
+                    if (requestExecutionIds.remove(id)) TideBackgroundService.endRequest(id)
+                    result.success(null)
+                }
                 // 悬浮窗待处理消息接口已移除。
                 "tickVitalSigns" -> {
                     val id = call.argument<String>("botId").orEmpty()

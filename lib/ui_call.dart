@@ -778,15 +778,50 @@ class _CallPageState extends State<CallPage>
     final wasRecording = _recording;
     _recording = false;
     _botSpeaking = false;
-
     final duration = DateTime.now().difference(_startedAt);
     final botId = widget.bot['id']?.toString() ?? '';
     final transcript = List<String>.from(_transcript);
-    if (mounted) Navigator.pop(context);
     unawaited(_stopCallMedia(wasRecording));
-    if (duration.inMilliseconds < 1000 || botId.isEmpty) return;
+    if (botId.isEmpty) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final callId = 'call_${botId}_$now';
+    final callCard = <String, dynamic>{
+      'id': 'card_$callId',
+      'bot_id': botId,
+      'role': 'user',
+      'type': 'voice_call_card',
+      'content': '[语音通话，通话时长${_formatDuration(duration)}]',
+      'call_id': callId,
+      'call_status': 'ended',
+      'call_duration': duration.inSeconds,
+      'timestamp': now,
+    };
+    try {
+      await DBManager().insertVoiceCallRecord(
+        callId: callId,
+        botId: botId,
+        initiator: 'user',
+        status: 'ended',
+        transcript: transcript.join('\n'),
+        summary: transcript.isEmpty ? '本次通话未获取到有用信息。' : '通话摘要正在生成。',
+        startTime: DateTime.fromMillisecondsSinceEpoch(
+          now - duration.inMilliseconds,
+        ),
+        endTime: DateTime.fromMillisecondsSinceEpoch(now),
+      );
+      await MessageDeliveryService.instance.insert(callCard);
+      AppLogService.instance.add('VOICE_CALL', '通话结束卡片已保存：$callId');
+    } catch (error) {
+      AppLogService.instance.add('VOICE_CALL', '保存通话结束卡片失败：$error');
+    }
+    if (mounted) Navigator.pop(context, callCard);
     unawaited(_persistCallSummary(
       botId: botId,
+      callId: callId,
       duration: duration,
       transcript: transcript,
     ));
@@ -809,42 +844,14 @@ class _CallPageState extends State<CallPage>
 
   Future<void> _persistCallSummary({
     required String botId,
+    required String callId,
     required Duration duration,
     required List<String> transcript,
   }) async {
     final durationText = _formatDuration(duration);
     var summary = '本次通话未获取到有用信息。';
     var failed = false;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final callId = 'call_${botId}_$now';
-    try {
-      await DBManager().insertVoiceCallRecord(
-        callId: callId,
-        botId: botId,
-        initiator: 'user',
-        status: 'ended',
-        transcript: transcript.join('\n'),
-        summary: transcript.isEmpty ? summary : '通话摘要正在生成。',
-        startTime:
-            DateTime.fromMillisecondsSinceEpoch(now - duration.inMilliseconds),
-        endTime: DateTime.fromMillisecondsSinceEpoch(now),
-      );
-      await MessageDeliveryService.instance.insert({
-        'id': 'card_$callId',
-        'bot_id': botId,
-        'role': 'user',
-        'type': 'voice_call_card',
-        'content': '[语音通话，通话时长$durationText]',
-        'call_id': callId,
-        'call_status': 'ended',
-        'call_duration': duration.inSeconds,
-        'timestamp': now,
-      });
-      AppLogService.instance.add('VOICE_CALL', '通话结束卡片已保存：$callId');
-    } catch (error) {
-      AppLogService.instance.add('VOICE_CALL', '保存通话结束卡片失败：$error');
-      return;
-    }
+
     if (transcript.isNotEmpty) {
       try {
         final result = await AIManager().sendMessage(

@@ -95,9 +95,9 @@ class AppLogService {
     revision.value++;
   }
 
-  void add(String level, String message) {
+  void add(String level, String message, {DateTime? time}) {
     if (!_enabled) return;
-    entries.add(AppLogEntry(DateTime.now(), level, _redact(message)));
+    entries.add(AppLogEntry(time ?? DateTime.now(), level, _redact(message)));
     if (entries.length > 3000) entries.removeRange(0, entries.length - 3000);
     revision.value++;
   }

@@ -19,14 +19,13 @@ class NativeBackgroundCoordinator {
   static Future<void> synchronize() {
     if (defaultTargetPlatform != TargetPlatform.android) return Future.value();
     _synchronizeAgain = true;
-    return _synchronizing ??= _drainSynchronization();
+    return _synchronizing ??= Future<void>.microtask(_drainSynchronization);
   }
 
   static Future<void> _drainSynchronization() async {
     try {
       do {
         _synchronizeAgain = false;
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         await _synchronize();
       } while (_synchronizeAgain);
     } finally {
@@ -63,9 +62,16 @@ class NativeBackgroundCoordinator {
     try {
       final raw = await _channel.invokeMethod<String>('drainBackgroundLogs');
       for (final row in (jsonDecode(raw ?? '[]') as List).whereType<Map>()) {
+        final message = row['message']?.toString() ?? '';
+        // Discard old-version polling entries still waiting in the native queue.
+        if (message.startsWith('任务开始：') ||
+            message.startsWith('任务结束：') ||
+            message.startsWith('主动回复已安排：') ||
+            message.startsWith('主动回复暂停：')) continue;
         final at = DateTime.fromMillisecondsSinceEpoch(row['time'] as int);
-        AppLogService.instance
-            .add('PROACTIVE_NATIVE', '[$at] ${row['message']}');
+        AppLogService.instance.add(
+            row['level']?.toString() ?? 'PROACTIVE_NATIVE', message,
+            time: at);
       }
     } catch (error) {
       AppLogService.instance.add('ERROR', '原生后台日志读取失败：$error');

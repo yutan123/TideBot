@@ -1,3 +1,4 @@
+import 'request_execution_lease.dart';
 import 'ai_request_task.dart';
 import 'memory_prompt_policy.dart';
 export 'ai_request_task.dart';
@@ -214,127 +215,133 @@ class AIManager {
     void Function(String delta)? onDelta,
   }) async {
     cancellationToken?.throwIfCancelled();
-    if (diaryTask) task = AIRequestTask.diary;
-    if (quoteTask) task = AIRequestTask.dailyQuote;
-    diaryTask = task == AIRequestTask.diary;
-    quoteTask = task == AIRequestTask.dailyQuote;
-    if (task.internal) {
-      persistResponse = false;
-      includeChatHistory = false;
-      requestHistory = null;
-      enableAutoSummary = false;
-      skipLifeState = true;
-      allowTools = false;
-      allowStickers = false;
-      useJarvis = false;
-      activeGame = null;
-      onDelta = null;
-      forceSingleReply = true;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    const primaryLocal = '';
-    const backupLocal = '';
-    final backupRemote = (prefs.getString('backup_model_$botId') ?? '').trim();
-    final matchingBots = (await DBManager().getAllBots())
-        .where((bot) => bot['id']?.toString() == botId)
-        .toList();
-    final primaryRemote = matchingBots.isEmpty
-        ? ''
-        : (matchingBots.first['chat_model']?.toString().trim() ?? '');
-    // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
-    // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
-    final primary = {'local': primaryLocal, 'provider': primaryRemote};
-    final backup = {'local': backupLocal, 'provider': backupRemote};
-    bool configured(Map<String, String> candidate) =>
-        candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
-    // Never attempt an empty primary. A configured backup must be usable even
-    // when the bot has no primary model selected.
-    final attempts = <Map<String, String>>[
-      if (configured(primary)) primary,
-      if (configured(backup) && backup['provider'] != primary['provider'])
-        backup,
-    ];
-    if (attempts.isEmpty) {
-      return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
-    }
-
-    final vitalTracked =
-        persistResponse && !skipLifeState && activeGame == null;
-    final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
-    if (vitalTracked) {
-      AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
-      final vitalContext =
-          await BotVitalSignsService.instance.beforeRequest(botId);
-      AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
-      extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
-    }
+    final executionLease = await RequestExecutionLease.acquire();
     try {
-      Map<String, dynamic>? lastFailure;
-      var attempted = 0;
-      for (var index = 0; index < attempts.length; index++) {
-        cancellationToken?.throwIfCancelled();
-        final candidate = attempts[index];
-        final selectedImagePaths = <String>[
-          if (imagePath?.isNotEmpty == true) imagePath!,
-          ...?imagePaths,
-          ...?imageAttachments,
-        ];
-        try {
-          attempted++;
-          final result = await _sendMessageOnce(
-            botId: botId,
-            text: text,
-            imagePath:
-                selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-            imagePaths: selectedImagePaths,
-            audioPath: audioPath,
-            activeGame: activeGame,
-            persistResponse: persistResponse,
-            includeChatHistory: includeChatHistory,
-            requestHistory: requestHistory,
-            enableAutoSummary: enableAutoSummary,
-            skipLifeState: skipLifeState,
-            task: task,
-            diaryTask: diaryTask,
-            quoteTask: quoteTask,
-            allowTools: allowTools,
-            allowStickers: allowStickers,
-            forceSingleReply: forceSingleReply,
-            notifyResponse: notifyResponse,
-            extraSystemPrompt: extraSystemPrompt,
-            useJarvis: useJarvis,
-            cancellationToken: cancellationToken,
-            // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-            // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-            onDelta: onDelta,
-            forcedLocalId: candidate['local']!,
-            forcedProviderId: candidate['provider']!,
-          );
-          if (result['success'] == true) {
-            if (vitalTracked)
-              await BotVitalSignsService.instance
-                  .afterRequest(botId, result, vitalCutoff);
-            return result;
-          }
-          lastFailure = result;
-          final code =
-              int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
-          final retryable = result['error_code']?.toString() == 'network' ||
-              code == 429 ||
-              code >= 500;
-          if (!retryable || index == attempts.length - 1) break;
-        } on AICancelledException {
-          rethrow;
-        }
+      if (diaryTask) task = AIRequestTask.diary;
+      if (quoteTask) task = AIRequestTask.dailyQuote;
+      diaryTask = task == AIRequestTask.diary;
+      quoteTask = task == AIRequestTask.dailyQuote;
+      if (task.internal) {
+        persistResponse = false;
+        includeChatHistory = false;
+        requestHistory = null;
+        enableAutoSummary = false;
+        skipLifeState = true;
+        allowTools = false;
+        allowStickers = false;
+        useJarvis = false;
+        activeGame = null;
+        onDelta = null;
+        forceSingleReply = true;
       }
-      if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-      return {
-        ...?lastFailure,
-        'error': '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
-      };
-    } catch (_) {
-      if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-      rethrow;
+      final prefs = await SharedPreferences.getInstance();
+      const primaryLocal = '';
+      const backupLocal = '';
+      final backupRemote =
+          (prefs.getString('backup_model_$botId') ?? '').trim();
+      final matchingBots = (await DBManager().getAllBots())
+          .where((bot) => bot['id']?.toString() == botId)
+          .toList();
+      final primaryRemote = matchingBots.isEmpty
+          ? ''
+          : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+      // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+      // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+      final primary = {'local': primaryLocal, 'provider': primaryRemote};
+      final backup = {'local': backupLocal, 'provider': backupRemote};
+      bool configured(Map<String, String> candidate) =>
+          candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
+      // Never attempt an empty primary. A configured backup must be usable even
+      // when the bot has no primary model selected.
+      final attempts = <Map<String, String>>[
+        if (configured(primary)) primary,
+        if (configured(backup) && backup['provider'] != primary['provider'])
+          backup,
+      ];
+      if (attempts.isEmpty) {
+        return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
+      }
+
+      final vitalTracked =
+          persistResponse && !skipLifeState && activeGame == null;
+      final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
+      if (vitalTracked) {
+        AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
+        final vitalContext =
+            await BotVitalSignsService.instance.beforeRequest(botId);
+        AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
+        extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
+      }
+      try {
+        Map<String, dynamic>? lastFailure;
+        var attempted = 0;
+        for (var index = 0; index < attempts.length; index++) {
+          cancellationToken?.throwIfCancelled();
+          final candidate = attempts[index];
+          final selectedImagePaths = <String>[
+            if (imagePath?.isNotEmpty == true) imagePath!,
+            ...?imagePaths,
+            ...?imageAttachments,
+          ];
+          try {
+            attempted++;
+            final result = await _sendMessageOnce(
+              botId: botId,
+              text: text,
+              imagePath:
+                  selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
+              imagePaths: selectedImagePaths,
+              audioPath: audioPath,
+              activeGame: activeGame,
+              persistResponse: persistResponse,
+              includeChatHistory: includeChatHistory,
+              requestHistory: requestHistory,
+              enableAutoSummary: enableAutoSummary,
+              skipLifeState: skipLifeState,
+              task: task,
+              diaryTask: diaryTask,
+              quoteTask: quoteTask,
+              allowTools: allowTools,
+              allowStickers: allowStickers,
+              forceSingleReply: forceSingleReply,
+              notifyResponse: notifyResponse,
+              extraSystemPrompt: extraSystemPrompt,
+              useJarvis: useJarvis,
+              cancellationToken: cancellationToken,
+              // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+              // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+              onDelta: onDelta,
+              forcedLocalId: candidate['local']!,
+              forcedProviderId: candidate['provider']!,
+            );
+            if (result['success'] == true) {
+              if (vitalTracked)
+                await BotVitalSignsService.instance
+                    .afterRequest(botId, result, vitalCutoff);
+              return result;
+            }
+            lastFailure = result;
+            final code =
+                int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+            final retryable = result['error_code']?.toString() == 'network' ||
+                code == 429 ||
+                code >= 500;
+            if (!retryable || index == attempts.length - 1) break;
+          } on AICancelledException {
+            rethrow;
+          }
+        }
+        if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+        return {
+          ...?lastFailure,
+          'error': '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
+        };
+      } catch (_) {
+        if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+        rethrow;
+      }
+    } finally {
+      await executionLease.release();
     }
   }
 
@@ -1010,7 +1017,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           ? await _buildToolContext(
               db,
               botId: botId,
-              requireEmotion: true,
+              includeEmotion: true,
               requireSticker: allowSticker,
               stickerEmotions: stickerEmotions,
               inspectableImageNumbers: inspectableImageNumbers,
@@ -1352,7 +1359,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               ? await _buildNativeTools(
                   db,
                   botId: botId,
-                  requireEmotion: true,
+                  includeEmotion: true,
                   allowSticker: stickerEmotions.isNotEmpty,
                   stickerTypes: stickerEmotions.toSet(),
                   inspectableImageNumbers: inspectableImageNumbers,
@@ -1651,7 +1658,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               voiceSetter: () => toolRequestedVoice = true,
               requestTools: tools,
               requiredToolNames: {
-                if (task != AIRequestTask.proactiveChat) 'set_emotion',
                 if (allowSticker) 'send_sticker',
               },
               allowedStickerTypes:
@@ -3638,7 +3644,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   Future<List<Map<String, dynamic>>> _buildNativeTools(
     DBManager db, {
     required String botId,
-    bool requireEmotion = false,
+    bool includeEmotion = false,
     bool allowSticker = false,
     bool allowSilence = true,
     Set<String> stickerTypes = const {},
@@ -3646,7 +3652,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     List<int> currentImageNumbers = const [],
   }) async {
     final tools = <Map<String, dynamic>>[];
-    if (requireEmotion) {
+    if (includeEmotion) {
       tools.add(_setEmotionToolSchema());
     }
     if (allowSticker && stickerTypes.isNotEmpty) {
@@ -3837,7 +3843,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'type': 'function',
         'function': {
           'name': 'set_emotion',
-          'description': '本轮成功文字回复必须调用一次，用于写入当前心情。不得在聊天正文输出心情标签。',
+          'description': '只有心情相较当前状态发生有意义变化时才调用，更新角色心情；没有变化无需调用。不得在聊天正文输出心情标签。',
           'parameters': {
             'type': 'object',
             'properties': {
@@ -4906,7 +4912,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   Future<String> _buildToolContext(
     DBManager db, {
     required String botId,
-    bool requireEmotion = false,
+    bool includeEmotion = false,
     bool requireSticker = false,
     List<String> stickerEmotions = const [],
     List<int> inspectableImageNumbers = const [],
@@ -4947,9 +4953,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         );
       }
     }
-    if (requireEmotion) {
+    if (includeEmotion) {
       parts.add(
-        '【心情协议】本轮必须通过 set_emotion 实际调用一次写入心情，不得在正文输出心情标签或伪造调用。是否输出正文遵守系统回复规则；choose_silence 仍须满足其适用条件。',
+        '【心情协议】set_emotion 是可选工具。仅当心情相较当前状态发生有意义变化时调用；没有变化无需调用，直接正常回复。不得在正文输出心情标签或伪造调用。是否输出正文遵守系统回复规则；choose_silence 仍须满足其适用条件。',
       );
     }
     if (stickerEmotions.isNotEmpty) {

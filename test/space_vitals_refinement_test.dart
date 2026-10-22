@@ -127,7 +127,11 @@ void main() {
     expect(find.byIcon(Icons.wb_sunny_rounded), findsNothing);
     expect(find.byType(SleepStateMark), findsNWidgets(2));
     final track = find.descendant(
-        of: find.byType(SleepTimeline), matching: find.byType(CustomPaint));
+        of: find.byType(SleepTimeline),
+        matching: find.byWidgetPredicate(
+            (widget) => widget is CustomPaint && widget.size.height == 112));
+    expect(track, findsOneWidget);
+    expect(find.text('00:00 · 1分'), findsOneWidget);
     final rect = tester.getRect(track);
     await tester.tapAt(Offset(
         rect.left + 4 + (rect.width - 8) * 3630000 / 7200000, rect.center.dy));

@@ -9,6 +9,9 @@ class TideAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != TideAlarmScheduler.taskAction) return
         val pending = goAsync()
+        val power = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val handoff = power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "TideBot:AlarmHandoff")
+            .apply { setReferenceCounted(false); acquire(15_000L) }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 val taskId = intent.getStringExtra(TideAlarmScheduler.taskIdExtra) ?: return@launch
@@ -17,7 +20,8 @@ class TideAlarmReceiver : BroadcastReceiver() {
                     TideAlarmScheduler.rearmDaily(context, intent)
                 }
                 if (TideMasterScheduler.isRegistered(context, taskId)) {
-                    TideTaskWork.enqueue(context, taskId, scheduledTime)
+                    TideTaskWork.enqueue(context, taskId, scheduledTime).result
+                        .get(5, java.util.concurrent.TimeUnit.SECONDS)
                     try {
                         TideBackgroundService.startTask(context, taskId, scheduledTime)
                     } catch (error: Exception) {
@@ -31,6 +35,7 @@ class TideAlarmReceiver : BroadcastReceiver() {
             } catch (error: Exception) {
                 Log.e("TideAlarmReceiver", "Failed to handle alarm", error)
             } finally {
+                if (handoff.isHeld) handoff.release()
                 pending.finish()
             }
         }

@@ -135,7 +135,7 @@ object TideAiClient {
     /**
      * 构建请求体
      */
-    private fun buildRequestBody(req: AiRequest): String {
+    internal fun buildRequestBody(req: AiRequest): String {
         val json = JSONObject()
         json.put("model", req.model)
         json.put("max_tokens", req.maxTokens)

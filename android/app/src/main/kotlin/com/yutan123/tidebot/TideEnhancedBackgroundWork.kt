@@ -96,7 +96,13 @@ class TideEnhancedBackgroundWork(
                 TideStore.rows(db, "SELECT task_id,trigger_time FROM background_tasks WHERE enabled=1 AND trigger_time<=? ORDER BY trigger_time LIMIT 16", System.currentTimeMillis().toString())
             }
             if (due.isNotEmpty()) {
-                setForeground(ForegroundInfo(998, TideNativeNotifications.workNotification(applicationContext), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+                try {
+                    setForeground(ForegroundInfo(998, TideNativeNotifications.workNotification(applicationContext), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: IllegalStateException) {
+                    Log.w(TAG, "Foreground promotion unavailable; using Worker execution", error)
+                }
             }
             val batchStarted = android.os.SystemClock.elapsedRealtime()
             for (task in due) {

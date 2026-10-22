@@ -34,6 +34,26 @@ String vitalDate(dynamic value) {
   return '${d.month}月${d.day}日';
 }
 
+Color moodTrendColor(num value) => value < 35
+    ? const Color(0xff6488D8)
+    : value < 50
+        ? const Color(0xff8A83B8)
+        : value < 65
+            ? const Color(0xff44A9A1)
+            : value < 82
+                ? const Color(0xff39A873)
+                : const Color(0xffE6A84B);
+
+IconData moodTrendIcon(num value) => value < 35
+    ? Icons.sentiment_very_dissatisfied_rounded
+    : value < 50
+        ? Icons.sentiment_dissatisfied_rounded
+        : value < 65
+            ? Icons.sentiment_neutral_rounded
+            : value < 82
+                ? Icons.sentiment_satisfied_alt_rounded
+                : Icons.sentiment_very_satisfied_rounded;
+
 String vitalDuration(int minutes) => '${minutes ~/ 60}小时${minutes % 60}分';
 Map<String, dynamic>? latestSleep(Map<String, dynamic> s) {
   final list = vitalList(s['sleep_history']);
@@ -149,7 +169,12 @@ class VitalMetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final color = index == 0 ? theme.primary : vitalColors[index];
+    final moodValue = vitalDouble(data['mood'], 65);
+    final color = index == 1
+        ? moodTrendColor(moodValue)
+        : index == 0
+            ? theme.primary
+            : vitalColors[index];
     final points = metricPoints(data, index);
     return BouncyTap(
         onTap: onTap ?? () {},
@@ -159,7 +184,8 @@ class VitalMetricCard extends StatelessWidget {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Icon(vitalIcons[index], color: color, size: 19),
+                Icon(index == 1 ? moodTrendIcon(moodValue) : vitalIcons[index],
+                    color: color, size: 19),
                 const SizedBox(width: 7),
                 Expanded(
                     child: Text(vitalTitles[index],
@@ -184,7 +210,10 @@ class VitalMetricCard extends StatelessWidget {
                   child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: VitalChart(
-                          points: points, color: color, compact: true))),
+                          points: points,
+                          color: color,
+                          compact: true,
+                          moodTrend: index == 1))),
               Text(metricNote(data, index),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -200,10 +229,12 @@ class VitalChart extends StatefulWidget {
       required this.points,
       required this.color,
       this.compact = false,
+      this.moodTrend = false,
       this.onSelected});
   final List<Map<String, dynamic>> points;
   final Color color;
   final bool compact;
+  final bool moodTrend;
   final ValueChanged<Map<String, dynamic>>? onSelected;
   @override
   State<VitalChart> createState() => _VitalChartState();
@@ -236,20 +267,31 @@ class _VitalChartState extends State<VitalChart> {
             onHorizontalDragUpdate: (d) => pick(d.localPosition, c.maxWidth),
             child: CustomPaint(
                 size: Size(c.maxWidth, c.maxHeight),
-                painter: _VitalPainter(widget.points, widget.color,
-                    theme.textFaint, widget.compact, selected))));
+                painter: _VitalPainter(
+                    widget.points,
+                    widget.color,
+                    theme.textFaint,
+                    widget.compact,
+                    selected,
+                    widget.moodTrend))));
   }
 }
 
 class _VitalPainter extends CustomPainter {
-  _VitalPainter(this.points, this.color, this.ink, this.compact, this.selected);
+  _VitalPainter(this.points, this.color, this.ink, this.compact, this.selected,
+      this.moodTrend);
   final List<Map<String, dynamic>> points;
   final Color color, ink;
-  final bool compact;
+  final bool compact, moodTrend;
   final int? selected;
+
+  Color _colorAt(int index) =>
+      moodTrend ? moodTrendColor(vitalDouble(points[index]['value'])) : color;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final top = compact ? 4.0 : 20.0, bottom = compact ? 4.0 : 30.0;
+    final top = compact ? 4.0 : 20.0;
+    final bottom = compact ? 4.0 : 30.0;
     final values = points.map((e) => vitalDouble(e['value'])).toList();
     var low = values.reduce(min), high = values.reduce(max);
     if (high - low < 1) {
@@ -260,12 +302,13 @@ class _VitalPainter extends CustomPainter {
     low -= pad;
     high += pad;
     Offset p(int i) => Offset(
-        points.length == 1
-            ? size.width / 2
-            : i / (points.length - 1) * size.width,
-        top +
-            (1 - (values[i] - low) / (high - low)) *
-                (size.height - top - bottom));
+          points.length == 1
+              ? size.width / 2
+              : i / (points.length - 1) * size.width,
+          top +
+              (1 - (values[i] - low) / (high - low)) *
+                  (size.height - top - bottom),
+        );
     final grid = Paint()
       ..color = ink.withValues(alpha: .15)
       ..strokeWidth = .7;
@@ -282,41 +325,67 @@ class _VitalPainter extends CustomPainter {
       ..lineTo(p(0).dx, size.height - bottom)
       ..close();
     canvas.drawPath(
-        fill,
-        Paint()
-          ..shader = LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                color.withValues(alpha: .25),
-                color.withValues(alpha: .01)
-              ]).createShader(Offset.zero & size));
-    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: .20), color.withValues(alpha: .01)],
+        ).createShader(Offset.zero & size),
+    );
+    if (moodTrend && points.length > 1) {
+      for (var i = 0; i < points.length - 1; i++) {
+        final segment = Path()
+          ..moveTo(p(i).dx, p(i).dy)
+          ..lineTo(p(i + 1).dx, p(i + 1).dy);
+        canvas.drawPath(
+          segment,
+          Paint()
+            ..shader = LinearGradient(
+              colors: [_colorAt(i), _colorAt(i + 1)],
+            ).createShader(Rect.fromLTRB(p(i).dx, 0, p(i + 1).dx, size.height))
+            ..strokeWidth = compact ? 2.4 : 3
+            ..strokeCap = StrokeCap.round
+            ..style = PaintingStyle.stroke,
+        );
+      }
+      for (var i = 0; i < points.length; i++) {
+        canvas.drawCircle(
+            p(i), compact ? 2 : 2.7, Paint()..color = _colorAt(i));
+      }
+    } else {
+      canvas.drawPath(
         line,
         Paint()
           ..color = color
           ..strokeWidth = compact ? 2 : 2.8
           ..style = PaintingStyle.stroke
-          ..strokeJoin = StrokeJoin.round);
-    if (points.length == 1) canvas.drawCircle(p(0), 3, Paint()..color = color);
+          ..strokeJoin = StrokeJoin.round,
+      );
+    }
+    if (points.length == 1)
+      canvas.drawCircle(p(0), 3, Paint()..color = _colorAt(0));
     if (selected != null && selected! < points.length) {
       final point = p(selected!);
+      final selectedColor = _colorAt(selected!);
       canvas.drawLine(
-          Offset(point.dx, top),
-          Offset(point.dx, size.height - bottom),
-          Paint()..color = color.withValues(alpha: .35));
-      canvas.drawCircle(point, 5, Paint()..color = color);
+        Offset(point.dx, top),
+        Offset(point.dx, size.height - bottom),
+        Paint()..color = selectedColor.withValues(alpha: .45),
+      );
+      canvas.drawCircle(point, 5, Paint()..color = selectedColor);
       canvas.drawCircle(point, 2, Paint()..color = Colors.white);
     }
     if (!compact) {
       for (final i in [0, points.length - 1]) {
         final text = TextPainter(
-            text: TextSpan(
-                text:
-                    '${vitalDate(points[i]['time'])} ${vitalClock(points[i]['time'])}',
-                style: TextStyle(color: ink, fontSize: 10)),
-            textDirection: TextDirection.ltr)
-          ..layout();
+          text: TextSpan(
+            text:
+                '${vitalDate(points[i]['time'])} ${vitalClock(points[i]['time'])}',
+            style: TextStyle(color: ink, fontSize: 10),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
         text.paint(canvas,
             Offset(i == 0 ? 0 : size.width - text.width, size.height - 16));
       }
@@ -382,7 +451,7 @@ class _BotDataPageState extends State<BotDataPage> {
                 : RefreshIndicator(
                     onRefresh: load,
                     child: ListView(
-                        addRepaintBoundaries: false,
+                        addRepaintBoundaries: true,
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                         children: [
                           Text('${widget.botName} 的生活轨迹',
@@ -397,7 +466,7 @@ class _BotDataPageState extends State<BotDataPage> {
                                   color: theme.textWeak, fontSize: 12)),
                           const SizedBox(height: 20),
                           GridView.builder(
-                              addRepaintBoundaries: false,
+                              addRepaintBoundaries: true,
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
                               itemCount: 6,
@@ -501,7 +570,11 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context),
         i = widget.index,
-        color = widget.index == 0 ? theme.primary : vitalColors[widget.index];
+        color = i == 1
+            ? moodTrendColor(vitalDouble(data?['mood'], 65))
+            : i == 0
+                ? theme.primary
+                : vitalColors[i];
     if (data == null)
       return TideBackground(
           child: Scaffold(
@@ -545,7 +618,13 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                             decoration: BoxDecoration(
                                 color: color.withValues(alpha: .12),
                                 borderRadius: BorderRadius.circular(18)),
-                            child: Icon(vitalIcons[i], color: color, size: 26)),
+                            child: Icon(
+                                i == 1
+                                    ? moodTrendIcon(
+                                        vitalDouble(data?['mood'], 65))
+                                    : vitalIcons[i],
+                                color: color,
+                                size: 26)),
                         const SizedBox(width: 12),
                         Expanded(
                             child: Column(
@@ -594,12 +673,32 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                             text('变化趋势', size: 16),
+                            if (i == 1) ...[
+                              const SizedBox(height: 10),
+                              Wrap(spacing: 12, runSpacing: 8, children: [
+                                for (final value in [20, 40, 55, 70, 90])
+                                  Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(moodTrendIcon(value),
+                                            size: 14,
+                                            color: moodTrendColor(value)),
+                                        const SizedBox(width: 4),
+                                        text(
+                                            BotVitalSignsService.instance
+                                                .moodName(value),
+                                            size: 11,
+                                            color: moodTrendColor(value)),
+                                      ]),
+                              ]),
+                            ],
                             const SizedBox(height: 12),
                             SizedBox(
                                 height: 190,
                                 child: VitalChart(
                                     points: points,
                                     color: color,
+                                    moodTrend: i == 1,
                                     onSelected: (p) => setState(() {
                                           selected = p;
                                           if (i == 0) {

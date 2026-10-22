@@ -511,7 +511,6 @@ Future<void> _generateMissingLifeSchedules() async {
 Future<void> _runDeviceEventTriggeredReply() async {
   final db = DBManager();
   if (await db.getKV('proactive_reply') == 'false') {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：用户已关闭主动回复');
     return;
   }
   final capability = DeviceCapabilityService.instance;
@@ -519,7 +518,6 @@ Future<void> _runDeviceEventTriggeredReply() async {
     DeviceCapabilityService.proactiveFeature,
   );
   if (botId == null || botId.isEmpty) {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：未绑定机器人');
     return;
   }
   if (await BotVitalSignsService.instance.isSleepPeriod(botId)) return;
@@ -527,7 +525,6 @@ Future<void> _runDeviceEventTriggeredReply() async {
     DeviceCapabilityService.proactiveFeature,
     botId,
   )) {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：未获能力授权');
     return;
   }
   final event = await capability.latestDeviceEvent();
@@ -542,7 +539,6 @@ Future<void> _runDeviceEventTriggeredReply() async {
           ? whitelist.contains('app_opened')
           : whitelist.contains('screen_event');
   if (!allowed) {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：事件 $type 未获授权');
     return;
   }
   final eventTime = (event['time'] as num?)?.toInt() ??
@@ -556,11 +552,9 @@ Future<void> _runDeviceEventTriggeredReply() async {
           0;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - last < const Duration(minutes: 45).inMilliseconds) {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：冷却中');
     return;
   }
   if (Random.secure().nextInt(100) >= 35) {
-    AppLogService.instance.add('PROACTIVE', '跳过设备事件触发：随机策略未命中');
     return;
   }
   AppLogService.instance.add('PROACTIVE', '设备事件触发主动回复：$botId / $type');

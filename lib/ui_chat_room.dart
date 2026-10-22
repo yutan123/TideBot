@@ -3093,8 +3093,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       return;
     }
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
+    final callCard = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute<Map<String, dynamic>>(
         builder: (_) => CallPage(
           bot: _bot,
           hasStt: hasStt,
@@ -3106,6 +3106,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         ),
       ),
     );
+    if (mounted && callCard != null) {
+      final id = callCard['id']?.toString();
+      if (id != null && !_msgs.any((message) => message['id'] == id)) {
+        setState(() {
+          _msgs = normalizeChatMessages([..._msgs, callCard]);
+        });
+        _scrollDown();
+      }
+    }
+    await _syncLatestMessages();
   }
 
   String _errorSolution(dynamic code) {

@@ -37,4 +37,32 @@ void main() {
     await NativeBackgroundCoordinator.refreshLogs();
     expect(calls, 2);
   });
+  test(
+      'keeps complete request context, original time and levels without polling noise',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    await AppLogService.instance.setEnabled(true);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            channel,
+            (_) async => '''[
+      {"time":1000,"message":"任务开始：vitals:bot"},
+      {"time":2000,"message":"任务结束：status=success"},
+      {"time":2500,"message":"主动回复已安排：bot=bot"},
+      {"time":3000,"level":"PROACTIVE_REQUEST","message":"完整请求：system 人设，上下文 user 提问，tools choose_silence，Bearer secret123"},
+      {"time":4000,"level":"PROACTIVE_NATIVE","message":"主动回复结束：sent"}
+    ]''');
+    await NativeBackgroundCoordinator.refreshLogs();
+    final native = AppLogService.instance.entries
+        .where((entry) => entry.level.startsWith('PROACTIVE'))
+        .toList();
+    expect(native, hasLength(2));
+    expect(native.first.level, 'PROACTIVE_REQUEST');
+    expect(native.first.time.millisecondsSinceEpoch, 3000);
+    expect(native.first.message,
+        contains('system 人设，上下文 user 提问，tools choose_silence'));
+    expect(native.first.message, isNot(contains('secret123')));
+    expect(native.first.message, isNot(contains('[1970')));
+    expect(native.last.time.millisecondsSinceEpoch, 4000);
+  });
 }
