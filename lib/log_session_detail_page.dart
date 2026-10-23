@@ -28,7 +28,7 @@ class LogSessionDetailPage extends StatelessWidget {
               child: NativeSelectableText(
                   '[${e.time.toLocal()}] ${e.level}\n${e.message}',
                   style: TextStyle(
-                      fontFamily: 'TideFont',
+                      fontFamily: 'monospace',
                       fontSize: 12,
                       color: e.level.toUpperCase().contains('ERROR')
                           ? Colors.redAccent

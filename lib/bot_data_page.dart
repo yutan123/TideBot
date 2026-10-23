@@ -34,6 +34,14 @@ String vitalDate(dynamic value) {
   return '${d.month}月${d.day}日';
 }
 
+Color stressTrendColor(num value) => value < 3
+    ? const Color(0xff39A873)
+    : value < 5
+        ? const Color(0xffE6B34B)
+        : value < 7
+            ? const Color(0xffE68B4B)
+            : const Color(0xffD95F70);
+
 Color moodTrendColor(num value) => value < 35
     ? const Color(0xff6488D8)
     : value < 50
@@ -92,9 +100,7 @@ String metricNote(Map<String, dynamic> s, int index) {
     case 1:
       return '心情 ${vitalDouble(s['mood'], 65).round()} · 每小时更新';
     case 2:
-      return vitalDouble(s['stress'], 3) < 4
-          ? '节奏轻松，状态平稳'
-          : '${s['activity'] ?? '日常活动'} · 注意休息';
+      return '${stressLevel(vitalDouble(s['stress'], 3))} · ${s['activity'] ?? '日常活动'}';
     case 3:
       return '${vitalDouble(s['temperature'], 36.5).toStringAsFixed(1)} °C · ${vitalInt(s['heart'], 72)} 次/分';
     case 4:
@@ -154,7 +160,11 @@ List<Map<String, dynamic>> metricPoints(Map<String, dynamic> s, int index,
             'time': e['time'],
             'value': vitalDouble(
                 e[key], key == 'height' ? vitalDouble(s['height']) : 0),
-            'note': index == 5 ? '${e['health']}' : '${e['activity']}'
+            'note': index == 5
+                ? '${e['health']}'
+                : index == 2
+                    ? '${stressLevel(vitalDouble(e['stress']))} · ${e['activity']}'
+                    : '${e['activity']}'
           })
       .toList();
 }
@@ -174,7 +184,9 @@ class VitalMetricCard extends StatelessWidget {
         ? moodTrendColor(moodValue)
         : index == 0
             ? theme.primary
-            : vitalColors[index];
+            : index == 2
+                ? stressTrendColor(vitalDouble(data['stress'], 3))
+                : vitalColors[index];
     final points = metricPoints(data, index);
     return BouncyTap(
         onTap: onTap ?? () {},
@@ -213,7 +225,8 @@ class VitalMetricCard extends StatelessWidget {
                           points: points,
                           color: color,
                           compact: true,
-                          moodTrend: index == 1))),
+                          moodTrend: index == 1,
+                          stressTrend: index == 2))),
               Text(metricNote(data, index),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -230,11 +243,13 @@ class VitalChart extends StatefulWidget {
       required this.color,
       this.compact = false,
       this.moodTrend = false,
+      this.stressTrend = false,
       this.onSelected});
   final List<Map<String, dynamic>> points;
   final Color color;
   final bool compact;
   final bool moodTrend;
+  final bool stressTrend;
   final ValueChanged<Map<String, dynamic>>? onSelected;
   @override
   State<VitalChart> createState() => _VitalChartState();
@@ -273,20 +288,24 @@ class _VitalChartState extends State<VitalChart> {
                     theme.textFaint,
                     widget.compact,
                     selected,
-                    widget.moodTrend))));
+                    widget.moodTrend,
+                    widget.stressTrend))));
   }
 }
 
 class _VitalPainter extends CustomPainter {
   _VitalPainter(this.points, this.color, this.ink, this.compact, this.selected,
-      this.moodTrend);
+      this.moodTrend, this.stressTrend);
   final List<Map<String, dynamic>> points;
   final Color color, ink;
-  final bool compact, moodTrend;
+  final bool compact, moodTrend, stressTrend;
   final int? selected;
 
-  Color _colorAt(int index) =>
-      moodTrend ? moodTrendColor(vitalDouble(points[index]['value'])) : color;
+  Color _colorAt(int index) => moodTrend
+      ? moodTrendColor(vitalDouble(points[index]['value']))
+      : stressTrend
+          ? stressTrendColor(vitalDouble(points[index]['value']))
+          : color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -333,7 +352,7 @@ class _VitalPainter extends CustomPainter {
           colors: [color.withValues(alpha: .20), color.withValues(alpha: .01)],
         ).createShader(Offset.zero & size),
     );
-    if (moodTrend && points.length > 1) {
+    if ((moodTrend || stressTrend) && points.length > 1) {
       for (var i = 0; i < points.length - 1; i++) {
         final segment = Path()
           ..moveTo(p(i).dx, p(i).dy)
@@ -421,7 +440,7 @@ class _BotDataPageState extends State<BotDataPage> {
       final value = await BotVitalSignsService.instance.snapshot(widget.botId);
       if (mounted)
         setState(() {
-          data = value;
+          data = recordedVitalSnapshot(value, now: DateTime.now());
           error = null;
         });
     } catch (e) {
@@ -446,6 +465,8 @@ class _BotDataPageState extends State<BotDataPage> {
                             onPressed: load, child: const Text('读取失败，点击重试')))
                 : RefreshIndicator(
                     onRefresh: load,
+                    backgroundColor: Colors.transparent,
+                    color: theme.primary,
                     child: ListView(
                         addRepaintBoundaries: true,
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -546,7 +567,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
       final v = await BotVitalSignsService.instance.snapshot(widget.botId);
       if (mounted)
         setState(() {
-          data = v;
+          data = recordedVitalSnapshot(v, now: DateTime.now());
           error = null;
           sleep ??= v['sleep'] is Map
               ? Map<String, dynamic>.from(v['sleep'] as Map)
@@ -570,7 +591,9 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
             ? moodTrendColor(vitalDouble(data?['mood'], 65))
             : i == 0
                 ? theme.primary
-                : vitalColors[i];
+                : i == 2
+                    ? stressTrendColor(vitalDouble(data?['stress'], 3))
+                    : vitalColors[i];
     if (data == null)
       return TideBackground(
           child: Scaffold(
@@ -605,6 +628,8 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                 backgroundColor: Colors.transparent),
             body: RefreshIndicator(
                 onRefresh: load,
+                backgroundColor: Colors.transparent,
+                color: theme.primary,
                 child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
                     children: [
@@ -669,6 +694,23 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                             text('变化趋势', size: 16),
+                            if (i == 2) ...[
+                              const SizedBox(height: 10),
+                              Wrap(spacing: 12, runSpacing: 8, children: [
+                                for (final entry in stressRanges.entries)
+                                  Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.circle,
+                                            size: 8,
+                                            color: stressTrendColor(entry.key)),
+                                        const SizedBox(width: 4),
+                                        text(entry.value,
+                                            size: 11,
+                                            color: stressTrendColor(entry.key)),
+                                      ]),
+                              ]),
+                            ],
                             if (i == 1) ...[
                               const SizedBox(height: 10),
                               Wrap(spacing: 12, runSpacing: 8, children: [
@@ -695,6 +737,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                                     points: points,
                                     color: color,
                                     moodTrend: i == 1,
+                                    stressTrend: i == 2,
                                     onSelected: (p) => setState(() {
                                           selected = p;
                                           if (i == 0) {
@@ -773,8 +816,15 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                                           text(
                                               '${vitalDate(e['time'])} ${vitalClock(e['time'])}',
                                               size: 12),
-                                          text('${e['activity'] ?? '日常生活'}',
-                                              size: 11, color: theme.textWeak)
+                                          text(
+                                              i == 2
+                                                  ? '${stressLevel(vitalDouble(e['stress']))} · ${e['activity'] ?? '日常生活'}'
+                                                  : '${e['activity'] ?? '日常生活'}',
+                                              size: 11,
+                                              color: i == 2
+                                                  ? stressTrendColor(
+                                                      vitalDouble(e['stress']))
+                                                  : theme.textWeak)
                                         ])),
                                     text(i == 1
                                         ? '${BotVitalSignsService.instance.moodName(vitalDouble(e['mood']))} ${vitalDouble(e['mood']).round()}'

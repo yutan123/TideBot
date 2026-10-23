@@ -98,22 +98,26 @@ class _TideBackgroundState extends State<TideBackground> {
     final scrimOpacity = widget.opacity ?? theme.effectiveBackgroundOpacity;
     final scrim = Colors.black.withValues(alpha: scrimOpacity);
 
-    // 使用 RepaintBoundary 让背景图单独成层，避免重绘
+    // Use a single RepaintBoundary for the background stack to ensure
+    // BackdropFilter in child widgets can reference it correctly during animations
     return Stack(
       fit: StackFit.expand,
       children: [
         RepaintBoundary(
-          child: Image(
-            image: image,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, __, ___) =>
-                ColoredBox(color: theme.pageBackground),
-          ),
-        ),
-        IgnorePointer(
-          child: RepaintBoundary(
-            child: ColoredBox(color: scrim),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image(
+                image: image,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) =>
+                    ColoredBox(color: theme.pageBackground),
+              ),
+              IgnorePointer(
+                child: ColoredBox(color: scrim),
+              ),
+            ],
           ),
         ),
         widget.child,

@@ -216,13 +216,14 @@ class _CallPageState extends State<CallPage>
         return;
       }
       _applyGeneratedImage(reply);
-      _appendMessage(answer, isUser: false);
       _transcript.add('机器人：$answer');
       if (mounted) setState(() => _caption = answer);
       final ttsId = _ttsProviderId;
       if (_hasTts && ttsId.isNotEmpty) {
         await _synthesizeAndPlay(answer, ttsId);
-      } else if (!_hasTts) {
+      } else {
+        // TTS 不可用，直接显示文字
+        _appendMessage(answer, isUser: false);
         AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，仅显示文字');
       }
     } on AICancelledException {
@@ -1841,6 +1842,7 @@ class _CallPageState extends State<CallPage>
               minLines: 1,
               maxLines: 3,
               textInputAction: TextInputAction.send,
+              selectionControls: materialTextSelectionControls,
               onSubmitted: (_) => _submitText(),
               decoration: InputDecoration(
                 hintText: '输入回复',

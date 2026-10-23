@@ -3014,12 +3014,25 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ),
           Column(
             children: [
-              IncomingCallBanner(botId: _bot['id']?.toString() ?? ''),
               _chatHeader(),
               Expanded(
-                child: AnimatedBuilder(
-                  animation: _emojiPanelCtrl,
-                  builder: (context, _) => _chatBody(),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: AnimatedBuilder(
+                        animation: _emojiPanelCtrl,
+                        builder: (context, _) => _chatBody(),
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      left: 16,
+                      right: 16,
+                      child: IncomingCallBanner(
+                        botId: _bot['id']?.toString() ?? '',
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -4156,6 +4169,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       minLines: 1,
                       maxLines: 4,
                       textInputAction: TextInputAction.newline,
+                      selectionControls: materialTextSelectionControls,
                       style: TextStyle(
                           fontSize: 15,
                           fontFamily: 'TideFont',

@@ -754,6 +754,7 @@ class _GameArenaPageState extends State<GameArenaPage> {
                       child: TextField(
                         controller: _chatController,
                         onSubmitted: (_) => _talk(),
+                        selectionControls: materialTextSelectionControls,
                         decoration: InputDecoration(
                           hintText: '和 $_botName 聊聊游戏…',
                           filled: true,

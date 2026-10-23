@@ -161,11 +161,14 @@ class AIManager {
       _cacheDiagnostics.clear();
       return;
     }
-    AppLogService.instance.addJson('CACHE', '完整请求前缀变化诊断', {
+    // 缓存诊断使用紧凑 JSON 格式，避免大量空行占用日志空间
+    final diagnostics = {
       ..._cacheDiagnostics.record(
           scope: scope, requestId: requestId, payload: payload),
       'history_window': window,
-    });
+    };
+    AppLogService.instance
+        .add('CACHE', '完整请求前缀变化诊断\n${jsonEncode(diagnostics)}');
   }
 
   Future<Map<String, dynamic>> sendMessage({
@@ -1039,8 +1042,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       );
 
       // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
+      // 通话时（extraSystemPrompt 非空）自动禁用独白，不让机器人感知其存在
       final innerThoughtEnabled = !diaryTask &&
           !quoteTask &&
+          extraSystemPrompt.isEmpty &&
           await db.getKV('inner_thought_enabled') == 'true';
       String recentThoughtsContext = '';
       if (innerThoughtEnabled && history.isNotEmpty) {
@@ -1909,7 +1914,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               };
               await MessageDeliveryService.instance.insert(
                 row,
-                notify: notifyResponse && index == 0,
+                notify: notifyResponse,
               );
               persistedMessages.add(row);
             }
@@ -1927,9 +1932,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               };
               await MessageDeliveryService.instance.insert(
                 row,
-                notify: notifyResponse &&
-                    !persistedMessages
-                        .any((message) => message['type'] != 'inner_thought'),
+                notify: notifyResponse,
               );
               persistedMessages.add(row);
               AppLogService.instance
@@ -1949,9 +1952,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               };
               await MessageDeliveryService.instance.insert(
                 row,
-                notify: notifyResponse &&
-                    !persistedMessages
-                        .any((message) => message['type'] != 'inner_thought'),
+                notify: notifyResponse,
               );
               persistedMessages.add(row);
             }
@@ -4844,18 +4845,22 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           endTime: now,
           chatMessage: cardMessage,
         );
-        // 更新通话状态
-        VoiceCallStateService.instance
-            .startRinging(callId, botId, isIncoming: true);
 
-        // 发送通知
-        await MessageDeliveryService.instance.sendNotification(
-          title: (await db.getBotData(botId))?['name'] ?? '机器人',
-          body: '给你发起了语音通话',
-          payload: {'type': 'voice_call', 'bot_id': botId, 'call_id': callId},
-        );
+        // 延迟响铃：等待工具执行完毕、机器人回复完成后再弹出来电提示
+        // 这样用户看到的顺序是：先看到机器人说"给你打电话"，再弹出接听/拒接按钮
+        Future.delayed(const Duration(milliseconds: 1500), () async {
+          VoiceCallStateService.instance
+              .startRinging(callId, botId, isIncoming: true);
 
-        AppLogService.instance.add('VOICE_CALL', '机器人发起语音通话：$callId');
+          // 发送通知
+          MessageDeliveryService.instance.sendNotification(
+            title: (await db.getBotData(botId))?['name']?.toString() ?? '机器人',
+            body: '给你发起了语音通话',
+            payload: {'type': 'voice_call', 'bot_id': botId, 'call_id': callId},
+          );
+        });
+
+        AppLogService.instance.add('VOICE_CALL', '机器人发起语音通话：$callId（延迟响铃）');
 
         return {
           'result': {

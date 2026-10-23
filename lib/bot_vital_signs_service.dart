@@ -538,12 +538,13 @@ class BotVitalSignsService {
         // One settled hourly mean; reopening the page never rerolls the value.
         s['heart'] = hourlyMeanHeartRate(
           previous: vitalDouble(s['heart'], 72),
+          baseline: vitalDouble(s['base_heart'], 72),
           asleep: inSleep,
           activity: activity,
           stress: stress.toDouble(),
           sleepQuality: quality,
           temperature: vitalDouble(s['temperature'], 36.5),
-          noise: _rng.nextDouble() * 4 - 2,
+          noise: _rng.nextDouble() * 6 - 3,
         );
         s['steps'] = max(0, steps);
         s['activity'] = activity;
@@ -721,7 +722,7 @@ class BotVitalSignsService {
     final steps = s['steps'] ?? 0;
     final activity = s['activity'] ?? '休息';
 
-    return '【你自己的生活状态】心情：$mood；压力 $stress/10；精力 $energy；健康：$health${illness.isNotEmpty ? " $illness" : ""}。$sleepInfo$bodyInfo今日步数$steps步，当前活动：$activity。这些是角色生活状态。$sleepStatus';
+    return '【你自己的生活状态】心情：$mood；压力 $stress/10（${stressLevel(vitalDouble(s['stress']))}）；精力 $energy；健康：$health${illness.isNotEmpty ? " $illness" : ""}。$sleepInfo$bodyInfo今日步数$steps步，当前活动：$activity。这些是角色生活状态。$stressScaleGuidance$sleepStatus';
   }
 
   Future<void> _pendingReply(String id, String reason) async {

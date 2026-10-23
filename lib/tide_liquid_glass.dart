@@ -136,6 +136,8 @@ class _TideLiquidGlassState extends State<TideLiquidGlass>
       }
       return true;
     });
+    // Keep glass shader within the widget's own coordinate space so it moves
+    // correctly during page transitions and scrolling
     final glass = GlassMotionRepaint(
       motion: Listenable.merge(motion),
       child: ClipRRect(

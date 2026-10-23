@@ -127,9 +127,12 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
           creationParams: {...params, 'revision': _revision},
           creationParamsCodec: const StandardMessageCodec(),
           onPlatformViewCreated: _onCreated,
-          hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+          hitTestBehavior: PlatformViewHitTestBehavior.translucent,
           gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{
             Factory<LongPressGestureRecognizer>(LongPressGestureRecognizer.new),
+            Factory<TapGestureRecognizer>(TapGestureRecognizer.new),
+            Factory<VerticalDragGestureRecognizer>(
+                VerticalDragGestureRecognizer.new),
           },
         ),
       );

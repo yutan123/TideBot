@@ -8,6 +8,61 @@ List<Map<String, dynamic>> vitalList(dynamic value) => value is List
     ? value.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
     : [];
 
+/// Use recorded values for the data pages; live state can change between hours.
+/// The returned view never writes those historical values back to the simulation.
+Map<String, dynamic> recordedVitalSnapshot(Map<String, dynamic> state,
+    {required DateTime now}) {
+  final cutoff = now.millisecondsSinceEpoch;
+  final samples = vitalList(state['samples'])
+      .where((sample) => vitalInt(sample['time']) <= cutoff)
+      .toList()
+    ..sort((a, b) => vitalInt(a['time']).compareTo(vitalInt(b['time'])));
+  final sleepHistory = vitalList(state['sleep_history'])
+      .where((sleep) => vitalInt(sleep['end']) <= cutoff)
+      .toList()
+    ..sort((a, b) => vitalInt(a['end']).compareTo(vitalInt(b['end'])));
+  final result = Map<String, dynamic>.from(state)
+    ..['samples'] = samples
+    ..['sleep_history'] = sleepHistory;
+  if (samples.isNotEmpty) {
+    final latest = samples.last;
+    for (final key in [
+      'mood',
+      'stress',
+      'height',
+      'weight',
+      'temperature',
+      'heart',
+      'steps',
+      'health',
+      'recovery',
+      'activity'
+    ]) {
+      if (latest.containsKey(key)) result[key] = latest[key];
+    }
+    result['last_hour'] = vitalInt(latest['time']) ~/ 3600000;
+  }
+  return result;
+}
+
+const stressRanges = <int, String>{
+  0: '放松 0–<3',
+  3: '轻度压力 3–<5',
+  5: '中度压力 5–<7',
+  7: '重度压力 7–10',
+};
+
+String stressLevel(num value) => value < 3
+    ? '放松'
+    : value < 5
+        ? '轻度压力'
+        : value < 7
+            ? '中度压力'
+            : '重度压力';
+
+String get stressScaleGuidance =>
+    '压力等级（0–10）：${stressRanges.values.join('；')}。';
+
 /// Calendar time, including an explicitly marked following day.
 DateTime? vitalTime(String day, String clock) {
   final match =
@@ -129,6 +184,7 @@ List<Map<String, dynamic>> stepPlan(
 /// Continue from the latest value without reverting to an initial baseline.
 int hourlyMeanHeartRate(
     {required double previous,
+    double? baseline,
     required bool asleep,
     required String activity,
     required double stress,
@@ -140,12 +196,20 @@ int hourlyMeanHeartRate(
       : RegExp('散步|步行|逛街|通勤').hasMatch(activity)
           ? 9.0
           : 0.0;
-  final change = (asleep ? -1.0 : exertion / 12) +
-      (asleep ? 0 : (stress.clamp(0, 10) - 3) * .25) +
-      (sleepQuality < 60 && !asleep ? 1 : 0) +
-      max(0.0, temperature - 37) * .8 +
-      noise.clamp(-2, 2);
-  return (previous + change.clamp(-4, 4)).clamp(45, 135).round();
+  final target = (baseline ?? previous) +
+      (asleep ? -8 : exertion) +
+      (asleep ? 0 : (stress.clamp(0, 10) - 3) * .8) +
+      (sleepQuality < 60 && !asleep ? 4 : 0) +
+      max(0.0, temperature - 37) * 4;
+  final change = (target - previous) * .25 + noise.clamp(-3, 3);
+  var next = (previous + change.clamp(-6, 6)).clamp(45, 135).round();
+  // Preserve small hourly fluctuations that integer rounding would erase.
+  if (next == previous.round() && noise != 0) {
+    final direction = noise > 0 ? 1 : -1;
+    next = (next + direction).clamp(45, 135);
+    if (next == previous.round()) next -= direction;
+  }
+  return next;
 }
 
 /// Daily temperature continues from the saved value with small changes.

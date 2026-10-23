@@ -2398,6 +2398,7 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                         child: TextField(
                           controller: _commentCtrl,
                           textInputAction: TextInputAction.send,
+                          selectionControls: materialTextSelectionControls,
                           onSubmitted:
                               _sendingComment ? null : (_) => _sendComment(),
                           style: TextStyle(

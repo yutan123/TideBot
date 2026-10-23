@@ -68,6 +68,8 @@ class ActiveCall {
   final String callId;
   final String initiator;
   final DateTime startTime;
+  bool _bannerIgnored = false;
+  bool get bannerIgnored => _bannerIgnored;
 
   ActiveCall({
     required this.botId,
@@ -114,6 +116,14 @@ class VoiceCallStateService extends ChangeNotifier {
       }
     });
 
+    notifyListeners();
+  }
+
+  /// 只收起来电浮岛，保留通话及未接超时处理。
+  void ignoreBanner(String botId, String callId) {
+    final call = _ringingCalls[botId];
+    if (call == null || call.callId != callId || call._bannerIgnored) return;
+    call._bannerIgnored = true;
     notifyListeners();
   }
 
