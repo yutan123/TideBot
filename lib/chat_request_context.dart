@@ -57,6 +57,18 @@ int? cachedPromptTokens(Map usage) {
   return value is num ? value.toInt() : null;
 }
 
+/// OpenAI Chat Completions has no standardized per-message cache breakpoint.
+/// Providers that cache this endpoint do so using matching request prefixes;
+/// `cache_control` is an Anthropic extension.
+List<Map<String, dynamic>> prepareOpenAIChatCompletionMessages(
+  List<Map<String, dynamic>> messages,
+) =>
+    messages.map((message) {
+      final prepared = Map<String, dynamic>.from(message)
+        ..remove('cache_control');
+      return prepared;
+    }).toList();
+
 String memoryRecordedTime(Map<String, dynamic> memory) {
   final stamp = memory['timestamp'] ?? memory['created_at'];
   if (stamp is! num) return '未知';

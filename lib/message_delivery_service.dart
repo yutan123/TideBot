@@ -28,8 +28,8 @@ class MessageDeliveryService {
     if (notify &&
         message['role'] == 'assistant' &&
         botId != null &&
-        !AppState.isForeground.value &&
-        await _db.getKV('unread_notifications') != 'false') {
+        await _db.getKV('unread_notifications') != 'false' &&
+        !AppState.isViewingChat(botId)) {
       await OpsManager().showSystemNotification(
         id: messageId.hashCode,
         title: notificationTitle ?? 'TideBot',
@@ -51,8 +51,8 @@ class MessageDeliveryService {
     required String body,
     Map<String, dynamic>? payload,
   }) async {
-    if (AppState.isForeground.value) return;
     if (await _db.getKV('unread_notifications') == 'false') return;
+    if (AppState.isViewingChat(payload?['bot_id']?.toString())) return;
 
     await OpsManager().showSystemNotification(
       id: DateTime.now().millisecondsSinceEpoch.hashCode,

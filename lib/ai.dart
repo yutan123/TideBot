@@ -150,7 +150,9 @@ class AIManager {
   void _logRequestPrefix(String key, List<Map<String, dynamic>> messages,
       List<Map<String, dynamic>> tools) {
     final fixed = messages
-        .takeWhile((m) => m['cache_control'] != null && m['role'] == 'system')
+        .take(1)
+        .where((m) => m['role'] == 'system')
+        .map((m) => {'role': m['role'], 'content': m['content']})
         .toList();
     final current = {
       'fixed': jsonEncode(fixed),
@@ -181,6 +183,7 @@ class AIManager {
       'tool_names': tools.map((t) => (t['function'] as Map?)?['name']).toList(),
       'conversation_common_prefix_chars': common,
       'note': '字符前缀仅作本地诊断，非供应商实际缓存 token；缓存有效期和路由由供应商决定',
+      'cache_protocol': 'OpenAI Chat Completions provider-managed prefix cache',
     });
     if (_requestPrefixes.length >= 32 && !_requestPrefixes.containsKey(key)) {
       _requestPrefixes.remove(_requestPrefixes.keys.first);
@@ -1124,7 +1127,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         {
           'role': 'system',
           'content': stableSystemPrompt,
-          'cache_control': {'type': 'ephemeral'}, // 缓存点1：稳定人设
         },
       ];
 
@@ -1201,13 +1203,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               DateTime.now().millisecondsSinceEpoch;
       messages.addAll(historyMessages);
 
-      // 缓存点3：在添加动态内容之前，先在历史消息末尾打缓存标记
-      // 确保缓存标记后面只有动态上下文和当前用户消息（不会命中缓存）
-      if (historyMessages.isNotEmpty) {
-        messages.last['cache_control'] = {'type': 'ephemeral'};
-      }
-
-      // 动态上下文放在历史之后，不打缓存标记（每轮都会变化）
+      // Keep turn-varying context after the reusable transcript prefix.
       if (dynamicContext.isNotEmpty) {
         messages.add({'role': 'system', 'content': dynamicContext});
       }
@@ -1375,7 +1371,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       final payload = <String, dynamic>{
         'model': modelName,
-        'messages': messages,
+        'messages': prepareOpenAIChatCompletionMessages(messages),
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
@@ -1902,7 +1898,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               };
               await MessageDeliveryService.instance.insert(
                 row,
-                notify: notifyResponse && persistedMessages.isEmpty,
+                notify: notifyResponse &&
+                    !persistedMessages
+                        .any((message) => message['type'] != 'inner_thought'),
               );
               persistedMessages.add(row);
               AppLogService.instance
@@ -1922,7 +1920,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               };
               await MessageDeliveryService.instance.insert(
                 row,
-                notify: notifyResponse && persistedMessages.isEmpty,
+                notify: notifyResponse &&
+                    !persistedMessages
+                        .any((message) => message['type'] != 'inner_thought'),
               );
               persistedMessages.add(row);
             }

@@ -26,6 +26,7 @@ class OpsManager {
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
   Future<void>? _notificationInitialization;
+  static const messageChannelId = 'tide_bot_messages_alerts_v2';
 
   Future<void> init() async {
     await _audioPlayer.setReleaseMode(ReleaseMode.stop);
@@ -49,10 +50,12 @@ class OpsManager {
 
   Future<void> _initializeNotifications() async {
     const channel = AndroidNotificationChannel(
-      'tide_bot_msg',
-      'TideBot 消息通知',
+      messageChannelId,
+      'TideBot 消息提醒',
       description: '机器人回复与未读消息提醒',
       importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
     );
     const settings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
@@ -165,11 +168,15 @@ class OpsManager {
     await initializeNotifications();
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
-        'tide_bot_msg',
-        'TideBot 消息通知',
+        messageChannelId,
+        'TideBot 消息提醒',
         channelDescription: '机器人回复与未读消息提醒',
         importance: Importance.high,
         priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        silent: false,
+        onlyAlertOnce: false,
       ),
     );
     final payload = jsonEncode({

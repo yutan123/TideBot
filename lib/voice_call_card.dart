@@ -49,9 +49,13 @@ class VoiceCallCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final callId = message['call_id']?.toString() ?? '';
+    final messageId = message['id']?.toString() ?? '';
+    final callId = message['call_id']?.toString() ??
+        (messageId.startsWith('card_') ? messageId.substring(5) : '');
     final status = message['call_status']?.toString() ?? 'ended';
-    final duration = (message['call_duration'] as num?)?.toInt() ?? 0;
+    final duration =
+        ((message['duration'] ?? message['call_duration']) as num?)?.toInt() ??
+            0;
     final isUser = message['role'] == 'user';
 
     return GestureDetector(
@@ -70,74 +74,65 @@ class VoiceCallCard extends StatelessWidget {
       },
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.7,
+          maxWidth: MediaQuery.of(context).size.width * 0.62,
         ),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: isUser ? theme.surface : theme.bubbleAi,
+          color: isUser
+              ? theme.surface.withValues(alpha: .92)
+              : theme.bubbleAi.withValues(alpha: .92),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isUser
-                ? theme.primary.withValues(alpha: 0.2)
-                : theme.textWeak.withValues(alpha: 0.1),
-            width: 1,
-          ),
+          border: Border.all(color: theme.primary.withValues(alpha: .22)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Icon(
-                  _getStatusIcon(status),
-                  size: 20,
-                  color: status == 'ended' ? theme.primary : theme.textWeak,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: theme.primary.withValues(alpha: .12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _getStatusIcon(status),
+                size: 16,
+                color: status == 'ended' ? theme.primary : theme.textWeak,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
                     _getStatusText(status),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: theme.textStrong,
-                      fontSize: 14,
+                      fontSize: 13,
                       fontFamily: 'TideFont',
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-              ],
-            ),
-            if (status == 'ended' && duration > 0) ...[
-              const SizedBox(height: 8),
-              Text(
-                '通话时长 ${_formatDuration(duration)}',
-                style: TextStyle(
-                  color: theme.textWeak,
-                  fontSize: 13,
-                  fontFamily: 'TideFont',
-                ),
-              ),
-            ],
-            if (status == 'ended' && callId.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    Icons.touch_app_rounded,
-                    size: 14,
-                    color: theme.textWeak,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '点击查看详情',
-                    style: TextStyle(
-                      color: theme.textWeak,
-                      fontSize: 12,
-                      fontFamily: 'TideFont',
+                  if (status == 'ended' && duration > 0)
+                    Text(
+                      '时长 ${_formatDuration(duration)}',
+                      style: TextStyle(
+                        color: theme.textWeak,
+                        fontSize: 11,
+                        fontFamily: 'TideFont',
+                      ),
                     ),
-                  ),
                 ],
               ),
+            ),
+            if (callId.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.chevron_right_rounded,
+                  size: 18, color: theme.textWeak),
             ],
           ],
         ),

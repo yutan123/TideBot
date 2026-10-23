@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'native_selectable_text.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -357,10 +358,11 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
               const SizedBox(height: 16),
               if (_isSkill) ...[
                 const Text('指引与附带文件'),
-                SelectableText((jsonDecode(item['manifest_json'].toString())
-                            as Map)['instructions']
-                        ?.toString() ??
-                    '此技能通过工具提供能力'),
+                NativeSelectableText(
+                    (jsonDecode(item['manifest_json'].toString())
+                                as Map)['instructions']
+                            ?.toString() ??
+                        '此技能通过工具提供能力'),
                 Text(
                     '文件：${(jsonDecode(item['manifest_json'].toString()) as Map)['files'] ?? []}'),
                 if (((jsonDecode(item['manifest_json'].toString())

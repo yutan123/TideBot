@@ -590,6 +590,7 @@ class FrostCard extends StatelessWidget {
   final VoidCallback? onLongPress;
   final bool liquid;
   final bool transparent;
+  final bool premiumGlass;
   const FrostCard(
       {super.key,
       required this.child,
@@ -599,7 +600,8 @@ class FrostCard extends StatelessWidget {
       this.onTap,
       this.onLongPress,
       this.liquid = false,
-      this.transparent = false});
+      this.transparent = false,
+      this.premiumGlass = true});
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -637,7 +639,7 @@ class FrostCard extends StatelessWidget {
       padding: margin,
       child: TideLiquidGlass(
         radius: radius,
-        premium: true,
+        premium: premiumGlass,
         child: GestureDetector(
           onTap: onTap,
           onLongPress: onLongPress,

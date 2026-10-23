@@ -10,6 +10,7 @@ import 'code_card.dart';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'native_selectable_text.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:flutter/services.dart';
@@ -28,6 +29,7 @@ import 'chat_event_bus.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'message_delivery_service.dart';
+import 'app_state.dart';
 import 'ui_components.dart';
 import 'theme.dart';
 import 'app_permissions.dart';
@@ -121,7 +123,47 @@ class ChatRoomPage extends StatefulWidget {
 }
 
 class _ChatRoomPageState extends State<ChatRoomPage>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver, RouteAware {
+  ModalRoute<dynamic>? _chatRoute;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route == _chatRoute) return;
+    AppState.chatRouteObserver.unsubscribe(this);
+    _chatRoute = route;
+    if (route != null) AppState.chatRouteObserver.subscribe(this, route);
+  }
+
+  void _showChat() {
+    if (_chatRoute?.isCurrent != true) return;
+    AppState.showChat(_bot['id']?.toString() ?? '', this);
+    unawaited(_markReadIfVisible());
+  }
+
+  Future<void> _markReadIfVisible() async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (AppState.isViewingChat(botId)) {
+      await MessageDeliveryService.instance.markRead(botId);
+    }
+  }
+
+  @override
+  void didPush() => _showChat();
+
+  @override
+  void didPopNext() {
+    _showChat();
+    unawaited(_syncLatestMessages());
+  }
+
+  @override
+  void didPushNext() => AppState.hideChat(this);
+
+  @override
+  void didPop() => AppState.hideChat(this);
+
   final TextEditingController _msgC = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollC = ScrollController();
@@ -221,8 +263,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _bot = Map.from(widget.botData);
     _sendVoiceCooldown.addListener(_refreshVoiceCooldown);
     _highlightedMessageId = widget.initialMessageId;
-    unawaited(
-        MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     _msgC.addListener(_msgChanged);
     _inputFocus.addListener(_handleInputFocus);
     _audioPositionSub = _player.onPositionChanged.listen((v) {
@@ -272,6 +312,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   @override
   void dispose() {
+    AppState.chatRouteObserver.unsubscribe(this);
+    AppState.hideChat(this);
     _sendVoiceCooldown.removeListener(_refreshVoiceCooldown);
     _sendVoiceCooldown.dispose();
     ChatTypingState.instance.removeListener(_refreshTypingState);
@@ -281,8 +323,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _typingLease?.close();
       _typingLease = null;
     }
-    unawaited(
-        MessageDeliveryService.instance.markRead(_bot['id']?.toString() ?? ''));
     WidgetsBinding.instance.removeObserver(this);
     _chatEvents?.cancel();
     _deferredPersistedMessageIds.clear();
@@ -333,7 +373,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _msgs = normalizeChatMessages(_msgs);
     });
     if (row['role'] == 'assistant') {
-      unawaited(MessageDeliveryService.instance.markRead(botId));
+      unawaited(_markReadIfVisible());
     }
     _scrollDown();
   }
@@ -542,7 +582,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       });
       if (changed) _scrollDown(animated: false);
-      await MessageDeliveryService.instance.markRead(botId);
+      await _markReadIfVisible();
     } catch (_) {}
   }
 
@@ -1184,6 +1224,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         audioPath: audioPath,
         persistResponse: persistThisReply,
         forceSingleReply: forceSingleReply,
+        notifyResponse: true,
         useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
         cancellationToken: requestToken,
         // Display timing is client-owned, including non-SSE providers and tools.
@@ -1312,7 +1353,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // AIManager. Rendering result metadata again would duplicate the same
       // media in the visible conversation.
       if (mounted) {
-        unawaited(MessageDeliveryService.instance.markRead(botId));
+        unawaited(_markReadIfVisible());
       }
     } catch (e, st) {
       debugPrint('[send] failed: $e');
@@ -3174,7 +3215,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
-              SelectableText(
+              NativeSelectableText(
                 log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
                 style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
               ),

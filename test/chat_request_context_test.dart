@@ -66,4 +66,20 @@ void main() {
     expect(cachedPromptTokens({'cached_tokens': 0}), 0);
     expect(cachedPromptTokens({}), isNull);
   });
+  test('OpenAI Chat Completions removes non-standard cache breakpoints', () {
+    final messages = <Map<String, dynamic>>[
+      {
+        'role': 'system',
+        'content': 'stable',
+        'cache_control': {'type': 'ephemeral'},
+      },
+      {'role': 'user', 'content': 'hello'},
+    ];
+
+    final prepared = prepareOpenAIChatCompletionMessages(messages);
+
+    expect(prepared.first, {'role': 'system', 'content': 'stable'});
+    expect(messages.first.containsKey('cache_control'), isTrue);
+    expect(prepared.last, {'role': 'user', 'content': 'hello'});
+  });
 }

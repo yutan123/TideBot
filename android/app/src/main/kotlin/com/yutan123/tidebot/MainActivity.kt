@@ -82,6 +82,8 @@ class MainActivity: FlutterActivity() {
     }
     
     override fun onDestroy() {
+        TideNativeNotifications.activityVisible = false
+        TideNativeNotifications.visibleChatBotId = null
         requestExecutionIds.forEach { TideBackgroundService.endRequest(it) }
         requestExecutionIds.clear()
         backgroundCoordinator.shutdown()
@@ -125,10 +127,21 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "tidebot/native_selectable_text",
+            NativeSelectableTextFactory(),
+        )
         nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "setVisibleChat" -> {
+                    TideNativeNotifications.visibleChatBotId = call.argument<String>("botId")
+                    result.success(null)
+                }
+                "deliverPendingMessages" -> backgroundResult(result, "NOTIFICATION_FAILED") {
+                    TideNativeNotifications.deliverPending(applicationContext)
+                    null
+                }
                 "beginRequestExecution" -> {
                     val id = call.argument<String>("id").orEmpty()
                     try {

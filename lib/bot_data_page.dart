@@ -39,7 +39,7 @@ Color moodTrendColor(num value) => value < 35
     : value < 50
         ? const Color(0xff8A83B8)
         : value < 65
-            ? const Color(0xff44A9A1)
+            ? const Color(0xff4C93C8)
             : value < 82
                 ? const Color(0xff39A873)
                 : const Color(0xffE6A84B);
@@ -180,6 +180,9 @@ class VitalMetricCard extends StatelessWidget {
         onTap: onTap ?? () {},
         child: FrostCard(
             liquid: true,
+            // Scrolling cards use the lightweight shader path; premium capture layers
+            // can retain stale screen-space geometry during scroll/back gestures.
+            premiumGlass: false,
             padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -348,10 +351,6 @@ class _VitalPainter extends CustomPainter {
             ..strokeCap = StrokeCap.round
             ..style = PaintingStyle.stroke,
         );
-      }
-      for (var i = 0; i < points.length; i++) {
-        canvas.drawCircle(
-            p(i), compact ? 2 : 2.7, Paint()..color = _colorAt(i));
       }
     } else {
       canvas.drawPath(

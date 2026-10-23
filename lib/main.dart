@@ -831,6 +831,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
         listenable: tideTheme,
         builder: (context, _) => MaterialApp(
           navigatorKey: appNavigatorKey,
+          navigatorObservers: [AppState.chatRouteObserver],
           title: 'TideBot',
           debugShowCheckedModeBanner: false,
           themeMode: tideTheme.mode,

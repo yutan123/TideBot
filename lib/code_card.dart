@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'native_selectable_text.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/services.dart';
 import 'theme.dart';
@@ -192,7 +193,7 @@ class _CodeCardState extends State<CodeCard> {
               padding: const EdgeInsets.all(12),
               constraints: const BoxConstraints(maxHeight: 400),
               child: SingleChildScrollView(
-                child: SelectableText(
+                child: NativeSelectableText(
                   widget.code,
                   style: TextStyle(
                     fontSize: 12,

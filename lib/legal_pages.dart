@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'native_selectable_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart';
@@ -128,7 +129,7 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                    child: SelectableText(
+                    child: NativeSelectableText(
                       tideBotLegalText,
                       style: TextStyle(
                         fontFamily: 'TideFont',

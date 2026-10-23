@@ -91,6 +91,11 @@ class NativeBackgroundCoordinator {
           where: 'synced_to_chat = 1 AND displayed = 0',
           orderBy: 'timestamp',
           limit: 100);
+      // Deliver before acknowledging this batch. Foreground polling can otherwise
+      // consume messages before the native task reaches its notification step.
+      if (rows.isNotEmpty) {
+        await _channel.invokeMethod<void>('deliverPendingMessages');
+      }
       for (final row in rows) {
         final id = row['message_id']?.toString() ?? '';
         final message = await DBManager().getMessageById(id);

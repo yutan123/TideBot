@@ -180,9 +180,19 @@ object TideVitalSigns {
                 val base = number(s,"base_weight",60.0); val sick = s.optString("health") == "生病"
                 s.put("weight", (number(s,"weight",base) + (Random.nextDouble()-.5)*.25 + (if(sick) -.08 else 0.0) + (if(steps>8000) -.03 else 0.0)).coerceIn(base-5,base+5))
                     .put("temperature",if(sick) 37.3+Random.nextDouble()*.8 else 36.3+Random.nextDouble()*.5)
-                    .put("heart",68+Random.nextInt(13)+(if(stress>7) 8 else 0)+(if(sick) 10 else 0))
                     .put("systolic",112+Random.nextInt(15)+(if(stress>7) 5 else 0)).put("diastolic",72+Random.nextInt(10)).put("body_day",day)
             }
+            // Match Dart's hourlyMeanHeartRate: continue from the saved value,
+            // including manual edits, without resetting it when the day changes.
+            val exertion = if (Regex("跑步|健身|运动|骑行|游泳|球").containsMatchIn(activity)) 24.0
+                else if (Regex("散步|步行|逛街|通勤").containsMatchIn(activity)) 9.0 else 0.0
+            val change = (if (sleeping) -1.0 else exertion / 12) +
+                (if (sleeping) 0.0 else (stress.coerceIn(0.0, 10.0) - 3) * .25) +
+                (if (quality < 60 && !sleeping) 1.0 else 0.0) +
+                max(0.0, number(s, "temperature", 36.5) - 37) * .8 +
+                (Random.nextDouble() * 4 - 2)
+            s.put("heart", (number(s, "heart", 72.0) + change.coerceIn(-4.0, 4.0))
+                .coerceIn(45.0, 135.0).roundToInt())
             s.put("steps",max(0,steps)).put("activity",activity)
                 .put("energy",(number(s,"energy",75.0)+(if(sleeping) 4.0 else -1.5)+(if(relaxing) 1 else 0)-(if(stress>7) 1 else 0)).coerceIn(0.0,100.0))
             val sample = JSONObject().put("time",t).put("day",day)

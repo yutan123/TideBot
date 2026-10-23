@@ -791,9 +791,7 @@ class _CallPageState extends State<CallPage>
       'role': 'user',
       'type': 'voice_call_card',
       'content': '[语音通话，通话时长${_formatDuration(duration)}]',
-      'call_id': callId,
-      'call_status': 'ended',
-      'call_duration': duration.inSeconds,
+      'duration': duration.inSeconds,
       'timestamp': now,
     };
     try {
