@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'chat_event_bus.dart';
 import 'db.dart';
 import 'theme.dart';
 
@@ -20,11 +22,25 @@ class VoiceCallDetailPage extends StatefulWidget {
 class _VoiceCallDetailPageState extends State<VoiceCallDetailPage> {
   Map<String, dynamic>? _record;
   bool _loading = true;
+  bool _loadFailed = false;
+  StreamSubscription<ChatEvent>? _updates;
 
   @override
   void initState() {
     super.initState();
+    _updates = ChatEventBus.instance.events.listen((event) {
+      if (event.messageId == 'card_${widget.callId}' ||
+          event.message?['call_id'] == widget.callId) {
+        unawaited(_loadRecord());
+      }
+    });
     _loadRecord();
+  }
+
+  @override
+  void dispose() {
+    _updates?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadRecord() async {
@@ -34,11 +50,15 @@ class _VoiceCallDetailPageState extends State<VoiceCallDetailPage> {
         setState(() {
           _record = record;
           _loading = false;
+          _loadFailed = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
       }
     }
   }
@@ -108,8 +128,14 @@ class _VoiceCallDetailPageState extends State<VoiceCallDetailPage> {
                   fontWeight: FontWeight.w500)),
         ),
         body: Center(
-          child: Text('通话记录不存在',
-              style: TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
+          child: _loadFailed
+              ? TextButton(
+                  onPressed: _loadRecord,
+                  child: const Text('通话记录读取失败，点击重试'),
+                )
+              : Text('通话记录不存在',
+                  style:
+                      TextStyle(color: theme.textWeak, fontFamily: 'TideFont')),
         ),
       );
     }

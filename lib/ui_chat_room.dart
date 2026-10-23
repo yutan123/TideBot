@@ -3217,7 +3217,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               const SizedBox(height: 6),
               NativeSelectableText(
                 log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                style: const TextStyle(fontSize: 12, fontFamily: 'TideFont'),
               ),
               const SizedBox(height: 14),
               const Text('解决方法', style: TextStyle(fontWeight: FontWeight.bold)),

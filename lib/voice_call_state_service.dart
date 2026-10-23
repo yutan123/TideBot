@@ -152,7 +152,8 @@ class VoiceCallStateService extends ChangeNotifier {
       );
 
       await DBManager().updateChatMessage(
-        callId,
+        'card_$callId',
+        callStatus: 'timeout',
         content: '[语音通话，超时未接通]',
       );
     } catch (_) {

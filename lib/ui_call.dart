@@ -17,7 +17,7 @@ import 'ai.dart';
 import 'app_log_service.dart';
 import 'db.dart';
 import 'video_call_overlay.dart';
-import 'message_delivery_service.dart';
+import 'voice_call_state_service.dart';
 
 enum CallFlowState {
   idle,
@@ -37,6 +37,8 @@ class CallPage extends StatefulWidget {
   final bool hasStt;
   final bool hasTts;
   final VoidCallback? onOpenSettings;
+  final String? callId;
+  final String initiator;
 
   const CallPage({
     super.key,
@@ -44,6 +46,8 @@ class CallPage extends StatefulWidget {
     required this.hasStt,
     required this.hasTts,
     this.onOpenSettings,
+    this.callId,
+    this.initiator = 'user',
   });
 
   @override
@@ -72,6 +76,9 @@ class _CallPageState extends State<CallPage>
   Completer<void>? _playDone;
   StreamSubscription<void>? _playSub;
   final DateTime _startedAt = DateTime.now();
+  late final String _callId = widget.callId ??
+      'call_${widget.bot['id']}_${_startedAt.millisecondsSinceEpoch}';
+  DateTime? _endedAt;
   final List<String> _transcript = [];
   final List<CallMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
@@ -774,7 +781,8 @@ class _CallPageState extends State<CallPage>
     final wasRecording = _recording;
     _recording = false;
     _botSpeaking = false;
-    final duration = DateTime.now().difference(_startedAt);
+    final endedAt = _endedAt ??= DateTime.now();
+    final duration = endedAt.difference(_startedAt);
     final botId = widget.bot['id']?.toString() ?? '';
     final transcript = List<String>.from(_transcript);
     unawaited(_stopCallMedia(wasRecording));
@@ -783,13 +791,16 @@ class _CallPageState extends State<CallPage>
       return;
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final callId = 'call_${botId}_$now';
+    final now = endedAt.millisecondsSinceEpoch;
+    final callId = _callId;
     final callCard = <String, dynamic>{
       'id': 'card_$callId',
       'bot_id': botId,
-      'role': 'user',
+      'role': widget.initiator,
       'type': 'voice_call_card',
+      'call_id': callId,
+      'call_status': 'ended',
+      'call_duration': duration.inSeconds,
       'content': '[语音通话，通话时长${_formatDuration(duration)}]',
       'duration': duration.inSeconds,
       'timestamp': now,
@@ -798,19 +809,29 @@ class _CallPageState extends State<CallPage>
       await DBManager().insertVoiceCallRecord(
         callId: callId,
         botId: botId,
-        initiator: 'user',
+        initiator: widget.initiator,
         status: 'ended',
         transcript: transcript.join('\n'),
-        summary: transcript.isEmpty ? '本次通话未获取到有用信息。' : '通话摘要正在生成。',
+        summary: transcript.isEmpty ? '本次通话未获取到有用信息。' : '',
         startTime: DateTime.fromMillisecondsSinceEpoch(
           now - duration.inMilliseconds,
         ),
         endTime: DateTime.fromMillisecondsSinceEpoch(now),
+        chatMessage: callCard,
       );
-      await MessageDeliveryService.instance.insert(callCard);
       AppLogService.instance.add('VOICE_CALL', '通话结束卡片已保存：$callId');
     } catch (error) {
       AppLogService.instance.add('VOICE_CALL', '保存通话结束卡片失败：$error');
+      if (mounted) {
+        setState(() => _ending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('通话记录保存失败，请再次点击挂断重试')),
+        );
+      }
+      return;
+    }
+    if (VoiceCallStateService.instance.activeCall?.callId == callId) {
+      VoiceCallStateService.instance.endCall();
     }
     if (mounted) Navigator.pop(context, callCard);
     unawaited(_persistCallSummary(

@@ -180,9 +180,6 @@ class VitalMetricCard extends StatelessWidget {
         onTap: onTap ?? () {},
         child: FrostCard(
             liquid: true,
-            // Scrolling cards use the lightweight shader path; premium capture layers
-            // can retain stale screen-space geometry during scroll/back gestures.
-            premiumGlass: false,
             padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -465,7 +462,7 @@ class _BotDataPageState extends State<BotDataPage> {
                                   color: theme.textWeak, fontSize: 12)),
                           const SizedBox(height: 20),
                           GridView.builder(
-                              addRepaintBoundaries: true,
+                              addRepaintBoundaries: false,
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
                               itemCount: 6,

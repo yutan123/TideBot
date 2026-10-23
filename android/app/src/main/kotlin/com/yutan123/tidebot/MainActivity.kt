@@ -56,7 +56,6 @@ class MainActivity: FlutterActivity() {
     }
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
-    private val requestExecutionIds = mutableSetOf<String>()
     private var pendingInstallApk: File? = null
     // 悬浮窗消息转发已移除。
 
@@ -84,8 +83,8 @@ class MainActivity: FlutterActivity() {
     override fun onDestroy() {
         TideNativeNotifications.activityVisible = false
         TideNativeNotifications.visibleChatBotId = null
-        requestExecutionIds.forEach { TideBackgroundService.endRequest(it) }
-        requestExecutionIds.clear()
+        // The service owns bounded request leases. Activity teardown alone is
+        // not proof that the Flutter engine's network request has finished.
         backgroundCoordinator.shutdown()
         super.onDestroy()
     }
@@ -129,7 +128,7 @@ class MainActivity: FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             "tidebot/native_selectable_text",
-            NativeSelectableTextFactory(),
+            NativeSelectableTextFactory(flutterEngine.dartExecutor.binaryMessenger),
         )
         nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         nativeChannel?.setMethodCallHandler { call, result ->
@@ -142,25 +141,29 @@ class MainActivity: FlutterActivity() {
                     TideNativeNotifications.deliverPending(applicationContext)
                     null
                 }
-                "beginRequestExecution" -> {
+                "beginRequestExecution", "renewRequestExecution" -> {
                     val id = call.argument<String>("id").orEmpty()
-                    try {
-                        require(id.isNotBlank())
-                        TideBackgroundService.beginRequest(applicationContext, id)
-                        requestExecutionIds.add(id)
-                        result.success(null)
-                    } catch (error: Exception) {
-                        result.error("REQUEST_PROTECTION_FAILED", error.javaClass.simpleName, null)
+                    if (id.isBlank()) {
+                        result.error("REQUEST_PROTECTION_FAILED", "Missing request ID", null)
+                    } else {
+                        val completion: (String?) -> Unit = { error ->
+                            if (error == null) result.success(mapOf("foreground" to true))
+                            else result.error("REQUEST_PROTECTION_FAILED", error, null)
+                        }
+                        try {
+                            if (call.method == "beginRequestExecution") {
+                                TideBackgroundService.beginRequest(applicationContext, id, completion)
+                            } else {
+                                TideBackgroundService.renewRequest(applicationContext, id, completion)
+                            }
+                        } catch (error: Exception) {
+                            result.error("REQUEST_PROTECTION_FAILED", error.message, null)
+                        }
                     }
-                }
-                "renewRequestExecution" -> {
-                    val id = call.argument<String>("id").orEmpty()
-                    if (id in requestExecutionIds) TideBackgroundService.renewRequest(id)
-                    result.success(null)
                 }
                 "endRequestExecution" -> {
                     val id = call.argument<String>("id").orEmpty()
-                    if (requestExecutionIds.remove(id)) TideBackgroundService.endRequest(id)
+                    TideBackgroundService.endRequest(id)
                     result.success(null)
                 }
                 // 悬浮窗待处理消息接口已移除。

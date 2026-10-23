@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
 import 'chat_event_bus.dart';
+import 'voice_call_schema.dart';
 
 /// 标准化的 token 估算（当 API 未返回 usage 时的近似值，而非真实记账）。
 ///
@@ -247,24 +248,7 @@ class DBManager {
       )
     ''');
 
-    // 语音通话记录表
-    await _execSql(db, '''
-      CREATE TABLE IF NOT EXISTS voice_call_records (
-        id TEXT PRIMARY KEY,
-        bot_id TEXT NOT NULL,
-        initiator TEXT NOT NULL,
-        status TEXT NOT NULL,
-        duration INTEGER DEFAULT 0,
-        summary TEXT DEFAULT '',
-        transcript TEXT DEFAULT '',
-        timestamp INTEGER NOT NULL,
-        FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
-      )
-    ''');
-    await _execSql(db, '''
-      CREATE INDEX IF NOT EXISTS idx_voice_call_records_bot 
-      ON voice_call_records(bot_id, timestamp DESC)
-    ''');
+    await ensureVoiceCallSchema(db);
     await _execSql(db, '''
       CREATE TABLE IF NOT EXISTS bot_life_schedules (
         id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, date_key TEXT NOT NULL,
@@ -292,7 +276,7 @@ class DBManager {
           "SELECT value FROM kv_store WHERE key = 'schema_repair_version'");
       if (result.isEmpty) return true;
       final stored = int.tryParse(result.first['value']?.toString() ?? '') ?? 0;
-      return stored < 35; // 35：新增后台任务相关表
+      return stored < 36; // 36：修复旧库通话时间字段和卡片关联字段
     } catch (_) {
       return true; // kv_store 不存在时需要修复
     }
@@ -307,7 +291,7 @@ class DBManager {
       ''');
       await db.insert(
         'kv_store',
-        {'key': 'schema_repair_version', 'value': '35'},
+        {'key': 'schema_repair_version', 'value': '36'},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (error) {
@@ -315,7 +299,7 @@ class DBManager {
     }
   }
 
-  Future<void> _repairExistingDatabase(Database db) async {
+  Future<bool> _repairExistingDatabase(Database db) async {
     try {
       await _execSql(db, '''
         CREATE TABLE IF NOT EXISTS bots (
@@ -448,17 +432,6 @@ class DBManager {
         'risk_level': "TEXT NOT NULL DEFAULT 'normal'",
         'authorized': 'INTEGER NOT NULL DEFAULT 0',
       });
-      await _ensureColumns(db, 'voice_call_records', const {
-        'id': 'TEXT PRIMARY KEY',
-        'bot_id': 'TEXT NOT NULL',
-        'initiator': "TEXT NOT NULL DEFAULT 'user'",
-        'status': "TEXT NOT NULL DEFAULT 'ended'",
-        'transcript': "TEXT DEFAULT ''",
-        'summary': "TEXT DEFAULT ''",
-        'start_time': 'INTEGER NOT NULL',
-        'end_time': 'INTEGER NOT NULL',
-        'created_at': 'INTEGER NOT NULL',
-      });
       for (final sql in const [
         'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)',
         'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)',
@@ -471,8 +444,10 @@ class DBManager {
       ]) {
         await _execSql(db, sql);
       }
+      return true;
     } catch (error) {
       print('[db] schema repair failed: $error');
+      return false;
     }
   }
 
@@ -488,9 +463,12 @@ class DBManager {
         // 只在首次打开或版本变更时执行完整修复，避免每次启动重复检查
         final needsRepair = await _shouldRepairSchema(db);
         if (needsRepair) {
-          await _repairExistingDatabase(db);
-          await _markSchemaRepaired(db);
+          final repaired = await _repairExistingDatabase(db);
+          await _ensureVoiceCallStorage(db);
+          if (repaired) await _markSchemaRepaired(db);
           // 历史数据库保留原数据，停用照片回忆迁移。
+        } else {
+          await _ensureVoiceCallStorage(db);
         }
         await db.update('memories', {'category': '记忆'},
             where: "category = 'fact' OR category IS NULL OR category = ''");
@@ -2392,11 +2370,31 @@ class DBManager {
         orderBy: 'date_key ASC');
   }
 
+  Future<void> _ensureVoiceCallStorage(Database db) async {
+    await db.transaction((txn) async {
+      await ensureVoiceCallSchema(txn);
+      final columns = await _tableColumns(txn, 'chat_history');
+      for (final entry in const {
+        'call_id': 'TEXT',
+        'call_status': 'TEXT',
+        'call_duration': 'INTEGER DEFAULT 0',
+        'duration': 'INTEGER',
+      }.entries) {
+        if (!columns.contains(entry.key)) {
+          await txn.execute(
+            'ALTER TABLE chat_history ADD COLUMN ${entry.key} ${entry.value}',
+          );
+        }
+      }
+    });
+  }
+
   // ========== 语音通话记录 ==========
 
   /// 保存通话记录
   Future<void> saveVoiceCallRecord(Map<String, dynamic> record) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     await db.insert('voice_call_records', record,
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
@@ -2404,6 +2402,7 @@ class DBManager {
   /// 获取通话记录
   Future<Map<String, dynamic>?> getVoiceCallRecord(String callId) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     final rows = await db.query('voice_call_records',
         where: 'id = ?', whereArgs: [callId], limit: 1);
     return rows.isEmpty ? null : rows.first;
@@ -2413,6 +2412,7 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryVoiceCallRecords(String botId,
       {int limit = 50}) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     return db.query('voice_call_records',
         where: 'bot_id = ?',
         whereArgs: [botId],
@@ -2424,6 +2424,7 @@ class DBManager {
   Future<void> updateVoiceCallStatus(
       String callId, String status, int duration) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     await db.update(
         'voice_call_records', {'status': status, 'duration': duration},
         where: 'id = ?', whereArgs: [callId]);
@@ -2433,6 +2434,7 @@ class DBManager {
   Future<void> updateVoiceCallSummary(
       String callId, String summary, String transcript) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     await db.update(
         'voice_call_records', {'summary': summary, 'transcript': transcript},
         where: 'id = ?', whereArgs: [callId]);
@@ -3076,25 +3078,41 @@ class DBManager {
     required String summary,
     required DateTime startTime,
     required DateTime endTime,
+    Map<String, dynamic>? chatMessage,
   }) async {
     final db = await database;
-    await db.insert(
-      'voice_call_records',
-      {
-        'id': callId,
-        'bot_id': botId,
-        'initiator': initiator,
-        'status': status,
-        'transcript': transcript,
-        'summary': summary,
-        'start_time': startTime.millisecondsSinceEpoch,
-        'end_time': endTime.millisecondsSinceEpoch,
-        'timestamp': endTime.millisecondsSinceEpoch,
-        'duration': endTime.difference(startTime).inSeconds,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _ensureVoiceCallStorage(db);
+    await db.transaction((txn) async {
+      await txn.insert(
+        'voice_call_records',
+        {
+          'id': callId,
+          'bot_id': botId,
+          'initiator': initiator,
+          'status': status,
+          'transcript': transcript,
+          'summary': summary,
+          'start_time': startTime.millisecondsSinceEpoch,
+          'end_time': endTime.millisecondsSinceEpoch,
+          'timestamp': endTime.millisecondsSinceEpoch,
+          'duration': endTime.difference(startTime).inSeconds,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      if (chatMessage != null) {
+        await txn.insert('chat_history', chatMessage,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.update('bots', {'last_msg_time': chatMessage['timestamp']},
+            where: 'id = ?', whereArgs: [botId]);
+      }
+    });
+    // A visible card always has a committed detail record, even if the app exits
+    // before summary generation finishes.
+    if (chatMessage != null) {
+      await _publishMessageEvent(
+          chatMessage['id'].toString(), ChatEventType.inserted);
+    }
   }
 
   /// 更新语音通话记录
@@ -3106,6 +3124,7 @@ class DBManager {
     DateTime? endTime,
   }) async {
     final db = await database;
+    await _ensureVoiceCallStorage(db);
     final updates = <String, dynamic>{};
     if (status != null) updates['status'] = status;
     if (transcript != null) updates['transcript'] = transcript;
@@ -3140,6 +3159,7 @@ class DBManager {
         where: 'id = ?',
         whereArgs: [messageId],
       );
+      await _publishMessageEvent(messageId, ChatEventType.updated);
     }
   }
 

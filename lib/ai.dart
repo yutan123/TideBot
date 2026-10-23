@@ -38,6 +38,7 @@ import 'skill_package.dart';
 import 'world_book_service.dart';
 import 'tool_call_accumulator.dart';
 import 'chat_request_context.dart';
+import 'chat_cache_diagnostics.dart';
 import 'voice_call_state_service.dart';
 
 class AICancellationToken {
@@ -134,61 +135,37 @@ class AIManager {
 
   /// 主模型失败时自动尝试备用模型，并给予总计两次额外请求机会。
   /// 每次尝试均保持同一聊天上下文；失败信息只在最终结果中返回。
-  static final _requestPrefixes = <String, Map<String, String>>{};
+  static final _cacheDiagnostics = ChatCacheDiagnostics();
+  static int _requestSequence = 0;
 
-  void _logCacheUsage(Map usage, {required String stage}) {
+  void _logCacheUsage(Map usage,
+      {required String stage,
+      required String requestId,
+      Map<String, dynamic> responseMetadata = const {}}) {
     final cached = cachedPromptTokens(usage);
     final prompt = usage['prompt_tokens'] ?? usage['input_tokens'];
     AppLogService.instance.addJson('CACHE', '分请求缓存统计', {
+      'request_id': requestId,
       'stage': stage,
+      ...responseMetadata,
+      'usage': usage,
       'prompt_tokens': prompt,
       'cached_tokens': cached,
       'cache_reported': cached != null,
     });
   }
 
-  void _logRequestPrefix(String key, List<Map<String, dynamic>> messages,
-      List<Map<String, dynamic>> tools) {
-    final fixed = messages
-        .take(1)
-        .where((m) => m['role'] == 'system')
-        .map((m) => {'role': m['role'], 'content': m['content']})
-        .toList();
-    final current = {
-      'fixed': jsonEncode(fixed),
-      'tools': jsonEncode(tools),
-      'history': jsonEncode(messages
-          .where((m) => m['role'] != 'system')
-          .map((m) => {'role': m['role'], 'content': m['content']})
-          .toList()),
-    };
-    final previous = _requestPrefixes[key];
-    var common = 0;
-    if (previous != null) {
-      final old = previous['history']!;
-      final now = current['history']!;
-      while (common < old.length &&
-          common < now.length &&
-          old[common] == now[common]) {
-        common++;
-      }
+  void _logRequestPrefix(String scope, String requestId,
+      Map<String, dynamic> payload, Map<String, dynamic> window) {
+    if (!AppLogService.instance.enabled) {
+      _cacheDiagnostics.clear();
+      return;
     }
-    AppLogService.instance.addJson('CACHE', '请求前缀变化诊断', {
-      'request_key': key,
-      'previous_request_available': previous != null,
-      'fixed_changed':
-          previous == null ? null : previous['fixed'] != current['fixed'],
-      'tools_changed':
-          previous == null ? null : previous['tools'] != current['tools'],
-      'tool_names': tools.map((t) => (t['function'] as Map?)?['name']).toList(),
-      'conversation_common_prefix_chars': common,
-      'note': '字符前缀仅作本地诊断，非供应商实际缓存 token；缓存有效期和路由由供应商决定',
-      'cache_protocol': 'OpenAI Chat Completions provider-managed prefix cache',
+    AppLogService.instance.addJson('CACHE', '完整请求前缀变化诊断', {
+      ..._cacheDiagnostics.record(
+          scope: scope, requestId: requestId, payload: payload),
+      'history_window': window,
     });
-    if (_requestPrefixes.length >= 32 && !_requestPrefixes.containsKey(key)) {
-      _requestPrefixes.remove(_requestPrefixes.keys.first);
-    }
-    _requestPrefixes[key] = current;
   }
 
   Future<Map<String, dynamic>> sendMessage({
@@ -774,6 +751,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String forcedProviderId = '',
   }) async {
     final db = DBManager();
+    final requestId =
+        '${DateTime.now().microsecondsSinceEpoch}_${_requestSequence++}';
+    final windowDiagnostic = <String, dynamic>{};
 
     cancellationToken?.throwIfCancelled();
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
@@ -819,8 +799,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     var stickerEmotions = <String>[];
     var currentImages = <int, String>{};
     var inspectableImages = <int, String>{};
-    var inspectableImageNumbers = <int>[];
-    var currentImageNumbers = <int>[];
     var messages = <Map<String, dynamic>>[];
     if (task.internal) {
       final context = <String>[];
@@ -886,8 +864,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 构建核心设定提示
       final coreSettings = [
-        memoryCategoryPolicy,
-        memoryDeduplicationPolicy,
         if (activeGame == null) recentMemoryReference(allMemories),
         if (botViewOfUser?.isNotEmpty == true)
           '【你眼中的对方】\n$botViewOfUser'
@@ -955,7 +931,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         for (var i = 0; i < effectiveImagePaths.length; i++)
           i + 1: effectiveImagePaths[i],
       };
-      currentImageNumbers = currentImages.keys.toList();
       inspectableImages = <int, String>{};
       final imageNumberByPath = <String, int>{};
       void registerHistoricalImage(String path) {
@@ -977,7 +952,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (path.isEmpty || effectiveImagePaths.contains(path)) continue;
         registerHistoricalImage(path);
       }
-      inspectableImageNumbers = inspectableImages.keys.toList()..sort();
       final currentImageDescriptions = <int, String>{};
       // 本轮图片不进入历史图片工具。使用主模型识图时直接附着图片；选择
       // 专用识图模型时，先由该模型识别,再把文本结果转述给聊天模型。
@@ -1021,17 +995,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               db,
               botId: botId,
               includeEmotion: true,
-              requireSticker: allowSticker,
               stickerEmotions: stickerEmotions,
-              inspectableImageNumbers: inspectableImageNumbers,
-              currentImageNumbers: currentImageNumbers,
             )
           : '';
       final skillSections = <String>[];
       final injectedSkillIds = <String>[];
-      for (final skill in task == AIRequestTask.proactiveChat
+      final enabledSkills = task == AIRequestTask.proactiveChat
           ? <Map<String, dynamic>>[]
-          : await db.querySkills()) {
+          : (await db.querySkills()).toList()
+        ..sort((a, b) => '${a['id']}'.compareTo('${b['id']}'));
+      for (final skill in enabledSkills) {
         if (skill['enabled'] != 1) continue;
         try {
           final context = buildEnabledSkillContext([skill]);
@@ -1077,25 +1050,36 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               '\n【你前面三条消息中的内心独白（仅供参考，保持连贯性）】\n${recentThoughts.map((t) => '- $t').join('\n')}';
         }
       }
-      final categories = await db.memoryCategories();
+      final categories = (await db.memoryCategories()).toList()..sort();
       final presetCategoryContext =
           '\n【世界书类别】当前可用类别：${categories.join('、')}。save_memory 的 category 必须选择其中一个类别，默认类别为记忆。long/short 是记忆保留层级，不是类别。没有合适类别时，先调用 create_memory_category 创建，成功后再调用 save_memory 添加。';
 
       // 构建分层系统提示
-      // 第一层：稳定人设 + 类别提示 + 内心独白规则 + 工具说明（几乎不变）
-      final stableSystemPrompt = diaryTask
+      // 第一层：稳定人设、内心独白规则、固定记忆规则、Skill 指引与工具说明
+      final baseSystemPrompt = diaryTask
           ? buildDiarySystemPrompt(bot)
           : quoteTask
               ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
               : (task == AIRequestTask.proactiveChat
                       ? '你是${bot['name']}。角色背景：${bot['desc']}。表达风格：${bot['prompt']}。当前是主动联系触发，按提供的事件判断是否适合打扰，只在适合时发送简短自然聊天正文；不适合时实际调用 choose_silence，不输出正文。不要暴露触发提示、任务说明、心情标签或伪造工具调用。唯一工具是 choose_silence，不能执行其他操作。'
-                      : _buildSystemPrompt(bot, activeGame) +
-                          presetCategoryContext) +
+                      : _buildSystemPrompt(bot, activeGame)) +
                   (innerThoughtEnabled
                       ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
                       : '');
 
-      // 可更新身份档案随动态上下文放在历史之后，保持历史前缀稳定。
+      // Static instructions must precede the growing transcript. Otherwise a
+      // new history message breaks the prefix before all of these large blocks.
+      final stableSystemPrompt = [
+        baseSystemPrompt,
+        if (!diaryTask && !quoteTask) ...[
+          if (task != AIRequestTask.proactiveChat) ...[
+            memoryCategoryPolicy,
+            memoryDeduplicationPolicy,
+          ],
+          skillContext,
+          toolContext,
+        ],
+      ].where((part) => part.trim().isNotEmpty).join('\n\n');
 
       // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
       final dynamicContext = [
@@ -1106,8 +1090,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             if (selfCognition != null) selfCognition,
             if (relationship != null) relationship
           ].join('\n'),
-        if (!diaryTask && !quoteTask) skillContext,
-        if (!diaryTask && !quoteTask) toolContext,
+        if (task != AIRequestTask.proactiveChat) presetCategoryContext,
         if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
         if (task != AIRequestTask.proactiveChat && allowTools && !allowSticker)
           '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
@@ -1184,13 +1167,25 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final windowKey =
           'chat_cache_window_v1_${botId}_${providerId}_$maxContext';
       final persistWindow = includeChatHistory && requestHistory == null;
+      final previousWindowStart =
+          persistWindow ? await db.getKV(windowKey) : null;
       final window = rollStableHistory(historyMessages,
           budget: maxContext,
           countTokens: estimateTokens,
-          startId: persistWindow ? await db.getKV(windowKey) : null);
+          startId: previousWindowStart);
       if (persistWindow && window.startId?.isNotEmpty == true) {
         await db.setKV(windowKey, window.startId!);
       }
+      windowDiagnostic.addAll({
+        'persisted': persistWindow,
+        'previous_start_id': previousWindowStart,
+        'rolled_messages': window.rolled,
+        'start_id': window.startId,
+        'retained_messages': historyMessages.length,
+        'estimated_tokens': window.tokens,
+        'budget': maxContext,
+        'removed_messages': window.removed,
+      });
       AppLogService.instance.add('CONTEXT',
           '稳定历史窗口：保留 ${historyMessages.length} 条，估算 ${window.tokens}/$maxContext tokens，起点=${window.startId}，跳过 ${window.removed} 条；达到完整预算才滚动至一半');
       // IDs belong to the local window cursor, never the provider protocol.
@@ -1358,25 +1353,25 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                   includeEmotion: true,
                   allowSticker: stickerEmotions.isNotEmpty,
                   stickerTypes: stickerEmotions.toSet(),
-                  inspectableImageNumbers: inspectableImageNumbers,
-                  currentImageNumbers: currentImageNumbers,
                 )
               : const <Map<String, dynamic>>[];
       // Proactive contact exposes only the silence decision tool.
-      _logRequestPrefix('$botId|$providerId|$modelName', messages, tools);
       // Native tools remain enabled for every normal chat request. Provider
       // compatibility is handled by retrying the exact same turn without only
       // the unsupported tool fields after an explicit provider rejection.
       final toolCallingEnabled = allowTools && tools.isNotEmpty;
 
-      final payload = <String, dynamic>{
+      final payload = prepareChatCompletionPayload({
         'model': modelName,
         'messages': prepareOpenAIChatCompletionMessages(messages),
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
         if (onDelta != null) 'stream': true,
-      };
+      });
+      final cacheScope = '$baseUrl|$botId|$providerId|$modelName|${task.name}';
+      _logRequestPrefix(
+          '$cacheScope|initial', requestId, payload, windowDiagnostic);
       // 过滤payload中的base64图片，避免日志过长
       final filteredPayload = Map<String, dynamic>.from(payload);
       if (filteredPayload['messages'] is List) {
@@ -1403,6 +1398,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }).toList();
       }
       AppLogService.instance.addJson('REQUEST', '发往模型提供商的完整请求（已脱敏）', {
+        'request_id': requestId,
         'url': '$baseUrl/chat/completions',
         'task': task.name,
         'requested_at': DateTime.now().toIso8601String(),
@@ -1416,6 +1412,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       var hadToolCalls = false;
       var toolRequestedVoice = false;
       Map usage = const {};
+      final responseMetadata = <String, dynamic>{};
       String errorBody = '';
       int statusCode;
       final token = cancellationToken;
@@ -1442,6 +1439,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       token?.throwIfCancelled();
       statusCode = streamedResponse.statusCode;
+      responseMetadata.addAll({
+        'requested_model': modelName,
+        'provider_request_id': streamedResponse.headers['x-request-id'] ??
+            streamedResponse.headers['request-id'] ??
+            streamedResponse.headers['x-xai-request-id'],
+        'status_code': statusCode,
+      });
+      AppLogService.instance.addJson('CACHE', '缓存请求响应关联', {
+        'request_id': requestId,
+        ...responseMetadata,
+      });
       AppLogService.instance.add('AI_TRACE',
           'HTTP 响应头 status=$statusCode elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
@@ -1474,13 +1482,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             if (data == '[DONE]') break;
             try {
               final json = jsonDecode(data);
-              final choice = json['choices']?[0];
+              if (json is! Map) continue;
+              responseMetadata.addAll(cacheResponseMetadata(json));
+              // Usage-only SSE chunks legitimately have choices: []. Do not
+              // index choices before reading usage, or the catch loses it.
+              if (json['usage'] is Map) {
+                usage = Map.from(json['usage'] as Map);
+              }
+              final choices = json['choices'];
+              final choice =
+                  choices is List && choices.isNotEmpty ? choices.first : null;
               final delta = choice?['delta']?['content']?.toString();
               if (delta != null && delta.isNotEmpty) {
                 consumeDelta(delta);
-              }
-              if (json['usage'] is Map) {
-                usage = Map.from(json['usage'] as Map);
               }
               final calls = choice?['delta']?['tool_calls'] ??
                   choice?['message']?['tool_calls'];
@@ -1525,7 +1539,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'SSE 响应体结束 replyLength=${replyText.length} innerThought=${innerThought?.length ?? 0} elapsedMs=${DateTime.now().difference(httpStarted).inMilliseconds}');
 
         if (allowTools && streamedToolCalls.isNotEmpty) {
-          if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
+          if (!hadToolCalls)
+            _logCacheUsage(usage,
+                stage: 'initial',
+                requestId: requestId,
+                responseMetadata: responseMetadata);
           hadToolCalls = true;
           messages.add({
             'role': 'assistant',
@@ -1538,6 +1556,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             calls: streamedToolCalls,
             messages: messages,
             baseUrl: baseUrl,
+            cacheScope: cacheScope,
+            requestId: requestId,
             modelName: modelName,
             apiKey: provider['api_key']?.toString() ?? '',
             maxTokens: bot['max_tokens'] ?? 10000,
@@ -1545,7 +1565,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             innerThoughtSetter: (value) => innerThought = value,
             replyTextCallback: (t) => replyText = t,
             usageCallback: (u) {
-              _logCacheUsage(u, stage: 'tool_follow_up');
               usage = u;
             },
             searchSourcesSetter: (l) => searchSources = l,
@@ -1576,6 +1595,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       token?.throwIfCancelled();
       if (statusCode == 200 && errorBody.isNotEmpty) {
         final json = jsonDecode(errorBody);
+        if (json is Map) responseMetadata.addAll(cacheResponseMetadata(json));
         final message = json['choices']?[0]?['message'];
         replyText = task.internal
             ? diaryResponseContent(message)
@@ -1622,7 +1642,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               .map((call) => Map<String, dynamic>.from(call))
               .toList();
           if (toolCalls.isNotEmpty) {
-            if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
+            if (!hadToolCalls)
+              _logCacheUsage(usage,
+                  stage: 'initial',
+                  requestId: requestId,
+                  responseMetadata: responseMetadata);
             hadToolCalls = true;
             messages.add({
               'role': 'assistant',
@@ -1635,6 +1659,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               calls: toolCalls,
               messages: messages,
               baseUrl: baseUrl,
+              cacheScope: cacheScope,
+              requestId: requestId,
               modelName: modelName,
               apiKey: provider['api_key']?.toString() ?? '',
               maxTokens: bot['max_tokens'] ?? 10000,
@@ -1642,7 +1668,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               innerThoughtSetter: (value) => innerThought = value,
               replyTextCallback: (t) => replyText = t,
               usageCallback: (u) {
-                _logCacheUsage(u, stage: 'tool_follow_up');
                 usage = u;
               },
               searchSourcesSetter: (l) => searchSources = l,
@@ -1691,7 +1716,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final totalTokens = (usage['total_tokens'] as num?)?.toInt() ??
             promptTokens + completionTokens;
 
-        if (!hadToolCalls) _logCacheUsage(usage, stage: 'initial');
+        if (!hadToolCalls)
+          _logCacheUsage(usage,
+              stage: 'initial',
+              requestId: requestId,
+              responseMetadata: responseMetadata);
 
         AppLogService.instance.add('AI_TRACE', '开始写入 usage');
         await db.recordAiUsage(
@@ -3386,6 +3415,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required List<Map<String, dynamic>> calls,
     required List<Map<String, dynamic>> messages,
     required String baseUrl,
+    required String cacheScope,
+    required String requestId,
     required String modelName,
     required String apiKey,
     required int maxTokens,
@@ -3520,6 +3551,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     // for another action; its result is appended and sent back until the model
     // stops using tools. A hard limit prevents accidental infinite automation.
     for (var round = 0; round < 12; round++) {
+      final followUpId = '${requestId}_tool_${round + 1}';
+      final followUpPayload = prepareChatCompletionPayload({
+        'model': modelName,
+        'messages': prepareOpenAIChatCompletionMessages(messages),
+        'max_tokens': maxTokens,
+        if (requestTools.isNotEmpty) 'tools': requestTools,
+        if (requestTools.isNotEmpty) 'tool_choice': 'auto',
+      });
+      _logRequestPrefix(
+          '$cacheScope|tool_follow_up', followUpId, followUpPayload, const {});
       final followUp = await http
           .post(
             Uri.parse('$baseUrl/chat/completions'),
@@ -3527,13 +3568,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $apiKey',
             },
-            body: jsonEncode({
-              'model': modelName,
-              'messages': messages,
-              'max_tokens': maxTokens,
-              if (requestTools.isNotEmpty) 'tools': requestTools,
-              'tool_choice': 'auto',
-            }),
+            body: jsonEncode(followUpPayload),
           )
           .timeout(const Duration(seconds: 60));
       if (followUp.statusCode != 200) {
@@ -3548,6 +3583,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (fu is Map) {
         AppLogService.instance
             .add('CACHE', '工具后续响应：round=${round + 1} model=$modelName');
+        _logCacheUsage(fu,
+            stage: 'tool_follow_up',
+            requestId: followUpId,
+            responseMetadata: {
+              ...cacheResponseMetadata(decoded as Map),
+              'provider_request_id': followUp.headers['x-request-id'] ??
+                  followUp.headers['request-id'],
+            });
         usageCallback(fu);
       }
       if (message is! Map) return;
@@ -3648,8 +3691,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     bool allowSticker = false,
     bool allowSilence = true,
     Set<String> stickerTypes = const {},
-    List<int> inspectableImageNumbers = const [],
-    List<int> currentImageNumbers = const [],
   }) async {
     final tools = <Map<String, dynamic>>[];
     if (includeEmotion) {
@@ -3685,13 +3726,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               .trim()
               .isNotEmpty;
       tools.add(botImageToolSchema(hasPortraitReference: hasPortraitReference));
-      if (currentImageNumbers.isNotEmpty ||
-          inspectableImageNumbers.isNotEmpty) {
-        tools.add(userImageEditToolSchema(
-          currentImageNumbers: currentImageNumbers,
-          historyImageNumbers: inspectableImageNumbers,
-        ));
-      }
+      // Availability belongs to the per-request image maps, never the schema.
+      // Keep this definition present even for text turns; execution validates it.
+      tools.add(userImageEditToolSchema());
     }
     tools.add({
       'type': 'function',
@@ -3785,8 +3822,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
   Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async {
     final tools = <Map<String, dynamic>>[];
-    final skills =
-        (await db.querySkills()).where((s) => s['enabled'] == 1).toList();
+    final skills = (await db.querySkills())
+        .where((s) => s['enabled'] == 1)
+        .toList()
+      ..sort((a, b) => '${a['id']}'.compareTo('${b['id']}'));
     if (skills.isNotEmpty) {
       final catalog = skills
           .map((s) => '${s['id']}: ${s['name']} — ${s['description']}')
@@ -4781,7 +4820,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final now = DateTime.now();
         final callId = '${now.millisecondsSinceEpoch}_$botId';
 
-        // 保存通话记录
+        final cardMessage = <String, dynamic>{
+          'id': 'card_$callId',
+          'bot_id': botId,
+          'role': 'assistant',
+          'content': '[语音通话，等待接听]',
+          'type': 'voice_call_card',
+          'call_id': callId,
+          'call_status': 'ringing',
+          'call_duration': 0,
+          'duration': 0,
+          'timestamp': now.millisecondsSinceEpoch,
+        };
+        // Ring only after both the detail and its card commit successfully.
         await db.insertVoiceCallRecord(
           callId: callId,
           botId: botId,
@@ -4791,20 +4842,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           summary: '',
           startTime: now,
           endTime: now,
+          chatMessage: cardMessage,
         );
-
-        // 插入通话卡片到聊天记录
-        final cardMessage = {
-          'id': callId,
-          'bot_id': botId,
-          'role': 'assistant',
-          'content': '[语音通话]',
-          'type': 'voice_call_card',
-          'call_id': callId,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        };
-        await db.insertChatMessage(cardMessage);
-
         // 更新通话状态
         VoiceCallStateService.instance
             .startRinging(callId, botId, isIncoming: true);
@@ -4913,10 +4952,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     DBManager db, {
     required String botId,
     bool includeEmotion = false,
-    bool requireSticker = false,
     List<String> stickerEmotions = const [],
-    List<int> inspectableImageNumbers = const [],
-    List<int> currentImageNumbers = const [],
   }) async {
     final parts = <String>[];
     if (await db.getKV('bot_image_generation_enabled') != 'false') {
@@ -4934,13 +4970,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         '【已授权工具：生图】创作新图片或机器人人像使用 generate_image；编辑用户已有图片必须使用 edit_user_image，禁止用 generate_image 代替原图修改。不得只用文字描述代替实际生图；当图片能明显帮助当前回答时也可以主动调用 generate_image。以下画风和人像参考规则仅适用于 generate_image：$styleRule $referenceRule 不要声称已生成不存在的图片。',
       );
     }
-    if (await db.getKV('bot_image_generation_enabled') != 'false' &&
-        (currentImageNumbers.isNotEmpty ||
-            inspectableImageNumbers.isNotEmpty)) {
-      parts.add(userImageEditContext(
-        currentImageNumbers: currentImageNumbers,
-        historyImageNumbers: inspectableImageNumbers,
-      ));
+    if (await db.getKV('bot_image_generation_enabled') != 'false') {
+      parts.add(userImageEditContext());
     }
     if (await db.getKV('web_search_enabled') == 'true') {
       final provider = _normalizeSearchProvider(
@@ -4963,11 +4994,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         '【本轮可用表情包】可用分类包括 ${stickerEmotions.join('、')}。只有确实需要发送表情包时才调用 send_sticker，type 必须来自上述列表；不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。',
       );
     }
-    if (inspectableImageNumbers.isNotEmpty) {
-      parts.add(
-        '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看上下文中用户先前消息发送的历史图片。用户本轮发送的图片会自动处理：使用主模型识图时直接附着，使用专用识图模型时自动提供识别结果；不得为本轮图片调用历史图片工具。只有确实需要知道某张历史图片的画面内容时才调用，并且只能使用上下文明确提供的 image_number，不得猜测或编造编号。',
-      );
-    }
+    parts.add(
+      '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看历史消息旁标有 [图片#N] 的用户原图，image_number=N。没有标记时不能调用，不得猜测编号。用户本轮图片会自动处理，不能用这两个历史图片工具查看 [本轮图片#N]。',
+    );
     return parts.isEmpty ? '' : '\n${parts.join('\n')}';
   }
 

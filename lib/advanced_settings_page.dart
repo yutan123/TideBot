@@ -846,7 +846,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                                     child: NativeSelectableText(
                                         '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
                                         style: TextStyle(
-                                            fontFamily: 'monospace',
+                                            fontFamily: 'TideFont',
                                             fontSize: 11,
                                             color: theme.textStrong)),
                                   );

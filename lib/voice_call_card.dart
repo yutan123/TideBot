@@ -78,9 +78,7 @@ class VoiceCallCard extends StatelessWidget {
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: isUser
-              ? theme.surface.withValues(alpha: .92)
-              : theme.bubbleAi.withValues(alpha: .92),
+          color: isUser ? theme.surface : theme.bubbleAi,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: theme.primary.withValues(alpha: .22)),
         ),

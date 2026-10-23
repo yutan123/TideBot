@@ -1,7 +1,7 @@
 /// Maintains a stable history start until the full budget is reached.
 /// The caller persists [startId]; loading full database history must not restore
 /// messages discarded by a previous rollover.
-({int removed, int tokens, String? startId}) rollStableHistory(
+({int removed, int rolled, int tokens, String? startId}) rollStableHistory(
   List<Map<String, dynamic>> messages, {
   required int budget,
   required int Function(String) countTokens,
@@ -27,6 +27,7 @@
   if (roll > 0) messages.removeRange(0, roll);
   return (
     removed: removed + roll,
+    rolled: roll,
     tokens: tokens,
     startId: messages.isEmpty ? null : messages.first['id']?.toString(),
   );

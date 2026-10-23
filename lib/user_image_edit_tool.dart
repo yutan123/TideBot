@@ -9,11 +9,7 @@ const userImageEditRule =
     '此工具将 prompt 原样发送给图生图模型，系统不会追加任何画风、穿搭、人物身份、构图或其他提示词；generate_image 的机器人参考图和全局画风规则不适用于此工具。'
     '用户指代不清或缺少有效编号时先询问，不得擅自选图；工具失败不得声称已改好，不得退回文生图冒充原图修改。';
 
-Map<String, dynamic> userImageEditToolSchema({
-  required List<int> currentImageNumbers,
-  required List<int> historyImageNumbers,
-}) =>
-    {
+Map<String, dynamic> userImageEditToolSchema() => {
       'type': 'function',
       'function': {
         'name': 'edit_user_image',
@@ -44,13 +40,9 @@ Map<String, dynamic> userImageEditToolSchema({
       },
     };
 
-String userImageEditContext({
-  required List<int> currentImageNumbers,
-  required List<int> historyImageNumbers,
-}) =>
-    '【已授权工具：用户原图编辑】$userImageEditRule '
-    '本轮编号（source=current）：${currentImageNumbers.isEmpty ? '无' : currentImageNumbers.map((n) => '[本轮图片#$n]').join('、')}；'
-    '历史编号（source=history）：${historyImageNumbers.isEmpty ? '无' : historyImageNumbers.map((n) => '[图片#$n]').join('、')}。';
+String userImageEditContext() => '【已授权工具：用户原图编辑】$userImageEditRule '
+    '编号只读取对应消息旁的标记：[本轮图片#N] 对应 source=current，'
+    '[图片#N] 对应 source=history；没有标记就没有可选原图。';
 
 class UserImageEditSelection {
   const UserImageEditSelection({

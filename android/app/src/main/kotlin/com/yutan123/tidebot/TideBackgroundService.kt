@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -21,6 +23,7 @@ class TideBackgroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val activeTasks = java.util.concurrent.atomic.AtomicInteger(0)
     private var latestStartId = 0
+    private var foregroundReady = false
 
     inner class LocalBinder : Binder() {
         fun getService(): TideBackgroundService = this@TideBackgroundService
@@ -35,20 +38,58 @@ class TideBackgroundService : Service() {
             handoffLocks.clear()
         }
         private const val ACTION_PROTECT_REQUEST = "com.yutan123.tidebot.PROTECT_REQUEST"
-        fun beginRequest(context: Context, id: String) {
+        private val requestHandler = Handler(Looper.getMainLooper())
+        private class PendingRequest(
+            val complete: (String?) -> Unit,
+            val timeout: Runnable,
+        )
+        private val pendingRequests = mutableMapOf<String, PendingRequest>()
+        private const val EXTRA_REQUEST_ID = "request_id"
+
+        // A successful startForegroundService() only queues a service start. Do
+        // not let Dart send the HTTP request until onStartCommand confirms that
+        // startForeground() and the wake lock have actually completed.
+        fun beginRequest(context: Context, id: String, complete: (String?) -> Unit) {
+            require(id.isNotBlank())
             requestLeases.begin(id)
+            val timeout = Runnable {
+                requestLeases.end(id)
+                completeRequest(id, "前台服务启动确认超时")
+                running?.stopIfIdle()
+            }
+            pendingRequests[id] = PendingRequest(complete, timeout)
+            requestHandler.postDelayed(timeout, 8_000L)
             try {
-                val intent = Intent(context, TideBackgroundService::class.java).setAction(ACTION_PROTECT_REQUEST)
+                val intent = Intent(context, TideBackgroundService::class.java)
+                    .setAction(ACTION_PROTECT_REQUEST)
+                    .putExtra(EXTRA_REQUEST_ID, id)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
                 else context.startService(intent)
             } catch (error: Exception) {
                 requestLeases.end(id)
-                throw error
+                completeRequest(id, "${error.javaClass.simpleName}: ${error.message}")
             }
         }
-        fun renewRequest(id: String) { requestLeases.renew(id) }
+        private fun completeRequest(id: String, error: String?) {
+            val pending = pendingRequests.remove(id) ?: return
+            requestHandler.removeCallbacks(pending.timeout)
+            pending.complete(error)
+        }
+        fun renewRequest(context: Context, id: String, complete: (String?) -> Unit) {
+            val service = running
+            if (service == null || !requestLeases.contains(id)) {
+                // A live Dart request can restore protection after a service loss
+                // or a delayed renewal. Without renewals, leases still expire.
+                beginRequest(context, id, complete)
+            } else {
+                requestLeases.renew(id)
+                service.acquireWakeLock()
+                complete(null)
+            }
+        }
         fun endRequest(id: String) {
             requestLeases.end(id)
+            completeRequest(id, "请求保护已取消")
             running?.stopIfIdle()
         }
         private const val TAG = "TideBackgroundService"
@@ -84,9 +125,23 @@ class TideBackgroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate")
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("初始化中..."))
-        running = this
+        try {
+            createNotificationChannel()
+            startForeground(NOTIFICATION_ID, buildNotification("正在准备后台请求"))
+            acquireWakeLock()
+            foregroundReady = true
+            running = this
+        } catch (error: Exception) {
+            Log.e(TAG, "Request foreground promotion failed", error)
+            pendingRequests.keys.toList().forEach { id ->
+                requestLeases.end(id)
+                completeRequest(id, "${error.javaClass.simpleName}: ${error.message}")
+            }
+            releaseHandoffs()
+            releaseWakeLock()
+            stopSelf()
+            return
+        }
         serviceScope.launch {
             while (isActive) {
                 delay(60_000)
@@ -96,18 +151,25 @@ class TideBackgroundService : Service() {
                 }
             }
         }
-        acquireWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}")
         
         latestStartId = startId
+        if (!foregroundReady) {
+            releaseHandoffs()
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
         acquireWakeLock()
         releaseHandoffs()
         when (intent?.action) {
             ACTION_PROTECT_REQUEST -> {
                 updateNotification("正在接收回复，可切换到后台")
+                val id = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
+                if (requestLeases.contains(id)) completeRequest(id, null)
+                else completeRequest(id, "请求保护已过期")
                 stopIfIdle()
             }
             ACTION_EXECUTE_TASK -> {
@@ -139,7 +201,7 @@ class TideBackgroundService : Service() {
         }
 
         // Native deliveries are durable and deduplicated; let Android redeliver
-        // an interrupted task. UI requests remain bounded to their engine lifetime.
+        // an interrupted task. UI requests expire when their lease renewals stop.
         return if (activeTasks.get() > 0) START_REDELIVER_INTENT else START_NOT_STICKY
     }
 
@@ -151,6 +213,8 @@ class TideBackgroundService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
+        foregroundReady = false
+        if (running === this) running = null
         serviceScope.cancel()
         stopSelf()
     }
@@ -160,6 +224,7 @@ class TideBackgroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy")
+        foregroundReady = false
         if (running === this) running = null
         serviceScope.cancel()
         releaseWakeLock()
@@ -203,7 +268,7 @@ class TideBackgroundService : Service() {
             "$TAG::TaskLock"
         ).apply {
             setReferenceCounted(false)
-            acquire(10 * 60 * 1000L) // 10 分钟，足够完成任何 AI 请求
+            acquire(10 * 60 * 1000L) // 有时限保护；活跃请求定期续期
         }
     }
 

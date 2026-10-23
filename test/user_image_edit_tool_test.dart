@@ -82,9 +82,7 @@ void main() {
 
   test('schema requires all parameters and separates edit from portrait tools',
       () {
-    final function = userImageEditToolSchema(
-        currentImageNumbers: [1, 2],
-        historyImageNumbers: [1, 7])['function'] as Map;
+    final function = userImageEditToolSchema()['function'] as Map;
     expect(function['name'], 'edit_user_image');
     final parameters = function['parameters'] as Map;
     expect(parameters['required'], ['source', 'image_number', 'prompt']);
@@ -92,24 +90,21 @@ void main() {
     expect(function['description'], contains('不能用 generate_image 代替'));
     expect(function['description'], contains('系统不会追加'));
     expect(function['description'], contains('可用编号参见当前上下文'));
-    expect(
-      userImageEditToolSchema(
-        currentImageNumbers: [3],
-        historyImageNumbers: [4, 9],
-      )['function'],
-      function,
-    );
     final properties = parameters['properties'] as Map;
     expect(properties.keys, ['source', 'image_number', 'prompt']);
     expect((properties['source'] as Map)['enum'], ['current', 'history']);
     expect((properties['image_number'] as Map)['type'], 'integer');
   });
 
-  test('context labels current and historical numbers independently', () {
-    final context = userImageEditContext(
-        currentImageNumbers: [1, 2], historyImageNumbers: [1, 7]);
-    expect(context, contains('source=current）：[本轮图片#1]、[本轮图片#2]'));
-    expect(context, contains('source=history）：[图片#1]、[图片#7]'));
+  test(
+      'image instructions reference message markers without a number inventory',
+      () {
+    final context = userImageEditContext();
+    expect(context, contains('[本轮图片#N] 对应 source=current'));
+    expect(context, contains('[图片#N] 对应 source=history'));
+    expect(context, isNot(contains('历史编号')));
+    expect(context, isNot(contains('本轮编号')));
+    expect(context, isNot(contains('[图片#36]')));
     expect(context, isNot(contains('/current-photo.png')));
   });
 

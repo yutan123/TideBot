@@ -130,13 +130,20 @@ class IncomingCallBanner extends StatelessWidget {
         status: 'active',
       );
 
-      VoiceCallStateService.instance.accept(call.callId, call.botId);
+      await DBManager().updateChatMessage(
+        'card_${call.callId}',
+        content: '[语音通话，通话中]',
+        callStatus: 'active',
+      );
+      VoiceCallStateService.instance.accept(call.botId, call.callId);
 
       if (context.mounted) {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => CallPage(
               bot: bot,
+              callId: call.callId,
+              initiator: call.initiator,
               hasStt: bot['has_stt'] == 1,
               hasTts: bot['has_tts'] == 1,
             ),
@@ -162,7 +169,7 @@ class IncomingCallBanner extends StatelessWidget {
         callStatus: 'rejected',
       );
 
-      VoiceCallStateService.instance.reject(call.callId, call.botId);
+      VoiceCallStateService.instance.reject(call.botId, call.callId);
     } catch (error) {
       debugPrint('拒接通话失败：$error');
     }

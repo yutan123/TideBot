@@ -12,6 +12,7 @@ internal class TideRequestLeases(private val now: () -> Long) {
         if ((deadlines[id] ?: 0L) > time) deadlines[id] = time + 10 * 60_000L
         else deadlines.remove(id)
     }
+    @Synchronized fun contains(id: String): Boolean = (deadlines[id] ?: 0L) > now()
     @Synchronized fun end(id: String) { deadlines.remove(id) }
     @Synchronized fun hasActive(): Boolean {
         val time = now()

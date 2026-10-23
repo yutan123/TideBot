@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tide_bot/request_execution_lease.dart';
@@ -13,6 +16,10 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
+      if (call.method == 'beginRequestExecution' ||
+          call.method == 'renewRequestExecution') {
+        return {'foreground': true};
+      }
       return null;
     });
   });
@@ -91,5 +98,62 @@ void main() {
     final lease = await RequestExecutionLease.acquire();
     await lease.release();
     expect(calls, isEmpty);
+  });
+  test('acquire waits for native foreground readiness before returning',
+      () async {
+    final ready = Completer<Map<String, bool>>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'beginRequestExecution') return ready.future;
+      return null;
+    });
+    var acquired = false;
+    final pending = RequestExecutionLease.acquire().then((lease) {
+      acquired = true;
+      return lease;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(acquired, isFalse);
+    ready.complete({'foreground': true});
+    final lease = await pending;
+    expect(acquired, isTrue);
+    await lease.release();
+  });
+
+  test('background and resume renew only live requests', () async {
+    final lease = await RequestExecutionLease.acquire();
+    final binding = WidgetsBinding.instance;
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await Future<void>.delayed(Duration.zero);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+        calls.where((c) => c.method == 'renewRequestExecution'), hasLength(2));
+    await lease.release();
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+        calls.where((c) => c.method == 'renewRequestExecution'), hasLength(2));
+  });
+
+  test('renewal failure does not prevent final release', () async {
+    final lease = await RequestExecutionLease.acquire();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'renewRequestExecution') {
+        throw PlatformException(code: 'REQUEST_PROTECTION_FAILED');
+      }
+      return null;
+    });
+    WidgetsBinding.instance
+        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await Future<void>.delayed(Duration.zero);
+    await lease.release();
+    expect(calls.last.method, 'endRequestExecution');
+    WidgetsBinding.instance
+        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   });
 }
