@@ -2,6 +2,12 @@ import 'dart:convert';
 
 /// Remove only recognizable internal tool payloads, preserving ordinary JSON.
 String stripInternalToolPayloads(String text) {
+  // A textual imitation is not an executed tool call. Remove the marker only;
+  // callers still validate empty replies and rely on real tools for silence.
+  text = text.replaceAll(
+    RegExp(r'\[\s*tool_call\s+[a-z_][a-z0-9_]*\s*\]', caseSensitive: false),
+    '',
+  );
   final out = StringBuffer();
   var cursor = 0;
   while (cursor < text.length) {

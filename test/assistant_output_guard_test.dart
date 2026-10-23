@@ -2,6 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tide_bot/assistant_output_guard.dart';
 
 void main() {
+  test('discards bracket tool imitations from proactive replies', () {
+    expect(stripInternalToolPayloads('[tool_call choose_silence]'), '');
+    expect(
+        stripInternalToolPayloads(' \n[ TOOL_CALL  choose_silence ]\n '), '');
+    expect(
+        stripInternalToolPayloads(
+            '[tool_call choose_silence][tool_call set_emotion]'),
+        '');
+  });
+  test('keeps chat text around bracket tool imitations', () {
+    expect(stripInternalToolPayloads('晚安。[tool_call choose_silence]'), '晚安。');
+    expect(
+        stripInternalToolPayloads(
+            '[tool_call choose_silence]刚醒。{"name":"set_emotion"}'),
+        '刚醒。');
+  });
+  test('preserves ordinary mentions and unrelated bracket text', () {
+    const text = 'choose_silence 是工具名。[平静] [tool_calling choose_silence]';
+    expect(stripInternalToolPayloads(text), text);
+  });
   test('removes adjacent internal calls but preserves chat text', () {
     expect(
         stripInternalToolPayloads(

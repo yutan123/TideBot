@@ -243,8 +243,11 @@ object TideAiClient {
         return AiResponse(content, finishReason, usage, silent)
     }
 
+    // Text that imitates a tool call must never be stored as a chat message.
+    // This does not set silent: only a real tool_calls entry can do that.
     private fun stripMetadata(text: String): String = text.replace(
-        Regex("""\[(?:(?:你|对方)发送了一个表情包，表情包类型|发送时间)\s*[:：][^\]]*(?:\]|$)"""), "").trim()
+        Regex("""\[\s*tool_call\s+[a-z_][a-z0-9_]*\s*\]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\[(?:(?:你|对方)发送了一个表情包，表情包类型|发送时间)\s*[:：][^\]]*(?:\]|$)"""), "").trim()
 
     private class HttpException(code: Int) : IOException("Provider HTTP $code") {
         val retryable = code == 408 || code == 429 || code >= 500
