@@ -91,7 +91,14 @@ void main() {
     expect(parameters['additionalProperties'], isFalse);
     expect(function['description'], contains('不能用 generate_image 代替'));
     expect(function['description'], contains('系统不会追加'));
-    expect(function['description'], contains('历史可用编号：1、7'));
+    expect(function['description'], contains('可用编号参见当前上下文'));
+    expect(
+      userImageEditToolSchema(
+        currentImageNumbers: [3],
+        historyImageNumbers: [4, 9],
+      )['function'],
+      function,
+    );
     final properties = parameters['properties'] as Map;
     expect(properties.keys, ['source', 'image_number', 'prompt']);
     expect((properties['source'] as Map)['enum'], ['current', 'history']);

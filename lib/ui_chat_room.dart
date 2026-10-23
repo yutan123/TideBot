@@ -1376,9 +1376,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     if (_loading) return;
 
     final messageId = message['id'].toString();
-    final messageType = message['type']?.toString() ?? 'text';
     final text = message['content']?.toString().trim() ?? '';
-    final filePath = message['file_path']?.toString();
 
     try {
       // 查找同一批次的所有消息（通过时间戳前缀匹配）
@@ -1821,7 +1819,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 content,
                 style: TextStyle(
                   fontSize: 13,
-                  color: theme.textWeak.withOpacity(0.8),
+                  color: theme.textWeak.withValues(alpha: 0.8),
                   height: 1.4,
                   fontStyle: FontStyle.italic,
                 ),

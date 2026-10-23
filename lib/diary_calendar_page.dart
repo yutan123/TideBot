@@ -256,7 +256,7 @@ class DiaryDetailPage extends StatelessWidget {
                               TextButton(
                                 onPressed: () =>
                                     Navigator.pop(dialogContext, true),
-                                child: Text(
+                                child: const Text(
                                   '删除',
                                   style: TextStyle(color: Colors.red),
                                 ),

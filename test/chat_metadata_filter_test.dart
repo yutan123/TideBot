@@ -12,10 +12,10 @@ void main() {
       '[发送时间:2026-10-22 12:00:00]',
       '[发送时间：任意内容]',
     ]) {
-      expect(parseChatReply('前${tag}后').text, '前后');
+      expect(parseChatReply('前$tag' '后').text, '前后');
       final stream = ChatReplyStream();
       var visible = '';
-      for (final character in '前${tag}后'.split('')) {
+      for (final character in '前$tag' '后'.split('')) {
         visible += stream.add(character);
         expect(visible, anyOf('前', '前后'));
       }

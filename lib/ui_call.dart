@@ -86,9 +86,6 @@ class _CallPageState extends State<CallPage>
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
 
-  /// 本轮通话流式输出是否已失败（失败后降级到非流式）
-  bool _streamFailedThisCall = false;
-
   /// STT/TTS 实际配置的 provider ID
   String _sttProviderId = '';
   String _ttsProviderId = '';
@@ -599,7 +596,6 @@ class _CallPageState extends State<CallPage>
             reason.contains('流式') ||
             reason.contains('SSE')) {
           AppLogService.instance.add('VOICE_CALL', '流式输出失败，本轮通话降级到非流式');
-          _streamFailedThisCall = true;
         }
         if (mounted) {
           setState(() {

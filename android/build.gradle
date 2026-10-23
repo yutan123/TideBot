@@ -11,6 +11,14 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    if (project.name == "rive_common") {
+        plugins.withId("com.android.library") {
+            androidComponents.finalizeDsl { androidDsl ->
+                // Rive defaults to API 19; the app supports API 26 and later.
+                androidDsl.defaultConfig.minSdk = 26
+            }
+        }
+    }
 }
 
 tasks.register("clean", Delete) {

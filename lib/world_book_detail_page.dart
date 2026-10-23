@@ -115,7 +115,8 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     final result = <Map<String, dynamic>>[];
     for (var index = 0; index < _presetCategories.length; index++) {
       final name = _presetCategories[index];
-      final color = stored[name] ?? _colorPool[index % _colorPool.length].value;
+      final color =
+          stored[name] ?? _colorPool[index % _colorPool.length].toARGB32();
       if (!stored.containsKey(name)) {
         await _db.setKV('wb_category_$name', color.toString());
       }
