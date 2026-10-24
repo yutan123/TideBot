@@ -28,6 +28,7 @@ import 'message_delivery_service.dart';
 import 'future_task_scheduler.dart';
 import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
+import 'video_processing_service.dart';
 import 'app_log_service.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
@@ -4535,21 +4536,215 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         await db.insertToolAudit(
           source: 'native',
           toolName: name,
-          inputSummary: _redactToolInput({'image_number': number}),
+          inputSummary: _redactToolInput({'number': number}),
           status: 'success',
           durationMs: 0,
         );
         return {
-          'result': {
-            'ok': true,
-            'image_number': number,
-            'description': description,
-            'message': '已查看 [图片#$number]。不要向用户复述文件路径。',
-          },
+          'result': {'ok': true, 'image_path': path},
+          'message': description,
         };
       } catch (error) {
         return {
-          'result': {'ok': false, 'error': '识图失败：$error'},
+          'result': {'ok': false, 'error': '图片识别失败：$error'},
+        };
+      }
+    }
+    if (name == 'view_video') {
+      final videoId = args['video_id']?.toString().trim() ?? '';
+      if (videoId.isEmpty || !videoId.startsWith('VID')) {
+        return {
+          'result': {'ok': false, 'error': '缺少有效的视频编号（格式：VIDxxxx）'},
+        };
+      }
+
+      try {
+        // 从SharedPreferences读取视频历史
+        final prefs = await SharedPreferences.getInstance();
+        final videoHistory = prefs.getStringList('video_history_$botId') ?? [];
+
+        // 查找匹配的视频
+        Map<String, dynamic>? videoInfo;
+        for (final videoJson in videoHistory.reversed) {
+          try {
+            final video = json.decode(videoJson) as Map<String, dynamic>;
+            if (video['id'] == videoId) {
+              videoInfo = video;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (videoInfo == null) {
+          return {
+            'result': {'ok': false, 'error': '视频编号 $videoId 不在当前对话历史中'},
+          };
+        }
+
+        // 构建视频信息响应
+        final duration = (videoInfo['duration'] as num?)?.toDouble() ?? 0.0;
+        var framePaths =
+            (videoInfo['frame_paths'] as List?)?.cast<String>() ?? [];
+        final platformLink = videoInfo['platform_link'] as String?;
+        final platform = videoInfo['platform'] as String?;
+        final title = videoInfo['title'] as String?;
+        final originalVideoPath = videoInfo['original_video_path'] as String?;
+
+        // 检查帧文件是否存在
+        final existingFrames = <String>[];
+        for (final path in framePaths) {
+          if (await File(path).exists()) {
+            existingFrames.add(path);
+          }
+        }
+
+        // 如果帧文件不存在
+        if (existingFrames.isEmpty && framePaths.isNotEmpty) {
+          // 检查是否有保存的原始视频文件（用户上传视频）
+          if (originalVideoPath != null &&
+              originalVideoPath.isNotEmpty &&
+              await File(originalVideoPath).exists()) {
+            // 重新从保存的视频文件中抽帧
+            try {
+              await db.insertToolAudit(
+                source: 'native',
+                toolName: name,
+                inputSummary: _redactToolInput({'video_id': videoId}),
+                status: 'info',
+                durationMs: 0,
+                error: '视频帧已失效，正在从保存的视频文件重新抽帧...',
+              );
+
+              final videoService = VideoProcessingService.instance; // 需要导入该类
+              final config = videoService.calculateFrameConfig(duration);
+              final newFramePaths = await videoService.extractFrames(
+                videoPath: originalVideoPath,
+                frameCount: config.frameCount,
+                duration: duration,
+              );
+
+              if (newFramePaths.isNotEmpty) {
+                framePaths = newFramePaths;
+
+                // 更新历史记录中的帧路径
+                videoInfo['frame_paths'] = newFramePaths;
+                final prefs = await SharedPreferences.getInstance();
+                final videoHistory =
+                    prefs.getStringList('video_history_$botId') ?? [];
+                for (int i = 0; i < videoHistory.length; i++) {
+                  try {
+                    final video =
+                        json.decode(videoHistory[i]) as Map<String, dynamic>;
+                    if (video['id'] == videoId) {
+                      videoHistory[i] = json.encode(videoInfo);
+                      break;
+                    }
+                  } catch (_) {}
+                }
+                await prefs.setStringList('video_history_$botId', videoHistory);
+              } else {
+                return {
+                  'result': {
+                    'ok': false,
+                    'error': '重新抽帧失败，无法获取视频内容。',
+                  },
+                };
+              }
+            } catch (e) {
+              return {
+                'result': {
+                  'ok': false,
+                  'error': '重新抽帧时出错：$e',
+                },
+              };
+            }
+          } else if (platformLink != null && platformLink.isNotEmpty) {
+            // 平台视频：无法恢复
+            await db.insertToolAudit(
+              source: 'native',
+              toolName: name,
+              inputSummary: _redactToolInput({'video_id': videoId}),
+              status: 'error',
+              durationMs: 0,
+              error: '视频帧文件已失效，平台视频需要重新分享链接',
+            );
+            return {
+              'result': {
+                'ok': false,
+                'error': '视频帧文件已失效。平台视频文件不会长期保存，请重新分享该视频链接。',
+                'platform_link': platformLink,
+              },
+            };
+          } else {
+            // 既没有原始视频也没有平台链接
+            await db.insertToolAudit(
+              source: 'native',
+              toolName: name,
+              inputSummary: _redactToolInput({'video_id': videoId}),
+              status: 'error',
+              durationMs: 0,
+              error: '视频文件不存在或已被清理',
+            );
+            return {
+              'result': {
+                'ok': false,
+                'error': '视频文件不存在或已被清理，无法获取视频内容。',
+              },
+            };
+          }
+        }
+
+        framePaths = existingFrames;
+
+        final durationText = _formatVideoDuration(duration.toInt());
+        final parts = <String>[];
+
+        parts.add('[视频详情]');
+        parts.add('编号：$videoId');
+        parts.add('时长：$durationText');
+        parts.add('实际可用帧数：${framePaths.length} 帧');
+
+        if (platformLink != null && platform != null) {
+          final platformName = platform == 'douyin'
+              ? '抖音'
+              : platform == 'xiaohongshu'
+                  ? '小红书'
+                  : platform == 'bilibili'
+                      ? 'B站'
+                      : platform;
+          parts.add('来源：$platformName');
+          if (title != null && title.isNotEmpty) {
+            parts.add('标题：$title');
+          }
+          parts.add('链接：$platformLink');
+        }
+
+        final message = parts.join('\n');
+
+        await db.insertToolAudit(
+          source: 'native',
+          toolName: name,
+          inputSummary: _redactToolInput({'video_id': videoId}),
+          status: 'success',
+          durationMs: 0,
+        );
+
+        return {
+          'result': {
+            'ok': true,
+            'video_id': videoId,
+            'duration': duration,
+            'frame_count': framePaths.length,
+            'platform': platform,
+            'platform_link': platformLink,
+            'title': title,
+          },
+          'message': message,
+          'images': framePaths,
+        };
+      } catch (error) {
+        return {
+          'result': {'ok': false, 'error': '查看视频失败：$error'},
         };
       }
     }
@@ -5654,4 +5849,26 @@ class _StickerPlan {
   final bool required;
   final Set<String> stickerIds;
   final List<String> emotions;
+}
+
+// 辅助函数：格式化视频时长
+String _formatVideoDuration(int seconds) {
+  if (seconds < 60) {
+    return '${seconds}秒';
+  } else if (seconds < 3600) {
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? '$minutes分$remainingSeconds秒' : '$minutes分钟';
+  } else {
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final remainingSeconds = seconds % 60;
+    if (remainingSeconds > 0) {
+      return '$hours小时$minutes分$remainingSeconds秒';
+    } else if (minutes > 0) {
+      return '$hours小时$minutes分钟';
+    } else {
+      return '$hours小时';
+    }
+  }
 }

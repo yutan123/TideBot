@@ -305,7 +305,7 @@ class DBManager {
         CREATE TABLE IF NOT EXISTS bots (
           id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
           avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
-          max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
+          video_model TEXT, max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
           last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0,
           last_read_at INTEGER DEFAULT 0, is_disabled INTEGER DEFAULT 0
         )
@@ -343,6 +343,7 @@ class DBManager {
         'chat_model': 'TEXT',
         'stt_model': 'TEXT',
         'tts_model': 'TEXT',
+        'video_model': 'TEXT',
         'max_tokens': 'INTEGER',
         'created_at': 'INTEGER',
         'daily_quote': 'TEXT',
@@ -455,7 +456,7 @@ class DBManager {
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
-      version: 34,
+      version: 35,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -478,7 +479,7 @@ class DBManager {
           CREATE TABLE bots (
             id TEXT PRIMARY KEY, name TEXT, desc TEXT, prompt TEXT,
             avatar TEXT, chat_model TEXT, stt_model TEXT, tts_model TEXT,
-            max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
+            video_model TEXT, max_tokens INTEGER, created_at INTEGER, daily_quote TEXT,
             last_msg_time INTEGER, is_pinned INTEGER DEFAULT 0,
             last_read_at INTEGER DEFAULT 0,
             is_disabled INTEGER DEFAULT 0
@@ -970,6 +971,12 @@ class DBManager {
           ''');
             await db.execute(
                 'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)');
+          }
+          if (oldVersion < 35) {
+            // 添加视频解析模型字段
+            try {
+              await db.execute('ALTER TABLE bots ADD COLUMN video_model TEXT');
+            } catch (_) {}
           }
         } catch (error) {
           print('[db] onUpgrade continued after error: $error');

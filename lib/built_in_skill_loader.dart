@@ -6,7 +6,7 @@ import 'skill_package.dart';
 class BuiltInSkillLoader {
   static Future<void> ensureBuiltInSkills() async {
     final db = DBManager();
-    final builtInSkills = ['talk'];
+    final builtInSkills = ['talk', 'view_video'];
 
     for (final skillId in builtInSkills) {
       try {

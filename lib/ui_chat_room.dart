@@ -42,6 +42,11 @@ import 'chat_protocol.dart';
 import 'ui_call.dart';
 import 'ui_space_square.dart';
 import 'world_book_service.dart';
+import 'link_preview_service.dart';
+import 'link_preview_models.dart';
+import 'link_preview_cards.dart';
+import 'video_processing_service.dart';
+import 'platform_video_resolver.dart';
 
 class _EmojiAsset {
   final String asset;
@@ -109,6 +114,16 @@ final _emojiCategoryIcons = <String, (IconData, String)>{
   'symbols': (Icons.sentiment_satisfied_alt_outlined, '符号'),
   // 国旗分组已移除
 };
+
+/// 根据链接返回平台名称
+String _getPlatformName(String url) {
+  final lower = url.toLowerCase();
+  if (lower.contains('douyin.com')) return '抖音';
+  if (lower.contains('xiaohongshu.com') || lower.contains('xhslink'))
+    return '小红书';
+  if (lower.contains('bilibili.com') || lower.contains('b23.tv')) return 'B站';
+  return '平台';
+}
 
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
@@ -1033,6 +1048,83 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final text = queuedText ?? _msgC.text.trim();
     AppLogService.instance.add('AI_TRACE',
         '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
+
+    // ========== 检测并处理平台视频链接 ==========
+    if (text.isNotEmpty && !noUserBubble) {
+      final resolver = PlatformVideoResolver();
+      final platformLinks = resolver.extractLinks(text);
+
+      if (platformLinks.isNotEmpty) {
+        // 检测到平台视频链接，尝试解析
+        for (final link in platformLinks) {
+          GlobalNotice.show('检测到${_getPlatformName(link)}链接，正在解析...',
+              color: Theme.of(context).primaryColor);
+
+          try {
+            final result = await resolver.parse(link).timeout(
+                  const Duration(seconds: 30),
+                );
+
+            if (result == null) {
+              GlobalNotice.show('无法解析视频链接', color: const Color(0xFFE74C3C));
+              continue;
+            }
+
+            if (result.videoUrl != null) {
+              // 有视频URL，下载视频
+              GlobalNotice.show('正在下载视频...',
+                  color: Theme.of(context).primaryColor);
+
+              final videoPath = await resolver
+                  .downloadVideo(
+                    result.videoUrl!,
+                    result.headers,
+                  )
+                  .timeout(const Duration(minutes: 5));
+
+              if (videoPath == null) {
+                GlobalNotice.show('视频下载失败', color: const Color(0xFFE74C3C));
+                continue;
+              }
+
+              // 下载成功，处理视频
+              GlobalNotice.show('正在分析视频...',
+                  color: Theme.of(context).primaryColor);
+
+              await _processDownloadedVideo(
+                videoPath,
+                platformLink: link,
+                platform: result.platform,
+                title: result.title,
+              );
+
+              GlobalNotice.show('视频解析完成', color: const Color(0xFF4CAF50));
+
+              // 清空文本框中的链接
+              if (mounted) {
+                _msgC.text = _msgC.text.replaceAll(link, '').trim();
+                setState(() => _hasText = _msgC.text.isNotEmpty);
+              }
+
+              return; // 处理完毕，不继续发送文本
+            } else if (result.imageUrls.isNotEmpty) {
+              // 图集类型，提示用户
+              GlobalNotice.show(
+                '${result.platform == "xiaohongshu" ? "小红书" : ""}图集暂不支持自动解析',
+                color: const Color(0xFFF39C12),
+              );
+            } else {
+              GlobalNotice.show('该内容暂不支持解析', color: const Color(0xFFE74C3C));
+            }
+          } catch (e) {
+            print('[PlatformVideo] 处理失败: $e');
+            GlobalNotice.show('视频解析失败：$e', color: const Color(0xFFE74C3C));
+          }
+        }
+      }
+    }
+    // ========== 平台视频链接检测结束 ==========
+
     images ??= List<String>.from(_pendingImages);
     documents ??= List<String>.from(_pendingDocuments);
     mediaContext ??= _pendingMediaContext;
@@ -1703,7 +1795,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void _pickMedia() async {
     final r = await showTideSheet<String>(
       context: context,
-      height: 180,
+      height: 240,
       child: Column(
         children: [
           const SizedBox(height: 10),
@@ -1714,6 +1806,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             ),
             title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')),
             onTap: () => Navigator.pop(context, 'img'),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.videocam_rounded,
+              color: TideTheme.of(context).primary,
+            ),
+            title: const Text('视频', style: TextStyle(fontFamily: 'TideFont')),
+            onTap: () => Navigator.pop(context, 'video'),
           ),
           ListTile(
             leading: Icon(
@@ -1736,6 +1836,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
         if (mounted) setState(() => _pendingImages.addAll(fixed));
       }
+    } else if (r == 'video') {
+      if (!await AppPermissions.photos(context, feature: '选择视频')) return;
+      await _pickAndProcessVideo();
     } else if (r == 'file') {
       try {
         await Permission.storage.request();
@@ -1769,6 +1872,522 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
       }
     }
+  }
+
+  // ========== 视频处理 ==========
+  Future<void> _pickAndProcessVideo() async {
+    try {
+      // 选择视频
+      final picker = ImagePicker();
+      final video = await picker.pickVideo(source: ImageSource.gallery);
+      if (video == null) return;
+
+      if (!mounted) return;
+
+      // 显示处理中提示
+      GlobalNotice.show('正在处理视频...', color: TideTheme.of(context).primary);
+
+      // 获取视频时长
+      final videoService = VideoProcessingService.instance;
+      final duration = await videoService.getVideoDuration(video.path);
+
+      if (duration == 0) {
+        if (mounted) GlobalNotice.show('无法读取视频信息');
+        return;
+      }
+
+      // 根据时长决定处理策略
+      final config = videoService.calculateFrameConfig(duration);
+
+      // 抽帧
+      final framePaths = await videoService.extractFrames(
+        videoPath: video.path,
+        frameCount: config.frameCount,
+        duration: duration,
+      );
+
+      if (framePaths.isEmpty) {
+        if (mounted) GlobalNotice.show('视频抽帧失败');
+        return;
+      }
+
+      // 提取音频
+      final audioPath = await videoService.extractAudio(video.path);
+
+      // 压缩并保存用户上传的视频文件（节省空间）
+      String? compressedVideoPath;
+      try {
+        final tempDir = await getTemporaryDirectory();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        compressedVideoPath = '${tempDir.path}/user_video_$timestamp.mp4';
+
+        // 使用FFmpeg压缩视频：480p，降低码率
+        final compressCommand =
+            '-i "${video.path}" -vf scale=854:-2 -c:v libx264 -preset fast -crf 28 -c:a aac -b:a 96k "$compressedVideoPath"';
+
+        final compressResult =
+            await videoService.executeFFmpegCommand(compressCommand);
+
+        if (!compressResult) {
+          debugPrint('[video] compression failed, using original file');
+          // 压缩失败，复制原文件
+          final originalFile = File(video.path);
+          await originalFile.copy(compressedVideoPath);
+        }
+
+        debugPrint('[video] compressed video saved: $compressedVideoPath');
+      } catch (e) {
+        debugPrint('[video] compression error: $e');
+        compressedVideoPath = null;
+      }
+
+      // 构建视频处理结果
+      final result = VideoProcessingResult(
+        framePaths: framePaths,
+        audioPath: audioPath,
+        duration: duration,
+        isPreview: config.isPreview,
+        originalVideoPath: compressedVideoPath, // 保存压缩后的视频路径
+      );
+
+      if (!mounted) {
+        await result.cleanup();
+        return;
+      }
+
+      // 发送视频消息
+      await _sendVideoMessage(result);
+
+      if (mounted) {
+        GlobalNotice.show('视频发送成功', color: const Color(0xFF4CAF50));
+      }
+    } catch (e) {
+      debugPrint('[video] process failed: $e');
+      if (mounted) {
+        GlobalNotice.show('视频处理失败: $e', color: const Color(0xFFE74C3C));
+      }
+    }
+  }
+
+  // ========== 处理下载的平台视频 ==========
+  Future<void> _processDownloadedVideo(
+    String videoPath, {
+    String? platformLink,
+    String? platform,
+    String? title,
+  }) async {
+    try {
+      // 获取视频时长
+      final videoService = VideoProcessingService.instance;
+      final duration = await videoService.getVideoDuration(videoPath);
+
+      if (duration == 0) {
+        if (mounted) GlobalNotice.show('无法读取视频信息');
+        // 删除临时文件
+        try {
+          await File(videoPath).delete();
+        } catch (_) {}
+        return;
+      }
+
+      // 根据时长决定处理策略
+      final config = videoService.calculateFrameConfig(duration);
+
+      // 抽帧
+      final framePaths = await videoService.extractFrames(
+        videoPath: videoPath,
+        frameCount: config.frameCount,
+        duration: duration,
+      );
+
+      if (framePaths.isEmpty) {
+        if (mounted) GlobalNotice.show('视频抽帧失败');
+        // 删除临时文件
+        try {
+          await File(videoPath).delete();
+        } catch (_) {}
+        return;
+      }
+
+      // 提取音频
+      final audioPath = await videoService.extractAudio(videoPath);
+
+      // 删除原始视频文件
+      try {
+        await File(videoPath).delete();
+      } catch (e) {
+        debugPrint('[video] failed to delete temp video: $e');
+      }
+
+      // 构建视频处理结果
+      final result = VideoProcessingResult(
+        framePaths: framePaths,
+        audioPath: audioPath,
+        duration: duration,
+        isPreview: config.isPreview,
+      );
+
+      if (!mounted) {
+        await result.cleanup();
+        return;
+      }
+
+      // 发送视频消息
+      await _sendVideoMessage(
+        result,
+        platformLink: platformLink,
+        platform: platform,
+        title: title,
+      );
+
+      if (mounted) {
+        GlobalNotice.show('视频发送成功', color: const Color(0xFF4CAF50));
+      }
+    } catch (e) {
+      debugPrint('[video] process downloaded video failed: $e');
+      // 删除临时文件
+      try {
+        await File(videoPath).delete();
+      } catch (_) {}
+      if (mounted) {
+        GlobalNotice.show('视频处理失败: $e', color: const Color(0xFFE74C3C));
+      }
+    }
+  }
+
+  Future<void> _sendVideoMessage(
+    VideoProcessingResult result, {
+    String? platformLink,
+    String? platform,
+    String? title,
+  }) async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+
+    setState(() => _loading = true);
+
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+      // 发送消息到 AI
+      await _sendVideoToAI(
+        result,
+        timestamp,
+        platformLink: platformLink,
+        platform: platform,
+        title: title,
+      );
+    } finally {
+      await result.cleanup();
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _sendVideoToAI(
+    VideoProcessingResult result,
+    int timestamp, {
+    String? platformLink,
+    String? platform,
+    String? title,
+  }) async {
+    final botId = _bot['id']?.toString() ?? '';
+    if (botId.isEmpty) return;
+
+    // 转写音频
+    String? audioTranscription;
+    if (result.audioPath != null) {
+      try {
+        final transcript = await AIManager()
+            .transcribeAudio(botId: botId, audioPath: result.audioPath!)
+            .timeout(const Duration(seconds: 60), onTimeout: () => null);
+        if (transcript != null && transcript.trim().isNotEmpty) {
+          audioTranscription = transcript.trim();
+        }
+      } catch (e) {
+        debugPrint('[video] audio transcription failed: $e');
+      }
+    }
+
+    // 构建视频上下文
+    final durationText = _formatDuration(result.duration);
+    final contextParts = <String>[];
+
+    // 生成视频编号（使用 VID 前缀，区别于图片的编号）
+    final videoId = 'VID${timestamp}';
+
+    // 保存视频信息到状态（用于后续查看）
+    final videoInfo = {
+      'id': videoId,
+      'timestamp': timestamp,
+      'duration': result.duration,
+      'frame_count': result.framePaths.length,
+      'frame_paths': result.framePaths,
+      'audio_path': result.audioPath,
+      'original_video_path': result.originalVideoPath, // 压缩后保存的视频文件
+      'platform_link': platformLink,
+      'platform': platform,
+      'title': title,
+      'is_preview': result.isPreview,
+    };
+
+    // 保存到数据库或SharedPreferences供后续查看
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final existingVideos = prefs.getStringList('video_history_$botId') ?? [];
+
+      // 清理超出数量限制的旧视频文件
+      const maxVideos = 50; // 只保留最近50个视频
+      if (existingVideos.length >= maxVideos) {
+        final videosToRemove = existingVideos.length - maxVideos + 1;
+        for (int i = 0; i < videosToRemove; i++) {
+          try {
+            final oldVideo =
+                json.decode(existingVideos[i]) as Map<String, dynamic>;
+            final oldVideoPath = oldVideo['original_video_path'] as String?;
+
+            // 删除旧视频文件
+            if (oldVideoPath != null && oldVideoPath.isNotEmpty) {
+              final file = File(oldVideoPath);
+              if (await file.exists()) {
+                await file.delete();
+                debugPrint('[video] deleted old video: $oldVideoPath');
+              }
+            }
+
+            // 删除旧的帧文件（如果还存在）
+            final oldFramePaths =
+                (oldVideo['frame_paths'] as List?)?.cast<String>() ?? [];
+            for (final framePath in oldFramePaths) {
+              try {
+                final frameFile = File(framePath);
+                if (await frameFile.exists()) {
+                  await frameFile.delete();
+                }
+              } catch (_) {}
+            }
+          } catch (e) {
+            debugPrint('[video] failed to clean old video: $e');
+          }
+        }
+        existingVideos.removeRange(0, videosToRemove);
+      }
+
+      existingVideos.add(json.encode(videoInfo));
+      await prefs.setStringList('video_history_$botId', existingVideos);
+    } catch (e) {
+      debugPrint('[video] failed to save video history: $e');
+    }
+
+    if (result.isPreview) {
+      // >5分钟视频的预览模式
+      contextParts.add('[视频预览模式]');
+      contextParts.add('时长：$durationText');
+      contextParts.add(
+          '已提供：前40秒的${result.framePaths.length}帧图片${audioTranscription != null ? ' + 完整音频文字' : ''}');
+
+      // 添加平台链接或视频编号标注
+      if (platformLink != null) {
+        final platformName = platform == 'douyin'
+            ? '抖音'
+            : platform == 'xiaohongshu'
+                ? '小红书'
+                : platform == 'bilibili'
+                    ? 'B站'
+                    : '平台';
+        contextParts
+            .add('[视频文件，可获取查看，编号$videoId，$platformName链接：$platformLink]');
+      } else {
+        contextParts.add('[视频文件，时长$durationText，编号$videoId]');
+      }
+
+      contextParts.add('');
+      if (audioTranscription != null && audioTranscription.isNotEmpty) {
+        contextParts.add('音频内容：');
+        contextParts.add(audioTranscription);
+        contextParts.add('');
+      }
+      contextParts.add('如果当前信息足够理解视频，可以直接回复。');
+      contextParts.add('如果需要看完整视频，请输出：');
+      contextParts.add('{"action":"request_full_video","frames":N}');
+      contextParts.add('');
+      contextParts.add('N的范围：10-80帧（建议根据视频复杂度选择）');
+      contextParts.add('- 简单内容/重复画面多：10-30帧');
+      contextParts.add('- 一般内容：30-50帧');
+      contextParts.add('- 复杂内容/快速切换：50-80帧');
+    } else {
+      // 正常模式或完整模式
+      contextParts.add('[视频分析]');
+      contextParts.add('时长：$durationText');
+      contextParts.add('帧数：${result.framePaths.length}帧');
+
+      // 添加平台链接或视频编号标注
+      if (platformLink != null) {
+        final platformName = platform == 'douyin'
+            ? '抖音'
+            : platform == 'xiaohongshu'
+                ? '小红书'
+                : platform == 'bilibili'
+                    ? 'B站'
+                    : '平台';
+        contextParts
+            .add('[视频文件，可获取查看，编号$videoId，$platformName链接：$platformLink]');
+      } else {
+        contextParts.add('[视频文件，时长$durationText，编号$videoId]');
+      }
+
+      if (audioTranscription != null && audioTranscription.isNotEmpty) {
+        contextParts.add('');
+        contextParts.add('音频内容：');
+        contextParts.add(audioTranscription);
+      }
+    }
+
+    final videoContext = contextParts.join('\n');
+
+    // 发送给 AI
+    final streamEnabled =
+        (await DBManager().getKV('streaming_output')) != 'false';
+    final streamSpeed =
+        (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ?? 50)
+            .clamp(1, 100);
+
+    _setTypingState(true);
+    const requestTimeout = Duration(minutes: 5);
+    final requestToken = AICancellationToken();
+
+    try {
+      final aiResult = await AIManager()
+          .sendMessage(
+        botId: botId,
+        text: videoContext,
+        imagePaths: result.framePaths,
+        persistResponse: true,
+        forceSingleReply: false,
+        notifyResponse: true,
+        useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
+        cancellationToken: requestToken,
+      )
+          .timeout(requestTimeout, onTimeout: () {
+        requestToken.cancel();
+        throw TimeoutException('视频分析超时');
+      }).whenComplete(() => _setTypingState(false));
+
+      if (aiResult['success'] != true) {
+        throw StateError(aiResult['error']?.toString() ?? '视频分析失败');
+      }
+
+      // 检查是否需要请求完整视频
+      if (result.isPreview) {
+        final response = aiResult['messages']?.firstWhere(
+          (m) => m['role'] == 'assistant',
+          orElse: () => null,
+        );
+
+        if (response != null) {
+          final content = response['content']?.toString() ?? '';
+          final requestMatch = RegExp(
+                  r'\{"action"\s*:\s*"request_full_video"\s*,\s*"frames"\s*:\s*(\d+)\}')
+              .firstMatch(content);
+
+          if (requestMatch != null) {
+            final requestedFrames =
+                int.tryParse(requestMatch.group(1) ?? '') ?? 30;
+            final clampedFrames = requestedFrames.clamp(10, 80);
+
+            if (mounted) {
+              GlobalNotice.show('AI 请求查看完整视频（$clampedFrames帧）...',
+                  color: TideTheme.of(context).primary);
+            }
+
+            // 重新抽取完整视频
+            await _processFullVideo(
+                result.duration, clampedFrames, result.audioPath, timestamp);
+            return;
+          }
+        }
+      }
+
+      // 显示 AI 回复
+      final persisted = (aiResult['messages'] as List? ?? const [])
+          .whereType<Map>()
+          .map((message) => Map<String, dynamic>.from(message))
+          .toList();
+
+      if (!mounted) return;
+
+      for (var index = 0; index < persisted.length; index++) {
+        if (!mounted) break;
+
+        final row = persisted[index];
+        final fullContent = row['content']?.toString() ?? '';
+        final reveal = streamEnabled &&
+            (row['type'] == 'text' || row['type'] == 'inner_thought') &&
+            fullContent.isNotEmpty;
+
+        if (reveal) {
+          row['content'] = '';
+          row['is_streaming'] = true;
+        }
+
+        setState(() {
+          final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
+          if (existing >= 0) {
+            _msgs[existing] = row;
+          } else {
+            _msgs.add(row);
+          }
+          _msgs = normalizeChatMessages(_msgs);
+        });
+
+        _scrollDown();
+
+        if (reveal) {
+          await for (final content
+              in chatStreamText(fullContent, streamSpeed)) {
+            if (!mounted) break;
+            setState(() => row['content'] = content);
+            _scrollDown(animated: false);
+          }
+          if (!mounted) return;
+          setState(() => row.remove('is_streaming'));
+        }
+      }
+    } catch (e) {
+      debugPrint('[video] AI processing failed: $e');
+      if (mounted) {
+        GlobalNotice.show('视频分析失败: $e', color: const Color(0xFFE74C3C));
+      }
+    } finally {
+      _setTypingState(false);
+    }
+  }
+
+  Future<void> _processFullVideo(
+      double duration, int frameCount, String? audioPath, int timestamp) async {
+    try {
+      if (!mounted) return;
+      GlobalNotice.show('正在重新处理视频...', color: TideTheme.of(context).primary);
+
+      // 重新抽取指定帧数（这里需要保存原始视频路径，暂时简化）
+      // 实际应该在 _pickAndProcessVideo 中保存原始视频路径
+      if (mounted) {
+        GlobalNotice.show('完整视频处理功能待完善', color: const Color(0xFFFF9800));
+      }
+    } catch (e) {
+      debugPrint('[video] full video processing failed: $e');
+      if (mounted) {
+        GlobalNotice.show('完整视频处理失败', color: const Color(0xFFE74C3C));
+      }
+    }
+  }
+
+  String _formatDuration(double seconds) {
+    final minutes = (seconds / 60).floor();
+    final secs = (seconds % 60).floor();
+    if (minutes > 0) {
+      return '$minutes分$secs秒';
+    }
+    return '$secs秒';
   }
 
   Future<List<String>> _persistChatImages(List<String> paths) async {
@@ -2094,6 +2713,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String curImageGen = prefs.getString('image_gen_model_$botId') ?? '';
     String curStt = prefs.getString('stt_model_$botId') ??
         ((_bot['stt_model'] as String?)?.trim() ?? '');
+    String curVideo = prefs.getString('video_model_$botId') ??
+        ((_bot['video_model'] as String?)?.trim() ?? '');
     final jarvisOn = (await DBManager().getKV('jarvis_enabled')) == 'true';
     String curJarvis = prefs.getString('jarvis_model_$botId') ?? '';
     String curTts = prefs.getString('tts_model_$botId') ??
@@ -2126,6 +2747,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             if (key == 'stt_model_$botId') {
               _bot['stt_model'] = val;
               await DBManager().updateBot(botId, {'stt_model': val});
+            }
+            if (key == 'video_model_$botId') {
+              _bot['video_model'] = val;
+              await DBManager().updateBot(botId, {'video_model': val});
             }
             setSt(() {});
           }
@@ -2193,6 +2818,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                           curStt = v;
                           await pickModel('stt_model_$botId', v);
                         }, includePrimaryStt: true),
+                        _mLabel('视频解析模型'),
+                        _modelPicker(ctx, providers, curVideo, (v) async {
+                          curVideo = v;
+                          await pickModel('video_model_$botId', v);
+                        }, includePrimaryVision: true),
                         _mLabel('TTS模型'),
                         _modelPicker(ctx, ttsProviders, curTts, (v) async {
                           curTts = v;
@@ -3684,12 +4314,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                   // 动态分享使用独立卡片，JSON 负载不会直接暴露为聊天正文。
                                   if (sharedPost != null)
                                     _sharedPostCard(sharedPost, isUser),
-                                  // 普通文字气泡
+                                  // 链接预览卡片
                                   if (sharedPost == null &&
                                       !hasAudio &&
                                       !hasSummary &&
                                       txt.isNotEmpty)
-                                    _parseText(txt, isUser),
+                                    _buildTextWithLinkPreviews(txt, isUser),
                                   if ((isUser &&
                                           (m['send_status'] == 'sending' ||
                                               isRetrying ||
@@ -3921,6 +4551,99 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         text: TextSpan(children: spans),
       ),
     );
+  }
+
+  /// 构建包含链接预览的文本（新增方法）
+  Widget _buildTextWithLinkPreviews(String text, bool isUser) {
+    // 检测文本中的链接
+    final urls = LinkPreviewService.extractUrls(text);
+
+    if (urls.isEmpty) {
+      // 没有链接，直接渲染普通文本
+      return _parseText(text, isUser);
+    }
+
+    // 有链接，显示链接预览卡片和剩余文本
+    return Column(
+      crossAxisAlignment:
+          isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        // 显示所有链接预览卡片
+        for (final url in urls) _buildLinkPreviewCard(url, isUser),
+        // 移除链接后的文本
+        if (_getTextWithoutUrls(text, urls).trim().isNotEmpty)
+          _parseText(_getTextWithoutUrls(text, urls), isUser),
+      ],
+    );
+  }
+
+  /// 构建单个链接预览卡片（异步加载）
+  Widget _buildLinkPreviewCard(String url, bool isUser) {
+    return FutureBuilder<LinkPreviewData>(
+      future: LinkPreviewService.instance.fetchPreview(url),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          // 加载中显示占位
+          return Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.75,
+            ),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: TideTheme.of(context).buttonSecondary,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: TideTheme.of(context).textWeak,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '正在加载链接预览...',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: TideTheme.of(context).textWeak,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          // 加载失败，不显示卡片
+          return const SizedBox.shrink();
+        }
+
+        final data = snapshot.data!;
+
+        // 根据链接类型显示不同卡片
+        if (data.type == LinkType.web) {
+          return WebLinkCard(data: data, isUser: isUser);
+        } else {
+          return VideoShareCard(data: data, isUser: isUser);
+        }
+      },
+    );
+  }
+
+  /// 从文本中移除链接，保留剩余文本
+  String _getTextWithoutUrls(String text, List<String> urls) {
+    var result = text;
+    for (final url in urls) {
+      result = result.replaceAll(url, '').trim();
+    }
+    return result;
   }
 
   IconData _attachmentIcon(String path) {
