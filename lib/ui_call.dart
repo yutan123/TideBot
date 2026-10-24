@@ -187,6 +187,7 @@ class _CallPageState extends State<CallPage>
             allowTools: _videoEnabled,
             allowStickers: false,
             forceSingleReply: true,
+            persistResponse: false,
             cancellationToken: token,
             extraSystemPrompt: systemPrompt,
             includeChatHistory: true,
