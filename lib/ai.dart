@@ -1,3 +1,4 @@
+import 'call_speech.dart';
 import 'request_execution_lease.dart';
 import 'ai_request_task.dart';
 import 'memory_prompt_policy.dart';
@@ -1779,6 +1780,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         replyText = _cleanVisibleReply(rawReply);
         final wantsSources = _userExplicitlyRequestedSources(text);
         if (!wantsSources) replyText = _stripSourceLinks(replyText);
+        // 过滤模型错误输出的工具调用标记
+        replyText = replyText
+            .replaceAll(
+                RegExp(r'\[tool_call\s+choose_silence\]', caseSensitive: false),
+                '')
+            .replaceAll(RegExp(r'\[choose_silence\]', caseSensitive: false), '')
+            .trim();
         if (replyText.isEmpty && generatedImagePath != null) {
           replyText = '图片已生成。';
         }
@@ -2656,6 +2664,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String text,
     String providerId, {
     String mood = '平静',
+    CallSpeechStyle? speechStyle,
     AICancellationToken? cancellationToken,
   }) async {
     final list = await DBManager().queryTtsProviders();
@@ -2708,16 +2717,24 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'mimo' => _chatCompletionsEndpoint(baseUrl),
         _ => '$baseUrl/audio/speech',
       };
-      final payload = switch (protocol) {
+      final siliconHost = Uri.tryParse(baseUrl)?.host ?? '';
+      final effectiveVoice =
+          (configuredVoice.isEmpty || configuredVoice == 'default') &&
+                  (siliconHost == 'api.siliconflow.cn' ||
+                      siliconHost == 'api.siliconflow.com') &&
+                  model.contains('CosyVoice2-0.5B')
+              ? '$model:alex'
+              : voice;
+      final basePayload = switch (protocol) {
         'minimax' => {
             'model': model,
             'text': text,
             'stream': false,
             'voice_setting': {
               'voice_id': voice,
-              'speed': moodSpeed,
+              'speed': speechStyle == null ? moodSpeed : 1.0,
               'vol': 1.0,
-              'pitch': moodPitch,
+              'pitch': speechStyle == null ? moodPitch : 0,
             },
             'audio_setting': {
               'sample_rate': 32000,
@@ -2742,10 +2759,20 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         _ => {
             'model': model,
             'input': text,
-            'voice': voice,
-            if (moodSpeed != 1.0) 'speed': moodSpeed,
+            'voice': effectiveVoice,
+            if (speechStyle == null && moodSpeed != 1.0) 'speed': moodSpeed,
           },
       };
+      final payload = speechStyle == null
+          ? basePayload
+          : applyCallSpeechStyle(
+              basePayload,
+              protocol: protocol,
+              model: model,
+              baseUrl: baseUrl,
+              style: speechStyle,
+              supportsInstructions: provider['supports_instructions'] == true,
+            );
       cancellationToken?.throwIfCancelled();
       AppLogService.instance.add(
         'TTS',
@@ -2755,15 +2782,28 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
       };
-      final res = await _withCancellableClient(cancellationToken, (client) {
-        return client
-            .post(
-              Uri.parse(endpoint),
-              headers: headers,
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 30));
-      });
+      Future<http.Response> request(Map<String, dynamic> body) =>
+          _withCancellableClient(
+              cancellationToken,
+              (client) => client
+                  .post(
+                    Uri.parse(endpoint),
+                    headers: headers,
+                    body: jsonEncode(body),
+                  )
+                  .timeout(const Duration(seconds: 30)));
+      var res = await request(payload);
+      // Only retry rejected expressive parameters; no retry on auth/rate limits.
+      if (speechStyle != null &&
+          (res.statusCode == 400 ||
+              res.statusCode == 422 ||
+              (res.headers['content-type'] ?? '').contains('json')) &&
+          shouldRetryBasicSpeech(res.statusCode,
+              utf8.decode(res.bodyBytes, allowMalformed: true))) {
+        cancellationToken?.throwIfCancelled();
+        AppLogService.instance.add('TTS', '表现参数被拒绝，使用基础语音参数重试一次');
+        res = await request(basePayload);
+      }
       AppLogService.instance.add(
         'TTS',
         '语音服务响应 HTTP ${res.statusCode}，content-type=${res.headers['content-type'] ?? 'unknown'}',
@@ -5129,8 +5169,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String text,
     String providerId, {
     AICancellationToken? cancellationToken,
+    CallSpeechStyle? speechStyle,
   }) =>
-      _generateTTS(text, providerId, cancellationToken: cancellationToken);
+      _generateTTS(text, providerId,
+          cancellationToken: cancellationToken, speechStyle: speechStyle);
   Future<Map<String, dynamic>> testProviderCapabilities(
     String baseUrl,
     String apiKey,

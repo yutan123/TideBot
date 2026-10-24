@@ -7,6 +7,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'call_message.dart';
+import 'call_speech.dart';
 import 'call_speech_endpoint.dart';
 import 'app_permissions.dart';
 import 'package:flutter/material.dart';
@@ -89,6 +90,7 @@ class _CallPageState extends State<CallPage>
   Duration _elapsed = Duration.zero;
   bool _ending = false;
   AICancellationToken? _turnToken;
+  CallSpeechStyle? _previousSpeechStyle;
 
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
@@ -164,6 +166,15 @@ class _CallPageState extends State<CallPage>
   }
 
   Future<void> _runTextTurn(String text) async {
+    if (text.isEmpty || _processing || _ending || _finishingRecording) return;
+    // Text input replaces microphone input for this turn.
+    _autoStopTimer?.cancel();
+    _stopAmpMonitor();
+    final wasRecording = _recording;
+    _recording = false;
+    _recordingStartedAt = null;
+    if (wasRecording) await _recorder.stop();
+    if (_ending) return;
     _appendMessage(text, isUser: true);
     _transcript.add('用户：$text');
     if (mounted)
@@ -177,56 +188,7 @@ class _CallPageState extends State<CallPage>
       // 视频通话：发送前截取当前摄像头画面
       final frame = _videoEnabled ? await _captureVideoFrame() : null;
       if (_ending) return;
-      final systemPrompt =
-          _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
-      final reply = await AIManager()
-          .sendMessage(
-            botId: widget.bot['id'].toString(),
-            text: text,
-            imagePath: frame,
-            allowTools: _videoEnabled,
-            allowStickers: false,
-            forceSingleReply: true,
-            persistResponse: false,
-            cancellationToken: token,
-            extraSystemPrompt: systemPrompt,
-            includeChatHistory: true,
-          )
-          .timeout(const Duration(seconds: 60));
-      if (_ending) return;
-      if (reply['success'] != true) {
-        final reason = _replyFailureReason(reply);
-        AppLogService.instance.add('VOICE_CALL', '文字 AI 请求失败：$reason');
-        if (mounted) {
-          setState(() {
-            _flowState = CallFlowState.failed;
-            _caption = reason;
-          });
-        }
-        return;
-      }
-      final answer =
-          reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
-      if (answer.trim().isEmpty) {
-        if (mounted) {
-          setState(() {
-            _flowState = CallFlowState.failed;
-            _caption = '机器人没有返回回复';
-          });
-        }
-        return;
-      }
-      _applyGeneratedImage(reply);
-      _transcript.add('机器人：$answer');
-      if (mounted) setState(() => _caption = answer);
-      final ttsId = _ttsProviderId;
-      if (_hasTts && ttsId.isNotEmpty) {
-        await _synthesizeAndPlay(answer, ttsId);
-      } else {
-        // TTS 不可用，直接显示文字
-        _appendMessage(answer, isUser: false);
-        AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，仅显示文字');
-      }
+      await _completeCallTurn(text, frame, token);
     } on AICancelledException {
       return;
     } catch (error) {
@@ -569,78 +531,7 @@ class _CallPageState extends State<CallPage>
       }
       AppLogService.instance.add('VOICE_CALL', 'AI 请求开始');
 
-      String streamingReply = '';
-      final systemPrompt =
-          _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
-      final callSystemPrompt =
-          '$systemPrompt\n重要：语音通话中不要输出内心独白，不使用 <inner_thought> 标签。';
-      final reply = await AIManager()
-          .sendMessage(
-            botId: widget.bot['id'].toString(),
-            text: text,
-            imagePath: frame,
-            allowTools: _videoEnabled,
-            allowStickers: false,
-            forceSingleReply: true,
-            persistResponse: false,
-            cancellationToken: token,
-            extraSystemPrompt: callSystemPrompt,
-            includeChatHistory: true,
-            onDelta: (delta) {
-              if (mounted) {
-                setState(() {
-                  streamingReply += delta;
-                  _caption = streamingReply;
-                });
-              }
-            },
-          )
-          .timeout(const Duration(seconds: 60));
-      if (_ending) return;
-      if (reply['success'] != true) {
-        final reason = _replyFailureReason(reply);
-        AppLogService.instance.add('VOICE_CALL', 'AI 请求失败：$reason');
-        // 检测是否因流式失败，如果是则降级到非流式
-        if (reason.contains('stream') ||
-            reason.contains('流式') ||
-            reason.contains('SSE')) {
-          AppLogService.instance.add('VOICE_CALL', '流式输出失败，本轮通话降级到非流式');
-        }
-        if (mounted) {
-          setState(() {
-            _flowState = CallFlowState.failed;
-            _caption = reason;
-          });
-        }
-        return;
-      }
-      final answer =
-          reply['reply']?.toString() ?? reply['content']?.toString() ?? '';
-      if (answer.trim().isEmpty) {
-        AppLogService.instance.add('VOICE_CALL', 'AI 返回空回复');
-        if (mounted) {
-          setState(() {
-            _flowState = CallFlowState.failed;
-            _caption = '机器人没有返回回复';
-          });
-        }
-        return;
-      }
-      AppLogService.instance.add('VOICE_CALL', 'AI 回复成功，文本长度 ${answer.length}');
-      _transcript.add('机器人：$answer');
-
-      _applyGeneratedImage(reply);
-      // 先不显示文字，等 TTS 生成后再同步显示和播放
-      final ttsId = _ttsProviderId;
-      if (ttsId.isEmpty || !_hasTts) {
-        AppLogService.instance.add('VOICE_CALL', 'TTS 不可用，保留文字回复');
-        _appendMessage(answer, isUser: false);
-        if (mounted) setState(() => _caption = answer);
-        return;
-      }
-      AppLogService.instance.add('VOICE_CALL', 'TTS 生成开始：$ttsId');
-      // TTS 生成成功后在 _synthesizeAndPlay 里显示文字
-      await _synthesizeAndPlay(answer, ttsId);
+      await _completeCallTurn(text, frame, token);
     } on AICancelledException {
       return;
     } catch (error) {
@@ -663,7 +554,83 @@ class _CallPageState extends State<CallPage>
     }
   }
 
-  Future<void> _synthesizeAndPlay(String answer, String ttsId) async {
+  /// Both input modes share generation, privacy, voice direction and playback.
+  Future<void> _completeCallTurn(
+      String text, String? frame, AICancellationToken token) async {
+    final db = DBManager();
+    final emotional = await db.getKV('call_emotional_voice') != 'false';
+    final strength = await db.getKV('call_voice_strength') ?? 'natural';
+    token.throwIfCancelled();
+    final systemPrompt =
+        _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
+    final recent = _transcript.length > 12
+        ? _transcript.sublist(_transcript.length - 12)
+        : _transcript;
+    final reply = await AIManager()
+        .sendMessage(
+      botId: widget.bot['id'].toString(),
+      text: text,
+      imagePath: frame,
+      allowTools: _videoEnabled,
+      allowStickers: false,
+      forceSingleReply: true,
+      persistResponse: false,
+      cancellationToken: token,
+      extraSystemPrompt: '$systemPrompt\n不要输出内心独白。'
+          '\n本次通话最近的对话仅供上下文参考：\n${recent.join('\n')}'
+          '${emotional ? '\n$callSpeechPrompt' : ''}',
+      includeChatHistory: true,
+    )
+        .timeout(const Duration(seconds: 60), onTimeout: () {
+      token.cancel();
+      throw TimeoutException('通话回复超时');
+    });
+    token.throwIfCancelled();
+    if (_ending || !mounted) return;
+    if (reply['silent'] == true) {
+      setState(() {
+        _caption = '正在聆听，请说话';
+        _flowState = CallFlowState.idle;
+      });
+      return;
+    }
+    if (reply['success'] != true) {
+      setState(() {
+        _flowState = CallFlowState.failed;
+        _caption = _replyFailureReason(reply);
+      });
+      return;
+    }
+    final parsed = CallSpeechReply.parse(
+        reply['reply']?.toString() ?? reply['content']?.toString() ?? '');
+    final answer = parsed.text.trim();
+    if (answer.isEmpty) {
+      setState(() {
+        _flowState = CallFlowState.failed;
+        _caption = '机器人没有返回有效通话正文，请重试';
+      });
+      return;
+    }
+    final style = emotional
+        ? parsed.style
+            .moderated(previous: _previousSpeechStyle, strength: strength)
+        : null;
+    _previousSpeechStyle = style;
+    _applyGeneratedImage(reply);
+    _transcript.add('机器人：$answer');
+    if (_hasTts && _ttsProviderId.isNotEmpty) {
+      await _synthesizeAndPlay(answer, _ttsProviderId, speechStyle: style);
+    } else {
+      _appendMessage(answer, isUser: false);
+      setState(() {
+        _caption = answer;
+        _flowState = CallFlowState.idle;
+      });
+    }
+  }
+
+  Future<void> _synthesizeAndPlay(String answer, String ttsId,
+      {CallSpeechStyle? speechStyle}) async {
     // 立即显示回复文字（音画同步）
     _appendMessage(answer, isUser: false);
     if (mounted) {
@@ -678,6 +645,7 @@ class _CallPageState extends State<CallPage>
         answer,
         ttsId,
         cancellationToken: _turnToken,
+        speechStyle: speechStyle,
       );
       if (_ending) return;
       if (audioPath == null || audioPath.isEmpty) {

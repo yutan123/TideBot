@@ -166,8 +166,9 @@ class TideTheme extends ChangeNotifier {
   bool get enableLiquidGlass => _enableLiquidGlass;
   bool get useLiquidGlass => hasGlobalBackground && enableLiquidGlass;
 
-  /// The navigation dock retains its original flowing glass without wallpaper.
-  bool get useDockLiquidGlass => !hasGlobalBackground || useLiquidGlass;
+  /// The dock always retains its original flowing glass. Wallpaper glass
+  /// controls page surfaces and the selected capsule independently.
+  bool get useDockLiquidGlass => true;
 
   void _setGlobalBackgroundImage(String path) {
     _configuredBackgroundPath = '';

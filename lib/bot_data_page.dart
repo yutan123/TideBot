@@ -169,6 +169,46 @@ List<Map<String, dynamic>> metricPoints(Map<String, dynamic> s, int index,
       .toList();
 }
 
+/// Matches the dashboard surface only when wallpaper glass is enabled.
+/// Paint the complete surface in the card's coordinate space so it follows
+/// page transitions and the card's press animation together with its content.
+class _VitalDataCard extends StatelessWidget {
+  const _VitalDataCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    if (!theme.useLiquidGlass) {
+      return FrostCard(padding: padding, child: child);
+    }
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.2),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
 /// One square, generous typography and a quiet chart; no nested fixed heights.
 class VitalMetricCard extends StatelessWidget {
   const VitalMetricCard(
@@ -190,8 +230,7 @@ class VitalMetricCard extends StatelessWidget {
     final points = metricPoints(data, index);
     return BouncyTap(
         onTap: onTap ?? () {},
-        child: FrostCard(
-            liquid: true,
+        child: _VitalDataCard(
             padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -505,7 +544,7 @@ class _BotDataPageState extends State<BotDataPage> {
                                               botName: widget.botName,
                                               index: i))))),
                           const SizedBox(height: 20),
-                          FrostCard(
+                          _VitalDataCard(
                               child: Text(
                                   '睡眠、日程和心情共同构成TA的生活节奏。点击曲线可以查看具体记录。身高保持稳定，体重与体温每日更新，平均心率、心情、压力和步数每小时更新。',
                                   style: TextStyle(
@@ -689,7 +728,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                                 })
                             ])),
                       const SizedBox(height: 14),
-                      FrostCard(
+                      _VitalDataCard(
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -759,7 +798,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                           ])),
                       const SizedBox(height: 14),
                       if (values.isNotEmpty)
-                        FrostCard(
+                        _VitalDataCard(
                             child: Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceAround,
@@ -779,7 +818,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                       ],
                       if (i == 5) ...[
                         const SizedBox(height: 16),
-                        FrostCard(
+                        _VitalDataCard(
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -805,7 +844,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                         for (final e in recent)
                           Padding(
                               padding: const EdgeInsets.only(bottom: 8),
-                              child: FrostCard(
+                              child: _VitalDataCard(
                                   padding: const EdgeInsets.all(12),
                                   child: Row(children: [
                                     Expanded(
@@ -858,7 +897,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
     if (sleeps.isEmpty)
       return [
         const SizedBox(height: 18),
-        FrostCard(child: text('今晚的睡眠结束后，会在这里展示睡眠时长、清醒时段与质量。'))
+        _VitalDataCard(child: text('今晚的睡眠结束后，会在这里展示睡眠时长、清醒时段与质量。'))
       ];
     final current = sleeps.firstWhere((e) => e['start'] == sleep?['start'],
         orElse: () => sleeps.first);
@@ -886,7 +925,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
           })
       ]),
       const SizedBox(height: 12),
-      FrostCard(
+      _VitalDataCard(
           child: Column(children: [
         info('入睡',
             '${vitalDate(current['start'])} ${vitalClock(current['start'])}'),
@@ -907,7 +946,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
             child: InkWell(
                 onTap: () => showSegment(e),
                 borderRadius: BorderRadius.circular(16),
-                child: FrostCard(
+                child: _VitalDataCard(
                     padding: const EdgeInsets.all(13),
                     child: Row(children: [
                       SleepStateMark(
@@ -966,7 +1005,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                       fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                       color: selected ? Colors.white : theme.textStrong))));
 
-  Widget _bodyReadOnly(TideTheme theme) => FrostCard(
+  Widget _bodyReadOnly(TideTheme theme) => _VitalDataCard(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
         info('身高', '${vitalDouble(data!['height']).toStringAsFixed(1)} cm'),
         info('体重', '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
@@ -1085,7 +1124,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
 
   Widget _buildEditableBodyCard(
           TideTheme theme, BuildContext dialogContext, StateSetter refresh) =>
-      FrostCard(
+      _VitalDataCard(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Row(children: [
             Expanded(child: text('身体指标', size: 18)),

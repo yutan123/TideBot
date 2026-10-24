@@ -1,3 +1,4 @@
+import 'call_speech_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'native_background_coordinator.dart';
@@ -1037,6 +1038,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _stickers = false;
   bool _jarvis = false;
   bool _voiceReply = false;
+  bool _callEmotionalVoice = true;
+  String _callVoiceStrength = 'natural';
   String _imageStyle = '写实';
   String _searchProvider = 'Tavily';
   int _stickerChance = 50;
@@ -1118,6 +1121,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final stickers = await db.getKV('bot_stickers_enabled');
     final jarvis = await db.getKV('jarvis_enabled');
     final voiceReply = await db.getKV('voice_reply_enabled');
+    final callEmotionalVoice = await db.getKV('call_emotional_voice');
+    final callVoiceStrength = await db.getKV('call_voice_strength');
     final voiceReplyChance = int.tryParse(
       await db.getKV('voice_reply_chance') ?? '',
     );
@@ -1164,6 +1169,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _stickers = stickers == 'true';
       _jarvis = jarvis == 'true';
       _voiceReply = voiceReply == 'true';
+      _callEmotionalVoice = callEmotionalVoice != 'false';
+      _callVoiceStrength = const ['restrained', 'natural', 'expressive'].contains(callVoiceStrength) ? callVoiceStrength! : 'natural';
       _voiceReplyChance = (voiceReplyChance ?? 50).clamp(1, 100);
       _voiceReplyChanceController.text = _voiceReplyChance.toString();
       _stickerChance = (stickerChance ?? 50).clamp(1, 100);
@@ -1843,6 +1850,33 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(
                 children: [
+                  _settingSwitch(
+                    theme: theme,
+                    title: '通话情绪语音',
+                    help: '默认开启。根据本轮对话调整语气；语音输入和文字输入一致，保持原音色。效果取决于 TTS 模型。',
+                    value: _callEmotionalVoice,
+                    onChanged: (v) {
+                      setState(() => _callEmotionalVoice = v);
+                      _save('call_emotional_voice', '$v');
+                    },
+                    child: _callEmotionalVoice ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Wrap(spacing: 8, children: const {
+                          'restrained': '克制', 'natural': '自然', 'expressive': '丰富',
+                        }.entries.map((e) => ChoiceChip(
+                          label: Text(e.value), selected: _callVoiceStrength == e.key,
+                          selectedColor: theme.primary.withValues(alpha: .2),
+                          onSelected: (_) {
+                            setState(() => _callVoiceStrength = e.key);
+                            _save('call_voice_strength', e.key);
+                          },
+                        )).toList()),
+                        const SizedBox(height: 8),
+                        TideDialogs.glassButton('试听情绪语音', onTap: () => showCallSpeechPreview(context, _callVoiceStrength)),
+                      ]),
+                    ) : null,
+                  ),
                   _settingSwitch(
                     theme: theme,
                     title: '语音回复',
@@ -2850,6 +2884,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final kCtrl = TextEditingController(text: key);
     final mCtrl = TextEditingController(text: models);
     final vCtrl = TextEditingController(text: voice);
+    var supportsInstructions = false;
     TideDialogs.show(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2877,6 +2912,18 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 8),
             _f('音色', vCtrl),
+            const SizedBox(height: 8),
+            Text(protocol == 'mimo' ? '支持独立语气指令，保持所选音色。'
+                : protocol == 'minimax' ? '按模型支持情况使用原生情绪与语速。'
+                : 'CosyVoice2 预设自动适配情绪；其他兼容接口默认仅调整语速。'),
+            if (protocol == 'openai') StatefulBuilder(builder: (context, update) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              activeThumbColor: TideTheme.of(context).primary,
+              title: const Text('支持语气指令'),
+              subtitle: const Text('仅在接口文档明确支持 instructions 时开启'),
+              value: supportsInstructions,
+              onChanged: (v) => update(() => supportsInstructions = v),
+            )),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -2911,6 +2958,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'model': model,
                           'voice': vCtrl.text.trim(),
                           'protocol': protocol,
+                          'supports_instructions': supportsInstructions,
                           'id': 'tts_${DateTime.now().microsecondsSinceEpoch}',
                         };
                         _ttsProviders.add(p);

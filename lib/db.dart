@@ -2782,6 +2782,7 @@ class DBManager {
           'model': m['model'] ?? '',
           'voice': m['voice'] ?? '',
           'protocol': m['protocol'] ?? 'openai',
+          'supports_instructions': m['supports_instructions'] == true,
         });
       }
     } catch (_) {}
