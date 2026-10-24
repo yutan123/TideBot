@@ -44,7 +44,8 @@ dependencies:
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
   html: ^0.15.4
-  ffmpeg_kit_flutter: ^6.0.3
+  # Maintained Full GPL fork: available native artifacts and libx264 support.
+  ffmpeg_kit_flutter_new: 4.6.7
 
   # 后台守护与保活
   flutter_background_service: ^5.1.0

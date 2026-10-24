@@ -145,6 +145,14 @@ flutter run
 
 欢迎通过 [Issues](https://github.com/yutan123/TideBot/issues) 反馈问题或建议。报告问题时，请附上应用版本、Android 版本、复现步骤与已隐去密钥和私人内容的日志。
 
+## 许可证
+
+TideBot 采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**，完整协议见 [LICENSE](LICENSE)。
+
+你可以在协议允许的范围内使用、修改和分发本项目，包括商业使用。分发本项目或其修改版本时，须遵守协议中提供对应源代码、保留版权和许可声明等要求；如果修改后的版本支持通过网络与用户交互，须按协议第 13 条向这些用户提供获取该版本对应源代码的机会。
+
+本项目按协议以“现状”提供，不作任何担保，具体以协议全文为准。
+
 ## 第三方许可
 
-实际使用的第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。其中 `liquid_glass_widgets` 使用 MIT License。当前仓库尚未提供项目整体的 `LICENSE` 文件，第三方组件的许可证不代表 TideBot 整体采用相同许可。
+实际使用的第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。其中 `liquid_glass_widgets` 使用 MIT License。第三方组件保留各自的版权与许可证，具体以其随附文件为准。
