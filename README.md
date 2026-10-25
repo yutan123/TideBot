@@ -13,7 +13,7 @@
 ![Dart](https://img.shields.io/badge/Dart-3.0%2B-0175C2?logo=dart&logoColor=white)
 ![Local First](https://img.shields.io/badge/Data-Local_First-547AA5)
 
-[功能概览](#功能概览) · [模型与服务](#模型与服务) · [开始使用](#开始使用) · [常见问题](#常见问题) · [问题反馈](https://github.com/yutan123/TideBot/issues)
+[功能概览](#功能概览) · [模型与服务](#模型与服务) · [开始使用](#开始使用) · [常见问题](#常见问题) · [问题反馈](#开发与反馈)
 
 </div>
 
@@ -79,7 +79,7 @@ TideBot 保留提供商选择权，是为了让角色体验、预算和能力配
 
 ## 开始使用
 
-1. 从 [TideBot 更新发布页](https://github.com/yutan123/TideBot-OTA/releases) 获取适合设备的 APK 并安装。当前最低系统版本为 **Android 8.0（API 26）**。
+1. 获取发布方提供的适合设备的 APK 并安装。当前最低系统版本为 **Android 8.0（API 26）**。
 2. 在应用的 **API 设置**中添加提供商，填写服务地址、API Key 和模型名称，并测试连接。
 3. 创建角色，设置名称、人设与使用的模型，开始文字对话。
 4. 按需要配置 STT、TTS 和图片服务，再启用语音、图片与工具能力。
@@ -134,20 +134,20 @@ TideBot 将应用数据保存在设备上，但本地存储不等于所有 AI �
 
 ## 开发与反馈
 
-项目使用 Flutter、Dart 和 Kotlin，依赖见 [pubspec.yaml](pubspec.yaml)。准备可用的 Flutter 与 Android 开发环境后：
+项目使用 Flutter、Dart 和 Kotlin，依赖见 [pubspec.yaml](pubspec.yaml)。获取项目源码并准备可用的 Flutter 与 Android 开发环境后，在项目根目录执行：
 
 ```bash
-git clone https://github.com/yutan123/TideBot.git
-cd TideBot
 flutter pub get
 flutter run
 ```
 
-欢迎通过 [Issues](https://github.com/yutan123/TideBot/issues) 反馈问题或建议。报告问题时，请附上应用版本、Android 版本、复现步骤与已隐去密钥和私人内容的日志。
+欢迎通过应用内的“反馈与建议”入口反馈问题或建议。报告问题时，请附上应用版本、Android 版本、复现步骤与已隐去密钥和私人内容的日志。
 
-## 许可证
+## 版权与许可证
 
-TideBot 采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**，完整协议见 [LICENSE](LICENSE)。
+Copyright (C) 2025-2026 TideBot contributors.
+
+TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**。项目版权声明见 [COPYRIGHT](COPYRIGHT)，完整许可证见 [LICENSE](LICENSE)。
 
 你可以在协议允许的范围内使用、修改和分发本项目，包括商业使用。分发本项目或其修改版本时，须遵守协议中提供对应源代码、保留版权和许可声明等要求；如果修改后的版本支持通过网络与用户交互，须按协议第 13 条向这些用户提供获取该版本对应源代码的机会。
 

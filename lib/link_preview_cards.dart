@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'link_preview_models.dart';
 import 'theme.dart';
+import 'global_notice.dart';
 
 /// 普通网页链接卡片（参考图一设计）
 class WebLinkCard extends StatelessWidget {
@@ -118,7 +119,27 @@ class WebLinkCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(14),
                         child: Image.network(
                           data.imageUrl!,
+                          headers: data.imageHeaders,
                           fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          loadingBuilder: (context, child, progress) =>
+                              progress == null
+                                  ? child
+                                  : Center(
+                                      child: SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: theme.primary,
+                                          value: progress.expectedTotalBytes ==
+                                                  null
+                                              ? null
+                                              : progress.cumulativeBytesLoaded /
+                                                  progress.expectedTotalBytes!,
+                                        ),
+                                      ),
+                                    ),
                           errorBuilder: (_, __, ___) => _defaultIcon(theme),
                         ),
                       )
@@ -169,153 +190,83 @@ class VideoShareCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isPortrait =
-        MediaQuery.of(context).orientation == Orientation.portrait;
-    final maxWidth = isPortrait ? screenWidth * 0.75 : screenWidth * 0.5;
-    final platformInfo = _getPlatformInfo();
-
-    return GestureDetector(
-      onTap: () => _launchVideo(data.url),
-      child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        margin: const EdgeInsets.only(bottom: 8),
-        child: Stack(
-          children: [
-            // 视频封面
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: AspectRatio(
-                aspectRatio: 9 / 16, // 竖屏视频比例
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: theme.buttonSecondary,
-                  ),
-                  child: data.imageUrl != null && data.imageUrl!.isNotEmpty
-                      ? Image.network(
-                          data.imageUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _placeholderCover(
-                            theme,
-                            platformInfo,
+    final width = (MediaQuery.sizeOf(context).width * 0.68).clamp(0.0, 260.0);
+    final info = _getPlatformInfo();
+    return Semantics(
+      button: true,
+      label: '在${info.name}打开：${data.title}',
+      child: GestureDetector(
+        onTap: () => _launchVideo(data.url),
+        child: Container(
+          width: width,
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: theme.border),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: data.imageUrl?.isNotEmpty == true
+                    ? Stack(fit: StackFit.expand, children: [
+                        Image.network(data.imageUrl!,
+                            headers: data.imageHeaders,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _placeholderCover(theme, info)),
+                        Center(
+                            child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.36),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white54),
                           ),
-                        )
-                      : _placeholderCover(theme, platformInfo),
-                ),
+                          child: const Icon(Icons.open_in_new_rounded,
+                              size: 20, color: Colors.white),
+                        )),
+                      ])
+                    : _placeholderCover(theme, info),
               ),
-            ),
-            // 渐变蒙层
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0),
-                        Colors.black.withValues(alpha: 0.7),
-                      ],
-                      stops: const [0.5, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // 播放按钮
-            Positioned.fill(
-              child: Center(
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.25),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.play_arrow_rounded,
-                    size: 36,
-                    color: theme.primary,
-                  ),
-                ),
-              ),
-            ),
-            // 左下角信息
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: Row(
-                children: [
-                  // 平台 Logo 占位
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.3),
-                        width: 2,
-                      ),
-                    ),
-                    child: Center(
-                      child: _getPlatformIcon(platformInfo),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  // 标题
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          data.title,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                            fontFamily: 'TideFont',
-                            shadows: [
-                              Shadow(
-                                color: Colors.black45,
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(data.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          platformInfo.name,
                           style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withValues(alpha: 0.85),
-                            fontFamily: 'TideFont',
-                            shadows: const [
-                              Shadow(
-                                color: Colors.black45,
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: theme.textStrong,
+                              fontFamily: 'TideFont',
+                              height: 1.3)),
+                      const SizedBox(height: 6),
+                      Row(children: [
+                        _getPlatformIcon(info, size: 14),
+                        const SizedBox(width: 5),
+                        Expanded(
+                            child: Text(info.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.textWeak,
+                                    fontFamily: 'TideFont'))),
+                        Icon(Icons.north_east_rounded,
+                            size: 14, color: theme.textWeak),
+                      ]),
+                    ]),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -328,12 +279,12 @@ class VideoShareCard extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _getPlatformIcon(info, size: 48),
+            _getPlatformIcon(info, size: 28),
             const SizedBox(height: 12),
             Text(
-              info.name,
+              '封面暂不可用 · 点击打开',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 11,
                 color: theme.textWeak,
                 fontFamily: 'TideFont',
               ),
@@ -365,28 +316,19 @@ class VideoShareCard extends StatelessWidget {
   }
 
   Future<void> _launchVideo(String url) async {
-    final platformInfo = _getPlatformInfo();
-
-    // 尝试打开应用，失败则降级到网页
+    final appUri = data.appUri;
+    if (appUri != null) {
+      try {
+        if (await launchUrl(appUri, mode: LaunchMode.externalApplication))
+          return;
+      } catch (_) {/* 未安装客户端时打开原网页 */}
+    }
     final uri = Uri.tryParse(url);
     if (uri != null) {
-      // 先尝试检查应用是否安装并打开
-      final appUri = Uri.tryParse('${platformInfo.scheme}$url');
-      if (appUri != null) {
-        try {
-          if (await canLaunchUrl(appUri)) {
-            await launchUrl(appUri, mode: LaunchMode.externalApplication);
-            return;
-          }
-        } catch (_) {
-          // 应用未安装或无法打开，继续尝试网页
-        }
-      }
-
-      // 降级到网页
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+      } catch (_) {/* 统一显示失败反馈 */}
     }
+    GlobalNotice.show('无法打开链接，请确认已安装浏览器或对应平台应用');
   }
 }

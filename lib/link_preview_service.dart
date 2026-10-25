@@ -1,127 +1,227 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
 import 'link_preview_models.dart';
+import 'link_page_utils.dart';
 
-/// 链接预览服务
 class LinkPreviewService {
   static final LinkPreviewService _instance = LinkPreviewService._();
   static LinkPreviewService get instance => _instance;
-  LinkPreviewService._();
-
-  // 缓存，避免重复请求
+  LinkPreviewService._() : _client = http.Client();
+  LinkPreviewService.withClient(this._client);
+  final http.Client _client;
   final Map<String, LinkPreviewData> _cache = {};
+  final Map<String, Future<LinkPreviewData>> _pending = {};
 
-  /// URL 正则表达式
   static final RegExp _urlRegex = RegExp(
-    r'https?://[^\s]+',
+    r'''https?://[^\s<>"'（）()]+''',
     caseSensitive: false,
   );
+  static List<String> extractUrls(String text) => _urlRegex
+      .allMatches(text)
+      .map((m) => m[0]!.replaceFirst(RegExp(r'[，。！？、；：,.!?;:]+$'), ''))
+      .where((url) => Uri.tryParse(url)?.host.isNotEmpty == true)
+      .toSet()
+      .toList();
 
-  /// 从文本中提取所有链接
-  static List<String> extractUrls(String text) {
-    final matches = _urlRegex.allMatches(text);
-    return matches.map((m) => m.group(0)!).toList();
-  }
-
-  /// 识别链接类型
-  LinkType _identifyLinkType(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return LinkType.web;
-
-    final host = uri.host.toLowerCase();
-
-    if (host.contains('douyin.com') || host.contains('iesdouyin.com')) {
+  static LinkType identifyLinkType(String url) {
+    final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+    bool matches(String domain) => host == domain || host.endsWith('.$domain');
+    if (matches('douyin.com') || matches('iesdouyin.com'))
       return LinkType.douyin;
-    }
-    if (host.contains('xiaohongshu.com') || host.contains('xhslink.com')) {
-      return LinkType.xiaohongshu;
-    }
-    if (host.contains('bilibili.com') || host.contains('b23.tv')) {
-      return LinkType.bilibili;
-    }
-
+    if (matches('xiaohongshu.com') ||
+        matches('xhslink.com') ||
+        matches('xhslink.cn')) return LinkType.xiaohongshu;
+    if (matches('bilibili.com') || matches('b23.tv')) return LinkType.bilibili;
     return LinkType.web;
   }
 
-  /// 获取链接预览数据
-  Future<LinkPreviewData> fetchPreview(String url) async {
-    // 检查缓存
-    if (_cache.containsKey(url)) {
-      return _cache[url]!;
-    }
+  Future<LinkPreviewData> fetchPreview(String url) {
+    if (_cache.containsKey(url)) return Future.value(_cache[url]);
+    return _pending.putIfAbsent(
+        url,
+        () => _fetch(url).whenComplete(() {
+              _pending.remove(url);
+            }));
+  }
 
+  Future<LinkPreviewData> _fetch(String url) async {
+    final type = identifyLinkType(url);
+    var target = url;
     try {
-      final type = _identifyLinkType(url);
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        return LinkPreviewData.error(url);
+      var page = await fetchLinkPage(_client, Uri.parse(url), _headers(type));
+      target = page.uri.toString();
+      // 抖音普通页通常只有 JS 壳；分享详情页提供视频结构化数据。
+      if (type == LinkType.douyin) {
+        final id = videoId(target);
+        if (id != null) {
+          target = 'https://www.douyin.com/video/$id';
+          try {
+            final detail = await fetchLinkPage(
+                _client,
+                Uri.parse('https://www.iesdouyin.com/share/video/$id/'),
+                _headers(type));
+            if (detail.response.statusCode == 200) page = detail;
+          } catch (_) {/* 保留短链页面的元数据 */}
+        }
       }
-
-      final document = html_parser.parse(response.body);
-
-      // 提取 Open Graph 元数据
-      String? title;
-      String? description;
-      String? imageUrl;
-
-      // 优先使用 og:title
-      final ogTitle = document.querySelector('meta[property="og:title"]');
-      title = ogTitle?.attributes['content'];
-
-      // 降级到 title 标签
-      if (title == null || title.isEmpty) {
-        final titleElement = document.querySelector('title');
-        title = titleElement?.text.trim();
+      if (page.response.statusCode != 200) return _fallback(target, type);
+      final document = html_parser
+          .parse(utf8.decode(page.response.bodyBytes, allowMalformed: true));
+      String? meta(String key) => document
+          .querySelector('meta[property="$key"], meta[name="$key"]')
+          ?.attributes['content']
+          ?.trim();
+      var title = meta('og:title') ??
+          meta('twitter:title') ??
+          document.querySelector('title')?.text.trim();
+      var description = meta('og:description') ?? meta('description') ?? '';
+      var image = meta('og:image') ??
+          meta('twitter:image') ??
+          meta('twitter:image:src') ??
+          meta('image') ??
+          document
+              .querySelector('meta[itemprop="image"]')
+              ?.attributes['content']
+              ?.trim();
+      // 很多中文网站没有 og:image，继续尝试 image_src、JSON-LD 和站点图标。
+      image ??= document
+          .querySelector('link[rel="image_src"], link[rel*="icon"]')
+          ?.attributes['href']
+          ?.trim();
+      if (image == null || image.isEmpty) {
+        for (final script in document
+            .querySelectorAll('script[type="application/ld+json"]')) {
+          try {
+            final value = jsonDecode(script.text);
+            final candidates = value is List ? value : [value];
+            for (final candidate in candidates) {
+              if (candidate is Map && candidate['image'] != null) {
+                final candidateImage = candidate['image'];
+                image = candidateImage is String
+                    ? candidateImage
+                    : candidateImage is List && candidateImage.isNotEmpty
+                        ? candidateImage.first.toString()
+                        : null;
+                if (image != null && image.isNotEmpty) break;
+              }
+            }
+          } catch (_) {}
+          if (image != null && image.isNotEmpty) break;
+        }
       }
-
-      // og:description
-      final ogDesc = document.querySelector('meta[property="og:description"]');
-      description = ogDesc?.attributes['content'];
-
-      // 降级到 meta description
-      if (description == null || description.isEmpty) {
-        final metaDesc = document.querySelector('meta[name="description"]');
-        description = metaDesc?.attributes['content'];
+      // 百度等页面可能主动不提供文章图片，使用站点图标保持卡片有视觉内容。
+      image ??= '${page.uri.scheme}://${page.uri.host}/favicon.ico';
+      final html = document.outerHtml;
+      if (type == LinkType.douyin) {
+        final item =
+            findVideoItem(extractPageState(html, 'window._ROUTER_DATA'));
+        if (item != null) {
+          title = item['desc'] as String? ?? title;
+          description =
+              (item['author'] as Map?)?['nickname'] as String? ?? description;
+          final video = item['video'] as Map;
+          for (final key in ['cover', 'origin_cover', 'dynamic_cover']) {
+            final urls = (video[key] as Map?)?['url_list'] as List?;
+            if (urls != null && urls.isNotEmpty) {
+              image = urls.first as String;
+              break;
+            }
+          }
+        }
+      } else if (type == LinkType.xiaohongshu) {
+        final state = extractPageState(html, 'window.__INITIAL_STATE__');
+        final notes = (state?['note'] as Map?)?['noteDetailMap'] as Map?;
+        final id = RegExp(r'/(?:explore|discovery/item)/([a-zA-Z0-9]+)')
+            .firstMatch(target)
+            ?.group(1);
+        final note =
+            ((notes?[id] ?? (notes?.length == 1 ? notes!.values.first : null))
+                as Map?)?['note'] as Map?;
+        if (note != null) {
+          title = note['title'] as String? ?? note['desc'] as String? ?? title;
+          description = note['desc'] as String? ?? description;
+          final images = note['imageList'] as List?;
+          if (images != null && images.isNotEmpty) {
+            final first = images.first as Map;
+            image = first['urlDefault'] as String? ??
+                first['url'] as String? ??
+                image;
+          }
+        }
+      } else if (type == LinkType.bilibili) {
+        final id = RegExp(r'BV[0-9A-Za-z]{10}', caseSensitive: false)
+            .firstMatch(target)
+            ?.group(0);
+        if (id != null) {
+          try {
+            final response = await _client
+                .get(
+                    Uri.https('api.bilibili.com', '/x/web-interface/view',
+                        {'bvid': id}),
+                    headers: _headers(type))
+                .timeout(const Duration(seconds: 8));
+            final data = jsonDecode(response.body);
+            if (data['code'] == 0 && data['data'] is Map) {
+              title = data['data']['title'] as String? ?? title;
+              image = data['data']['pic'] as String? ?? image;
+              description = data['data']['desc'] as String? ?? description;
+            }
+          } catch (_) {/* 接口不可用时使用页面元数据 */}
+        }
       }
-
-      // og:image
-      final ogImage = document.querySelector('meta[property="og:image"]');
-      imageUrl = ogImage?.attributes['content'];
-
+      final imageUri =
+          image == null || image.isEmpty ? null : page.uri.resolve(image);
       final preview = LinkPreviewData(
-        url: url,
-        title: title?.trim().isNotEmpty == true ? title!.trim() : '网页链接',
-        description: description?.trim() ?? '',
-        imageUrl: imageUrl?.trim(),
+        url: target,
+        title: title?.isNotEmpty == true ? title! : _fallbackTitle(type),
+        description: description,
+        imageUrl:
+            imageUri != null && ['http', 'https'].contains(imageUri.scheme)
+                ? imageUri.toString()
+                : null,
+        imageHeaders: _headers(type),
         type: type,
       );
-
-      // 缓存结果
-      _cache[url] = preview;
-
+      // 不永久缓存缺封面或受限结果，下次打开消息允许重试。
+      if (type == LinkType.web || preview.imageUrl != null)
+        _cache[url] = preview;
       return preview;
-    } catch (e) {
-      final errorPreview = LinkPreviewData.error(url);
-      _cache[url] = errorPreview;
-      return errorPreview;
+    } catch (_) {
+      return _fallback(target, type);
     }
   }
 
-  /// 清除缓存
-  void clearCache() {
-    _cache.clear();
+  static String? videoId(String url) {
+    final uri = Uri.tryParse(url);
+    return RegExp(r'/(?:video|note|slides)/(\d+)')
+            .firstMatch(uri?.path ?? '')
+            ?.group(1) ??
+        uri?.queryParameters['modal_id'] ??
+        uri?.queryParameters['aweme_id'];
   }
 
-  /// 移除特定 URL 的缓存
-  void removeCachedUrl(String url) {
-    _cache.remove(url);
-  }
+  static String _fallbackTitle(LinkType type) => switch (type) {
+        LinkType.douyin => '抖音视频',
+        LinkType.xiaohongshu => '小红书笔记',
+        LinkType.bilibili => '哔哩哔哩视频',
+        _ => '网页链接',
+      };
+  LinkPreviewData _fallback(String url, LinkType type) => LinkPreviewData(
+        url: url,
+        title: _fallbackTitle(type),
+        description: '预览暂不可用，点击打开原链接',
+        type: type,
+      );
+  static Map<String, String> _headers(LinkType type) => {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+        if (type == LinkType.douyin) 'Referer': 'https://www.douyin.com/',
+        if (type == LinkType.xiaohongshu)
+          'Referer': 'https://www.xiaohongshu.com/',
+        if (type == LinkType.bilibili) 'Referer': 'https://www.bilibili.com/',
+      };
+  void clearCache() => _cache.clear();
+  void removeCachedUrl(String url) => _cache.remove(url);
 }

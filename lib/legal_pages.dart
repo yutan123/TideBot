@@ -38,8 +38,10 @@ AI 生成的文字、图片、语音、视频理解结果、转写和摘要可�
 请遵守适用法律及所用第三方服务的规则，不得侵犯他人的隐私、肖像、声音、著作权等权益，不得用于诈骗、非法访问或其他违法活动。上传、解析、下载或分享他人的内容前，请确认具有合法依据；可访问链接不代表已获得复制或传播授权。
 您提供的内容仍归原权利人所有。AI 输出的权利归属及使用范围受适用法律与相关服务条款约束，应用不保证输出具有独占性或不侵犯第三方权利。对外发布可能引起误解的生成内容时，请作必要说明。
 
-八、开源许可证
-TideBot 项目代码采用 GNU Affero General Public License v3.0（AGPL-3.0-only）。完整许可证随项目源码中的 LICENSE 文件提供，源码地址：https://github.com/yutan123/TideBot 。第三方组件保留各自的版权和许可证。
+八、版权与开源许可证
+Copyright (C) 2025-2026 TideBot contributors.
+TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 GNU Affero General Public License v3.0（AGPL-3.0-only）授权。项目版权声明和完整许可证随源码中的 COPYRIGHT、LICENSE 文件提供。第三方组件保留各自的版权和许可证。
+使用、修改和分发时，请按许可证要求保留 TideBot 的版权与许可声明。本应用按许可证以“现状”提供，不作任何担保，具体以许可证全文及适用法律为准。
 您可按许可证使用、研究、修改和分发代码，包括商业使用；分发及修改后通过网络与用户交互等情形下，应履行许可证规定的对应源代码提供等义务。本使用协议不增加对开源许可证所授予权利的限制；涉及代码许可的事项以相应开源许可证为准。
 
 九、可用性与责任边界
@@ -48,7 +50,7 @@ TideBot 项目代码采用 GNU Affero General Public License v3.0（AGPL-3.0-onl
 
 十、协议更新与反馈
 协议内容会随功能与实际数据处理方式调整，更新内容在应用内公布。涉及需要重新取得同意的重大变更时，应再次征求同意，不以静默更新替代必要授权。您可随时停止使用，并按需要备份或删除本地资料；停止使用不影响您依开源许可证已取得的权利。
-问题与建议可通过项目反馈页提交：https://github.com/yutan123/TideBot/issues 。请勿在公开反馈中上传私人数据或服务密钥。争议依适用法律处理，由依法具有管辖权的机构解决；个别条款无效不影响其他条款依法适用。''';
+问题与建议可通过应用内的“反馈与建议”入口提交。请勿在公开反馈中上传私人数据或服务密钥。争议依适用法律处理，由依法具有管辖权的机构解决；个别条款无效不影响其他条款依法适用。''';
 
 class LegalAgreementPage extends StatefulWidget {
   const LegalAgreementPage({super.key, required this.requiredAcceptance});
@@ -226,6 +228,19 @@ class TideBotAboutPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 28),
+                SelectableText(
+                  'Copyright (C) 2025-2026 TideBot contributors.\n'
+                  '原创内容采用 AGPL-3.0-only 授权，另有说明的内容除外。\n'
+                  '第三方组件保留各自的版权与许可证。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'TideFont',
+                    fontSize: 12,
+                    height: 1.6,
+                    color: theme.textWeak,
+                  ),
+                ),
+                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(

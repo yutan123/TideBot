@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'native_selectable_text.dart';
+import 'log_text.dart';
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -843,12 +843,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                                   final log = logs[i];
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 6),
-                                    child: NativeSelectableText(
-                                        '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
-                                        style: TextStyle(
-                                            fontFamily: 'TideFont',
-                                            fontSize: 11,
-                                            color: theme.textStrong)),
+                                    child: LogText(
+                                      '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
+                                      fontSize: 11,
+                                      color: theme.textStrong,
+                                    ),
                                   );
                                 },
                               ),

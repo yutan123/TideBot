@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'native_selectable_text.dart';
+import 'log_text.dart';
 import 'app_log_service.dart';
 import 'theme.dart';
 
@@ -25,14 +25,12 @@ class LogSessionDetailPage extends StatelessWidget {
             final e = session.entries[i];
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: NativeSelectableText(
-                  '[${e.time.toLocal()}] ${e.level}\n${e.message}',
-                  style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      color: e.level.toUpperCase().contains('ERROR')
-                          ? Colors.redAccent
-                          : theme.textStrong)),
+              child: LogText(
+                '[${e.time.toLocal()}] ${e.level}\n${e.message}',
+                color: e.level.toUpperCase().contains('ERROR')
+                    ? Colors.redAccent
+                    : theme.textStrong,
+              ),
             );
           },
         ),

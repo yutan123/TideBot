@@ -4,6 +4,8 @@ TideBot 使用第三方开源组件。以下声明保留实际依赖组件的版
 
 | 组件 | 用途 | 许可证 |
 | --- | --- | --- |
+| Noto Sans Mono | 日志英文、数字和代码的内置等宽字体（`LogMono.ttf`） | [SIL Open Font License 1.1](assets/fonts/LogMono-OFL.txt)，版权声明见随附许可 |
+| Noto Sans SC | 日志中文的内置无衬线字体（`LogSansSC.ttf`） | [SIL Open Font License 1.1](assets/fonts/LogSansSC-OFL.txt)，版权声明见随附许可 |
 | [liquid_glass_widgets](https://github.com/sdegenaar/liquid_glass_widgets) | 通过 Flutter 包依赖提供液态玻璃界面效果 | [MIT License](third_party/licenses/liquid_glass_widgets-LICENSE.txt)，Copyright (c) 2024–2026 Sebastian Degenaar |
 | [ffmpeg_kit_flutter_new](https://github.com/sk3llo/ffmpeg_kit_flutter)（4.6.7） | 视频抽帧、音频提取与 H.264 压缩；Android 原生依赖为 `com.antonkarpenko:ffmpeg-kit-full-gpl:2.2.3` | Flutter 插件采用 [LGPL-3.0](third_party/licenses/ffmpeg_kit_flutter_new-LICENSE.txt)；Full GPL 原生版本包含 x264 等 GPL 组件，适用 [GPL-3.0](third_party/licenses/GPL-3.0.txt) 及各组件随附许可 |
 

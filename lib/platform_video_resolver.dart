@@ -1,5 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'link_page_utils.dart';
+import 'link_preview_service.dart';
+import 'link_preview_models.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -41,69 +44,25 @@ class PlatformVideoResolver {
 
   /// 检测链接是否为支持的平台视频链接
   bool canParse(String url) {
-    final lower = url.toLowerCase();
-    return _isDouyinUrl(lower) ||
-        _isXiaohongshuUrl(lower) ||
-        _isBilibiliUrl(lower);
+    return LinkPreviewService.identifyLinkType(url) != LinkType.web;
   }
 
   /// 从文本中提取所有支持的平台视频链接
   List<String> extractLinks(String text) {
-    final List<String> links = [];
-    final Set<String> seen = {};
-
-    // 抖音链接
-    final douyinPatterns = [
-      RegExp(r'https?://v\.douyin\.com/[^\s<>"()]+', caseSensitive: false),
-      RegExp(
-          r'https?://(?:www\.)?douyin\.com/(?:video|note|slides)/\d+[^\s<>"()]*',
-          caseSensitive: false),
-    ];
-    for (final pattern in douyinPatterns) {
-      for (final match in pattern.allMatches(text)) {
-        final link = match.group(0)!;
-        if (!seen.contains(link.toLowerCase())) {
-          seen.add(link.toLowerCase());
-          links.add(link);
-        }
-      }
-    }
-
-    // 小红书链接
-    final xhsPatterns = [
-      RegExp(r'https?://xhslink\.(?:com|cn)/[^\s<>"()]+', caseSensitive: false),
-      RegExp(
-          r'https?://(?:www\.)?xiaohongshu\.com/(?:explore|discovery/item)/[^\s<>"()]+',
-          caseSensitive: false),
-    ];
-    for (final pattern in xhsPatterns) {
-      for (final match in pattern.allMatches(text)) {
-        final link = match.group(0)!;
-        if (!seen.contains(link.toLowerCase())) {
-          seen.add(link.toLowerCase());
-          links.add(link);
-        }
-      }
-    }
-
-    // B站链接
-    final biliPatterns = [
-      RegExp(r'https?://b23\.tv/[^\s<>"()]+', caseSensitive: false),
-      RegExp(
-          r'https?://(?:www\.)?bilibili\.com/video/[Bb][Vv][0-9A-Za-z]{10}[^\s<>"()]*',
-          caseSensitive: false),
-    ];
-    for (final pattern in biliPatterns) {
-      for (final match in pattern.allMatches(text)) {
-        final link = match.group(0)!;
-        if (!seen.contains(link.toLowerCase())) {
-          seen.add(link.toLowerCase());
-          links.add(link);
-        }
-      }
-    }
-
-    return links;
+    return LinkPreviewService.extractUrls(text).where((url) {
+      final uri = Uri.parse(url);
+      return switch (LinkPreviewService.identifyLinkType(url)) {
+        LinkType.douyin =>
+          uri.host == 'v.douyin.com' || LinkPreviewService.videoId(url) != null,
+        LinkType.xiaohongshu => uri.host == 'xhslink.com' ||
+            uri.host == 'xhslink.cn' ||
+            RegExp(r'^/(?:explore|discovery/item)/[^/]+').hasMatch(uri.path),
+        LinkType.bilibili => uri.host == 'b23.tv' ||
+            RegExp(r'^/video/(?:BV[0-9A-Za-z]{10}|av\d+)', caseSensitive: false)
+                .hasMatch(uri.path),
+        LinkType.web => false,
+      };
+    }).toList();
   }
 
   /// 解析视频链接
@@ -156,19 +115,12 @@ class PlatformVideoResolver {
 
   // ========== 平台判断 ==========
 
-  bool _isDouyinUrl(String url) {
-    return url.contains('douyin.com') || url.contains('iesdouyin.com');
-  }
-
-  bool _isXiaohongshuUrl(String url) {
-    return url.contains('xiaohongshu.com') ||
-        url.contains('xhslink.com') ||
-        url.contains('xhslink.cn');
-  }
-
-  bool _isBilibiliUrl(String url) {
-    return url.contains('bilibili.com') || url.contains('b23.tv');
-  }
+  bool _isDouyinUrl(String url) =>
+      LinkPreviewService.identifyLinkType(url) == LinkType.douyin;
+  bool _isXiaohongshuUrl(String url) =>
+      LinkPreviewService.identifyLinkType(url) == LinkType.xiaohongshu;
+  bool _isBilibiliUrl(String url) =>
+      LinkPreviewService.identifyLinkType(url) == LinkType.bilibili;
 
   // ========== 抖音解析 ==========
 
@@ -181,16 +133,8 @@ class PlatformVideoResolver {
       }
 
       // 2. 提取视频ID
-      final videoIdMatch = RegExp(r'/video/(\d+)').firstMatch(fullUrl) ??
-          RegExp(r'/note/(\d+)').firstMatch(fullUrl) ??
-          RegExp(r'(\d{19})').firstMatch(fullUrl);
-
-      if (videoIdMatch == null) {
-        print('[Douyin] 无法提取视频ID');
-        return null;
-      }
-
-      final videoId = videoIdMatch.group(1)!;
+      final videoId = LinkPreviewService.videoId(fullUrl);
+      if (videoId == null) return null;
 
       // 3. 获取视频详情页
       final detailUrl = 'https://www.iesdouyin.com/share/video/$videoId/';
@@ -217,25 +161,8 @@ class PlatformVideoResolver {
 
       // 5. 解析JSON
       final data = json.decode(routerData);
-      final loaderData = data['loaderData'] as Map<String, dynamic>?;
-      if (loaderData == null) return null;
-
-      // 查找 videoInfoRes
-      Map<String, dynamic>? videoInfo;
-      for (final value in loaderData.values) {
-        if (value is Map && value.containsKey('videoInfoRes')) {
-          videoInfo = value['videoInfoRes'] as Map<String, dynamic>?;
-          break;
-        }
-      }
-
-      if (videoInfo == null) return null;
-
-      // 6. 提取item_list中的第一个视频
-      final itemList = videoInfo['item_list'] as List?;
-      if (itemList == null || itemList.isEmpty) return null;
-
-      final item = itemList[0] as Map<String, dynamic>;
+      final item = findVideoItem(data);
+      if (item == null) return null;
 
       // 7. 提取视频信息
       final title = item['desc'] as String? ?? '';
@@ -504,127 +431,24 @@ class PlatformVideoResolver {
 
   // ========== 辅助方法 ==========
 
-  /// 获取重定向后的URL
   Future<String> _getRedirectUrl(
       String url, Map<String, String> headers) async {
+    final client = http.Client();
     try {
-      final request = await HttpClient().headUrl(Uri.parse(url));
-      headers.forEach((key, value) => request.headers.set(key, value));
-
-      final response = await request.close();
-      final redirectUrl = response.headers.value('location');
-
-      if (redirectUrl != null) {
-        return redirectUrl;
-      }
-
-      // 如果HEAD失败，尝试GET
-      final getRequest = await HttpClient().getUrl(Uri.parse(url));
-      headers.forEach((key, value) => getRequest.headers.set(key, value));
-      final getResponse = await getRequest.close();
-
-      return getResponse.redirects.isNotEmpty
-          ? getResponse.redirects.last.location.toString()
-          : url;
-    } catch (e) {
-      print('[Redirect] 获取重定向失败: $e');
-      return url;
+      final page = await fetchLinkPage(client, Uri.parse(url), headers);
+      return page.uri.toString();
+    } finally {
+      client.close();
     }
   }
 
-  /// 从HTML中提取 window._ROUTER_DATA
   String? _extractRouterData(String html) {
-    final startMarker = 'window._ROUTER_DATA = ';
-    final startIdx = html.indexOf(startMarker);
-    if (startIdx == -1) return null;
-
-    final braceStart = html.indexOf('{', startIdx);
-    if (braceStart == -1) return null;
-
-    int braceCount = 0;
-    int index = braceStart;
-
-    while (index < html.length) {
-      if (html[index] == '{') {
-        braceCount++;
-      } else if (html[index] == '}') {
-        braceCount--;
-        if (braceCount == 0) {
-          return html.substring(braceStart, index + 1);
-        }
-      }
-      index++;
-    }
-
-    return null;
+    final state = extractPageState(html, 'window._ROUTER_DATA');
+    return state == null ? null : jsonEncode(state);
   }
 
-  /// 从HTML中提取 window.__INITIAL_STATE__
   String? _extractInitialState(String html) {
-    final pattern = RegExp(
-        r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*</script>',
-        dotAll: true);
-    final match = pattern.firstMatch(html);
-
-    if (match != null) {
-      var jsonStr = match.group(1)!;
-      // 替换 undefined 为 null
-      jsonStr = jsonStr.replaceAll(RegExp(r'\bundefined\b'), 'null');
-      return jsonStr;
-    }
-
-    // 备用方法：手动提取
-    final startMarker = 'window.__INITIAL_STATE__';
-    final startIdx = html.indexOf(startMarker);
-    if (startIdx == -1) return null;
-
-    final braceStart = html.indexOf('{', startIdx);
-    if (braceStart == -1) return null;
-
-    final scriptEnd = html.indexOf('</script>', startIdx);
-
-    int braceCount = 0;
-    int index = braceStart;
-    bool inString = false;
-    bool escapeNext = false;
-
-    while (index < html.length && (scriptEnd == -1 || index < scriptEnd)) {
-      final char = html[index];
-
-      if (escapeNext) {
-        escapeNext = false;
-        index++;
-        continue;
-      }
-
-      if (char == '\\') {
-        escapeNext = true;
-        index++;
-        continue;
-      }
-
-      if (char == '"' && !inString) {
-        inString = true;
-      } else if (char == '"' && inString) {
-        inString = false;
-      }
-
-      if (!inString) {
-        if (char == '{') {
-          braceCount++;
-        } else if (char == '}') {
-          braceCount--;
-          if (braceCount == 0) {
-            var jsonStr = html.substring(braceStart, index + 1);
-            jsonStr = jsonStr.replaceAll(RegExp(r'\bundefined\b'), 'null');
-            return jsonStr;
-          }
-        }
-      }
-
-      index++;
-    }
-
-    return null;
+    final state = extractPageState(html, 'window.__INITIAL_STATE__');
+    return state == null ? null : jsonEncode(state);
   }
 }

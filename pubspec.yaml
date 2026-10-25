@@ -74,6 +74,12 @@ flutter:
     - assets/emojitwo/
     - assets/skills/
   fonts:
+    - family: LogMono
+      fonts:
+        - asset: assets/fonts/LogMono.ttf
+    - family: LogSansSC
+      fonts:
+        - asset: assets/fonts/LogSansSC.ttf
     - family: TideFont
       fonts:
         - asset: assets/fonts/TideFont-Regular.ttf

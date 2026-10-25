@@ -10,7 +10,7 @@ import 'code_card.dart';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
-import 'native_selectable_text.dart';
+import 'log_text.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:flutter/services.dart';
@@ -123,6 +123,79 @@ String _getPlatformName(String url) {
     return '小红书';
   if (lower.contains('bilibili.com') || lower.contains('b23.tv')) return 'B站';
   return '平台';
+}
+
+class _StableLinkPreviewCard extends StatefulWidget {
+  const _StableLinkPreviewCard(
+      {super.key, required this.url, required this.isUser});
+  final String url;
+  final bool isUser;
+
+  @override
+  State<_StableLinkPreviewCard> createState() => _StableLinkPreviewCardState();
+}
+
+class _StableLinkPreviewCardState extends State<_StableLinkPreviewCard> {
+  late Future<LinkPreviewData> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = LinkPreviewService.instance.fetchPreview(widget.url);
+  }
+
+  @override
+  void didUpdateWidget(covariant _StableLinkPreviewCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _future = LinkPreviewService.instance.fetchPreview(widget.url);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<LinkPreviewData>(
+      future: _future,
+      builder: (context, snapshot) {
+        final theme = TideTheme.of(context);
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _previewLoading(theme);
+        }
+        if (!snapshot.hasData) return const SizedBox.shrink();
+        final data = snapshot.data!;
+        return data.type == LinkType.web
+            ? WebLinkCard(data: data, isUser: widget.isUser)
+            : VideoShareCard(data: data, isUser: widget.isUser);
+      },
+    );
+  }
+
+  Widget _previewLoading(TideTheme theme) {
+    return Container(
+      constraints:
+          BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .75),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.buttonSecondary,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(children: [
+        SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: theme.textWeak)),
+        const SizedBox(width: 12),
+        Expanded(
+            child: Text('正在加载链接预览...',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: theme.textWeak,
+                    fontFamily: 'TideFont'))),
+      ]),
+    );
+  }
 }
 
 class ChatRoomPage extends StatefulWidget {
@@ -3858,9 +3931,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
-              NativeSelectableText(
+              LogText(
                 log?.isNotEmpty == true ? log! : '历史错误未保存完整日志。',
-                style: const TextStyle(fontSize: 12, fontFamily: 'TideFont'),
+                color: TideTheme.of(ctx).textStrong,
               ),
               const SizedBox(height: 14),
               const Text('解决方法', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -4577,64 +4650,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
   }
 
-  /// 构建单个链接预览卡片（异步加载）
+  /// 链接预览使用有状态子组件，future 只在 URL 变化时创建，避免消息列表重建时闪回加载态。
   Widget _buildLinkPreviewCard(String url, bool isUser) {
-    return FutureBuilder<LinkPreviewData>(
-      future: LinkPreviewService.instance.fetchPreview(url),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          // 加载中显示占位
-          return Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75,
-            ),
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: TideTheme.of(context).buttonSecondary,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: TideTheme.of(context).textWeak,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '正在加载链接预览...',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: TideTheme.of(context).textWeak,
-                      fontFamily: 'TideFont',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        if (!snapshot.hasData) {
-          // 加载失败，不显示卡片
-          return const SizedBox.shrink();
-        }
-
-        final data = snapshot.data!;
-
-        // 根据链接类型显示不同卡片
-        if (data.type == LinkType.web) {
-          return WebLinkCard(data: data, isUser: isUser);
-        } else {
-          return VideoShareCard(data: data, isUser: isUser);
-        }
-      },
-    );
+    return _StableLinkPreviewCard(key: ValueKey(url), url: url, isUser: isUser);
   }
 
   /// 从文本中移除链接，保留剩余文本
