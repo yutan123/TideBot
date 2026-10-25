@@ -195,6 +195,7 @@ class _CodeCardState extends State<CodeCard> {
               child: SingleChildScrollView(
                 child: NativeSelectableText(
                   widget.code,
+                  nativeInteraction: true,
                   style: TextStyle(
                     fontSize: 12,
                     fontFamily: 'Courier',

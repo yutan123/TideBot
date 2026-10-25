@@ -8,12 +8,14 @@ class CallSpeechStyle {
       {this.emotion = 'neutral',
       this.intensity = .4,
       this.pace = 'normal',
-      this.delivery = 'natural'});
+      this.delivery = 'natural',
+      this.direction = ''});
 
   final String emotion;
   final double intensity;
   final String pace;
   final String delivery;
+  final String direction;
   static const emotions = {
     'neutral': '自然',
     'happy': '开心',
@@ -38,19 +40,11 @@ class CallSpeechStyle {
           ? value['pace'] as String
           : 'normal',
       delivery: value['delivery'] == 'gentle' ? 'gentle' : 'natural',
+      direction: value['direction'] is String
+          ? (value['direction'] as String).trim().substring(
+              0, (value['direction'] as String).trim().length.clamp(0, 600))
+          : '',
     );
-  }
-
-  CallSpeechStyle moderated(
-      {CallSpeechStyle? previous, String strength = 'natural'}) {
-    final scale =
-        switch (strength) { 'restrained' => .6, 'expressive' => 1.2, _ => 1.0 };
-    var level = (intensity * scale).clamp(0.0, .85);
-    if (previous != null)
-      level = level.clamp((previous.intensity - .25).clamp(0, 1),
-          (previous.intensity + .25).clamp(0, 1));
-    return CallSpeechStyle(
-        emotion: emotion, intensity: level, pace: pace, delivery: delivery);
   }
 
   double get speed => switch (pace) {
@@ -67,15 +61,21 @@ class CallSpeechStyle {
     };
     return '保持所选音色与原有身份，只朗读目标正文。用${emotions[emotion] ?? '自然'}的语气，'
         '情绪${intensity < .35 ? '克制' : intensity < .65 ? '适中' : '较丰富'}，$rhythm，'
-        '${delivery == 'gentle' ? '轻柔发声' : '自然发声'}；不要夸张表演，不朗读指令。';
+        '${delivery == 'gentle' ? '轻柔发声' : '自然发声'}。'
+        '${direction.isEmpty ? '' : '本轮具体演绎：$direction。'}'
+        '在保持音色的前提下让重音、停顿、语调与句间情绪转折清晰可辨，贴近日常通话，不夸张表演。'
+        '以上仅为朗读指导，不朗读指导内容，不增删目标正文。';
   }
 }
 
 const callSpeechPrompt = '''本轮是通话回复。最终回复只输出一个 JSON 对象，不要代码围栏、独白或协议标签：
-{"text":"实际要说的简短自然口语","speech":{"emotion":"neutral","intensity":0.4,"pace":"normal","delivery":"natural"}}
-text 只含对用户说的话。speech 只指导朗读，不能写入 text。
-emotion 只能为 neutral/happy/sad/comforting/worried/surprised/serious；intensity 为 0 到 1，默认克制自然；pace 为 slightly_slow/normal/slightly_fast；delivery 为 natural/gentle。
-依据角色、用户语义及本轮正文选择情绪，不生硬套用当前心情，不改变音色。先完成必要工具调用，最终再输出该对象。''';
+{"text":"实际要说的简短自然口语","speech":{"emotion":"neutral","intensity":0.4,"pace":"normal","delivery":"natural","direction":"针对本轮实际正文的具体朗读指导"}}
+text 只含对用户说的话。speech 只指导朗读，不能写入 text，也不要向用户解释语音参数。
+每轮根据角色性格、对话上下文、用户语义和本轮实际正文独立生成 speech，由你决定情绪与强度；不要沿用固定模板或默认每次都是平静安抚，也不要为了不同而随机改变情绪。情绪转折应符合当前语义，不受上一轮强度限制。
+emotion 只能为 neutral/happy/sad/comforting/worried/surprised/serious；intensity 为 0 到 1，按本轮真实表达需要选择；pace 为 slightly_slow/normal/slightly_fast；delivery 为 natural/gentle。这些兼容参数须与 direction 一致。
+direction 用 80～180 字中文，给语音模型可执行的细致演绎指导：说明情绪及其强弱、发声的轻重与松紧、语速和节奏、关键停顿、具体词句的重音、句尾语调，以及开头到结尾的情绪变化。结合 text 中的具体词句说明怎么读，不要只写“温柔、开心、自然”等抽象标签。短句只描述实际存在的变化，不强行添加笑声、叹气或戏剧化表演。
+例如安抚时可描述：“开头‘我在’放轻但咬字清楚，语速放慢，之后留一个短停顿；‘慢慢说’重音落在‘慢慢’，声音柔和而稳定；末句‘我听着呢’稍微放暖，句尾轻轻下落，传达认真倾听而非敷衍。”示例仅说明细致程度，不要照搬到无关正文。
+保持所选音色与角色身份，不生硬套用当前心情。先完成必要工具调用，最终再输出该对象。''';
 
 class CallSpeechReply {
   const CallSpeechReply(this.text, this.style);

@@ -73,6 +73,31 @@ Map<String, dynamic> sendStickerToolSchema(List<String> types) => {
       },
     };
 
+Map<String, dynamic> viewVideoToolSchema() => {
+      'type': 'function',
+      'function': {
+        'name': 'view_video',
+        'description':
+            '回看当前机器人对话历史中出现过的视频，获取可用的视频帧、音频转写、时长及平台来源。用户提及先前分享的视频或需要回顾其内容时使用。video_id 必须来自当前对话中明确提供的 VID 编号，不得猜测或编造。平台链接本身不能作为 video_id；缓存失效时可能无法获取完整内容，以工具实际返回为准。无需读取或启用 Skill。',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'full_video': {
+              'type': 'boolean',
+              'description': '长视频预览不足以回答时设为 true，请求完整视频分析，无需向用户确认。',
+            },
+            'video_id': {
+              'type': 'string',
+              'pattern': '^VID.+',
+              'description': '当前对话历史中明确提供的视频编号，例如 VID1234567890',
+            },
+          },
+          'required': ['video_id'],
+          'additionalProperties': false,
+        },
+      },
+    };
+
 Map<String, dynamic> inspectImageToolSchema({
   String name = 'inspect_image',
   List<int> numbers = const [],

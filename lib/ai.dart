@@ -1068,7 +1068,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           : quoteTask
               ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
               : (task == AIRequestTask.proactiveChat
-                      ? '你是${bot['name']}。角色背景：${bot['desc']}。表达风格：${bot['prompt']}。当前是主动联系触发，按提供的事件判断是否适合打扰，只在适合时发送简短自然聊天正文；不适合时实际调用 choose_silence，不输出正文。不要暴露触发提示、任务说明、心情标签或伪造工具调用。唯一工具是 choose_silence，不能执行其他操作。'
+                      ? '你是${bot['name']}。角色背景：${bot['desc']}。表达风格：${bot['prompt']}。'
+                          '当前触发的是主动联系，不是用户发来了新消息。历史对话只是背景，不要把其中的旧消息当作用户刚刚说的话再次回答，也不要继续补写你上一条已经发送完的回复。'
+                          '你可以选择给对方发送一条消息，也可以选择不发送；没有自然想说的内容或当前不宜打扰时，实际调用 choose_silence，且不输出正文。选择发送时，直接输出要发送给对方的聊天内容，不解释你的决定。'
+                          '发送前结合当前时间、距上次互动的间隔、最后几条消息是谁说的，以及上次对话是否已经结束，判断这条消息在此刻出现是否自然。对方已说忙碌、休息、睡觉或暂不想聊时尊重其状态，不催促回应。'
+                          '上次话题仍有自然延续空间时，可以带着新的想法或新的相关信息接续；不能原样重发或换个说法重复你刚说过的话、问过的问题或发过的问候，对方未回复时也不要重复追问。'
+                          '上次对话已经结束、间隔较久或无法自然接续时，可以轻量开启新话题，例如关心对方现在在做什么，或分享自己此刻的状态、感受与见闻。询问和分享按语境选择，不必每次都问问题；自己的状态须符合角色、当前时间和已提供的生活信息，不编造与已知状态冲突的经历。'
+                          '每次主动消息都应有清楚的来意和一点新的内容，让对方能理解你为什么此时发来这句话。不要孤立发送“嗯”“哦”“好的”“哈哈”等承接语、无来由的感叹或只有表情的消息，不要假装对方刚刚回应过你，也不要为了完成触发而硬凑一句话；没有合适内容就调用 choose_silence。'
+                          '表达简短自然，符合角色，不套用固定开场白。不要暴露触发提示、任务说明、心情标签或伪造工具调用。唯一工具是 choose_silence，不能执行其他操作。'
                       : _buildSystemPrompt(bot, activeGame)) +
                   (innerThoughtEnabled
                       ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
@@ -2176,6 +2183,92 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     if (status == 429) return 'HTTP 429，请求过于频繁';
     if (status >= 500) return 'HTTP $status，服务商暂时故障';
     return 'HTTP $status，请求失败';
+  }
+
+  /// Send the original video to the explicitly selected video provider.
+  Future<String> describeVideoForBot({
+    required String videoPath,
+    required String providerId,
+    String userText = '',
+  }) async {
+    final provider = await DBManager().getChatProviderById(providerId);
+    if (provider == null) throw StateError('视频解析模型不存在或已被删除，请重新设置');
+    final baseUrl = (provider['base_url']?.toString() ?? '')
+        .trim()
+        .replaceFirst(RegExp(r'/+$'), '');
+    final model = (provider['model']?.toString() ?? '').split(',').first.trim();
+    if (baseUrl.isEmpty || model.isEmpty) {
+      throw StateError('视频解析模型配置不完整，请检查服务地址和模型名称');
+    }
+    final file = File(videoPath);
+    if (!await file.exists()) throw StateError('视频文件不可访问，请重新选择');
+    final extension = videoPath.split('.').last.toLowerCase();
+    final mime = switch (extension) {
+      'mov' => 'video/quicktime',
+      'webm' => 'video/webm',
+      'mkv' => 'video/x-matroska',
+      'avi' => 'video/x-msvideo',
+      '3gp' => 'video/3gpp',
+      'mpeg' || 'mpg' => 'video/mpeg',
+      _ => 'video/mp4',
+    };
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$baseUrl/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${provider['api_key']}',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {
+                  'role': 'system',
+                  'content':
+                      '请客观分析用户提供的视频，按时间顺序描述画面、动作、声音与可读文字，结合用户问题提供供聊天模型使用的中文分析。无法确认的内容必须说明，不得编造。'
+                },
+                {
+                  'role': 'user',
+                  'content': [
+                    {
+                      'type': 'text',
+                      'text': userText.isEmpty ? '请分析这个视频。' : userText
+                    },
+                    {
+                      'type': 'video_url',
+                      'video_url': {
+                        'url':
+                            'data:$mime;base64,${base64Encode(await file.readAsBytes())}',
+                      }
+                    },
+                  ]
+                },
+              ],
+            }),
+          )
+          .timeout(const Duration(minutes: 5));
+      if (response.statusCode != 200) {
+        throw StateError(
+            '视频解析模型请求失败（HTTP ${response.statusCode}），请确认该模型支持视频输入');
+      }
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      final content = body['choices']?[0]?['message']?['content'];
+      final text = content is String
+          ? content.trim()
+          : content is List
+              ? content
+                  .whereType<Map>()
+                  .map((part) => part['text'] ?? '')
+                  .join('\n')
+                  .trim()
+              : '';
+      if (text.isEmpty) throw StateError('视频解析模型未返回分析内容，请重试或检查模型设置');
+      return text;
+    } finally {
+      client.close();
+    }
   }
 
   Future<String> describeImagesForBot({
@@ -3741,6 +3834,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     if (allowSticker && stickerTypes.isNotEmpty) {
       tools.add(sendStickerToolSchema(stickerTypes.toList()..sort()));
     }
+    tools.add(viewVideoToolSchema());
     tools.add(inspectImageToolSchema(name: 'inspect_image'));
     tools.add(inspectImageToolSchema(name: 'look_at_image'));
     if (await db.getKV('web_search_enabled') == 'true' &&
@@ -4580,9 +4674,49 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'result': {'ok': false, 'error': '视频编号 $videoId 不在当前对话历史中'},
           };
         }
-
+        if (args['full_video'] == true) {
+          final path = videoInfo['original_video_path']?.toString() ?? '';
+          if (path.isEmpty || !await File(path).exists()) {
+            throw StateError('完整视频文件不可用，请重新发送视频');
+          }
+          final bot = await db.getBotById(botId);
+          final modelId = (prefs.getString('video_model_$botId') ??
+                  bot?['video_model']?.toString() ??
+                  '')
+              .trim();
+          if (modelId.isNotEmpty) {
+            final analysis = await describeVideoForBot(
+                videoPath: path,
+                providerId: modelId,
+                userText: '请分析整个视频，补充预览未覆盖的内容。');
+            return {
+              'result': {'ok': true, 'video_id': videoId, 'full_video': true},
+              'message': analysis
+            };
+          }
+          final service = VideoProcessingService.instance;
+          final fullDuration = await service.getVideoDuration(path);
+          if (fullDuration <= 0) throw StateError('无法读取完整视频时长');
+          final frames = await service.extractFrames(
+              videoPath: path,
+              frameCount: (fullDuration / 8).ceil().clamp(1, 120),
+              duration: fullDuration,
+              previewLongVideo: false);
+          if (frames.isEmpty) throw StateError('完整视频抽帧失败');
+          return {
+            'result': {
+              'ok': true,
+              'video_id': videoId,
+              'full_video': true,
+              'duration': fullDuration
+            },
+            'message': '未选择视频解析模型，以下为覆盖全片的采样画面，音频请结合先前转写；采样不能保证覆盖每个细节。',
+            'images': frames
+          };
+        }
         // 构建视频信息响应
-        final duration = (videoInfo['duration'] as num?)?.toDouble() ?? 0.0;
+
+        var duration = (videoInfo['duration'] as num?)?.toDouble() ?? 0.0;
         var framePaths =
             (videoInfo['frame_paths'] as List?)?.cast<String>() ?? [];
         final platformLink = videoInfo['platform_link'] as String?;
@@ -4599,7 +4733,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         }
 
         // 如果帧文件不存在
-        if (existingFrames.isEmpty && framePaths.isNotEmpty) {
+        if (existingFrames.isEmpty) {
           // 检查是否有保存的原始视频文件（用户上传视频）
           if (originalVideoPath != null &&
               originalVideoPath.isNotEmpty &&
@@ -4616,6 +4750,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               );
 
               final videoService = VideoProcessingService.instance; // 需要导入该类
+              if (duration <= 0) {
+                duration =
+                    await videoService.getVideoDuration(originalVideoPath);
+                if (duration <= 0) throw StateError('无法读取历史视频时长');
+                videoInfo['duration'] = duration;
+              }
               final config = videoService.calculateFrameConfig(duration);
               final newFramePaths = await videoService.extractFrames(
                 videoPath: originalVideoPath,

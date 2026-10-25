@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
@@ -14,22 +15,12 @@ class VideoProcessingService {
   /// 获取视频时长（秒）
   Future<double> getVideoDuration(String videoPath) async {
     try {
-      final session = await FFmpegKit.execute('-i "$videoPath"');
-      final output = await session.getOutput();
-      final allOutput = await session.getAllLogsAsString();
-
-      // FFmpeg 将信息输出到 stderr
-      final fullOutput = (output ?? '') + (allOutput ?? '');
-      final durationRegex = RegExp(r'Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})');
-      final match = durationRegex.firstMatch(fullOutput);
-
-      if (match != null) {
-        final hours = int.parse(match.group(1)!);
-        final minutes = int.parse(match.group(2)!);
-        final seconds = double.parse(match.group(3)!);
-        return hours * 3600 + minutes * 60 + seconds;
-      }
-
+      final session = await FFprobeKit.getMediaInformation(videoPath)
+          .timeout(const Duration(seconds: 30));
+      final info = session.getMediaInformation();
+      final duration = double.tryParse(info?.getDuration() ?? '');
+      if (duration != null && duration.isFinite && duration > 0)
+        return duration;
       return 0;
     } catch (e) {
       return 0;
@@ -74,6 +65,7 @@ class VideoProcessingService {
     required String videoPath,
     required int frameCount,
     required double duration,
+    bool previewLongVideo = true,
     int targetWidth = 854, // 480p宽度
   }) async {
     final tempDir = await getTemporaryDirectory();
@@ -82,7 +74,8 @@ class VideoProcessingService {
     await outputDir.create(recursive: true);
 
     final framePaths = <String>[];
-    final interval = duration / frameCount;
+    final interval =
+        duration > 300 && previewLongVideo ? 8.0 : duration / frameCount;
 
     try {
       for (int i = 0; i < frameCount; i++) {

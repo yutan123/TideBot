@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -129,6 +130,7 @@ class _CreateBotPageState extends State<CreateBotPage> {
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: theme.border, width: 0.5)),
                 child: TextField(
+                    contextMenuBuilder: androidTextContextMenu,
                     controller: ctrl,
                     maxLines: maxLines,
                     style: TextStyle(

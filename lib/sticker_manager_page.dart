@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -51,6 +52,7 @@ class _StickerManagerPageState extends State<StickerManagerPage> {
                         fontFamily: 'TideFont')),
                 const SizedBox(height: 14),
                 TextField(
+                    contextMenuBuilder: androidTextContextMenu,
                     controller: emotion,
                     decoration: InputDecoration(
                       labelText: '情绪分类，例如：开心、睡觉',

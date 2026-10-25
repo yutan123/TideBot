@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'log_text.dart';
@@ -184,15 +185,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
             'battery': '电量',
             'location': '位置（用于当地天气等按需信息）',
             'notifications': '最近通知内容',
-            'foreground_app': '当前前台应用',
             'app_usage': '应用使用时长',
-            'screen_text': '当前屏幕文字（无障碍）',
           }
         : feature == DeviceCapabilityService.proactiveFeature
             ? const {
-                'app_opened': '打开或切换应用',
                 'new_notification': '收到新通知',
-                'screen_event': '屏幕操作事件',
               }
             : const {
                 'back': '返回',
@@ -313,17 +310,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         await explain('请在系统页面开启 TideBot 通知使用权',
             capability.openNotificationListenerSettings);
       }
-    }
-    final needsAccessibility =
-        (feature == DeviceCapabilityService.contextFeature &&
-                (selected.contains('screen_text') ||
-                    selected.contains('foreground_app'))) ||
-            (feature == DeviceCapabilityService.proactiveFeature &&
-                (selected.contains('app_opened') ||
-                    selected.contains('screen_event')));
-    if (needsAccessibility && state['accessibility'] != true) {
-      await explain(
-          '请在系统无障碍页面开启“TideBot 受控自动化”', capability.openAccessibilitySettings);
     }
     if (feature == DeviceCapabilityService.proactiveFeature &&
         selected.contains('new_notification') &&
@@ -469,6 +455,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: portController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
@@ -477,6 +464,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                 ),
               ),
               TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: keyController,
                 decoration: const InputDecoration(labelText: 'API Key'),
               ),
@@ -690,17 +678,17 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                       value: value,
                       title: '授权额外信息感知',
                       description: '启用后仍需逐项选择允许的信息；信息只在与当前问题有关时注入上下文。',
-                      defaultWhitelist: const {'battery', 'foreground_app'},
+                      defaultWhitelist: const {'battery'},
                       update: (v) => _extraContext = v),
                 ),
-                _featureFooter(DeviceCapabilityService.contextFeature,
-                    const {'battery', 'foreground_app'}),
+                _featureFooter(
+                    DeviceCapabilityService.contextFeature, const {'battery'}),
                 const Divider(),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('操作触发主动回复',
                       style: TextStyle(fontFamily: 'TideFont')),
-                  subtitle: const Text('打开应用等操作可低概率触发已绑定机器人的主动消息。',
+                  subtitle: const Text('收到已授权的通知时，可低概率触发已绑定机器人的主动消息。',
                       style: TextStyle(fontFamily: 'TideFont')),
                   value: _operationProactive,
                   onChanged: (value) => _setProtectedToggle(
@@ -709,11 +697,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                       value: value,
                       title: '授权操作触发主动回复',
                       description: '机器人只会收到你允许的触发类型。消息发送仍受主动回复设置、频率限制和绑定机器人约束。',
-                      defaultWhitelist: const {'app_opened'},
+                      defaultWhitelist: const {'new_notification'},
                       update: (v) => _operationProactive = v),
                 ),
                 _featureFooter(DeviceCapabilityService.proactiveFeature,
-                    const {'app_opened'}),
+                    const {'new_notification'}),
                 // 机器人操控手机与悬浮窗功能已移除。
               ]),
             ),

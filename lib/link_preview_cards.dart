@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'link_preview_models.dart';
 import 'theme.dart';
 import 'global_notice.dart';
+import 'android_selection_menu.dart';
 
 /// 普通网页链接卡片（参考图一设计）
 class WebLinkCard extends StatelessWidget {
@@ -177,15 +178,25 @@ class WebLinkCard extends StatelessWidget {
 }
 
 /// 视频分享卡片（抖音/小红书/B站，参考图二设计）
-class VideoShareCard extends StatelessWidget {
+class VideoShareCard extends StatefulWidget {
   final LinkPreviewData data;
   final bool isUser;
+  final String? originalText;
 
   const VideoShareCard({
     super.key,
     required this.data,
     required this.isUser,
+    this.originalText,
   });
+
+  @override
+  State<VideoShareCard> createState() => _VideoShareCardState();
+}
+
+class _VideoShareCardState extends State<VideoShareCard> {
+  bool _expanded = false;
+  LinkPreviewData get data => widget.data;
 
   @override
   Widget build(BuildContext context) {
@@ -260,11 +271,38 @@ class VideoShareCard extends StatelessWidget {
                                     fontSize: 11,
                                     color: theme.textWeak,
                                     fontFamily: 'TideFont'))),
-                        Icon(Icons.north_east_rounded,
-                            size: 14, color: theme.textWeak),
+                        InkWell(
+                          onTap: () => setState(() => _expanded = !_expanded),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Text(_expanded ? '收起分享原文' : '展开分享原文',
+                                  style: TextStyle(
+                                      fontSize: 11, color: theme.textWeak)),
+                              Icon(
+                                  _expanded
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                  size: 16,
+                                  color: theme.textWeak),
+                            ]),
+                          ),
+                        ),
                       ]),
                     ]),
               ),
+              if (_expanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: SelectableText(
+                    widget.originalText ?? data.url,
+                    selectionControls: materialTextSelectionHandleControls,
+                    contextMenuBuilder: androidTextContextMenu,
+                    style: TextStyle(
+                        fontSize: 12, height: 1.5, color: theme.textWeak),
+                  ),
+                ),
             ],
           ),
         ),

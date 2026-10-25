@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
 import 'link_preview_models.dart';
 import 'link_page_utils.dart';
+import 'platform_media_parser.dart';
 
 class LinkPreviewService {
   static final LinkPreviewService _instance = LinkPreviewService._();
@@ -112,43 +113,41 @@ class LinkPreviewService {
         }
       }
       // 百度等页面可能主动不提供文章图片，使用站点图标保持卡片有视觉内容。
-      image ??= '${page.uri.scheme}://${page.uri.host}/favicon.ico';
+      if (type == LinkType.web) {
+        image ??= '${page.uri.scheme}://${page.uri.host}/favicon.ico';
+      }
       final html = document.outerHtml;
       if (type == LinkType.douyin) {
-        final item =
-            findVideoItem(extractPageState(html, 'window._ROUTER_DATA'));
-        if (item != null) {
-          title = item['desc'] as String? ?? title;
-          description =
-              (item['author'] as Map?)?['nickname'] as String? ?? description;
-          final video = item['video'] as Map;
-          for (final key in ['cover', 'origin_cover', 'dynamic_cover']) {
-            final urls = (video[key] as Map?)?['url_list'] as List?;
-            if (urls != null && urls.isNotEmpty) {
-              image = urls.first as String;
-              break;
-            }
+        for (final state in platformPageStates(html)) {
+          final item = findVideoItem(state);
+          if (item == null) continue;
+          title = item['desc']?.toString() ?? title;
+          final author = item['author'];
+          if (author is Map)
+            description = author['nickname']?.toString() ?? description;
+          final video = item['video'];
+          if (video is Map) {
+            image = mediaUrl(video['cover'] ??
+                    video['origin_cover'] ??
+                    video['originCover']) ??
+                image;
           }
+          image = mediaUrl(item['images']) ?? image;
+          break;
         }
       } else if (type == LinkType.xiaohongshu) {
-        final state = extractPageState(html, 'window.__INITIAL_STATE__');
-        final notes = (state?['note'] as Map?)?['noteDetailMap'] as Map?;
         final id = RegExp(r'/(?:explore|discovery/item)/([a-zA-Z0-9]+)')
             .firstMatch(target)
             ?.group(1);
-        final note =
-            ((notes?[id] ?? (notes?.length == 1 ? notes!.values.first : null))
-                as Map?)?['note'] as Map?;
-        if (note != null) {
-          title = note['title'] as String? ?? note['desc'] as String? ?? title;
-          description = note['desc'] as String? ?? description;
-          final images = note['imageList'] as List?;
-          if (images != null && images.isNotEmpty) {
-            final first = images.first as Map;
-            image = first['urlDefault'] as String? ??
-                first['url'] as String? ??
-                image;
-          }
+        for (final state in platformPageStates(html)) {
+          final note = findNoteData(state, id);
+          if (note == null) continue;
+          title =
+              note['title']?.toString() ?? note['desc']?.toString() ?? title;
+          description = note['desc']?.toString() ?? description;
+          final images = noteImageUrls(note);
+          if (images.isNotEmpty) image = images.first;
+          break;
         }
       } else if (type == LinkType.bilibili) {
         final id = RegExp(r'BV[0-9A-Za-z]{10}', caseSensitive: false)
@@ -222,6 +221,11 @@ class LinkPreviewService {
           'Referer': 'https://www.xiaohongshu.com/',
         if (type == LinkType.bilibili) 'Referer': 'https://www.bilibili.com/',
       };
+  // Media resolution already fetched the platform page; reuse its actual cover.
+  void rememberPreview(String originalUrl, LinkPreviewData preview) {
+    if (preview.imageUrl?.isNotEmpty == true) _cache[originalUrl] = preview;
+  }
+
   void clearCache() => _cache.clear();
   void removeCachedUrl(String url) => _cache.remove(url);
 }

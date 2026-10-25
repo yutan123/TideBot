@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -90,7 +91,6 @@ class _CallPageState extends State<CallPage>
   Duration _elapsed = Duration.zero;
   bool _ending = false;
   AICancellationToken? _turnToken;
-  CallSpeechStyle? _previousSpeechStyle;
 
   /// 是否启用分贝打断（仅机器人说话期间监听用户是否插话）。
   bool _vadActive = false;
@@ -559,7 +559,6 @@ class _CallPageState extends State<CallPage>
       String text, String? frame, AICancellationToken token) async {
     final db = DBManager();
     final emotional = await db.getKV('call_emotional_voice') != 'false';
-    final strength = await db.getKV('call_voice_strength') ?? 'natural';
     token.throwIfCancelled();
     final systemPrompt =
         _videoEnabled ? _videoCallSystemPrompt : _callSystemPrompt;
@@ -611,11 +610,7 @@ class _CallPageState extends State<CallPage>
       });
       return;
     }
-    final style = emotional
-        ? parsed.style
-            .moderated(previous: _previousSpeechStyle, strength: strength)
-        : null;
-    _previousSpeechStyle = style;
+    final style = emotional ? parsed.style : null;
     _applyGeneratedImage(reply);
     _transcript.add('机器人：$answer');
     if (_hasTts && _ttsProviderId.isNotEmpty) {
@@ -1805,13 +1800,14 @@ class _CallPageState extends State<CallPage>
         children: [
           Expanded(
             child: TextField(
+              contextMenuBuilder: androidTextContextMenu,
               focusNode: _textFocusNode,
               controller: _textController,
               enabled: !_processing && !_ending,
               minLines: 1,
               maxLines: 3,
               textInputAction: TextInputAction.send,
-              selectionControls: materialTextSelectionControls,
+              selectionControls: materialTextSelectionHandleControls,
               onSubmitted: (_) => _submitText(),
               decoration: InputDecoration(
                 hintText: '输入回复',

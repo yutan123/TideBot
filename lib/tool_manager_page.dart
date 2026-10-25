@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -112,6 +113,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                       fontWeight: FontWeight.w700)),
               const SizedBox(height: 18),
               TextFormField(
+                  contextMenuBuilder: androidTextContextMenu,
                   initialValue: title,
                   onChanged: (value) => title = value,
                   style: TextStyle(color: theme.textStrong),
@@ -119,6 +121,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                   decoration: decoration('名称')),
               const SizedBox(height: 12),
               TextFormField(
+                  contextMenuBuilder: androidTextContextMenu,
                   initialValue: description,
                   onChanged: (value) => description = value,
                   style: TextStyle(color: theme.textStrong),
@@ -252,18 +255,22 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 14),
             TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: name,
                 decoration: const InputDecoration(labelText: '名称')),
             TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: url,
                 decoration:
                     const InputDecoration(labelText: 'Streamable HTTP URL')),
             TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: token,
                 obscureText: true,
                 decoration:
                     const InputDecoration(labelText: 'Bearer Token（可选）')),
             TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: timeoutSeconds,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: '超时秒数')),
@@ -359,10 +366,12 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
               if (_isSkill) ...[
                 const Text('指引与附带文件'),
                 NativeSelectableText(
-                    (jsonDecode(item['manifest_json'].toString())
-                                as Map)['instructions']
-                            ?.toString() ??
-                        '此技能通过工具提供能力'),
+                  (jsonDecode(item['manifest_json'].toString())
+                              as Map)['instructions']
+                          ?.toString() ??
+                      '此技能通过工具提供能力',
+                  nativeInteraction: true,
+                ),
                 Text(
                     '文件：${(jsonDecode(item['manifest_json'].toString()) as Map)['files'] ?? []}'),
                 if (((jsonDecode(item['manifest_json'].toString())

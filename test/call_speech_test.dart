@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/call_speech.dart';
-import '../lib/assistant_output_guard.dart';
+import 'package:tide_bot/call_speech.dart';
+import 'package:tide_bot/assistant_output_guard.dart';
 
 void main() {
   test('call JSON survives chat guard and metadata stays out of spoken text',
@@ -32,13 +32,27 @@ void main() {
     expect(CallSpeechReply.parse('[{"emotion":"sad"}]').text, isEmpty);
     expect(CallSpeechStyle.fromJson({'intensity': double.nan}).intensity, .4);
   });
-  test('strength and per-turn smoothing keep intensity bounded', () {
-    const style = CallSpeechStyle(intensity: 1, pace: 'slightly_fast');
-    final value = style.moderated(
-        previous: const CallSpeechStyle(intensity: .1), strength: 'expressive');
-    expect(value.intensity, closeTo(.35, .001));
-    expect(style.moderated(strength: 'restrained').intensity, .6);
-    expect(style.moderated(strength: 'expressive').intensity, .85);
+  test('per-turn directions reach TTS without entering spoken text', () {
+    const direction = '开头放轻，在“别急”之后短暂停顿，末句重音清楚，句尾温暖下落。';
+    final reply = CallSpeechReply.parse(
+        '{"text":"别急，我在。","speech":{"emotion":"comforting","intensity":0.9,"direction":"$direction"}}');
+    expect(reply.text, '别急，我在。');
+    expect(reply.style.intensity, .9);
+    expect(reply.style.direction, direction);
+    final result = applyCallSpeechStyle(
+      {'input': reply.text, 'voice': 'fixed'},
+      protocol: 'openai',
+      model: 'custom',
+      baseUrl: 'https://custom.example/v1',
+      style: reply.style,
+      supportsInstructions: true,
+    );
+    expect(result['instructions'], contains(direction));
+    expect(result['input'], reply.text);
+    expect(result['voice'], 'fixed');
+    expect(CallSpeechStyle.fromJson({'direction': 42}).direction, isEmpty);
+    expect(CallSpeechStyle.fromJson({'direction': '长' * 1000}).direction.length,
+        600);
   });
   const style =
       CallSpeechStyle(emotion: 'happy', intensity: .6, pace: 'slightly_fast');

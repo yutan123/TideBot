@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -207,6 +208,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
               ),
               const SizedBox(height: 18),
               TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: promptCtrl,
                 minLines: 3,
                 maxLines: 6,
@@ -225,6 +227,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
               ),
               const SizedBox(height: 16),
               TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: descCtrl,
                 minLines: 5,
                 maxLines: 10,
@@ -375,6 +378,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
               ),
               const SizedBox(height: 18),
               TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: controller,
                 minLines: 8,
                 maxLines: 15,
@@ -744,6 +748,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                 ),
                 const SizedBox(height: 18),
                 TextField(
+                  contextMenuBuilder: androidTextContextMenu,
                   controller: nameCtrl,
                   decoration: _fieldDecoration(theme, '类别名称').copyWith(
                     hintText: '例如：兴趣爱好、工作技能',
@@ -878,6 +883,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     int maxLines = 1,
   }) {
     return TextField(
+      contextMenuBuilder: androidTextContextMenu,
       controller: controller,
       minLines: minLines,
       maxLines: maxLines,
@@ -1369,6 +1375,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
         borderRadius: BorderRadius.circular(16),
       ),
       child: TextField(
+        contextMenuBuilder: androidTextContextMenu,
         controller: _search,
         onChanged: (_) => setState(() {}),
         textInputAction: TextInputAction.search,

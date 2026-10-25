@@ -1,7 +1,5 @@
-import 'call_speech_preview.dart';
-import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'native_background_coordinator.dart';
+import 'permission_management_page.dart';
+import 'android_selection_menu.dart';
 import 'bot_reference_images_page.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -47,6 +45,11 @@ class _ProfilePageState extends State<ProfilePage> {
       'page': 'advanced',
     },
     {'icon': Icons.notifications_rounded, 'title': '通知管理', 'page': 'notify'},
+    {
+      'icon': Icons.verified_user_outlined,
+      'title': '权限管理',
+      'page': 'permissions'
+    },
     {'icon': Icons.analytics_rounded, 'title': '数据大盘', 'page': 'dashboard'},
     {'icon': Icons.info_rounded, 'title': '关于 TideBot', 'page': 'about'},
     {'icon': Icons.storage_rounded, 'title': '数据管理', 'page': 'data'},
@@ -113,6 +116,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             const SizedBox(height: 12),
             TextField(
+              contextMenuBuilder: androidTextContextMenu,
               controller: ctrl,
               autofocus: true,
               style: TextStyle(
@@ -533,6 +537,12 @@ class _ProfilePageState extends State<ProfilePage> {
         break;
       case 'advanced':
         _showAdvancedSettings();
+        break;
+      case 'permissions':
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const PermissionManagementPage()));
         break;
       case 'notify':
         _showNotificationSettings();
@@ -1039,7 +1049,6 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   bool _jarvis = false;
   bool _voiceReply = false;
   bool _callEmotionalVoice = true;
-  String _callVoiceStrength = 'natural';
   String _imageStyle = '写实';
   String _searchProvider = 'Tavily';
   int _stickerChance = 50;
@@ -1122,7 +1131,6 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     final jarvis = await db.getKV('jarvis_enabled');
     final voiceReply = await db.getKV('voice_reply_enabled');
     final callEmotionalVoice = await db.getKV('call_emotional_voice');
-    final callVoiceStrength = await db.getKV('call_voice_strength');
     final voiceReplyChance = int.tryParse(
       await db.getKV('voice_reply_chance') ?? '',
     );
@@ -1170,7 +1178,6 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       _jarvis = jarvis == 'true';
       _voiceReply = voiceReply == 'true';
       _callEmotionalVoice = callEmotionalVoice != 'false';
-      _callVoiceStrength = const ['restrained', 'natural', 'expressive'].contains(callVoiceStrength) ? callVoiceStrength! : 'natural';
       _voiceReplyChance = (voiceReplyChance ?? 50).clamp(1, 100);
       _voiceReplyChanceController.text = _voiceReplyChance.toString();
       _stickerChance = (stickerChance ?? 50).clamp(1, 100);
@@ -1404,6 +1411,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
         children: [
           Expanded(
             child: TextField(
+              contextMenuBuilder: androidTextContextMenu,
               controller: _replyDelayMinController,
               keyboardType: TextInputType.number,
               style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1426,6 +1434,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
           ),
           Expanded(
             child: TextField(
+              contextMenuBuilder: androidTextContextMenu,
               controller: _replyDelayMaxController,
               keyboardType: TextInputType.number,
               style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1446,6 +1455,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
         children: [
           Expanded(
             child: TextField(
+              contextMenuBuilder: androidTextContextMenu,
               controller: _proactiveMinController,
               keyboardType: TextInputType.number,
               style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1468,6 +1478,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
           ),
           Expanded(
             child: TextField(
+              contextMenuBuilder: androidTextContextMenu,
               controller: _proactiveMaxController,
               keyboardType: TextInputType.number,
               style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1496,6 +1507,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   }
 
   Widget _compactPostsPerDay(TideTheme theme) => TextField(
+        contextMenuBuilder: androidTextContextMenu,
         controller: _botPostsPerDayController,
         keyboardType: TextInputType.number,
         style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1512,6 +1524,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
       );
 
   Widget _compactSpeed(TideTheme theme) => TextField(
+        contextMenuBuilder: androidTextContextMenu,
         controller: _streamSpeedController,
         keyboardType: TextInputType.number,
         style: TextStyle(color: theme.textStrong, fontFamily: 'TideFont'),
@@ -1696,6 +1709,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                               ),
                               const SizedBox(height: 10),
                               TextField(
+                                contextMenuBuilder: androidTextContextMenu,
                                 controller: _searchKeyController,
                                 obscureText: !_showSearchKey,
                                 style: TextStyle(
@@ -1796,6 +1810,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                           ),
                                           const SizedBox(height: 12),
                                           TextField(
+                                            contextMenuBuilder:
+                                                androidTextContextMenu,
                                             controller: controller,
                                             autofocus: true,
                                             decoration: const InputDecoration(
@@ -1853,29 +1869,13 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   _settingSwitch(
                     theme: theme,
                     title: '通话情绪语音',
-                    help: '默认开启。根据本轮对话调整语气；语音输入和文字输入一致，保持原音色。效果取决于 TTS 模型。',
+                    help:
+                        '默认开启。机器人根据每轮对话自动生成细致的情绪、重音、停顿和语气变化，无需选择情绪或强度；语音与文字输入均生效，保持原音色。效果取决于语音模型。',
                     value: _callEmotionalVoice,
                     onChanged: (v) {
                       setState(() => _callEmotionalVoice = v);
                       _save('call_emotional_voice', '$v');
                     },
-                    child: _callEmotionalVoice ? Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Wrap(spacing: 8, children: const {
-                          'restrained': '克制', 'natural': '自然', 'expressive': '丰富',
-                        }.entries.map((e) => ChoiceChip(
-                          label: Text(e.value), selected: _callVoiceStrength == e.key,
-                          selectedColor: theme.primary.withValues(alpha: .2),
-                          onSelected: (_) {
-                            setState(() => _callVoiceStrength = e.key);
-                            _save('call_voice_strength', e.key);
-                          },
-                        )).toList()),
-                        const SizedBox(height: 8),
-                        TideDialogs.glassButton('试听情绪语音', onTap: () => showCallSpeechPreview(context, _callVoiceStrength)),
-                      ]),
-                    ) : null,
                   ),
                   _settingSwitch(
                     theme: theme,
@@ -1890,6 +1890,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                         ? Padding(
                             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                             child: TextField(
+                              contextMenuBuilder: androidTextContextMenu,
                               controller: _voiceReplyChanceController,
                               keyboardType: TextInputType.number,
                               style: TextStyle(
@@ -1930,6 +1931,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                         ? Column(
                             children: [
                               TextField(
+                                contextMenuBuilder: androidTextContextMenu,
                                 controller: _stickerChanceController,
                                 keyboardType: TextInputType.number,
                                 style: TextStyle(
@@ -2075,6 +2077,8 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                 },
                                 child: _botPostsWithImages
                                     ? TextField(
+                                        contextMenuBuilder:
+                                            androidTextContextMenu,
                                         controller:
                                             _botPostsImageChanceController,
                                         keyboardType: TextInputType.number,
@@ -2152,7 +2156,6 @@ class NotificationSettingsPage extends StatefulWidget {
 class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   late bool _unread;
   late bool _keepRunning;
-  bool _downloadProgress = true;
   bool _switchingPersistentNotification = false;
 
   @override
@@ -2160,9 +2163,6 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     super.initState();
     _unread = widget.initialUnread;
     _keepRunning = widget.initialKeepRunning;
-    DBManager().getKV('download_progress_notifications').then((value) {
-      if (mounted) setState(() => _downloadProgress = value != 'false');
-    });
   }
 
   Future<void> _setValue(String key, bool value) async {
@@ -2191,34 +2191,6 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(
                 children: [
-                  if (defaultTargetPlatform == TargetPlatform.android) ...[
-                    ListTile(
-                      leading: Icon(Icons.alarm_rounded, color: theme.primary),
-                      title: const Text('准时执行后台任务',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      subtitle: const Text('允许精确闹钟后，定时任务可在设定时间唤醒',
-                          style:
-                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () async {
-                        await Permission.scheduleExactAlarm.request();
-                        await NativeBackgroundCoordinator.synchronize();
-                      },
-                    ),
-                    ListTile(
-                      leading: Icon(Icons.battery_saver_rounded,
-                          color: theme.primary),
-                      title: const Text('允许后台运行',
-                          style: TextStyle(fontFamily: 'TideFont')),
-                      subtitle: const Text('在系统设置中允许 TideBot 忽略电池优化',
-                          style:
-                              TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () async {
-                        await Permission.ignoreBatteryOptimizations.request();
-                      },
-                    ),
-                  ],
                   SwitchListTile(
                     title: const Text(
                       '机器人未读消息通知',
@@ -2237,24 +2209,6 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                       }
                       setState(() => _unread = value);
                       await _setValue('unread_notifications', value);
-                    },
-                  ),
-                  SwitchListTile(
-                    title: const Text(
-                      '下载进度通知',
-                      style: TextStyle(fontFamily: 'TideFont'),
-                    ),
-                    subtitle: const Text(
-                      '显示文件下载的实时进度',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 12),
-                    ),
-                    value: _downloadProgress,
-                    activeThumbColor: theme.primary,
-                    onChanged: (value) async {
-                      if (value && !await AppPermissions.notifications(context))
-                        return;
-                      setState(() => _downloadProgress = value);
-                      await _setValue('download_progress_notifications', value);
                     },
                   ),
                   SwitchListTile(
@@ -2913,17 +2867,22 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _f('音色', vCtrl),
             const SizedBox(height: 8),
-            Text(protocol == 'mimo' ? '支持独立语气指令，保持所选音色。'
-                : protocol == 'minimax' ? '按模型支持情况使用原生情绪与语速。'
-                : 'CosyVoice2 预设自动适配情绪；其他兼容接口默认仅调整语速。'),
-            if (protocol == 'openai') StatefulBuilder(builder: (context, update) => SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              activeThumbColor: TideTheme.of(context).primary,
-              title: const Text('支持语气指令'),
-              subtitle: const Text('仅在接口文档明确支持 instructions 时开启'),
-              value: supportsInstructions,
-              onChanged: (v) => update(() => supportsInstructions = v),
-            )),
+            Text(protocol == 'mimo'
+                ? '支持独立语气指令，保持所选音色。'
+                : protocol == 'minimax'
+                    ? '按模型支持情况使用原生情绪与语速。'
+                    : 'CosyVoice2 预设自动适配情绪；其他兼容接口默认仅调整语速。'),
+            if (protocol == 'openai')
+              StatefulBuilder(
+                  builder: (context, update) => SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        activeThumbColor: TideTheme.of(context).primary,
+                        title: const Text('支持语气指令'),
+                        subtitle: const Text('仅在接口文档明确支持 instructions 时开启'),
+                        value: supportsInstructions,
+                        onChanged: (v) =>
+                            update(() => supportsInstructions = v),
+                      )),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -3169,6 +3128,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
                     child: TextField(
+                      contextMenuBuilder: androidTextContextMenu,
                       controller: searchCtrl,
                       onChanged: (_) => setPickerState(() {}),
                       autofocus: false,
@@ -3374,6 +3334,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             children: [
               Expanded(
                 child: TextField(
+                  contextMenuBuilder: androidTextContextMenu,
                   controller: modelCtrl,
                   style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),
                   decoration: const InputDecoration(
@@ -3426,6 +3387,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                 color: TideTheme.of(context).surfaceVariant,
               ),
               child: TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: c,
                 obscureText: hidden,
                 style: const TextStyle(fontSize: 14, fontFamily: 'TideFont'),

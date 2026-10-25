@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -1194,6 +1195,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
           SizedBox(
               width: 80,
               child: TextField(
+                  contextMenuBuilder: androidTextContextMenu,
                   controller: ctrl,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),

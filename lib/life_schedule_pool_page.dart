@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'package:flutter/material.dart';
 
 import 'life_schedule_service.dart';
@@ -61,6 +62,7 @@ class _LifeSchedulePoolPageState extends State<LifeSchedulePoolPage> {
                     ),
                     const SizedBox(height: 18),
                     TextField(
+                      contextMenuBuilder: androidTextContextMenu,
                       controller: controller,
                       autofocus: true,
                       onSubmitted: (_) =>

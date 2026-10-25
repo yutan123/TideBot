@@ -71,8 +71,10 @@ Map<String, dynamic>? extractPageState(String html, String marker) {
 
 Map<String, dynamic>? findVideoItem(dynamic node) {
   if (node is Map) {
-    if (node['video'] is Map &&
-        (node.containsKey('aweme_id') || node.containsKey('desc'))) {
+    if ((node['video'] is Map || node['images'] is List) &&
+        (node.containsKey('aweme_id') ||
+            node.containsKey('awemeId') ||
+            node.containsKey('desc'))) {
       return Map<String, dynamic>.from(node);
     }
     for (final value in node.values) {

@@ -5,6 +5,31 @@ import 'package:tide_bot/link_preview_models.dart';
 import 'package:tide_bot/theme.dart';
 
 void main() {
+  testWidgets('展开原文保留原始短链和分享文字，收起不跳转平台', (tester) async {
+    const original = '这是分享原文 https://v.douyin.com/original/';
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+          body: Center(
+              child: VideoShareCard(
+        data: LinkPreviewData(
+            url: 'https://www.douyin.com/video/123',
+            title: '分享的视频',
+            type: LinkType.douyin),
+        isUser: true,
+        originalText: original,
+      ))),
+    ));
+    expect(find.text(original), findsNothing);
+    await tester.tap(find.text('展开分享原文'));
+    await tester.pump();
+    expect(find.text(original), findsOneWidget);
+    expect(find.byType(SelectableText), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('收起分享原文'));
+    await tester.pump();
+    expect(find.text(original), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   for (final width in [320.0, 430.0, 900.0]) {
     testWidgets('缺封面卡片在 $width 宽度下保持紧凑且文字不溢出', (tester) async {
       tester.view.physicalSize = Size(width, 900);

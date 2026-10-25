@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'native_selectable_text.dart';
 
-/// Bundled fonts keep log text independent of the app and device typefaces.
+/// Keep the same monospace face used by the original log viewer. The native
+/// Android TextView resolves this family just like the old SelectableText did.
 const logTextStyle = TextStyle(
   inherit: false,
-  fontFamily: 'LogMono',
-  fontFamilyFallback: ['LogSansSC'],
+  fontFamily: 'monospace',
   fontSize: 12,
   height: 1.5,
   fontWeight: FontWeight.w400,

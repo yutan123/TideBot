@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -752,9 +753,10 @@ class _GameArenaPageState extends State<GameArenaPage> {
                   children: [
                     Expanded(
                       child: TextField(
+                        contextMenuBuilder: androidTextContextMenu,
                         controller: _chatController,
                         onSubmitted: (_) => _talk(),
-                        selectionControls: materialTextSelectionControls,
+                        selectionControls: materialTextSelectionHandleControls,
                         decoration: InputDecoration(
                           hintText: '和 $_botName 聊聊游戏…',
                           filled: true,

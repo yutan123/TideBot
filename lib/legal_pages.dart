@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -96,6 +97,7 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
                     // Keep long legal content in Flutter's scroll layout.
                     // One tall Android platform view can exceed texture limits.
                     child: SelectionArea(
+                      contextMenuBuilder: androidSelectionContextMenu,
                       child: Text(
                         tideBotLegalText,
                         style: TextStyle(
@@ -206,39 +208,10 @@ class TideBotAboutPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  '多角色对话 · 流式回复与表情贴纸\n'
-                  '记忆与世界书 · 日记、生活日程与空间动态\n'
-                  '语音交流 · 通话记录、转写与摘要\n'
-                  '多模态输入 · 图片、音频、视频与文档正文提取\n'
-                  '视频理解 · 抖音、小红书、B站链接解析与历史视频查看\n'
-                  '图片创作 · 角色参考图生图与用户图片编辑\n'
-                  '工具扩展 · 网络搜索、技能包与远程 MCP\n'
-                  '设备协作 · 提醒、定时任务与可选局域网 API\n'
-                  '个性界面 · 日夜间主题、自定义背景与液态玻璃\n'
-                  '数据管理 · 本地存储、完整备份与恢复',
+                  '与专属角色自然聊天，让记忆延续陪伴。\n'
+                  '用文字、语音和影像，分享日常与灵感。\n'
+                  '自由定制角色与界面，数据本地保存。',
                   style: TextStyle(fontFamily: 'TideFont', height: 1.8),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '模型、语音、图片及工具能力取决于所配置的服务和授权；平台视频解析受原内容可用性及平台限制影响。',
-                  style: TextStyle(
-                    fontFamily: 'TideFont',
-                    height: 1.6,
-                    color: theme.textWeak,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                SelectableText(
-                  'Copyright (C) 2025-2026 TideBot contributors.\n'
-                  '原创内容采用 AGPL-3.0-only 授权，另有说明的内容除外。\n'
-                  '第三方组件保留各自的版权与许可证。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'TideFont',
-                    fontSize: 12,
-                    height: 1.6,
-                    color: theme.textWeak,
-                  ),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -268,6 +241,17 @@ class TideBotAboutPage extends StatelessWidget {
                       ),
                     ),
                     child: const Text('查看用户协议与免责声明'),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Center(
+                  child: Text(
+                    '潮起有时，陪伴无期',
+                    style: TextStyle(
+                      fontFamily: 'TideFont',
+                      fontSize: 12,
+                      color: theme.textWeak,
+                    ),
                   ),
                 ),
               ],

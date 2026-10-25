@@ -1203,6 +1203,18 @@ class DBManager {
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
 
+  Future<void> removeLegacyVideoSkill() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      const where = 'id = ? AND built_in = 1';
+      const args = ['view_video'];
+      final legacy = await txn.query('skills', where: where, whereArgs: args);
+      if (legacy.isEmpty) return;
+      await txn.delete('skill_tools', where: 'skill_id = ?', whereArgs: args);
+      await txn.delete('skills', where: where, whereArgs: args);
+    });
+  }
+
   Future<void> deleteSkill(String id) async {
     final db = await database;
     // 检查是否为内置skill

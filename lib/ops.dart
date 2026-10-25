@@ -11,7 +11,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 
 import 'app_navigation.dart';
-import 'db.dart';
 
 class OpsManager {
   static final OpsManager _instance = OpsManager._internal();
@@ -184,45 +183,6 @@ class OpsManager {
       'message_id': messageId,
     });
     await _notifications.show(id, title, body, details, payload: payload);
-  }
-
-  /// File download progress notification shown in the status bar.
-  Future<void> showDownloadProgress({
-    required int notifId,
-    required int percent,
-    required String body,
-    required bool done,
-    String botId = '',
-  }) async {
-    if (await DBManager().getKV('download_progress_notifications') == 'false') {
-      if (done) await cancelDownloadProgress(notifId);
-      return;
-    }
-    await initializeNotifications();
-    final details = NotificationDetails(
-      android: AndroidNotificationDetails(
-        'tide_bot_msg',
-        'TideBot 消息通知',
-        channelDescription: '机器人回复与未读消息提醒',
-        importance: Importance.high,
-        priority: Priority.high,
-        onlyAlertOnce: true,
-        showProgress: !done,
-        progress: percent.clamp(0, 100),
-        maxProgress: 100,
-        indeterminate: false,
-        ongoing: !done,
-        autoCancel: done,
-        visibility: NotificationVisibility.public,
-      ),
-    );
-    await _notifications.show(notifId, done ? '下载完成' : '文件下载中', body, details,
-        payload: botId);
-  }
-
-  Future<void> cancelDownloadProgress(int notifId) async {
-    await initializeNotifications();
-    await _notifications.cancel(notifId);
   }
 
   // 手机操控桥接已移除。

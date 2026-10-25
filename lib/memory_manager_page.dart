@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'db.dart';
@@ -324,11 +325,13 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                     ),
                     const SizedBox(height: 16),
                     TextField(
+                      contextMenuBuilder: androidTextContextMenu,
                       controller: titleCtrl,
                       decoration: decoration.copyWith(labelText: '标题'),
                     ),
                     const SizedBox(height: 12),
                     TextField(
+                      contextMenuBuilder: androidTextContextMenu,
                       controller: content,
                       minLines: 4,
                       maxLines: 7,
@@ -339,6 +342,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                     ),
                     const SizedBox(height: 12),
                     TextField(
+                      contextMenuBuilder: androidTextContextMenu,
                       controller: keysCtrl,
                       decoration: decoration.copyWith(
                         labelText: '关键词（用逗号分隔）',
@@ -470,10 +474,12 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                                 fontFamily: 'TideFont')),
                         const SizedBox(height: 12),
                         TextField(
+                            contextMenuBuilder: androidTextContextMenu,
                             controller: title,
                             decoration: const InputDecoration(labelText: '标题')),
                         const SizedBox(height: 10),
                         TextField(
+                            contextMenuBuilder: androidTextContextMenu,
                             controller: prompt,
                             minLines: 3,
                             maxLines: 5,
@@ -530,6 +536,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                         // 动态表单：每天只填时间；一次显示日期 + 时间两个独立输入框。
                         if (_frequency == 'daily')
                           TextField(
+                              contextMenuBuilder: androidTextContextMenu,
                               controller: timeText,
                               keyboardType: TextInputType.datetime,
                               decoration: const InputDecoration(
@@ -538,6 +545,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               ))
                         else ...[
                           TextField(
+                              contextMenuBuilder: androidTextContextMenu,
                               controller: dateText,
                               keyboardType: TextInputType.datetime,
                               decoration: const InputDecoration(
@@ -546,6 +554,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                               )),
                           const SizedBox(height: 10),
                           TextField(
+                              contextMenuBuilder: androidTextContextMenu,
                               controller: timeText,
                               keyboardType: TextInputType.datetime,
                               decoration: const InputDecoration(
@@ -653,6 +662,7 @@ class _MemoryManagerPageState extends State<MemoryManagerPage> {
                         fontFamily: 'TideFont')),
                 const SizedBox(height: 16),
                 TextField(
+                    contextMenuBuilder: androidTextContextMenu,
                     controller: content,
                     minLines: 4,
                     maxLines: 7,

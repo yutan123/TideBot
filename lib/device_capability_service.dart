@@ -23,7 +23,9 @@ class DeviceCapabilityService {
     final values = (await SharedPreferences.getInstance())
             .getStringList('${feature}_whitelist') ??
         const <String>[];
-    return values.toSet();
+    return values.toSet()
+      ..removeAll(
+          {'foreground_app', 'screen_text', 'app_opened', 'screen_event'});
   }
 
   Future<void> setWhitelist(String feature, Set<String> values) async {
@@ -52,23 +54,6 @@ class DeviceCapabilityService {
     );
   }
 
-  Future<Map<String, dynamic>> accessibilityState() async =>
-      await _channel.invokeMapMethod<String, dynamic>('accessibilityState') ??
-      const {};
-
-  /// Whether Android has enabled TideBot in Accessibility settings. The native
-  /// service may still be reconnecting, so this must not depend only on an
-  /// in-process service instance.
-  Future<bool> accessibilityEnabled() async {
-    final state = await accessibilityState();
-    return state['enabled'] == true;
-  }
-
-  Future<bool> accessibilityConnected() async {
-    final state = await accessibilityState();
-    return state['connected'] == true;
-  }
-
   // 手机操控接口已移除。
 
   Future<Map<String, dynamic>> capabilityState() async =>
@@ -88,9 +73,8 @@ class DeviceCapabilityService {
         .toList();
   }
 
-  Future<void> openAccessibilitySettings() =>
-      _channel.invokeMethod<void>('openAccessibilitySettings');
-
+  Future<void> openPermissionSettings(String kind) =>
+      _channel.invokeMethod<void>('openPermissionSettings', {'kind': kind});
   Future<void> openUsageAccessSettings() =>
       _channel.invokeMethod<void>('openUsageAccessSettings');
 

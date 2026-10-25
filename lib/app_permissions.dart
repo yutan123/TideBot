@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'global_notice.dart';
+import 'device_capability_service.dart';
 
 /// Android runtime permission gateway.
 /// ImagePicker's Android photo picker can work without broad storage access on
@@ -9,9 +10,13 @@ import 'global_notice.dart';
 class AppPermissions {
   static Future<bool> photos(BuildContext context,
       {String feature = '选择图片'}) async {
-    PermissionStatus status = await Permission.photos.status;
+    final state = await DeviceCapabilityService.instance.capabilityState();
+    final permission = (state['sdkInt'] as int? ?? 33) >= 33
+        ? Permission.photos
+        : Permission.storage;
+    PermissionStatus status = await permission.status;
     if (!status.isGranted && !status.isLimited) {
-      status = await Permission.photos.request();
+      status = await permission.request();
     }
     if (status.isGranted || status.isLimited) return true;
     if (!context.mounted) return false;

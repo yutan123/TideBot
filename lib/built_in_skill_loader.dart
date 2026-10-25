@@ -6,7 +6,9 @@ import 'skill_package.dart';
 class BuiltInSkillLoader {
   static Future<void> ensureBuiltInSkills() async {
     final db = DBManager();
-    final builtInSkills = ['talk', 'view_video'];
+    // 旧版本误把内置视频工具的说明安装成了 Skill。
+    await db.removeLegacyVideoSkill();
+    final builtInSkills = ['talk'];
 
     for (final skillId in builtInSkills) {
       try {

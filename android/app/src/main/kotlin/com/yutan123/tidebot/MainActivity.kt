@@ -56,23 +56,10 @@ class MainActivity: FlutterActivity() {
     }
     private val CHANNEL = "tidebot.native.channel"
     private var nativeChannel: MethodChannel? = null
+    private var selectionMenu: NativeSelectionMenu? = null
     private var pendingInstallApk: File? = null
     // 悬浮窗消息转发已移除。
 
-
-    private fun accessibilitySystemEnabled(): Boolean {
-        if (Settings.Secure.getInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) != 1) return false
-        val expected = ComponentName(this, TideAccessibilityService::class.java)
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ).orEmpty()
-        return enabled.split(':').any { value ->
-            ComponentName.unflattenFromString(value)?.let {
-                it.packageName == expected.packageName && it.className == expected.className
-            } == true
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +68,8 @@ class MainActivity: FlutterActivity() {
     }
     
     override fun onDestroy() {
+        selectionMenu?.dispose()
+        selectionMenu = null
         TideNativeNotifications.activityVisible = false
         TideNativeNotifications.visibleChatBotId = null
         // The service owns bounded request leases. Activity teardown alone is
@@ -126,6 +115,8 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        selectionMenu?.dispose()
+        selectionMenu = NativeSelectionMenu(this, flutterEngine.dartExecutor.binaryMessenger)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             "tidebot/native_selectable_text",
             NativeSelectableTextFactory(flutterEngine.dartExecutor.binaryMessenger),
@@ -282,12 +273,6 @@ class MainActivity: FlutterActivity() {
                         val level = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
                         if (level >= 0) context["battery"] = "$level%"
                     }
-                    if (allowed.contains("foreground_app")) {
-                        context["foreground_app"] = TideAccessibilityService.state()["packageName"] ?: ""
-                    }
-                    if (allowed.contains("screen_text")) {
-                        context["screen_text"] = TideAccessibilityService.visibleText()
-                    }
                     if (allowed.contains("notifications") && TideNotificationListenerService.connected) {
                         context["notifications"] = TideNotificationListenerService.snapshot()
                     }
@@ -320,10 +305,10 @@ class MainActivity: FlutterActivity() {
                     result.success(apps)
                 }
                 "capabilityState" -> result.success(mapOf(
-                    "accessibility" to accessibilitySystemEnabled(),
-                    "accessibilityConnected" to (TideAccessibilityService.instance != null),
+                    "sdkInt" to Build.VERSION.SDK_INT,
+                    "installPackages" to (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()),
                     "usageAccess" to hasUsageAccess(),
-                    "notificationAccess" to TideNotificationListenerService.connected,
+                    "notificationAccess" to (Settings.Secure.getString(contentResolver, "enabled_notification_listeners")?.split(':')?.any { ComponentName.unflattenFromString(it)?.packageName == packageName } == true),
                     "locationPermission" to (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
                 ))
                 "latestDeviceEvent" -> {
@@ -331,18 +316,32 @@ class MainActivity: FlutterActivity() {
                         this["type"] = "new_notification"
                         this["time"] = (this["postedAt"] as? Number)?.toLong() ?: 0L
                     }
-                    val accessibility = TideAccessibilityService.lastEvent
-                    val selected = listOfNotNull(notification, accessibility)
+                    val selected = listOfNotNull(notification)
                         .maxByOrNull { (it["time"] as? Number)?.toLong() ?: 0L }
                     result.success(selected)
                 }
-                "accessibilityState" -> result.success(TideAccessibilityService.state().toMutableMap().apply {
-                    this["enabled"] = accessibilitySystemEnabled()
-                    this["connected"] = TideAccessibilityService.instance != null
-                })
-                "openAccessibilitySettings" -> {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    result.success(null)
+                "openPermissionSettings" -> {
+                    val kind = call.argument<String>("kind")
+                    val action = when (kind) {
+                        "battery" -> Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                        "alarm" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                        "install" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                        else -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                    }
+                    val intent = Intent(action).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    try {
+                        startActivity(intent)
+                        result.success(null)
+                    } catch (e: Exception) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                            result.success(null)
+                        } catch (fallback: Exception) {
+                            result.error("settings_unavailable", "无法打开系统授权设置", null)
+                        }
+                    }
                 }
                 "openUsageAccessSettings" -> {
                     startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))

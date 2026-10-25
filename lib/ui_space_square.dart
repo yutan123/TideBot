@@ -1,3 +1,4 @@
+import 'android_selection_menu.dart';
 import 'life_schedule_service.dart';
 import 'bot_image_tool.dart';
 import 'dart:async';
@@ -1642,6 +1643,7 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: TextField(
+                contextMenuBuilder: androidTextContextMenu,
                 controller: ctrl,
                 autofocus: true,
                 maxLines: null,
@@ -2396,9 +2398,11 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                     children: [
                       Expanded(
                         child: TextField(
+                          contextMenuBuilder: androidTextContextMenu,
                           controller: _commentCtrl,
                           textInputAction: TextInputAction.send,
-                          selectionControls: materialTextSelectionControls,
+                          selectionControls:
+                              materialTextSelectionHandleControls,
                           onSubmitted:
                               _sendingComment ? null : (_) => _sendComment(),
                           style: TextStyle(
