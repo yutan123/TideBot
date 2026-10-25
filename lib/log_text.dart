@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'native_selectable_text.dart';
 
-/// Keep the same monospace face used by the original log viewer. The native
-/// Android TextView resolves this family just like the old SelectableText did.
+/// Use bundled Latin and Chinese fonts so device themes cannot replace log text.
 const logTextStyle = TextStyle(
   inherit: false,
-  fontFamily: 'monospace',
+  fontFamily: 'LogMono',
+  fontFamilyFallback: ['LogSansSC'],
   fontSize: 12,
   height: 1.5,
   fontWeight: FontWeight.w400,

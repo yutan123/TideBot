@@ -195,4 +195,38 @@ void main() {
     expect(state?.containsKey('missing'), isTrue);
     expect(state?['missing'], isNull);
   });
+  test('抖音200壳页设置nonce后携带cookie重试一次', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      if (calls == 1) {
+        return _response('<title>shell</title>', 200,
+            headers: {'set-cookie': '_ac_nonce=abc; Path=/; HttpOnly'});
+      }
+      expect(request.headers['Cookie'], '_ac_nonce=abc');
+      return _response('<title>video</title>', 200);
+    });
+    final result = await fetchLinkPage(
+        client, Uri.parse('https://www.douyin.com/share/video/123/'), {});
+    expect(calls, 2);
+    expect(result.response.body, contains('video'));
+  });
+  test('重定向cookie仅发给相同主机，不传递给外部CDN', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      if (calls == 1)
+        return _response('', 302,
+            headers: {'location': '/step2', 'set-cookie': 'share=abc; Path=/'});
+      if (calls == 2) {
+        expect(request.headers['Cookie'], 'share=abc');
+        return _response('', 302,
+            headers: {'location': 'https://cdn.example.com/video'});
+      }
+      expect(request.headers['Cookie'], isNull);
+      return _response('done', 200);
+    });
+    await fetchLinkPage(client, Uri.parse('https://example.com/share'), {});
+    expect(calls, 3);
+  });
 }

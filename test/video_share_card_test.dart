@@ -5,29 +5,20 @@ import 'package:tide_bot/link_preview_models.dart';
 import 'package:tide_bot/theme.dart';
 
 void main() {
-  testWidgets('展开原文保留原始短链和分享文字，收起不跳转平台', (tester) async {
-    const original = '这是分享原文 https://v.douyin.com/original/';
+  testWidgets('分享卡片只展示预览，不再提供原文折叠入口', (tester) async {
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
-          body: Center(
-              child: VideoShareCard(
+          body: VideoShareCard(
         data: LinkPreviewData(
             url: 'https://www.douyin.com/video/123',
             title: '分享的视频',
             type: LinkType.douyin),
         isUser: true,
-        originalText: original,
-      ))),
+      )),
     ));
-    expect(find.text(original), findsNothing);
-    await tester.tap(find.text('展开分享原文'));
-    await tester.pump();
-    expect(find.text(original), findsOneWidget);
-    expect(find.byType(SelectableText), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.tap(find.text('收起分享原文'));
-    await tester.pump();
-    expect(find.text(original), findsNothing);
+    expect(find.text('分享的视频'), findsOneWidget);
+    expect(find.textContaining('分享原文'), findsNothing);
+    expect(find.byType(SelectableText), findsNothing);
     expect(tester.takeException(), isNull);
   });
   for (final width in [320.0, 430.0, 900.0]) {

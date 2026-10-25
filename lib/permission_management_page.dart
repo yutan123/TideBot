@@ -244,11 +244,6 @@ class _PermissionManagementPageState extends State<PermissionManagementPage>
             FrostCard(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(children: [
-                  _row(Icons.install_mobile_rounded, '安装应用更新',
-                      '仅用于你手动确认后的 TideBot APK 更新安装',
-                      nativeKey: 'installPackages',
-                      open: () => DeviceCapabilityService.instance
-                          .openPermissionSettings('install')),
                   _row(Icons.alarm_rounded, '精确闹钟', '让已设置的后台任务在指定时间唤醒',
                       permission: Permission.scheduleExactAlarm),
                   _row(Icons.query_stats_rounded, '使用情况访问',

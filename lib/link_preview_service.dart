@@ -163,6 +163,11 @@ class LinkPreviewService {
                 .timeout(const Duration(seconds: 8));
             final data = jsonDecode(response.body);
             if (data['code'] == 0 && data['data'] is Map) {
+              final aid = data['data']['aid'];
+              if (aid is num && aid > 0) {
+                final resolved = Uri.parse(target);
+                target = resolved.replace(path: '/video/av$aid').toString();
+              }
               title = data['data']['title'] as String? ?? title;
               image = data['data']['pic'] as String? ?? image;
               description = data['data']['desc'] as String? ?? description;
@@ -214,8 +219,9 @@ class LinkPreviewService {
         type: type,
       );
   static Map<String, String> _headers(LinkType type) => {
-        'User-Agent':
-            'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+        'User-Agent': type == LinkType.douyin
+            ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+            : 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         if (type == LinkType.douyin) 'Referer': 'https://www.douyin.com/',
         if (type == LinkType.xiaohongshu)
           'Referer': 'https://www.xiaohongshu.com/',

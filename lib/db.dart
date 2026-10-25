@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:archive/archive.dart';
 import 'chat_event_bus.dart';
@@ -1505,21 +1506,74 @@ class DBManager {
     }
   }
 
-  /// Byte usage of each bot's persisted chat rows. SQLite stores every bot in
-  /// one database file, so allocate the file proportionally by row payload.
+  /// Byte usage of each bot's persisted chat rows, including referenced media.
+  /// SQLite stores every bot in one database file, so allocate the database
+  /// payload proportionally and add each chat image/video file once per bot.
   Future<Map<String, int>> chatStorageByBot() async {
     final db = await database;
     try {
       final rows = await db.rawQuery('''
-        SELECT bot_id, SUM(
+        SELECT bot_id, id, type, file_path,
           length(COALESCE(content, '')) + length(COALESCE(file_path, '')) +
           length(COALESCE(error_log, '')) + length(COALESCE(sources_json, '')) + 96
-        ) AS bytes FROM chat_history GROUP BY bot_id
+          AS row_bytes
+        FROM chat_history
       ''');
-      return {
-        for (final row in rows)
-          row['bot_id']?.toString() ?? '': (row['bytes'] as num?)?.toInt() ?? 0
-      };
+      final result = <String, int>{};
+      final mediaByBot = <String, Set<String>>{};
+      for (final row in rows) {
+        final botId = row['bot_id']?.toString() ?? '';
+        result[botId] =
+            (result[botId] ?? 0) + ((row['row_bytes'] as num?)?.toInt() ?? 0);
+        final type = row['type']?.toString() ?? '';
+        final path = row['file_path']?.toString().trim() ?? '';
+        if (path.isNotEmpty &&
+            const {'image', 'video', 'audio', 'shared_post'}.contains(type)) {
+          mediaByBot.putIfAbsent(botId, () => <String>{}).add(path);
+        }
+      }
+      for (final entry in mediaByBot.entries) {
+        for (final path in entry.value) {
+          try {
+            final file = File(path);
+            if (await file.exists()) {
+              result[entry.key] =
+                  (result[entry.key] ?? 0) + await file.length();
+            }
+          } catch (_) {}
+        }
+      }
+      final prefs = await SharedPreferences.getInstance();
+      for (final botId in result.keys.toList()) {
+        final history = prefs.getStringList('video_history_$botId') ?? [];
+        final paths = <String>{};
+        for (final raw in history) {
+          try {
+            final item = jsonDecode(raw);
+            if (item is! Map) continue;
+            final original =
+                item['original_video_path']?.toString().trim() ?? '';
+            if (original.isNotEmpty) paths.add(original);
+            final audio = item['audio_path']?.toString().trim() ?? '';
+            if (audio.isNotEmpty) paths.add(audio);
+            final frames = item['frame_paths'];
+            if (frames is List) {
+              paths.addAll(frames
+                  .map((path) => path.toString().trim())
+                  .where((path) => path.isNotEmpty));
+            }
+          } catch (_) {}
+        }
+        for (final path in paths) {
+          try {
+            final file = File(path);
+            if (await file.exists()) {
+              result[botId] = (result[botId] ?? 0) + await file.length();
+            }
+          } catch (_) {}
+        }
+      }
+      return result;
     } catch (error) {
       print('[db] chatStorageByBot failed: $error');
       try {
@@ -1666,7 +1720,7 @@ class DBManager {
     );
   }
 
-  /// 导出单个机器人的可移植 TideBot ZIP，包含聊天记录 JSON 和所有图片/音频文件。
+  /// 导出单个机器人的可移植 TideBot ZIP，包含聊天记录 JSON 和所有图片、视频、音频文件。
   ///
   /// 返回「建议文件名 + ZIP 字节数组」。真正的落盘由调用方决定。
   Future<({String fileName, Uint8List bytes})> buildChatExport(
@@ -1679,12 +1733,36 @@ class DBManager {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = 'tidebot_chat_${safeName}_$timestamp.zip';
 
-    // 收集所有图片和音频文件路径
+    // 收集所有图片、视频和音频文件路径。
     final mediaFiles = <String>{};
+    final prefs = await SharedPreferences.getInstance();
+    final videoHistory = prefs.getStringList('video_history_$botId') ?? [];
+    for (final raw in videoHistory) {
+      try {
+        final item = jsonDecode(raw);
+        if (item is! Map) continue;
+        final original = item['original_video_path']?.toString().trim() ?? '';
+        if (original.isNotEmpty && await File(original).exists()) {
+          mediaFiles.add(original);
+        }
+        final audio = item['audio_path']?.toString().trim() ?? '';
+        if (audio.isNotEmpty && await File(audio).exists())
+          mediaFiles.add(audio);
+        final frames = item['frame_paths'];
+        if (frames is List) {
+          for (final value in frames) {
+            final path = value.toString().trim();
+            if (path.isNotEmpty && await File(path).exists())
+              mediaFiles.add(path);
+          }
+        }
+      } catch (_) {}
+    }
     for (final msg in messages) {
       final type = msg['type']?.toString() ?? '';
       final filePath = msg['file_path']?.toString() ?? '';
-      if (filePath.isNotEmpty && (type == 'image' || type == 'audio')) {
+      if (filePath.isNotEmpty &&
+          const {'image', 'video', 'audio', 'shared_post'}.contains(type)) {
         if (await File(filePath).exists()) {
           mediaFiles.add(filePath);
         }
@@ -1697,6 +1775,16 @@ class DBManager {
       'version': 2, // 版本升级到 2，表示支持 ZIP 格式
       'exported_at': DateTime.now().toIso8601String(),
       'bot': {'id': botId, 'name': bot['name']?.toString() ?? ''},
+      'video_history': videoHistory
+          .map((raw) {
+            try {
+              return jsonDecode(raw);
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<Map>()
+          .toList(),
       'messages': messages
           .map((m) => {
                 'id': m['id'],
@@ -1872,6 +1960,30 @@ class DBManager {
       await txn.update('bots', {'last_msg_time': latest},
           where: 'id = ?', whereArgs: [botId]);
     });
+    final importedVideoHistory = raw['video_history'];
+    if (importedVideoHistory is List) {
+      final restored = <String>[];
+      String mapMediaPath(String path) =>
+          mediaPathMap[p.basename(path)] ?? path;
+      for (final value in importedVideoHistory) {
+        if (value is! Map) continue;
+        final item = Map<String, dynamic>.from(value);
+        final original = item['original_video_path']?.toString() ?? '';
+        if (original.isNotEmpty) {
+          item['original_video_path'] = mapMediaPath(original);
+        }
+        final audio = item['audio_path']?.toString() ?? '';
+        if (audio.isNotEmpty) item['audio_path'] = mapMediaPath(audio);
+        final frames = item['frame_paths'];
+        if (frames is List) {
+          item['frame_paths'] =
+              frames.map((frame) => mapMediaPath(frame.toString())).toList();
+        }
+        restored.add(jsonEncode(item));
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('video_history_$botId', restored);
+    }
     return items.length;
   }
 

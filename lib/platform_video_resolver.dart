@@ -14,6 +14,7 @@ class PlatformVideoResult {
   final String title;
   final String author;
   final String? description;
+  final String? resolvedUrl;
   final String? videoUrl;
   final String? audioUrl;
   final String? coverUrl;
@@ -27,6 +28,7 @@ class PlatformVideoResult {
     required this.title,
     required this.author,
     this.description,
+    this.resolvedUrl,
     this.videoUrl,
     this.audioUrl,
     this.coverUrl,
@@ -46,6 +48,8 @@ class PlatformVideoResolver {
 
   static const _mobileUA =
       'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+  static const _shareUA =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
   static const _desktopUA =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -85,7 +89,7 @@ class PlatformVideoResolver {
         LinkPreviewService.instance.rememberPreview(
             url,
             LinkPreviewData(
-              url: url,
+              url: result.resolvedUrl ?? url,
               type: type,
               title: result.title.isEmpty ? '分享的内容' : result.title,
               description: result.description ?? result.author,
@@ -108,7 +112,7 @@ class PlatformVideoResolver {
   Future<PlatformVideoResult> _parseSharePage(String url, LinkType type) async {
     final douyin = type == LinkType.douyin;
     final headers = {
-      'User-Agent': _mobileUA,
+      'User-Agent': douyin ? _shareUA : _mobileUA,
       'Referer':
           douyin ? 'https://www.douyin.com/' : 'https://www.xiaohongshu.com/',
       'Accept':
@@ -116,11 +120,14 @@ class PlatformVideoResolver {
     };
     var page = await fetchLinkPage(_client, Uri.parse(url), headers);
     final id = douyin
-        ? LinkPreviewService.videoId(page.uri.toString())
+        ? LinkPreviewService.videoId(page.uri.toString()) ??
+            LinkPreviewService.videoId(url)
         : RegExp(r'/(?:explore|discovery/item)/([^/?]+)')
             .firstMatch(page.uri.path)
             ?.group(1);
     final candidates = <Uri>[
+      if (douyin && id != null)
+        Uri.parse('https://www.douyin.com/share/video/$id/'),
       if (douyin && id != null)
         Uri.parse('https://www.iesdouyin.com/share/video/$id/'),
       if (douyin && id != null) Uri.parse('https://www.douyin.com/video/$id'),
@@ -154,6 +161,7 @@ class PlatformVideoResolver {
           final user = item[douyin ? 'author' : 'user'];
           if (video != null || gallery && images.isNotEmpty) {
             return PlatformVideoResult(
+              resolvedUrl: page.uri.toString(),
               platform: douyin ? 'douyin' : 'xiaohongshu',
               title: (item['title'] ?? item['desc'] ?? '').toString(),
               author: user is Map ? (user['nickname'] ?? '').toString() : '',
@@ -169,6 +177,7 @@ class PlatformVideoResolver {
         final video = pageVideoUrl(html);
         if (video != null) {
           return PlatformVideoResult(
+            resolvedUrl: page.uri.toString(),
             platform: douyin ? 'douyin' : 'xiaohongshu',
             title: '',
             author: '',
@@ -182,7 +191,8 @@ class PlatformVideoResolver {
       try {
         page = await fetchLinkPage(_client, target, {
           ...headers,
-          if (attempt > 0 || !douyin) 'User-Agent': _desktopUA,
+          if (!douyin || target.path.startsWith('/video/'))
+            'User-Agent': _desktopUA,
         });
       } catch (_) {
         if (attempt + 1 >= candidates.length) break;
@@ -280,6 +290,9 @@ class PlatformVideoResolver {
     }
     final owner = data['owner'];
     return PlatformVideoResult(
+      resolvedUrl: data['aid'] is num && (data['aid'] as num) > 0
+          ? uri.replace(path: '/video/av${data['aid']}').toString()
+          : uri.toString(),
       platform: 'bilibili',
       title: (data['title'] ?? '').toString(),
       author: owner is Map ? (owner['name'] ?? '').toString() : '',

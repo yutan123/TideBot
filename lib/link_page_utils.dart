@@ -8,20 +8,51 @@ Future<({Uri uri, http.Response response})> fetchLinkPage(
   Map<String, String> headers,
 ) async {
   final visited = <Uri>{};
+  final cookiesByHost = <String, Map<String, String>>{};
+  var retriedNonce = false;
   for (var hop = 0; hop < 8; hop++) {
     if (!visited.add(uri) || !['http', 'https'].contains(uri.scheme)) {
       throw const FormatException('无效的链接重定向');
     }
     final request = http.Request('GET', uri)..followRedirects = false;
     request.headers.addAll(headers);
+    final cookies = cookiesByHost[uri.host];
+    if (cookies != null && cookies.isNotEmpty) {
+      request.headers['Cookie'] = cookies.entries
+          .map((entry) => '${entry.key}=${entry.value}')
+          .join('; ');
+    }
     final response = await client
         .send(request)
         .then(http.Response.fromStream)
         .timeout(const Duration(seconds: 10));
+    final setCookie = response.headers['set-cookie'];
+    if (setCookie != null) {
+      final jar = cookiesByHost.putIfAbsent(uri.host, () => {});
+      for (final cookie in setCookie.split(RegExp(r',(?=\s*[^;,=\s]+=)'))) {
+        final pair = cookie.split(';').first.trim();
+        final equals = pair.indexOf('=');
+        if (equals > 0)
+          jar[pair.substring(0, equals)] = pair.substring(equals + 1);
+      }
+    }
     final location = response.headers['location'];
     if ([301, 302, 303, 307, 308].contains(response.statusCode) &&
         location != null) {
       uri = uri.resolve(location);
+      continue;
+    }
+    // Some Douyin share responses first set a nonce cookie on a 200 page.
+    // Replay once with that cookie instead of treating the shell as the video.
+    if (!retriedNonce &&
+        response.statusCode == 200 &&
+        (uri.host == 'douyin.com' ||
+            uri.host.endsWith('.douyin.com') ||
+            uri.host == 'iesdouyin.com' ||
+            uri.host.endsWith('.iesdouyin.com')) &&
+        setCookie?.contains('_ac_nonce=') == true) {
+      retriedNonce = true;
+      visited.remove(uri);
       continue;
     }
     return (uri: uri, response: response);

@@ -164,98 +164,180 @@ class TideBotAboutPage extends StatelessWidget {
           backgroundColor: Colors.transparent,
         ),
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    height: 112,
-                    fit: BoxFit.cover,
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 18),
+                  child: Column(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          height: 112,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'TideBot',
+                        style: TextStyle(
+                          fontFamily: 'TideFont',
+                          fontWeight: FontWeight.w800,
+                          fontSize: 28,
+                          color: theme.textStrong,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '面向个人的本地优先 AI 伴侣与智能交互工具。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontFamily: 'TideFont', color: theme.textWeak),
+                      ),
+                      const SizedBox(height: 28),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '功能特性',
+                          style: TextStyle(
+                            fontFamily: 'TideFont',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: theme.textStrong,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _aboutFeature(
+                        theme,
+                        Icons.chat_bubble_outline_rounded,
+                        '自然对话与专属角色',
+                        '持续聊天、保留上下文和重要记忆，让交流更有连续性。',
+                      ),
+                      _aboutFeature(
+                        theme,
+                        Icons.image_outlined,
+                        '文字、语音与多媒体',
+                        '支持文字、图片、语音、视频和文件，分享日常与灵感。',
+                      ),
+                      _aboutFeature(
+                        theme,
+                        Icons.tune_rounded,
+                        '模型与界面自由定制',
+                        '自定义角色、模型服务、主题背景和聊天风格。',
+                      ),
+                      _aboutFeature(
+                        theme,
+                        Icons.lock_outline_rounded,
+                        '本地优先的数据管理',
+                        '聊天记录和媒体资料优先保存在本机，支持备份与导出。',
+                      ),
+                      const SizedBox(height: 22),
+                      Text(
+                        '潮起有时，陪伴无期',
+                        style: TextStyle(
+                          fontFamily: 'TideFont',
+                          fontSize: 12,
+                          color: theme.textWeak,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  'TideBot',
-                  style: TextStyle(
-                    fontFamily: 'TideFont',
-                    fontWeight: FontWeight.w800,
-                    fontSize: 28,
-                    color: theme.textStrong,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  '面向个人的本地优先 AI 伴侣与智能交互工具。',
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(fontFamily: 'TideFont', color: theme.textWeak),
-                ),
-                const SizedBox(height: 28),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '功能特性',
-                    style: TextStyle(
-                      fontFamily: 'TideFont',
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: theme.textStrong,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  '与专属角色自然聊天，让记忆延续陪伴。\n'
-                  '用文字、语音和影像，分享日常与灵感。\n'
-                  '自由定制角色与界面，数据本地保存。',
-                  style: TextStyle(fontFamily: 'TideFont', height: 1.8),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: theme.primary,
-                      side: BorderSide(color: theme.primary),
-                    ),
-                    onPressed: () => OtaUpdate.checkNow(context),
-                    child: const Text('检测新版本'),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: theme.primary,
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            const LegalAgreementPage(requiredAcceptance: false),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: theme.primary,
+                          side: BorderSide(color: theme.primary),
+                        ),
+                        onPressed: () => OtaUpdate.checkNow(context),
+                        child: const Text('检测新版本'),
                       ),
                     ),
-                    child: const Text('查看用户协议与免责声明'),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Center(
-                  child: Text(
-                    '潮起有时，陪伴无期',
-                    style: TextStyle(
-                      fontFamily: 'TideFont',
-                      fontSize: 12,
-                      color: theme.textWeak,
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: theme.primary,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const LegalAgreementPage(
+                                requiredAcceptance: false),
+                          ),
+                        ),
+                        child: const Text('查看用户协议与免责声明'),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _aboutFeature(
+    TideTheme theme,
+    IconData icon,
+    String title,
+    String description,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.surfaceVariant.withValues(alpha: 0.52),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: theme.border.withValues(alpha: 0.7)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: theme.primary, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: theme.textStrong,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontSize: 13,
+                        height: 1.45,
+                        color: theme.textWeak,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -47,7 +47,6 @@ import 'world_book_service.dart';
 import 'link_preview_service.dart';
 import 'link_preview_models.dart';
 import 'link_preview_cards.dart';
-import 'video_processing_service.dart';
 import 'platform_video_resolver.dart';
 
 class _EmojiAsset {
@@ -117,22 +116,11 @@ final _emojiCategoryIcons = <String, (IconData, String)>{
   // 国旗分组已移除
 };
 
-/// 根据链接返回平台名称
-String _getPlatformName(String url) {
-  final lower = url.toLowerCase();
-  if (lower.contains('douyin.com')) return '抖音';
-  if (lower.contains('xiaohongshu.com') || lower.contains('xhslink'))
-    return '小红书';
-  if (lower.contains('bilibili.com') || lower.contains('b23.tv')) return 'B站';
-  return '平台';
-}
-
 class _StableLinkPreviewCard extends StatefulWidget {
   const _StableLinkPreviewCard(
-      {super.key, required this.url, required this.isUser, this.originalText});
+      {super.key, required this.url, required this.isUser});
   final String url;
   final bool isUser;
-  final String? originalText;
 
   @override
   State<_StableLinkPreviewCard> createState() => _StableLinkPreviewCardState();
@@ -168,10 +156,7 @@ class _StableLinkPreviewCardState extends State<_StableLinkPreviewCard> {
         final data = snapshot.data!;
         return data.type == LinkType.web
             ? WebLinkCard(data: data, isUser: widget.isUser)
-            : VideoShareCard(
-                data: data,
-                isUser: widget.isUser,
-                originalText: widget.originalText);
+            : VideoShareCard(data: data, isUser: widget.isUser);
       },
     );
   }
@@ -1129,100 +1114,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     Map<String, dynamic>? retryTarget,
   }) async {
     final text = queuedText ?? _msgC.text.trim();
-    final downloadedGalleryImages = <String>[];
     final preparedVideos = <PreparedVideoInput>[];
+    final unregisteredSharedVideos = <String>{};
     AppLogService.instance.add('AI_TRACE',
         '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
 
-    // ========== 检测并处理平台视频链接 ==========
-    if (text.isNotEmpty && !noUserBubble) {
-      final resolver = PlatformVideoResolver();
-      final platformLinks = resolver.extractLinks(text);
-
-      if (platformLinks.isNotEmpty) {
-        // 检测到平台视频链接，尝试解析
-        for (final link in platformLinks) {
-          GlobalNotice.show('检测到${_getPlatformName(link)}链接，正在解析...',
-              color: Theme.of(context).primaryColor);
-
-          try {
-            final result = await resolver.parse(link).timeout(
-                  const Duration(seconds: 30),
-                );
-
-            if (result == null) {
-              GlobalNotice.show('无法解析视频链接', color: const Color(0xFFE74C3C));
-              continue;
-            }
-
-            if (result.videoUrl != null) {
-              // 有视频URL，下载视频
-              GlobalNotice.show('正在下载视频...',
-                  color: Theme.of(context).primaryColor);
-
-              final videoPath = await resolver
-                  .downloadVideo(
-                    result.videoUrl!,
-                    result.headers,
-                    audioUrl: result.audioUrl,
-                  )
-                  .timeout(const Duration(minutes: 5));
-
-              if (videoPath == null) {
-                GlobalNotice.show('视频下载失败', color: const Color(0xFFE74C3C));
-                continue;
-              }
-
-              // 下载成功，处理视频
-              GlobalNotice.show('正在分析视频...',
-                  color: Theme.of(context).primaryColor);
-
-              final handled = await _processDownloadedVideo(
-                videoPath,
-                shareText: text,
-                platformLink: link,
-                platform: result.platform,
-                title: result.title,
-              );
-
-              if (handled) {
-                for (final path in downloadedGalleryImages) {
-                  try {
-                    await File(path).delete();
-                  } catch (_) {}
-                }
-                return;
-              }
-              continue;
-            } else if (result.isGallery && result.imageUrls.isNotEmpty) {
-              final downloaded = await resolver.downloadImages(result);
-              downloadedGalleryImages.addAll(downloaded);
-              images = {...?images, ..._pendingImages, ...downloaded}.toList();
-              final noteContext = [result.title, result.description]
-                  .whereType<String>()
-                  .where((value) => value.trim().isNotEmpty)
-                  .toSet()
-                  .join('\n');
-              mediaContext = [
-                if (mediaContext != null) mediaContext,
-                if (_pendingMediaContext != null) _pendingMediaContext,
-                '用户分享的图文内容：$noteContext',
-              ].join('\n');
-            } else {
-              GlobalNotice.show(result.failureReason ?? '平台未提供可读取的媒体地址，已保留原链接',
-                  color: const Color(0xFFE74C3C));
-            }
-          } catch (e) {
-            print('[PlatformVideo] 处理失败: $e');
-            GlobalNotice.show('视频解析失败：$e', color: const Color(0xFFE74C3C));
-          }
-        }
-      }
-    }
-    // ========== 平台视频链接检测结束 ==========
-
-    images ??= [..._pendingImages];
-    documents ??= List<String>.from(_pendingDocuments);
+    images = List<String>.from(images ?? _pendingImages);
+    documents = List<String>.from(documents ?? _pendingDocuments);
     mediaContext ??= _pendingMediaContext;
     expression ??= _pendingExpression;
     if (text.isEmpty &&
@@ -1239,12 +1137,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       } catch (error) {
         if (mounted) GlobalNotice.show('图片保存失败：$error');
         return;
-      } finally {
-        for (final path in downloadedGalleryImages) {
-          try {
-            await File(path).delete();
-          } catch (_) {}
-        }
       }
     }
     final botId = _bot['id']?.toString() ?? '';
@@ -1395,6 +1287,62 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
       final documentNotices = <String>[];
       final framePaths = <String>[];
+      final sharedVideos = <String, String>{};
+      // The original message is already visible and saved. Media is only prepared
+      // for the model, without extra user bubbles or download notifications.
+      final resolver = PlatformVideoResolver();
+      for (final link in resolver.extractLinks(text)) {
+        if (!mounted || myGen != _requestGen) return;
+        try {
+          final result =
+              await resolver.parse(link).timeout(const Duration(seconds: 45));
+          if (result == null) continue;
+          if (result.videoUrl != null) {
+            final temporaryPath = await resolver.downloadVideo(
+                result.videoUrl!, result.headers,
+                audioUrl: result.audioUrl);
+            if (temporaryPath == null) {
+              throw StateError('视频下载失败');
+            }
+            try {
+              final directory = await getApplicationDocumentsDirectory();
+              final folder = Directory('${directory.path}/chat_media/videos');
+              await folder.create(recursive: true);
+              final saved = await File(temporaryPath).copy(p.join(folder.path,
+                  '${DateTime.now().microsecondsSinceEpoch}_share.mp4'));
+              unregisteredSharedVideos.add(saved.path);
+              documents.add(saved.path);
+              sharedVideos[saved.path] = link;
+            } finally {
+              try {
+                await File(temporaryPath).delete();
+              } catch (_) {}
+            }
+          } else if (result.isGallery && result.imageUrls.isNotEmpty) {
+            final downloaded = await resolver.downloadImages(result);
+            try {
+              images.addAll(await _persistChatImages(downloaded));
+            } finally {
+              for (final path in downloaded) {
+                try {
+                  await File(path).delete();
+                } catch (_) {}
+              }
+            }
+          } else {
+            documentNotices.add('分享链接 $link 的媒体暂不可读取；仅可依据原文回应，不得声称已观看视频。');
+          }
+          if (result.title.isNotEmpty ||
+              result.description?.isNotEmpty == true) {
+            documentNotices.add(
+                '分享内容（$link）：${result.title}\n${result.description ?? ''}');
+          }
+        } catch (error) {
+          AppLogService.instance.add('PLATFORM_MEDIA', '$link 处理失败：$error');
+          documentNotices.add('分享链接 $link 的媒体获取失败；原文和链接仍有效，不得声称已观看视频。');
+        }
+      }
+      if (!mounted || myGen != _requestGen) return;
       for (final path in documents) {
         if (isVideoAttachment(path)) {
           final prefs = await SharedPreferences.getInstance();
@@ -1402,26 +1350,38 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   _bot['video_model']?.toString() ??
                   '')
               .trim();
-          if (mounted)
+          if (mounted && !sharedVideos.containsKey(path))
             GlobalNotice.show(modelId.isEmpty ? '正在提取视频画面与音频…' : '正在使用视频解析模型…');
-          final prepared = await prepareVideoInput(
-              path: path, botId: botId, modelId: modelId, userText: text);
-          preparedVideos.add(prepared);
-          final history = prefs.getStringList('video_history_$botId') ?? [];
-          final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
-          history.add(json.encode({
-            'id': videoId,
-            'timestamp': DateTime.now().millisecondsSinceEpoch,
-            'duration': prepared.temporaryMedia?.duration ?? prepared.duration,
-            'frame_paths': prepared.frames,
-            'original_video_path': path,
-            'chat_attachment': true,
-            'is_preview': prepared.temporaryMedia?.isPreview ?? false,
-          }));
-          if (history.length > 50) history.removeRange(0, history.length - 50);
-          await prefs.setStringList('video_history_$botId', history);
-          documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
-          framePaths.addAll(prepared.frames);
+          try {
+            final prepared = await prepareVideoInput(
+                path: path, botId: botId, modelId: modelId, userText: text);
+            preparedVideos.add(prepared);
+            final history = prefs.getStringList('video_history_$botId') ?? [];
+            final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
+            history.add(json.encode({
+              'id': videoId,
+              'timestamp': DateTime.now().millisecondsSinceEpoch,
+              'duration':
+                  prepared.temporaryMedia?.duration ?? prepared.duration,
+              'frame_paths': prepared.frames,
+              'original_video_path': path,
+              'chat_attachment': !sharedVideos.containsKey(path),
+              if (sharedVideos.containsKey(path))
+                'platform_link': sharedVideos[path],
+              'is_preview': prepared.temporaryMedia?.isPreview ?? false,
+            }));
+            if (history.length > 50)
+              history.removeRange(0, history.length - 50);
+            await prefs.setStringList('video_history_$botId', history);
+            unregisteredSharedVideos.remove(path);
+            documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
+            framePaths.addAll(prepared.frames);
+          } catch (error) {
+            if (!sharedVideos.containsKey(path)) rethrow;
+            AppLogService.instance.add('PLATFORM_MEDIA', '分享视频分析失败：$error');
+            documentNotices
+                .add('分享链接 ${sharedVideos[path]} 的视频无法分析，不得声称已观看视频。');
+          }
         } else {
           documentNotices.add(await MediaPreprocessor().documentText(path));
         }
@@ -1438,6 +1398,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ? preparedContext
               : '${_emojiToModelText(text)}\n$preparedContext');
 
+      if (!mounted || myGen != _requestGen) return;
       // AIManager reads persisted, role-typed history. Partially revealed UI
       // rows must never be reused as a model transcript.
       debugPrint('[send] request start bot=$botId model=$cm');
@@ -1621,6 +1582,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         } catch (_) {}
       }
     } finally {
+      for (final path in unregisteredSharedVideos) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
       for (final video in preparedVideos) {
         try {
           await video.cleanup();
@@ -2054,455 +2020,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     } catch (error) {
       if (mounted) GlobalNotice.show('添加视频失败：$error');
     }
-  }
-
-  // ========== 处理下载的平台视频 ==========
-  Future<bool> _processDownloadedVideo(
-    String videoPath, {
-    String? shareText,
-    String? platformLink,
-    String? platform,
-    String? title,
-  }) async {
-    var shareSaved = false;
-    try {
-      // 获取视频时长
-      final videoService = VideoProcessingService.instance;
-      final duration = await videoService.getVideoDuration(videoPath);
-
-      if (duration == 0) {
-        if (mounted) GlobalNotice.show('无法读取视频信息');
-        // 删除临时文件
-        try {
-          await File(videoPath).delete();
-        } catch (_) {}
-        return false;
-      }
-
-      // 根据时长决定处理策略
-      final config = videoService.calculateFrameConfig(duration);
-
-      // 抽帧
-      final framePaths = await videoService.extractFrames(
-        videoPath: videoPath,
-        frameCount: config.frameCount,
-        duration: duration,
-      );
-
-      if (framePaths.isEmpty) {
-        if (mounted) GlobalNotice.show('视频抽帧失败');
-        // 删除临时文件
-        try {
-          await File(videoPath).delete();
-        } catch (_) {}
-        return false;
-      }
-
-      // 提取音频
-      final audioPath = await videoService.extractAudio(videoPath);
-
-      // 删除原始视频文件
-      try {
-        await File(videoPath).delete();
-      } catch (e) {
-        debugPrint('[video] failed to delete temp video: $e');
-      }
-
-      // 构建视频处理结果
-      final result = VideoProcessingResult(
-        framePaths: framePaths,
-        audioPath: audioPath,
-        duration: duration,
-        isPreview: config.isPreview,
-      );
-
-      if (!mounted) {
-        await result.cleanup();
-        return false;
-      }
-
-      if (shareText != null) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final message = <String, dynamic>{
-          'id': 'share_$now',
-          'bot_id': _bot['id'].toString(),
-          'role': 'user',
-          'type': 'text',
-          'content': shareText,
-          'timestamp': now,
-        };
-        await MessageDeliveryService.instance.insert(message);
-        shareSaved = true;
-        if (!mounted) {
-          await result.cleanup();
-          return true;
-        }
-        setState(() {
-          _msgs.add(message);
-          if (_msgC.text.trim() == shareText) _msgC.clear();
-          _hasText = _msgC.text.isNotEmpty;
-        });
-        _onUserInteracted();
-        _scrollDown();
-      }
-
-      // 发送视频消息
-      await _sendVideoMessage(
-        result,
-        platformLink: platformLink,
-        platform: platform,
-        title: title,
-      );
-
-      return true;
-    } catch (e) {
-      debugPrint('[video] process downloaded video failed: $e');
-      // 删除临时文件
-      try {
-        await File(videoPath).delete();
-      } catch (_) {}
-      if (mounted) {
-        GlobalNotice.show('视频处理失败: $e', color: const Color(0xFFE74C3C));
-      }
-    }
-    return shareSaved;
-  }
-
-  Future<void> _sendVideoMessage(
-    VideoProcessingResult result, {
-    String? platformLink,
-    String? platform,
-    String? title,
-  }) async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-
-    setState(() => _loading = true);
-
-    try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-
-      // 发送消息到 AI
-      await _sendVideoToAI(
-        result,
-        timestamp,
-        platformLink: platformLink,
-        platform: platform,
-        title: title,
-      );
-    } finally {
-      await result.cleanup();
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _sendVideoToAI(
-    VideoProcessingResult result,
-    int timestamp, {
-    String? platformLink,
-    String? platform,
-    String? title,
-  }) async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty) return;
-
-    // 转写音频
-    String? audioTranscription;
-    if (result.audioPath != null) {
-      try {
-        final transcript = await AIManager()
-            .transcribeAudio(botId: botId, audioPath: result.audioPath!)
-            .timeout(const Duration(seconds: 60), onTimeout: () => null);
-        if (transcript != null && transcript.trim().isNotEmpty) {
-          audioTranscription = transcript.trim();
-        }
-      } catch (e) {
-        debugPrint('[video] audio transcription failed: $e');
-      }
-    }
-
-    // 构建视频上下文
-    final durationText = _formatDuration(result.duration);
-    final contextParts = <String>[];
-
-    // 生成视频编号（使用 VID 前缀，区别于图片的编号）
-    final videoId = 'VID${timestamp}';
-
-    // 保存视频信息到状态（用于后续查看）
-    final videoInfo = {
-      'id': videoId,
-      'timestamp': timestamp,
-      'duration': result.duration,
-      'frame_count': result.framePaths.length,
-      'frame_paths': result.framePaths,
-      'audio_path': result.audioPath,
-      'original_video_path': result.originalVideoPath, // 压缩后保存的视频文件
-      'platform_link': platformLink,
-      'platform': platform,
-      'title': title,
-      'is_preview': result.isPreview,
-    };
-
-    // 保存到数据库或SharedPreferences供后续查看
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final existingVideos = prefs.getStringList('video_history_$botId') ?? [];
-
-      // 清理超出数量限制的旧视频文件
-      const maxVideos = 50; // 只保留最近50个视频
-      if (existingVideos.length >= maxVideos) {
-        final videosToRemove = existingVideos.length - maxVideos + 1;
-        for (int i = 0; i < videosToRemove; i++) {
-          try {
-            final oldVideo =
-                json.decode(existingVideos[i]) as Map<String, dynamic>;
-            final oldVideoPath = oldVideo['original_video_path'] as String?;
-
-            // 删除旧视频文件
-            if (oldVideo['chat_attachment'] != true &&
-                oldVideoPath != null &&
-                oldVideoPath.isNotEmpty) {
-              final file = File(oldVideoPath);
-              if (await file.exists()) {
-                await file.delete();
-                debugPrint('[video] deleted old video: $oldVideoPath');
-              }
-            }
-
-            // 删除旧的帧文件（如果还存在）
-            final oldFramePaths =
-                (oldVideo['frame_paths'] as List?)?.cast<String>() ?? [];
-            for (final framePath in oldFramePaths) {
-              try {
-                final frameFile = File(framePath);
-                if (await frameFile.exists()) {
-                  await frameFile.delete();
-                }
-              } catch (_) {}
-            }
-          } catch (e) {
-            debugPrint('[video] failed to clean old video: $e');
-          }
-        }
-        existingVideos.removeRange(0, videosToRemove);
-      }
-
-      existingVideos.add(json.encode(videoInfo));
-      await prefs.setStringList('video_history_$botId', existingVideos);
-    } catch (e) {
-      debugPrint('[video] failed to save video history: $e');
-    }
-
-    if (result.isPreview) {
-      // >5分钟视频的预览模式
-      contextParts.add('[视频预览模式]');
-      contextParts.add('时长：$durationText');
-      contextParts.add(
-          '已提供：前40秒的${result.framePaths.length}帧图片${audioTranscription != null ? ' + 完整音频文字' : ''}');
-
-      // 添加平台链接或视频编号标注
-      if (platformLink != null) {
-        final platformName = platform == 'douyin'
-            ? '抖音'
-            : platform == 'xiaohongshu'
-                ? '小红书'
-                : platform == 'bilibili'
-                    ? 'B站'
-                    : '平台';
-        contextParts
-            .add('[视频文件，可获取查看，编号$videoId，$platformName链接：$platformLink]');
-      } else {
-        contextParts.add('[视频文件，时长$durationText，编号$videoId]');
-      }
-
-      contextParts.add('');
-      if (audioTranscription != null && audioTranscription.isNotEmpty) {
-        contextParts.add('音频内容：');
-        contextParts.add(audioTranscription);
-        contextParts.add('');
-      }
-      contextParts.add('如果当前信息足够理解视频，可以直接回复。');
-      contextParts.add('如果需要看完整视频，请输出：');
-      contextParts.add('{"action":"request_full_video","frames":N}');
-      contextParts.add('');
-      contextParts.add('N的范围：10-80帧（建议根据视频复杂度选择）');
-      contextParts.add('- 简单内容/重复画面多：10-30帧');
-      contextParts.add('- 一般内容：30-50帧');
-      contextParts.add('- 复杂内容/快速切换：50-80帧');
-    } else {
-      // 正常模式或完整模式
-      contextParts.add('[视频分析]');
-      contextParts.add('时长：$durationText');
-      contextParts.add('帧数：${result.framePaths.length}帧');
-
-      // 添加平台链接或视频编号标注
-      if (platformLink != null) {
-        final platformName = platform == 'douyin'
-            ? '抖音'
-            : platform == 'xiaohongshu'
-                ? '小红书'
-                : platform == 'bilibili'
-                    ? 'B站'
-                    : '平台';
-        contextParts
-            .add('[视频文件，可获取查看，编号$videoId，$platformName链接：$platformLink]');
-      } else {
-        contextParts.add('[视频文件，时长$durationText，编号$videoId]');
-      }
-
-      if (audioTranscription != null && audioTranscription.isNotEmpty) {
-        contextParts.add('');
-        contextParts.add('音频内容：');
-        contextParts.add(audioTranscription);
-      }
-    }
-
-    final videoContext = contextParts.join('\n');
-
-    // 发送给 AI
-    final streamEnabled =
-        (await DBManager().getKV('streaming_output')) != 'false';
-    final streamSpeed =
-        (int.tryParse(await DBManager().getKV('streaming_speed') ?? '') ?? 50)
-            .clamp(1, 100);
-
-    _setTypingState(true);
-    const requestTimeout = Duration(minutes: 5);
-    final requestToken = AICancellationToken();
-
-    try {
-      final aiResult = await AIManager()
-          .sendMessage(
-        botId: botId,
-        text: videoContext,
-        imagePaths: result.framePaths,
-        persistResponse: true,
-        forceSingleReply: false,
-        notifyResponse: true,
-        useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
-        cancellationToken: requestToken,
-      )
-          .timeout(requestTimeout, onTimeout: () {
-        requestToken.cancel();
-        throw TimeoutException('视频分析超时');
-      }).whenComplete(() => _setTypingState(false));
-
-      if (aiResult['success'] != true) {
-        throw StateError(aiResult['error']?.toString() ?? '视频分析失败');
-      }
-
-      // 检查是否需要请求完整视频
-      if (result.isPreview) {
-        final response = aiResult['messages']?.firstWhere(
-          (m) => m['role'] == 'assistant',
-          orElse: () => null,
-        );
-
-        if (response != null) {
-          final content = response['content']?.toString() ?? '';
-          final requestMatch = RegExp(
-                  r'\{"action"\s*:\s*"request_full_video"\s*,\s*"frames"\s*:\s*(\d+)\}')
-              .firstMatch(content);
-
-          if (requestMatch != null) {
-            final requestedFrames =
-                int.tryParse(requestMatch.group(1) ?? '') ?? 30;
-            final clampedFrames = requestedFrames.clamp(10, 80);
-
-            if (mounted) {
-              GlobalNotice.show('AI 请求查看完整视频（$clampedFrames帧）...',
-                  color: TideTheme.of(context).primary);
-            }
-
-            // 重新抽取完整视频
-            await _processFullVideo(
-                result.duration, clampedFrames, result.audioPath, timestamp);
-            return;
-          }
-        }
-      }
-
-      // 显示 AI 回复
-      final persisted = (aiResult['messages'] as List? ?? const [])
-          .whereType<Map>()
-          .map((message) => Map<String, dynamic>.from(message))
-          .toList();
-
-      if (!mounted) return;
-
-      for (var index = 0; index < persisted.length; index++) {
-        if (!mounted) break;
-
-        final row = persisted[index];
-        final fullContent = row['content']?.toString() ?? '';
-        final reveal = streamEnabled &&
-            (row['type'] == 'text' || row['type'] == 'inner_thought') &&
-            fullContent.isNotEmpty;
-
-        if (reveal) {
-          row['content'] = '';
-          row['is_streaming'] = true;
-        }
-
-        setState(() {
-          final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
-          if (existing >= 0) {
-            _msgs[existing] = row;
-          } else {
-            _msgs.add(row);
-          }
-          _msgs = normalizeChatMessages(_msgs);
-        });
-
-        _scrollDown();
-
-        if (reveal) {
-          await for (final content
-              in chatStreamText(fullContent, streamSpeed)) {
-            if (!mounted) break;
-            setState(() => row['content'] = content);
-            _scrollDown(animated: false);
-          }
-          if (!mounted) return;
-          setState(() => row.remove('is_streaming'));
-        }
-      }
-    } catch (e) {
-      debugPrint('[video] AI processing failed: $e');
-      if (mounted) {
-        GlobalNotice.show('视频分析失败: $e', color: const Color(0xFFE74C3C));
-      }
-    } finally {
-      _setTypingState(false);
-    }
-  }
-
-  Future<void> _processFullVideo(
-      double duration, int frameCount, String? audioPath, int timestamp) async {
-    try {
-      if (!mounted) return;
-      GlobalNotice.show('正在重新处理视频...', color: TideTheme.of(context).primary);
-
-      // 重新抽取指定帧数（这里需要保存原始视频路径，暂时简化）
-      // 实际应该在 _pickAndProcessVideo 中保存原始视频路径
-      if (mounted) {
-        GlobalNotice.show('完整视频处理功能待完善', color: const Color(0xFFFF9800));
-      }
-    } catch (e) {
-      debugPrint('[video] full video processing failed: $e');
-      if (mounted) {
-        GlobalNotice.show('完整视频处理失败', color: const Color(0xFFE74C3C));
-      }
-    }
-  }
-
-  String _formatDuration(double seconds) {
-    final minutes = (seconds / 60).floor();
-    final secs = (seconds % 60).floor();
-    if (minutes > 0) {
-      return '$minutes分$secs秒';
-    }
-    return '$secs秒';
   }
 
   Future<List<String>> _persistChatImages(List<String> paths) async {
@@ -4679,38 +4196,21 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       return _parseText(text, isUser);
     }
 
-    // 有链接，显示链接预览卡片和剩余文本
+    // 卡片补充预览，消息气泡完整保留分享原文和链接。
     return Column(
       crossAxisAlignment:
           isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
         // 显示所有链接预览卡片
-        for (final url in urls)
-          _buildLinkPreviewCard(url, isUser, originalText: text),
-        // 移除链接后的文本
-        if (_getTextWithoutUrls(text, urls).trim().isNotEmpty)
-          _parseText(_getTextWithoutUrls(text, urls), isUser),
+        for (final url in urls) _buildLinkPreviewCard(url, isUser),
+        _parseText(text, isUser),
       ],
     );
   }
 
   /// 链接预览使用有状态子组件，future 只在 URL 变化时创建，避免消息列表重建时闪回加载态。
-  Widget _buildLinkPreviewCard(String url, bool isUser,
-      {String? originalText}) {
-    return _StableLinkPreviewCard(
-        key: ValueKey(url),
-        url: url,
-        isUser: isUser,
-        originalText: originalText);
-  }
-
-  /// 从文本中移除链接，保留剩余文本
-  String _getTextWithoutUrls(String text, List<String> urls) {
-    var result = text;
-    for (final url in urls) {
-      result = result.replaceAll(url, '').trim();
-    }
-    return result;
+  Widget _buildLinkPreviewCard(String url, bool isUser) {
+    return _StableLinkPreviewCard(key: ValueKey(url), url: url, isUser: isUser);
   }
 
   IconData _attachmentIcon(String path) {

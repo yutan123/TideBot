@@ -266,13 +266,28 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     ]);
   }
 
+  String _formatCompact(int value) {
+    final magnitude = value.abs().toDouble();
+    if (magnitude >= 1000000000) {
+      return '${_trimCompact(value / 1000000000)}B';
+    }
+    if (magnitude >= 1000000) {
+      return '${_trimCompact(value / 1000000)}M';
+    }
+    if (magnitude >= 1000) {
+      return '${_trimCompact(value / 1000)}K';
+    }
+    return '$value';
+  }
+
+  String _trimCompact(double value) {
+    final decimals = value.abs() >= 100 ? 0 : 1;
+    return value.toStringAsFixed(decimals).replaceFirst(RegExp(r'\.0$'), '');
+  }
+
   Widget _summaryCard(
       TideTheme theme, IconData icon, String label, int value, Color accent) {
     final hasBackground = theme.globalBackground.isNotEmpty;
-    // 根据数值大小动态调整字体大小，避免换行
-    final valueStr = '$value';
-    final fontSize =
-        valueStr.length > 7 ? 22.0 : (valueStr.length > 6 ? 25.0 : 29.0);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
@@ -304,14 +319,43 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(icon, color: accent, size: 25),
             const Spacer(),
-            Text(valueStr,
+            LayoutBuilder(builder: (context, constraints) {
+              final style = TextStyle(
+                  fontSize: 29,
+                  fontWeight: FontWeight.w700,
+                  color: theme.textStrong,
+                  fontFamily: 'TideFont');
+              final fullValue = '$value';
+              // 按实际字体、系统文字缩放和卡片宽度判断，放得下就显示完整数字。
+              final painter = TextPainter(
+                text: TextSpan(
+                    text: fullValue,
+                    style: DefaultTextStyle.of(context).style.merge(style)),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+                locale: Localizations.maybeLocaleOf(context),
                 maxLines: 1,
-                overflow: TextOverflow.visible,
-                style: TextStyle(
-                    fontSize: fontSize,
-                    fontWeight: FontWeight.w700,
-                    color: theme.textStrong,
-                    fontFamily: 'TideFont')),
+              )..layout();
+              final fits = painter.width <= constraints.maxWidth;
+              painter.dispose();
+              return Semantics(
+                label: fullValue,
+                excludeSemantics: true,
+                child: Tooltip(
+                  message: fullValue,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      fits ? fullValue : _formatCompact(value),
+                      maxLines: 1,
+                      softWrap: false,
+                      style: style,
+                    ),
+                  ),
+                ),
+              );
+            }),
             const SizedBox(height: 3),
             Text(label,
                 maxLines: 1,

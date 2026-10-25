@@ -5,7 +5,7 @@ import 'link_page_utils.dart';
 /// Platforms use several page-state envelopes across desktop and share pages.
 Iterable<Map<String, dynamic>> platformPageStates(String html) sync* {
   for (final marker in [
-    'window._ROUTER_DATA',
+    '_ROUTER_DATA',
     'window.__INITIAL_STATE__',
     'window.__INITIAL_DATA__',
   ]) {
@@ -100,7 +100,9 @@ String? douyinVideoUrl(Map item) {
     'play_addr',
     'playAddr',
     'play_addr_h264',
-    'playAddrH264'
+    'playAddrH264',
+    'download_addr',
+    'downloadAddr'
   ]) {
     final url = mediaUrl(video[key]);
     if (url != null) return url;

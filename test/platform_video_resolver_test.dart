@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:tide_bot/platform_video_resolver.dart';
 import 'package:tide_bot/platform_media_parser.dart';
+import 'package:tide_bot/link_preview_service.dart';
 
 http.Response page(String html) => http.Response.bytes(utf8.encode(html), 200,
     headers: {'content-type': 'text/html; charset=utf-8'});
@@ -189,6 +190,53 @@ void main() {
     expect(result.isGallery, isTrue);
     expect(result.videoUrl, isNull);
     expect(result.imageUrls, ['https://img.example.com/1.jpg']);
+  });
+  test('抖音桌面壳页回退移动分享页，保留作品地址供App直达', () async {
+    var shareFetched = false;
+    final resolver =
+        PlatformVideoResolver.withClient(MockClient((request) async {
+      if (request.url.host == 'v.douyin.com') {
+        return http.Response('', 302, headers: {
+          'location': 'https://www.douyin.com/video/1234567890123456789'
+        });
+      }
+      if (request.url.path.startsWith('/share/video/')) {
+        shareFetched = true;
+        expect(request.headers['User-Agent'], contains('iPhone'));
+        return page('<script>_ROUTER_DATA = ${jsonEncode({
+              'loaderData': {
+                'video_(id)/page': {
+                  'videoInfoRes': {
+                    'item_list': [
+                      {
+                        'aweme_id': '1234567890123456789',
+                        'desc': '实际视频',
+                        'video': {
+                          'download_addr': {
+                            'url_list': ['https://cdn.example.com/play.mp4']
+                          },
+                          'cover': {
+                            'url_list': ['https://img.example.com/share.jpg']
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            })}</script>');
+      }
+      return page('<title>抖音</title>');
+    }));
+    const original = 'https://v.douyin.com/fallback/';
+    final result = (await resolver.parse(original))!;
+    expect(shareFetched, isTrue);
+    expect(result.videoUrl, 'https://cdn.example.com/play.mp4');
+    expect(result.resolvedUrl, contains('/share/video/1234567890123456789/'));
+    final preview = await LinkPreviewService.instance.fetchPreview(original);
+    expect(preview.appUri.toString(),
+        'snssdk1128://aweme/detail/1234567890123456789');
+    LinkPreviewService.instance.clearCache();
   });
   test('验证页保留失败原因，不伪造媒体', () async {
     final resolver = PlatformVideoResolver.withClient(MockClient((r) async => page(
