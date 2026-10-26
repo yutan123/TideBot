@@ -79,7 +79,8 @@ flutter:
         - asset: assets/fonts/LogMono.ttf
     - family: LogSansSC
       fonts:
-        - asset: assets/fonts/LogSansSC.ttf
+        - asset: assets/fonts/LogSansSC.otf
+          weight: 400
     - family: TideFont
       fonts:
         - asset: assets/fonts/TideFont-Regular.ttf

@@ -12,17 +12,34 @@ class BuiltInSkillLoader {
 
     for (final skillId in builtInSkills) {
       try {
-        // 检查是否已存在
         final existing = await db.querySkills();
-        final found =
-            existing.any((s) => s['id'] == skillId && s['built_in'] == 1);
-        if (found) continue;
+        final matches = existing.where((s) => s['id'] == skillId);
+        final installed = matches.isEmpty ? null : matches.first;
+        // A user-installed skill with the same ID is not an app-owned asset.
+        if (installed != null && installed['built_in'] != 1) continue;
 
         // 从assets加载
         final content =
             await rootBundle.loadString('assets/skills/$skillId.md');
         final package = SkillPackage.parse('$skillId.md', utf8.encode(content));
         final manifest = package.manifest;
+        final manifestJson = jsonEncode(manifest);
+        if (installed != null) {
+          if (installed['manifest_json'] == manifestJson) continue;
+          // Refresh bundled instructions without resetting the user's switches.
+          await (await db.database).update(
+              'skills',
+              {
+                'name': manifest['name'].toString(),
+                'version': manifest['version']?.toString() ?? '1.0.0',
+                'description': manifest['description']?.toString() ?? '',
+                'manifest_json': manifestJson,
+                'updated_at': DateTime.now().millisecondsSinceEpoch,
+              },
+              where: 'id = ? AND built_in = 1',
+              whereArgs: [skillId]);
+          continue;
+        }
 
         // 保存内置skill
         await db.saveSkill({

@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
 import 'full_backup_service.dart';
 import 'db.dart';
 import 'ops.dart';
@@ -50,13 +49,11 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   Future<void> _loadAsync() async {
     final docs = await getApplicationDocumentsDirectory();
     final temp = await getTemporaryDirectory();
-    final dbPath = await getDatabasesPath();
-    final dbFile = File('$dbPath/tidebot.db');
     final native = await OpsManager().storageInfo();
     final values = await Future.wait<dynamic>([
       _size(docs),
       _size(temp),
-      dbFile.exists().then((yes) => yes ? dbFile.length() : 0),
+      DBManager().databaseStorageBytes(),
       DBManager().getAllBots(),
       DBManager().chatStorageByBot(),
     ]);
@@ -196,7 +193,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                     child: Column(children: [
                   _row(Icons.install_mobile_rounded, '安装包', _format(_apk)),
                   _row(Icons.data_object_rounded, '应用数据', _format(_appData)),
-                  _row(Icons.storage_rounded, '聊天数据库（已含于应用数据）',
+                  _row(Icons.storage_rounded, '数据库及日志（已含于应用数据）',
                       _format(_database)),
                   _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
                       action: '清理', onTap: _clearCache)
@@ -246,7 +243,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                         title: Text(bot['name']?.toString() ?? '未命名机器人',
                             style: const TextStyle(fontFamily: 'TideFont')),
                         subtitle: Text(
-                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}',
+                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}（含消息数据和媒体）',
                             style: const TextStyle(fontFamily: 'TideFont')),
                         controlAffinity: ListTileControlAffinity.leading),
                   if (_bots.isEmpty)

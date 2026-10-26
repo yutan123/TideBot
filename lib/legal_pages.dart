@@ -217,7 +217,6 @@ class TideBotAboutPage extends StatelessWidget {
                   ),
                 ),
               ),
-              const Spacer(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
                 child: Column(
@@ -284,12 +283,14 @@ class TideBotAboutPage extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Text(
-            title,
-            style: TextStyle(
-              fontFamily: 'TideFont',
-              fontSize: 14,
-              color: theme.textStrong,
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontFamily: 'TideFont',
+                fontSize: 14,
+                color: theme.textStrong,
+              ),
             ),
           ),
         ],

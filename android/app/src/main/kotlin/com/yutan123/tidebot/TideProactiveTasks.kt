@@ -7,6 +7,12 @@ import kotlin.random.Random
 /** Registers proactive deadlines from the same KV settings used by Flutter. */
 object TideProactiveTasks {
     fun reconcile(context: Context) {
+        // Also retire legacy vital alarms: filtering the list of bots alone does
+        // not remove tasks that were registered before the bot was disabled.
+        val stale = TideStore.open(context).use { db ->
+            TideStore.rows(db, "SELECT task_id FROM background_tasks WHERE task_type IN ('VITAL_SIGNS','PROACTIVE_REPLY') AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.id=background_tasks.bot_id AND COALESCE(b.is_disabled,0)=0)")
+        }
+        for (task in stale) TideMasterScheduler.cancelTask(context, task.getString("task_id"))
         TideStore.open(context).use { db ->
             val enabled = TideStore.kv(db, "proactive_reply") != "false"
             for (bot in TideStore.rows(db, "SELECT id,is_disabled FROM bots")) {

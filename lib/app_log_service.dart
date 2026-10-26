@@ -97,7 +97,12 @@ class AppLogService {
 
   void add(String level, String message, {DateTime? time}) {
     if (!_enabled) return;
-    entries.add(AppLogEntry(time ?? DateTime.now(), level, _redact(message)));
+    final at = time ?? DateTime.now();
+    // Native entries arrive in batches and may predate this logging session.
+    // Compare at millisecond precision, matching Android's timestamp precision.
+    if (_startedAt != null &&
+        at.millisecondsSinceEpoch < _startedAt!.millisecondsSinceEpoch) return;
+    entries.add(AppLogEntry(at, level, _redact(message)));
     if (entries.length > 3000) entries.removeRange(0, entries.length - 3000);
     revision.value++;
   }

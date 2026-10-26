@@ -2278,6 +2278,11 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   final Map<String, List<String>> _modelListCache = {};
   final _presets = [
     {
+      'name': 'MiniMax',
+      'url': 'https://api.minimax.cn/v1',
+      'models': 'MiniMax-M3.1-Flash',
+    },
+    {
       'name': 'DeepSeek',
       'url': 'https://api.deepseek.com/v1',
       'models': 'deepseek-chat',
@@ -2348,7 +2353,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     },
     {
       'name': 'MiniMax TTS',
-      'url': 'https://api.minimax.chat',
+      'url': 'https://api.minimax.cn/v1',
       'models': 'speech-02-turbo',
       'voice': 'male-qn-qingse',
       'protocol': 'minimax',

@@ -3,6 +3,7 @@ package com.yutan123.tidebot
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Build
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextPaint
@@ -39,9 +40,18 @@ class NativeSelectableTextFactory(private val messenger: BinaryMessenger) :
 private object BundledTextFonts {
     private val cache = mutableMapOf<String, Typeface>()
     fun get(context: Context, name: String): Typeface = cache.getOrPut(name) {
+        val asset = if (name == "LogSansSC") "LogSansSC.otf" else "$name.ttf"
         val key = FlutterInjector.instance().flutterLoader()
-            .getLookupKeyForAsset("assets/fonts/$name.ttf")
-        Typeface.createFromAsset(context.assets, key)
+            .getLookupKeyForAsset("assets/fonts/$asset")
+        // Typeface.create(base, NORMAL) does not select a variable font's wght axis.
+        if (name == "LogSansSC" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Typeface.Builder(context.assets, key)
+                .setFontVariationSettings("'wght' 400")
+                .setWeight(400)
+                .build()
+        } else {
+            Typeface.createFromAsset(context.assets, key)
+        }
     }
 }
 

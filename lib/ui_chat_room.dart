@@ -1,3 +1,4 @@
+import 'tide_popover.dart';
 import 'video_input.dart';
 import 'android_selection_menu.dart';
 import 'send_voice_cooldown.dart';
@@ -1962,68 +1963,36 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
 // ========== 选择图片/文件 ==========
-  void _pickMedia() async {
-    final theme = TideTheme.of(context);
-    final r = await showGeneralDialog<String>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      transitionDuration: const Duration(milliseconds: 400),
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return ScaleTransition(
-          scale: CurvedAnimation(
-            parent: animation,
-            curve: Curves.elasticOut,
-          ),
-          child: child,
-        );
-      },
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return Center(
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 40),
-              decoration: BoxDecoration(
-                color: theme.surface,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _mediaOptionRow(
-                      theme, Icons.camera_alt_outlined, '相机', 'camera', true),
-                  _mediaOptionRow(
-                      theme, Icons.photo_library_outlined, '照片', 'img', false),
-                  _mediaOptionRow(
-                      theme, Icons.videocam_outlined, '视频', 'video', false),
-                  _mediaOptionRow(theme, Icons.insert_drive_file_outlined, '文件',
-                      'file', false,
-                      isLast: true),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
+  void _pickMedia(BuildContext triggerContext) async {
+    final r = await showTidePopover<String>(
+      context: triggerContext,
+      preferAbove: true,
+      builder: (_) => const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TidePopoverItem(
+              icon: Icons.camera_alt_outlined, label: '相机', value: 'camera'),
+          TidePopoverItem(
+              icon: Icons.image_outlined, label: '照片', value: 'img'),
+          TidePopoverItem(
+              icon: Icons.play_circle_outline_rounded,
+              label: '视频',
+              value: 'video'),
+          TidePopoverItem(
+              icon: Icons.attach_file_rounded, label: '文件', value: 'file'),
+        ],
+      ),
     );
+    if (!mounted || r == null) return;
     if (r == 'camera') {
-      if (!await AppPermissions.photos(context, feature: '拍照')) return;
-      final photo = await ImagePicker().pickImage(source: ImageSource.camera);
-      if (photo != null) {
-        final confirmed = await _confirmPhoto(photo.path);
-        if (confirmed && mounted) {
-          final fixed = await _fixHeic(photo.path);
-          setState(() => _pendingImages.add(fixed));
-        }
+      try {
+        final photo = await ImagePicker().pickImage(source: ImageSource.camera);
+        if (photo == null || !mounted) return;
+        final fixed = await _fixHeic(photo.path);
+        if (mounted) setState(() => _pendingImages.add(fixed));
+      } catch (error) {
+        debugPrint('[camera] capture failed: $error');
+        if (mounted) GlobalNotice.show('拍照失败，请重试');
       }
     } else if (r == 'img') {
       if (!await AppPermissions.photos(context, feature: '选择图片')) return;
@@ -2071,149 +2040,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
       }
     }
-  }
-
-  Widget _mediaOptionRow(
-      TideTheme theme, IconData icon, String label, String value, bool isFirst,
-      {bool isLast = false}) {
-    return InkWell(
-      onTap: () => Navigator.pop(context, value),
-      borderRadius: BorderRadius.vertical(
-        top: isFirst ? const Radius.circular(24) : Radius.zero,
-        bottom: isLast ? const Radius.circular(24) : Radius.zero,
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          border: isLast
-              ? null
-              : Border(
-                  bottom: BorderSide(
-                    color: theme.surfaceVariant.withValues(alpha: 0.3),
-                    width: 0.5,
-                  ),
-                ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: theme.textStrong, size: 24),
-            const SizedBox(width: 16),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: 'TideFont',
-                fontSize: 16,
-                color: theme.textStrong,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<bool> _confirmPhoto(String path) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final theme = TideTheme.of(context);
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 400, maxHeight: 600),
-            decoration: BoxDecoration(
-              color: theme.surface,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    '确认照片',
-                    style: TextStyle(
-                      fontFamily: 'TideFont',
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: theme.textStrong,
-                    ),
-                  ),
-                ),
-                Flexible(
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(12),
-                    ),
-                    child: Image.file(
-                      File(path),
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            backgroundColor:
-                                theme.surfaceVariant.withValues(alpha: 0.5),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: Text(
-                            '取消',
-                            style: TextStyle(
-                              fontFamily: 'TideFont',
-                              fontSize: 15,
-                              color: theme.textWeak,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            backgroundColor: theme.primary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: const Text(
-                            '确认',
-                            style: TextStyle(
-                              fontFamily: 'TideFont',
-                              fontSize: 15,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    return result ?? false;
   }
 
   // ========== 视频处理 ==========
@@ -4658,12 +4484,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 ),
               Row(
                 children: [
-                  IconButton(
-                    tooltip: '图片和文件',
-                    onPressed: _pickMedia,
-                    icon: Icon(Icons.add_rounded,
-                        size: 26, color: theme.iconMuted),
-                  ),
+                  Builder(
+                      builder: (triggerContext) => IconButton(
+                            tooltip: '图片和文件',
+                            onPressed: () => _pickMedia(triggerContext),
+                            icon: Icon(Icons.add_rounded,
+                                size: 26, color: theme.iconMuted),
+                          )),
                   Expanded(
                     child: TextField(
                       contextMenuBuilder: androidTextContextMenu,

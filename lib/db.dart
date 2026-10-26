@@ -1369,6 +1369,7 @@ class DBManager {
               conflictAlgorithm: ConflictAlgorithm.replace);
         }
       });
+      await NativeBackgroundCoordinator.synchronize();
       return;
     }
     await db.update('bots', data, where: 'id = ?', whereArgs: [id]);
@@ -1378,6 +1379,7 @@ class DBManager {
     final db = await database;
     // 级联删除会同步清空该 bot 的聊天和记忆
     await db.delete('bots', where: 'id = ?', whereArgs: [id]);
+    await NativeBackgroundCoordinator.synchronize();
   }
 
   // ================= 消息流管理 =================
@@ -1506,16 +1508,43 @@ class DBManager {
     }
   }
 
-  /// Byte usage of each bot's persisted chat rows, including referenced media.
-  /// SQLite stores every bot in one database file, so allocate the database
-  /// payload proportionally and add each chat image/video file once per bot.
+  /// Physical database footprint, including pending WAL writes and journals.
+  /// This is shared by all app data; do not add it once per bot.
+  Future<int> databaseStorageBytes() async {
+    final db = await database;
+    var bytes = 0;
+    for (final suffix in const ['', '-wal', '-shm', '-journal']) {
+      try {
+        final file = File('${db.path}$suffix');
+        if (await file.exists()) bytes += await file.length();
+      } on FileSystemException {
+        // SQLite may remove a journal between exists() and length().
+      }
+    }
+    return bytes;
+  }
+
+  /// Logical row payload plus referenced media, estimated per bot.
+  /// Shared SQLite pages, indexes and journals are reported separately.
   Future<Map<String, int>> chatStorageByBot() async {
     final db = await database;
     try {
       final rows = await db.rawQuery('''
         SELECT bot_id, id, type, file_path,
-          length(COALESCE(content, '')) + length(COALESCE(file_path, '')) +
-          length(COALESCE(error_log, '')) + length(COALESCE(sources_json, '')) + 96
+          length(CAST(COALESCE(content, '') AS BLOB)) +
+          length(CAST(COALESCE(file_path, '') AS BLOB)) +
+          length(CAST(COALESCE(error_log, '') AS BLOB)) +
+          length(CAST(COALESCE(sources_json, '') AS BLOB)) +
+          length(CAST(COALESCE(id, '') AS BLOB)) +
+          length(CAST(COALESCE(bot_id, '') AS BLOB)) +
+          length(CAST(COALESCE(role, '') AS BLOB)) +
+          length(CAST(COALESCE(type, '') AS BLOB)) +
+          length(CAST(COALESCE(mood, '') AS BLOB)) +
+          length(CAST(COALESCE(error_code, '') AS BLOB)) +
+          length(CAST(COALESCE(error_message, '') AS BLOB)) +
+          length(CAST(COALESCE(retry_status, '') AS BLOB)) +
+          length(CAST(COALESCE(reply_to_id, '') AS BLOB)) +
+          length(CAST(COALESCE(reply_group_id, '') AS BLOB)) + 96
           AS row_bytes
         FROM chat_history
       ''');
@@ -1578,7 +1607,7 @@ class DBManager {
       print('[db] chatStorageByBot failed: $error');
       try {
         final rows = await db.rawQuery('''
-          SELECT bot_id, SUM(length(COALESCE(content, '')) + 96) AS bytes
+          SELECT bot_id, SUM(length(CAST(COALESCE(content, '') AS BLOB)) + 96) AS bytes
           FROM chat_history GROUP BY bot_id
         ''');
         return {

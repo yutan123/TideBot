@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'native_selectable_text.dart';
 
-/// Use bundled Latin and Chinese fonts so device themes cannot replace log text.
+/// Bundle Android's monospace faces explicitly: Droid Sans Mono and
+/// Noto Sans CJK SC Regular. Both font files have a default weight of 400.
+/// A variable font's default axis can otherwise be Thin even when TextStyle
+/// requests FontWeight.w400.
 const logTextStyle = TextStyle(
   inherit: false,
   fontFamily: 'LogMono',

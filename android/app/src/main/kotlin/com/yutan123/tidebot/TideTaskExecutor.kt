@@ -33,6 +33,19 @@ object TideTaskExecutor {
                 throw IllegalStateException("Task not found: $taskId")
             }
 
+            // Old alarms can survive disabling/deleting a bot. Retire them before
+            // advancing vital state or starting any model request.
+            if (taskConfig.optString("task_type") in setOf("VITAL_SIGNS", "PROACTIVE_REPLY")) {
+                val bot = TideConfigReader.getBotConfig(context, taskConfig.optString("bot_id"))
+                if (bot == null || bot.isDisabled) {
+                    TideStore.open(context).use { db ->
+                        db.execSQL("UPDATE background_tasks SET enabled=0 WHERE task_id=? AND trigger_time=?", arrayOf(taskId, scheduledTime))
+                    }
+                    markExecutionFinished(context, executionId, "skipped", null, "Bot disabled or not found")
+                    return@withContext
+                }
+            }
+
             // 根据任务类型执行
             when (taskConfig.optString("task_type")) {
                 "FUTURE_TASK" -> TideFutureTasks.execute(context, taskId, executionId)
@@ -58,7 +71,7 @@ object TideTaskExecutor {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Task execution failed: $taskId", e)
-            TideBackgroundLog.add(context, "任务异常：$taskId，类型=${e.javaClass.simpleName}")
+            TideBackgroundLog.add(context, "任务异常：$taskId，类型=${e.javaClass.simpleName}，原因=${e.message ?: "未知"}", "BACKGROUND_ERROR")
             markExecutionFinished(context, executionId, "failed", null, e.message)
         }
     }
@@ -180,8 +193,11 @@ object TideTaskExecutor {
         }
         val pendingIds = (0 until pending.length()).map { pending.getJSONObject(it).getString("id") }.toSet()
         val cutoff = (0 until pending.length()).maxOf { pending.getJSONObject(it).optLong("time") }
-        val bot = TideConfigReader.getBotConfig(context, id) ?: error("Bot not found")
-        check(!bot.isDisabled) { "Bot is disabled" }
+        val bot = TideConfigReader.getBotConfig(context, id)
+        if (bot == null || bot.isDisabled) {
+            markExecutionFinished(context, executionId, "skipped", null, "Bot disabled or not found")
+            return
+        }
         val model = bot.chatModel ?: error("No chat model configured")
         val response = TideAiClient.sendRequest(TideAiClient.AiRequest(model.baseUrl,model.apiKey,model.model,
             listOf(TideAiClient.Message("system",TidePromptContext.system(context, bot)), TideAiClient.Message("user",

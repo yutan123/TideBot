@@ -28,12 +28,18 @@ object TideMasterScheduler {
         
         try {
             val now = System.currentTimeMillis()
-            TideStore.transaction(db) {
+            val registered = TideStore.transaction(db) {
+                if (taskType in setOf("VITAL_SIGNS", "PROACTIVE_REPLY") &&
+                    TideStore.rows(db, "SELECT id FROM bots WHERE id=? AND COALESCE(is_disabled,0)=0", botId.orEmpty()).isEmpty()) {
+                    return@transaction false
+                }
                 db.execSQL("INSERT OR IGNORE INTO background_tasks (task_id,task_type,bot_id,trigger_time,repeating,enabled,config_json,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)",
                     arrayOf(taskId,taskType,botId,triggerTime,if (repeating) 1 else 0,config?.toString(),now,now))
                 db.execSQL("UPDATE background_tasks SET task_type=?,bot_id=?,trigger_time=?,repeating=?,enabled=1,config_json=?,updated_at=? WHERE task_id=?",
                     arrayOf(taskType,botId,triggerTime,if (repeating) 1 else 0,config?.toString(),now,taskId))
+                true
             }
+            if (!registered) return false
 
             // Enqueue a WorkManager delivery before attempting the alarm fast path.
             // Inexact alarms do not grant permission to start a foreground service.

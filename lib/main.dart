@@ -171,7 +171,7 @@ Future<void> _initPersistentService({
         isForegroundMode: true,
         notificationChannelId: 'tide_bot_alive',
         initialNotificationTitle: 'TideBot 正在运行中',
-        initialNotificationContent: '后台任务可用；关闭开关或划掉应用后台即可停止',
+        initialNotificationContent: 'TideBot正在运行中',
         foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(),

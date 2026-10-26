@@ -1,3 +1,4 @@
+import 'minimax_tts.dart';
 import 'call_speech.dart';
 import 'request_execution_lease.dart';
 import 'ai_request_task.dart';
@@ -2746,13 +2747,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return '$root/v1/chat/completions';
   }
 
-  String _miniMaxTtsEndpoint(String configuredUrl) {
-    final root = configuredUrl.trim().replaceFirst(RegExp(r'/+$'), '');
-    if (root.endsWith('/t2a_v2')) return root;
-    if (root.endsWith('/v1')) return '$root/t2a_v2';
-    return '$root/v1/t2a_v2';
-  }
-
   // TTS supports both legacy base_url/api_key and settings-page url/key fields.
   Future<String?> _generateTTS(
     String text,
@@ -2778,7 +2772,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
     final configuredVoice = (provider['voice']?.toString() ?? '').trim();
     final voice = configuredVoice.isEmpty || configuredVoice == 'default'
-        ? (protocol == 'mimo' ? 'mimo_default' : 'alloy')
+        ? switch (protocol) {
+            'mimo' => 'mimo_default',
+            'minimax' => 'male-qn-qingse',
+            _ => 'alloy',
+          }
         : configuredVoice;
     final moodSpeed = switch (mood) {
       '开心' || '兴奋' => 1.08,
@@ -2807,7 +2805,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
     try {
       final endpoint = switch (protocol) {
-        'minimax' => _miniMaxTtsEndpoint(baseUrl),
+        'minimax' => miniMaxTtsEndpoint(baseUrl),
         'mimo' => _chatCompletionsEndpoint(baseUrl),
         _ => '$baseUrl/audio/speech',
       };
@@ -2824,6 +2822,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'model': model,
             'text': text,
             'stream': false,
+            'output_format': 'hex',
             'voice_setting': {
               'voice_id': voice,
               'speed': speechStyle == null ? moodSpeed : 1.0,
@@ -2915,7 +2914,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       var bytes = res.bodyBytes;
       final contentType = (res.headers['content-type'] ?? '').toLowerCase();
-      if (contentType.contains('json') ||
+      if (protocol == 'minimax') {
+        bytes = decodeMiniMaxTtsAudio(jsonDecode(utf8.decode(bytes)));
+      } else if (contentType.contains('json') ||
           utf8.decode(bytes, allowMalformed: true).trimLeft().startsWith('{')) {
         AppLogService.instance.addJson('TTS', '语音服务 JSON 响应', {
           'status': res.statusCode,
@@ -3011,7 +3012,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
 
       final directory = await getApplicationDocumentsDirectory();
-      final extension = _audioExtension(bytes, contentType);
+      final extension =
+          protocol == 'minimax' ? 'mp3' : _audioExtension(bytes, contentType);
       final path =
           '${directory.path}/tide_tts_${DateTime.now().millisecondsSinceEpoch}.$extension';
       await File(path).writeAsBytes(bytes);
