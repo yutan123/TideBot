@@ -185,7 +185,12 @@ private class NativeSelectableTextView(
             }.getOrElse { Typeface.SANS_SERIF }
             else -> Typeface.create(family, Typeface.NORMAL)
         }
-        textView.typeface = Typeface.create(base, style)
+        // LogMono uses per-character spans; avoid setting a base typeface that triggers fallback
+        textView.typeface = if (family == "LogMono") {
+            Typeface.create(Typeface.SANS_SERIF, style)
+        } else {
+            Typeface.create(base, style)
+        }
         textView.setTextColor(color)
         textView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, fontSize)
         textView.letterSpacing = ((args["letterSpacing"] as? Number)?.toFloat() ?: 0f) / fontSize
@@ -193,15 +198,18 @@ private class NativeSelectableTextView(
         if (textView.text.toString() != text || renderedFamily != family || renderedStyle != style) {
             textView.text = if (family == "LogMono") {
                 val styled = SpannableString(text)
+                val mono = Typeface.create(BundledTextFonts.get(textView.context, "LogMono"), style)
                 val chinese = Typeface.create(BundledTextFonts.get(textView.context, "LogSansSC"), style)
-                // Explicit CJK spans avoid the device's customized Chinese face.
+                // Explicit spans for all characters prevent system fallback to theme fonts.
                 var start = 0
                 while (start < text.length) {
                     val useChinese = text[start].code > 0x024F
                     var end = start + 1
                     while (end < text.length && (text[end].code > 0x024F) == useChinese) end++
-                    if (useChinese) styled.setSpan(BundledTypefaceSpan(chinese), start, end,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    styled.setSpan(
+                        BundledTypefaceSpan(if (useChinese) chinese else mono),
+                        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
                     start = end
                 }
                 styled

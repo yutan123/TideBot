@@ -887,19 +887,59 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       'face': '脸',
       'smiling': '微笑',
       'grinning': '咧嘴笑',
+      'laughing': '大笑',
+      'rolling': '打滚',
+      'floor': '地板',
+      'tears': '眼泪',
+      'joy': '喜悦',
+      'winking': '眨眼',
+      'heart-shaped': '心形',
+      'heart': '爱心',
+      'throwing': '飞',
+      'kiss': '吻',
+      'sunglasses': '墨镜',
       'with': '带',
       'eyes': '眼睛',
-      'heart': '爱心',
-      'hands': '手',
+      'open': '张开',
+      'mouth': '嘴',
+      'hands': '双手',
       'hand': '手',
+      'folded': '合十',
+      'clapping': '鼓掌',
+      'thumbs': '大拇指',
+      'up': '向上',
+      'down': '向下',
       'person': '人',
       'people': '人们',
       'cat': '猫',
       'dog': '狗',
+      'animal': '动物',
+      'nature': '自然',
+      'food': '食物',
+      'drink': '饮料',
+      'activity': '活动',
+      'travel': '旅行',
+      'place': '地点',
+      'object': '物品',
+      'symbol': '符号',
+      'flag': '旗帜',
       'red': '红色',
       'blue': '蓝色',
       'green': '绿色',
       'yellow': '黄色',
+      'white': '白色',
+      'black': '黑色',
+      'orange': '橙色',
+      'purple': '紫色',
+      'brown': '棕色',
+      'pink': '粉色',
+      'fire': '火焰',
+      'sparkles': '闪耀',
+      'star': '星星',
+      'check': '对',
+      'mark': '号',
+      'cross': '叉',
+      'broken': '破碎',
     };
     var result = normalized;
     for (final entry in replacements.entries) {
@@ -1921,42 +1961,71 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
   }
 
-  // ========== 选择图片/文件 ==========
+// ========== 选择图片/文件 ==========
   void _pickMedia() async {
-    final r = await showTideSheet<String>(
+    final theme = TideTheme.of(context);
+    final r = await showGeneralDialog<String>(
       context: context,
-      height: 240,
-      child: Column(
-        children: [
-          const SizedBox(height: 10),
-          ListTile(
-            leading: Icon(
-              Icons.photo_library_rounded,
-              color: TideTheme.of(context).primary,
-            ),
-            title: const Text('相册', style: TextStyle(fontFamily: 'TideFont')),
-            onTap: () => Navigator.pop(context, 'img'),
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      transitionDuration: const Duration(milliseconds: 400),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return ScaleTransition(
+          scale: CurvedAnimation(
+            parent: animation,
+            curve: Curves.elasticOut,
           ),
-          ListTile(
-            leading: Icon(
-              Icons.videocam_rounded,
-              color: TideTheme.of(context).primary,
+          child: child,
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 40),
+              decoration: BoxDecoration(
+                color: theme.surface,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _mediaOptionRow(
+                      theme, Icons.camera_alt_outlined, '相机', 'camera', true),
+                  _mediaOptionRow(
+                      theme, Icons.photo_library_outlined, '照片', 'img', false),
+                  _mediaOptionRow(
+                      theme, Icons.videocam_outlined, '视频', 'video', false),
+                  _mediaOptionRow(theme, Icons.insert_drive_file_outlined, '文件',
+                      'file', false,
+                      isLast: true),
+                ],
+              ),
             ),
-            title: const Text('视频', style: TextStyle(fontFamily: 'TideFont')),
-            onTap: () => Navigator.pop(context, 'video'),
           ),
-          ListTile(
-            leading: Icon(
-              Icons.insert_drive_file_rounded,
-              color: TideTheme.of(context).primary,
-            ),
-            title: const Text('文件', style: TextStyle(fontFamily: 'TideFont')),
-            onTap: () => Navigator.pop(context, 'file'),
-          ),
-        ],
-      ),
+        );
+      },
     );
-    if (r == 'img') {
+    if (r == 'camera') {
+      if (!await AppPermissions.photos(context, feature: '拍照')) return;
+      final photo = await ImagePicker().pickImage(source: ImageSource.camera);
+      if (photo != null) {
+        final confirmed = await _confirmPhoto(photo.path);
+        if (confirmed && mounted) {
+          final fixed = await _fixHeic(photo.path);
+          setState(() => _pendingImages.add(fixed));
+        }
+      }
+    } else if (r == 'img') {
       if (!await AppPermissions.photos(context, feature: '选择图片')) return;
       final selected = await ImagePicker().pickMultiImage();
       if (selected.isNotEmpty) {
@@ -2002,6 +2071,149 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         });
       }
     }
+  }
+
+  Widget _mediaOptionRow(
+      TideTheme theme, IconData icon, String label, String value, bool isFirst,
+      {bool isLast = false}) {
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      borderRadius: BorderRadius.vertical(
+        top: isFirst ? const Radius.circular(24) : Radius.zero,
+        bottom: isLast ? const Radius.circular(24) : Radius.zero,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          border: isLast
+              ? null
+              : Border(
+                  bottom: BorderSide(
+                    color: theme.surfaceVariant.withValues(alpha: 0.3),
+                    width: 0.5,
+                  ),
+                ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: theme.textStrong, size: 24),
+            const SizedBox(width: 16),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'TideFont',
+                fontSize: 16,
+                color: theme.textStrong,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _confirmPhoto(String path) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final theme = TideTheme.of(context);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 400, maxHeight: 600),
+            decoration: BoxDecoration(
+              color: theme.surface,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    '确认照片',
+                    style: TextStyle(
+                      fontFamily: 'TideFont',
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: theme.textStrong,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(12),
+                    ),
+                    child: Image.file(
+                      File(path),
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            backgroundColor:
+                                theme.surfaceVariant.withValues(alpha: 0.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            '取消',
+                            style: TextStyle(
+                              fontFamily: 'TideFont',
+                              fontSize: 15,
+                              color: theme.textWeak,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            backgroundColor: theme.primary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            '确认',
+                            style: TextStyle(
+                              fontFamily: 'TideFont',
+                              fontSize: 15,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    return result ?? false;
   }
 
   // ========== 视频处理 ==========
@@ -4460,7 +4672,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                       minLines: 1,
                       maxLines: 4,
                       textInputAction: TextInputAction.newline,
-                      selectionControls: materialTextSelectionHandleControls,
                       style: TextStyle(
                           fontSize: 15,
                           fontFamily: 'TideFont',

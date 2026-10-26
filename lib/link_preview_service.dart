@@ -127,7 +127,9 @@ class LinkPreviewService {
             description = author['nickname']?.toString() ?? description;
           final video = item['video'];
           if (video is Map) {
-            image = mediaUrl(video['cover'] ??
+            image = mediaUrl(video['dynamic_cover'] ??
+                    video['dynamicCover'] ??
+                    video['cover'] ??
                     video['origin_cover'] ??
                     video['originCover']) ??
                 image;

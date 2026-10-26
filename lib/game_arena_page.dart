@@ -756,7 +756,6 @@ class _GameArenaPageState extends State<GameArenaPage> {
                         contextMenuBuilder: androidTextContextMenu,
                         controller: _chatController,
                         onSubmitted: (_) => _talk(),
-                        selectionControls: materialTextSelectionHandleControls,
                         decoration: InputDecoration(
                           hintText: '和 $_botName 聊聊游戏…',
                           filled: true,

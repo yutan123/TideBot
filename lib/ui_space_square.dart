@@ -2401,8 +2401,6 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
                           contextMenuBuilder: androidTextContextMenu,
                           controller: _commentCtrl,
                           textInputAction: TextInputAction.send,
-                          selectionControls:
-                              materialTextSelectionHandleControls,
                           onSubmitted:
                               _sendingComment ? null : (_) => _sendComment(),
                           style: TextStyle(

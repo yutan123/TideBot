@@ -42,9 +42,10 @@ class DiaryService {
     _running = true;
     try {
       final db = DBManager();
-      final today = DateTime.now();
-      final yesterday = DateTime(today.year, today.month, today.day)
-          .subtract(const Duration(days: 1));
+      final now = DateTime.now();
+      // Only write diaries for dates strictly before today
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
       final bots = await db.queryBots();
       for (final bot in bots) {
         final botId = bot['id']?.toString() ?? '';
@@ -57,13 +58,34 @@ class DiaryService {
           final key = _dateKey(DateTime.fromMillisecondsSinceEpoch(stamp));
           byDate.putIfAbsent(key, () => []).add(message);
         }
+        // Start from yesterday and go back up to 30 days, never including today
         for (var day = yesterday;
-            !day.isBefore(yesterday.subtract(const Duration(days: 30)));
+            day.isAfter(yesterday.subtract(const Duration(days: 30)));
             day = day.subtract(const Duration(days: 1))) {
           final dateKey = _dateKey(day);
+          // Double-check: never write diary for today or future dates
+          if (!day.isBefore(today)) continue;
+
+          // Skip dates before bot creation date
+          final created = bot['created_at'];
+          final createdMillis = created is num
+              ? created.toInt()
+              : int.tryParse(created?.toString() ?? '');
+          if (createdMillis != null) {
+            final createdDate =
+                DateTime.fromMillisecondsSinceEpoch(createdMillis);
+            final createdDay =
+                DateTime(createdDate.year, createdDate.month, createdDate.day);
+            if (day.isBefore(createdDay)) continue;
+          }
+
           final schedule = await db.getLifeSchedule(botId, dateKey);
-          if ((!byDate.containsKey(dateKey) && schedule == null) ||
-              await db.getDiary(botId, dateKey) != null) {
+          // Skip if already has diary
+          if (await db.getDiary(botId, dateKey) != null) {
+            continue;
+          }
+          // Skip if no schedule and no messages for this date
+          if (!byDate.containsKey(dateKey) && schedule == null) {
             continue;
           }
           final job = 'diary_${botId}_$dateKey';
@@ -109,6 +131,7 @@ class DiaryService {
   Future<bool> _writeDiary(
       String botId, String dateKey, List<Map<String, dynamic>> messages) async {
     final db = DBManager();
+    final schedule = await db.getLifeSchedule(botId, dateKey);
     final transcript = messages
         .where((m) => m['type'] == 'text' || m['type'] == 'audio')
         .map((m) {
@@ -126,8 +149,12 @@ class DiaryService {
         })
         .where((line) => line.trim().isNotEmpty)
         .join('\n');
-    if (transcript.isEmpty && await db.getLifeSchedule(botId, dateKey) == null)
+
+    // Skip if no schedule and no chat messages
+    if (transcript.isEmpty && schedule == null) {
+      AppLogService.instance.add('DIARY', '$botId $dateKey 跳过：当天无日程也无聊天记录');
       return true;
+    }
     final previous = await db.queryDiaryRange(
       botId,
       _dateKey(DateTime.parse(dateKey).subtract(const Duration(days: 3))),

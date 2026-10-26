@@ -154,7 +154,9 @@ class PlatformVideoResolver {
               : noteImageUrls(item);
           final videoInfo = item['video'];
           final cover = douyin && videoInfo is Map
-              ? mediaUrl(videoInfo['cover'] ??
+              ? mediaUrl(videoInfo['dynamic_cover'] ??
+                  videoInfo['dynamicCover'] ??
+                  videoInfo['cover'] ??
                   videoInfo['origin_cover'] ??
                   videoInfo['originCover'])
               : (images.isEmpty ? null : images.first);

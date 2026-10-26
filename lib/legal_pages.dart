@@ -196,57 +196,28 @@ class TideBotAboutPage extends StatelessWidget {
                         style: TextStyle(
                             fontFamily: 'TideFont', color: theme.textWeak),
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 32),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
                           '功能特性',
                           style: TextStyle(
                             fontFamily: 'TideFont',
-                            fontSize: 18,
+                            fontSize: 17,
                             fontWeight: FontWeight.w700,
                             color: theme.textStrong,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      _aboutFeature(
-                        theme,
-                        Icons.chat_bubble_outline_rounded,
-                        '自然对话与专属角色',
-                        '持续聊天、保留上下文和重要记忆，让交流更有连续性。',
-                      ),
-                      _aboutFeature(
-                        theme,
-                        Icons.image_outlined,
-                        '文字、语音与多媒体',
-                        '支持文字、图片、语音、视频和文件，分享日常与灵感。',
-                      ),
-                      _aboutFeature(
-                        theme,
-                        Icons.tune_rounded,
-                        '模型与界面自由定制',
-                        '自定义角色、模型服务、主题背景和聊天风格。',
-                      ),
-                      _aboutFeature(
-                        theme,
-                        Icons.lock_outline_rounded,
-                        '本地优先的数据管理',
-                        '聊天记录和媒体资料优先保存在本机，支持备份与导出。',
-                      ),
-                      const SizedBox(height: 22),
-                      Text(
-                        '潮起有时，陪伴无期',
-                        style: TextStyle(
-                          fontFamily: 'TideFont',
-                          fontSize: 12,
-                          color: theme.textWeak,
-                        ),
-                      ),
+                      const SizedBox(height: 14),
+                      _aboutFeature(theme, '自然对话与专属角色'),
+                      _aboutFeature(theme, '文字、语音与多媒体'),
+                      _aboutFeature(theme, '本地优先的数据管理'),
                     ],
                   ),
                 ),
               ),
+              const Spacer(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
                 child: Column(
@@ -280,6 +251,15 @@ class TideBotAboutPage extends StatelessWidget {
                         child: const Text('查看用户协议与免责声明'),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '潮起有时，陪伴无期',
+                      style: TextStyle(
+                        fontFamily: 'TideFont',
+                        fontSize: 12,
+                        color: theme.textWeak,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -290,56 +270,29 @@ class TideBotAboutPage extends StatelessWidget {
     );
   }
 
-  Widget _aboutFeature(
-    TideTheme theme,
-    IconData icon,
-    String title,
-    String description,
-  ) {
+  Widget _aboutFeature(TideTheme theme, String title) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: theme.surfaceVariant.withValues(alpha: 0.52),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: theme.border.withValues(alpha: 0.7)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: theme.primary, size: 22),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontFamily: 'TideFont',
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: theme.textStrong,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      description,
-                      style: TextStyle(
-                        fontFamily: 'TideFont',
-                        fontSize: 13,
-                        height: 1.45,
-                        color: theme.textWeak,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: theme.primary,
+              shape: BoxShape.circle,
+            ),
           ),
-        ),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: TextStyle(
+              fontFamily: 'TideFont',
+              fontSize: 14,
+              color: theme.textStrong,
+            ),
+          ),
+        ],
       ),
     );
   }

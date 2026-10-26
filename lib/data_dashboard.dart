@@ -317,7 +317,24 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
           ),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, color: accent, size: 25),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Icon(icon, color: accent, size: 25),
+                InkWell(
+                  onTap: () => _showDetailDialog(theme, label, value),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.info_outline_rounded,
+                      size: 20,
+                      color: theme.textWeak,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const Spacer(),
             LayoutBuilder(builder: (context, constraints) {
               final style = TextStyle(
@@ -368,6 +385,95 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
         ),
       ),
     );
+  }
+
+  void _showDetailDialog(TideTheme theme, String label, int value) {
+    final isToken = label.contains('Token');
+    final unit = isToken ? 'Token' : '条消息';
+    final approximateText = _formatApproximate(value, isToken);
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'TideFont',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: theme.textStrong,
+                ),
+              ),
+              const SizedBox(height: 24),
+              _detailRow(theme, '约', approximateText),
+              const SizedBox(height: 16),
+              _detailRow(theme, '准确数据', '$value $unit'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(TideTheme theme, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: BoxDecoration(
+        color: theme.surfaceVariant.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'TideFont',
+              fontSize: 15,
+              color: theme.textWeak,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'TideFont',
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: theme.textStrong,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatApproximate(int value, bool isToken) {
+    final unit = isToken ? 'Token' : '条消息';
+    if (value >= 10000) {
+      final wan =
+          (value / 10000).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
+      return '$wan 万$unit';
+    }
+    return '$value $unit';
   }
 }
 

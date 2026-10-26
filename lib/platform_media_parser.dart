@@ -85,6 +85,11 @@ String? mediaUrl(dynamic value) {
       'src',
       'backupUrls',
       'backup_urls',
+      'cover',
+      'origin_cover',
+      'originCover',
+      'dynamic_cover',
+      'dynamicCover',
     ]) {
       final url = mediaUrl(value[key]);
       if (url != null) return url;

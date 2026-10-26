@@ -1807,7 +1807,6 @@ class _CallPageState extends State<CallPage>
               minLines: 1,
               maxLines: 3,
               textInputAction: TextInputAction.send,
-              selectionControls: materialTextSelectionHandleControls,
               onSubmitted: (_) => _submitText(),
               decoration: InputDecoration(
                 hintText: '输入回复',
