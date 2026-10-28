@@ -78,30 +78,32 @@ class VideoProcessingService {
         duration > 300 && previewLongVideo ? 8.0 : duration / frameCount;
 
     try {
-      for (int i = 0; i < frameCount; i++) {
-        final timestamp = i * interval;
-        final outputPath = '${outputDir.path}/frame_$i.jpg';
-
-        final command =
-            '-ss ${timestamp.toStringAsFixed(2)} -i "$videoPath" -vframes 1 -vf scale=$targetWidth:-1 -q:v 3 "$outputPath"';
-
-        final session = await FFmpegKit.execute(command);
-        final returnCode = await session.getReturnCode();
-
-        if (ReturnCode.isSuccess(returnCode) &&
-            await File(outputPath).exists()) {
-          framePaths.add(outputPath);
-        }
+      // Bound concurrent decoders to avoid overwhelming mobile devices.
+      for (int offset = 0; offset < frameCount; offset += 2) {
+        final batch = await Future.wait([
+          for (int i = offset; i < frameCount && i < offset + 2; i++)
+            () async {
+              final timestamp = i * interval;
+              final outputPath = '${outputDir.path}/frame_$i.jpg';
+              final command =
+                  '-threads 1 -ss ${timestamp.toStringAsFixed(2)} -i "$videoPath" -vframes 1 -vf scale=$targetWidth:-1 -threads 1 -q:v 3 "$outputPath"';
+              final session = await FFmpegKit.execute(command);
+              final returnCode = await session.getReturnCode();
+              return ReturnCode.isSuccess(returnCode) &&
+                      await File(outputPath).exists()
+                  ? outputPath
+                  : null;
+            }(),
+        ]);
+        framePaths.addAll(batch.whereType<String>());
       }
 
       return framePaths;
     } catch (e) {
-      // 清理已创建的文件
-      for (final path in framePaths) {
-        try {
-          await File(path).delete();
-        } catch (_) {}
-      }
+      // Future.wait has settled every decoder, including the current batch.
+      try {
+        if (await outputDir.exists()) await outputDir.delete(recursive: true);
+      } catch (_) {}
       rethrow;
     }
   }

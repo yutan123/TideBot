@@ -53,17 +53,29 @@ String _replySource(String raw) => raw
 /// Protocol metadata is model context, never visible chat text.
 String stripChatMetadata(String raw) {
   var text = raw.replaceAll(
-    RegExp(r'\[(?:(?:你|对方)发送了一个表情包，表情包类型|发送时间)\s*[:：][^\]]*\]'),
+    RegExp(
+        r'\[(?:(?:说话人\s*[:：]\s*(?:对方|你))[^\]]*|(?:你|对方)发送了一个表情包\s*[,，]\s*表情包类型\s*[:：]?[^\]]*|发送时间\s*[:：][^\]]*|(?:本轮)?图片\s*(?:#\s*\d+|[:：][^\]]*))\]'),
     '',
   );
   // Hold a split opening anywhere in a cumulative stream, including mid-sentence.
   final start = text.lastIndexOf('[');
   if (start >= 0 && !text.substring(start).contains(']')) {
-    final tail = text.substring(start);
+    final tail = text
+        .substring(start)
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceAll(',', '，');
     const prefixes = [
+      '[说话人：对方',
+      '[说话人：你',
       '[你发送了一个表情包，表情包类型',
       '[对方发送了一个表情包，表情包类型',
       '[发送时间',
+      '[图片#',
+      '[图片：',
+      '[图片:',
+      '[本轮图片#',
+      '[本轮图片：',
+      '[本轮图片:',
     ];
     if (prefixes
         .any((prefix) => prefix.startsWith(tail) || tail.startsWith(prefix))) {

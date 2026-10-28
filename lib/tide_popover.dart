@@ -58,8 +58,7 @@ Future<T?> showTidePopover<T>({
                   color: theme.surface,
                   clipBehavior: Clip.antiAlias,
                   shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(24 + 24 * (1 - t.clamp(0, 1))),
+                    borderRadius: BorderRadius.circular(24),
                     side: BorderSide(
                         color: theme.textStrong.withValues(alpha: 0.08)),
                   ),

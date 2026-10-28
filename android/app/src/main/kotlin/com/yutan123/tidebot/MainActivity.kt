@@ -265,34 +265,9 @@ class MainActivity: FlutterActivity() {
                         result.success(false)
                     }
                 }
-                "deviceContext" -> {
-                    val allowed = call.argument<List<String>>("allowed")?.toSet() ?: emptySet()
-                    val context = mutableMapOf<String, Any>()
-                    if (allowed.contains("battery")) {
-                        val manager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-                        val level = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                        if (level >= 0) context["battery"] = "$level%"
-                    }
-                    if (allowed.contains("notifications") && TideNotificationListenerService.connected) {
-                        context["notifications"] = TideNotificationListenerService.snapshot()
-                    }
-                    if (allowed.contains("app_usage") && hasUsageAccess()) {
-                        val usage = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-                        val end = System.currentTimeMillis()
-                        context["app_usage"] = usage.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, end - 86400000L, end)
-                            .filter { it.totalTimeInForeground > 0 }
-                            .sortedByDescending { it.totalTimeInForeground }
-                            .take(15)
-                            .map { mapOf("packageName" to it.packageName, "foregroundMs" to it.totalTimeInForeground) }
-                    }
-                    if (allowed.contains("location") && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                        val location = lm.getProviders(true).mapNotNull { provider -> runCatching { lm.getLastKnownLocation(provider) }.getOrNull() }
-                            .maxByOrNull { it.time }
-                        if (location != null) context["location"] = mapOf("latitude" to location.latitude, "longitude" to location.longitude, "accuracy" to location.accuracy)
-                    }
-                    result.success(context)
-                }
+                "deviceContext" -> result.success(TideDeviceContext.read(
+                    applicationContext, call.argument<List<String>>("allowed")?.toSet() ?: emptySet()
+                ))
                 "installedApps" -> {
                     val apps = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))

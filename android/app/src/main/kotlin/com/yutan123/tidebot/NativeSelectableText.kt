@@ -77,6 +77,7 @@ private class NativeSelectableTextView(
     }
     private var disposed = false
     private var nativeInteraction = false
+    private var selectionMode: ActionMode? = null
     private var selectionActive = false
     private var selectionAtDown = false
     private var dragging = false
@@ -91,12 +92,16 @@ private class NativeSelectableTextView(
     // Observe selection without replacing Android's menu or its standard actions.
     private val selectionObserver = object : ActionMode.Callback {
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            selectionMode = mode
             selectionActive = true
             return true
         }
         override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
-        override fun onDestroyActionMode(mode: ActionMode) { selectionActive = false }
+        override fun onDestroyActionMode(mode: ActionMode) {
+            selectionMode = null
+            selectionActive = false
+        }
     }
 
     private fun sendDrag(phase: String, value: Float = 0f) {
@@ -169,6 +174,9 @@ private class NativeSelectableTextView(
                 @Suppress("UNCHECKED_CAST")
                 update(call.arguments as? Map<String, Any?> ?: emptyMap())
                 result.success(null)
+            } else if (call.method == "setVisible") {
+                setVisible(call.argument<Boolean>("visible") == true)
+                result.success(null)
             } else {
                 result.notImplemented()
             }
@@ -176,7 +184,22 @@ private class NativeSelectableTextView(
         update(args)
     }
 
+    private fun setVisible(visible: Boolean) {
+        if (disposed) return
+        if (!visible) {
+            selectionMode?.finish()
+            textView.clearFocus()
+            if (dragging) sendDrag("cancel")
+            dragging = false
+            tracker?.recycle()
+            tracker = null
+        }
+        textView.alpha = if (visible) 1f else 0f
+        textView.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+    }
     private fun update(args: Map<String, Any?>) {
+        if (disposed) return
+        setVisible(args["visible"] as? Boolean != false)
         nativeInteraction = args["nativeInteraction"] as? Boolean == true
         textView.customSelectionActionModeCallback = if (nativeInteraction) selectionObserver else null
         val fontSize = (args["fontSize"] as? Number)?.toFloat() ?: 14f
@@ -255,9 +278,8 @@ private class NativeSelectableTextView(
 
     override fun getView(): View = textView
     override fun dispose() {
-        if (dragging) sendDrag("cancel")
-        tracker?.recycle()
-        tracker = null
+        setVisible(false)
+        textView.text = ""
         textView.setOnTouchListener(null)
         textView.customSelectionActionModeCallback = null
         disposed = true

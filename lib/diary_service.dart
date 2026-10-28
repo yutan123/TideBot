@@ -141,7 +141,7 @@ class DiaryService {
                   .toIso8601String()
                   .substring(11, 16) // HH:mm
               : '';
-          final role = m['role'] == 'assistant' ? '角色' : '用户';
+          final role = m['role'] == 'assistant' ? '你' : '对方';
           final content = m['content'] ?? '';
           return timeStr.isEmpty
               ? '$role：$content'

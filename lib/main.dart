@@ -1,3 +1,4 @@
+import 'proactive_reply_engine.dart';
 import 'native_background_coordinator.dart';
 import 'bot_vital_signs_service.dart';
 import 'built_in_skill_loader.dart';
@@ -46,6 +47,10 @@ import 'mcp_connection_service.dart';
 
 import 'daily_launch_animation.dart';
 import 'bot_state.dart';
+
+// Kept as a root-library entry point for Android's background Flutter engine.
+@pragma('vm:entry-point')
+void proactiveReplyMain() => startProactiveReplyEngine();
 
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
@@ -655,13 +660,6 @@ Future<void> _runDueProactiveReplies() async {
           : ((history.last['timestamp'] as num?)?.toInt() ?? now);
       final minutesSinceLast =
           ((now - lastAt) ~/ Duration.millisecondsPerMinute).clamp(0, 10080);
-      final recent = history.reversed
-          .take(8)
-          .map(
-            (m) =>
-                '${m['role'] == 'user' ? '我' : bot['name']}: ${m['content']}',
-          )
-          .join('\n');
       final wallClock = DateTime.now();
       final currentTime =
           '${wallClock.year.toString().padLeft(4, '0')}-${wallClock.month.toString().padLeft(2, '0')}-${wallClock.day.toString().padLeft(2, '0')} ${wallClock.hour.toString().padLeft(2, '0')}:${wallClock.minute.toString().padLeft(2, '0')}';
@@ -670,10 +668,10 @@ Future<void> _runDueProactiveReplies() async {
             task: AIRequestTask.proactiveChat,
             botId: botId,
             text:
-                '【主动回复触发：不是用户新消息】\n当前本地时间：$currentTime。\n距用户上次主动互动：$minutesSinceLast 分钟。\n请结合最近对话、用户是否提到忙碌、没空、休息或睡觉，以及当前时间判断是否适合联系。不适合时调用 choose_silence，且不要输出正文；适合时自然接续未结束话题或轻量开启新话题。不要提及本触发或系统指令。回复限 1-3 个短句、80 字内。最近对话：\n$recent',
+                '【主动联系时机】当前本地时间：$currentTime。距最近一次对话：$minutesSinceLast 分钟。请判断现在是否适合主动联系。',
             persistResponse: true,
             notifyResponse: true,
-            includeChatHistory: false,
+            includeChatHistory: true,
           )
           .timeout(const Duration(minutes: 5));
       if (result['success'] == true && result['silent'] != true) {

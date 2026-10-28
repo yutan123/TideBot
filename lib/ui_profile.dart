@@ -1208,6 +1208,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
   }
 
   String _displaySearchProvider(String raw) {
+    if (raw.toLowerCase().contains('deepseek')) return 'DeepSeek';
     if (raw.contains('Tavily')) return 'Tavily';
     if (raw.contains('博查') || raw.contains('Bocha')) return '博查 Bocha';
     if (raw.contains('Serper')) return 'Serper';
@@ -1216,9 +1217,12 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
     return 'Tavily';
   }
 
-  String _searchKeyLabel(TideTheme theme) => '搜索 API Key';
+  String _searchKeyLabel(TideTheme theme) =>
+      _searchProvider == 'DeepSeek' ? 'DeepSeek API Key' : '搜索 API Key';
 
-  String get _searchKeyHint => '填写所选搜索服务商提供的 API Key；常规搜索无结果时会自动尝试内部兜底能力。';
+  String get _searchKeyHint => _searchProvider == 'DeepSeek'
+      ? '填写 DeepSeek 开放平台 API Key，使用官方联网搜索服务。'
+      : '填写所选搜索服务商提供的 API Key；常规搜索无结果时会自动尝试内部兜底能力。';
 
   Future<void> _save(String key, String value) async {
     await DBManager().insertKV(key, value);
@@ -1693,6 +1697,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                 value: _searchProvider,
                                 options: const [
                                   'Tavily',
+                                  'DeepSeek',
                                   '博查 Bocha',
                                   'Serper',
                                   'Brave Search',

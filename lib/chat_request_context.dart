@@ -33,6 +33,26 @@
   );
 }
 
+/// Adds deterministic speaker metadata without changing API roles or stored text.
+/// In multimodal messages the marker is a text part; media payloads stay intact.
+Map<String, dynamic> messageWithSpeaker(Map<String, dynamic> message) {
+  final role = message['role'];
+  if (role != 'user' && role != 'assistant') return Map.of(message);
+  final marker = role == 'user'
+      ? '[说话人：对方；普通原话的第一人称指对方，引用按原作者区分]'
+      : '[说话人：你；普通原话的第一人称指你，引用按原作者区分]';
+  final content = message['content'];
+  return {
+    ...message,
+    if (content is String) 'content': '$marker\n$content',
+    if (content is List)
+      'content': [
+        {'type': 'text', 'text': marker},
+        ...content,
+      ],
+  };
+}
+
 String messageTimeContext(String content, Object? timestamp) {
   final stamp =
       timestamp is num ? timestamp.toInt() : int.tryParse('$timestamp');

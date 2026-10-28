@@ -39,10 +39,13 @@ void main() {
           {String extra = '',
           List<String>? images,
           bool streaming = true,
-          bool callTool = false}) =>
+          bool callTool = false,
+          AIRequestTask task = AIRequestTask.chat,
+          String response = '正常回复。'}) =>
       http.runWithClient(
           () => AIManager().sendMessage(
                 botId: 'cache-bot',
+                task: task,
                 text: text,
                 persistResponse: false,
                 enableAutoSummary: false,
@@ -76,7 +79,7 @@ void main() {
                           {
                             'message': {
                               'role': 'assistant',
-                              'content': toolCall ? null : '正常回复。',
+                              'content': toolCall ? null : response,
                               if (toolCall)
                                 'tool_calls': [
                                   {
@@ -108,7 +111,26 @@ void main() {
                             'system_fingerprint': 'fp-cache',
                             'choices': [
                               {
-                                'delta': {'content': '正常回复。'},
+                                'delta': callTool && index == 1
+                                    ? {
+                                        'content':
+                                            '<inner_thought>想看看</inner_thought>',
+                                        'reasoning_content':
+                                            'private reasoning',
+                                        'tool_calls': [
+                                          {
+                                            'index': 0,
+                                            'id': 'call-1',
+                                            'type': 'function',
+                                            'function': {
+                                              'name': 'inspect_image',
+                                              'arguments': jsonEncode(
+                                                  {'image_number': 999}),
+                                            },
+                                          },
+                                        ],
+                                      }
+                                    : {'content': '正常回复。'},
                                 'finish_reason': null
                               }
                             ]
@@ -135,6 +157,76 @@ void main() {
                       'x-request-id': 'upstream-$index',
                     });
               }));
+
+  test(
+      'ended call summary reaches the next chat request after background update',
+      () async {
+    await message('call-card', 'assistant', '[通话已结束，通话时长2分3秒，通话摘要：摘要生成中]', 1000,
+        type: 'voice_call_card');
+    const summary = '[通话已结束，通话时长2分3秒，通话摘要：我们约好周五去看海。]';
+    await db.updateMessageContent('call-card', summary);
+    await message('question', 'user', '刚才电话里约好了什么？', 2000);
+
+    final result = await send('刚才电话里约好了什么？', streaming: false);
+
+    expect(result['success'], isTrue);
+    final messages = payloads.single['messages'] as List;
+    expect(
+        messages.where((m) =>
+            m['role'] == 'assistant' &&
+            m['content'].toString().contains(summary)),
+        hasLength(1));
+    expect(jsonEncode(messages), isNot(contains('摘要生成中')));
+  });
+
+  test('proactive chat shares normal persona, skills, tools and full history',
+      () async {
+    for (var i = 0; i < 16; i++) {
+      await message(
+          'past-$i', i.isEven ? 'user' : 'assistant', '历史内容-$i', 1000 + i);
+    }
+    await message('call-card', 'assistant', '[通话已结束，通话时长1分2秒，通话摘要：周五看海]', 2000,
+        type: 'voice_call_card');
+    await db.saveSkill({
+      'id': 'proactive-skill',
+      'name': '共同技能',
+      'version': '1.0.0',
+      'description': '共同技能',
+      'enabled': 1,
+      'manifest_json': jsonEncode({'instructions': '共同技能指引'}),
+      'updated_at': 1,
+    }, []);
+    await send('普通消息', streaming: false);
+    final normal = payloads.last;
+    final result = await send('内部主动触发',
+        streaming: false,
+        task: AIRequestTask.proactiveChat,
+        response: '想到周五就开心。一起去看海吧！');
+    expect(result['success'], isTrue, reason: '$result');
+    final proactive = payloads.last;
+    final normalMessages = normal['messages'] as List;
+    final messages = proactive['messages'] as List;
+    expect(messages.first, normalMessages.first);
+    expect(messages.first['content'], contains('共同技能指引'));
+    expect(proactive['tools'], normal['tools']);
+    final history = messages.where((m) => m['role'] != 'system').toList();
+    expect(history, hasLength(17));
+    expect(history,
+        normalMessages.where((m) => m['role'] != 'system').take(17).toList());
+    expect(jsonEncode(history), contains('周五看海'));
+    expect(messages.last['role'], 'system');
+    expect(
+        messages
+            .where((m) => m['role'] == 'system' && m['content'] == '内部主动触发'),
+        hasLength(1));
+    expect(result['reply_segments'], ['想到周五就开心。', '一起去看海吧！']);
+    await db.setKV('segmented_reply_enabled', 'false');
+    final single = await send('内部主动触发',
+        streaming: false,
+        task: AIRequestTask.proactiveChat,
+        response: '第一句。第二句！');
+    expect(single['reply_segments'], ['第一句。第二句！']);
+  });
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -215,6 +307,20 @@ void main() {
     expect(jsonEncode(firstMessages), isNot(contains('local_timestamp')));
     final diagnostics = reports('完整请求前缀变化诊断');
     expect(diagnostics, hasLength(3));
+    // Logging is enabled above; diagnostic metadata must stay out of HTTP bodies.
+    for (final payload in payloads) {
+      final body = jsonEncode(payload);
+      for (final marker in [
+        '完整请求前缀变化诊断',
+        'payload_sha256',
+        'messages_sha256',
+        'tools_sha256',
+        'message_roles',
+        'previous_request_available',
+      ]) {
+        expect(body, isNot(contains(marker)), reason: marker);
+      }
+    }
     for (final report in diagnostics.skip(1)) {
       expect(report['fixed_changed'], isFalse);
       expect(report['tools_changed'], isFalse);
@@ -291,14 +397,40 @@ void main() {
         (payloads[0]['messages'] as List).take(count + 1).toList());
   });
   test(
+      'streaming tools preserve request mode, prefix and raw assistant protocol',
+      () async {
+    await message('u1', 'user', '回看旧图', 1700000000000);
+    final result = await send('回看旧图', callTool: true);
+    expect(result['success'], isTrue, reason: '$result');
+    expect(payloads, hasLength(2));
+    expect(payloads[1]['stream'], isTrue);
+    expect(payloads[1]['tools'], payloads[0]['tools']);
+    final initial = payloads[0]['messages'] as List;
+    final follow = payloads[1]['messages'] as List;
+    expect(follow.take(initial.length).toList(), initial);
+    expect(follow[initial.length]['content'],
+        '<inner_thought>想看看</inner_thought>');
+    expect(follow[initial.length]['reasoning_content'], 'private reasoning');
+    expect(result['reply'], '正常回复。');
+    final report = reports('完整请求前缀变化诊断').last;
+    expect(report['request_settings_changed'], isFalse);
+    expect(report['common_full_messages'], initial.length);
+  });
+
+  test(
       'non-streaming tool follow-up uses canonical payload and separate correlation',
       () async {
+    await db.updateBot('cache-bot', {'max_tokens': 999});
     await message('u1', 'user', '回看旧图', 1700000000000);
     final result = await send('回看旧图', streaming: false, callTool: true);
     expect(result['success'], isTrue, reason: '$result');
     expect(payloads, hasLength(2));
     expect(payloads[1]['tools'], payloads[0]['tools']);
+    expect(payloads[1]['max_tokens'], payloads[0]['max_tokens']);
     final followUpMessages = payloads[1]['messages'] as List;
+    final initialMessages = payloads[0]['messages'] as List;
+    expect(followUpMessages.take(initialMessages.length).toList(),
+        initialMessages);
     expect(followUpMessages.last['role'], 'tool');
     expect(followUpMessages.last['tool_call_id'], 'call-1');
     final diagnostics = reports('完整请求前缀变化诊断');
@@ -307,6 +439,12 @@ void main() {
     expect(usages, hasLength(2));
     expect(
         diagnostics[1]['request_id'], '${diagnostics[0]['request_id']}_tool_1');
+    expect(diagnostics[1]['previous_request_id'], diagnostics[0]['request_id']);
+    expect(diagnostics[1]['common_full_messages'], initialMessages.length);
+    expect(diagnostics[1]['fixed_changed'], isFalse);
+    expect(diagnostics[1]['tools_changed'], isFalse);
+    expect(diagnostics[1]['request_settings_changed'], isFalse);
+    expect(diagnostics[1].containsKey('message_roles'), isFalse);
     expect(usages[0]['stage'], 'initial');
     expect(usages[1]['stage'], 'tool_follow_up');
     expect(usages[1]['request_id'], diagnostics[1]['request_id']);

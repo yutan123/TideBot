@@ -30,9 +30,11 @@ void main() {
             double stress = 3,
             double quality = 85,
             double temperature = 36.5,
+            double baseline = 72,
             double previous = 72}) =>
         hourlyMeanHeartRate(
             previous: previous,
+            baseline: baseline,
             asleep: asleep,
             activity: activity,
             stress: stress,
@@ -49,7 +51,7 @@ void main() {
       expect(rate(quality: 45), greaterThan(rate()));
       expect(rate(temperature: 38.2), greaterThan(rate()));
     });
-    test('long simulation stays bounded and gradual', () {
+    test('long simulation stays within the baseline range', () {
       var previous = 72.0;
       for (var i = 0; i < 1000; i++) {
         final next = rate(
@@ -58,7 +60,7 @@ void main() {
             temperature: 38.5,
             previous: previous);
         expect(next, inInclusiveRange(45, 135));
-        expect((next - previous).abs(), lessThanOrEqualTo(14));
+        expect(next, inInclusiveRange(62, 82));
         previous = next.toDouble();
       }
     });
@@ -66,7 +68,7 @@ void main() {
       for (final initial in [48.0, 95.0, 120.0, 132.0]) {
         var current = initial;
         for (var hour = 0; hour < 48; hour++) {
-          current = rate(previous: current).toDouble();
+          current = rate(previous: current, baseline: initial).toDouble();
         }
         expect(current, initial);
       }

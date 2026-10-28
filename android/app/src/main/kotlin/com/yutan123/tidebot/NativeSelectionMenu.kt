@@ -27,19 +27,15 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
                         result.success(false)
                     } else {
-                        val view = activity.findViewById<View>(android.R.id.content)
-                        val density = view.resources.displayMetrics.density
-                        // Flutter's global origin is the Flutter view's origin,
-                        // while ActionMode expects coordinates in the content view.
-                        val flutterView = findFlutterView(view) ?: view
-                        val contentLocation = IntArray(2)
-                        val flutterLocation = IntArray(2)
-                        view.getLocationOnScreen(contentLocation)
-                        flutterView.getLocationOnScreen(flutterLocation)
-                        val x = ((call.argument<Number>("x")?.toFloat() ?: 0f) * density).roundToInt() +
-                            flutterLocation[0] - contentLocation[0]
-                        val y = ((call.argument<Number>("y")?.toFloat() ?: 0f) * density).roundToInt() +
-                            flutterLocation[1] - contentLocation[1]
+                        val root = activity.findViewById<View>(android.R.id.content)
+                        val host = findFlutterView(root) ?: root
+                        val density = host.resources.displayMetrics.density
+                        // Flutter sends logical coordinates. ActionMode expects the
+                        // content rect relative to the view that owns the action mode.
+                        val x = ((call.argument<Number>("x")?.toFloat() ?: 0f) * density)
+                            .roundToInt()
+                        val y = ((call.argument<Number>("y")?.toFloat() ?: 0f) * density)
+                            .roundToInt()
                         anchor = Rect(x, y, x + 1, y + 1)
                         items = call.argument<List<Map<*, *>>>("items") ?: emptyList()
                         if (session == id && mode != null) {
@@ -48,7 +44,7 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                         } else {
                             close()
                             session = id
-                            mode = view.startActionMode(object : ActionMode.Callback2() {
+                            mode = host.startActionMode(object : ActionMode.Callback2() {
                                 override fun onCreateActionMode(actionMode: ActionMode, menu: Menu): Boolean {
                                     fill(menu)
                                     return true

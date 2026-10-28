@@ -152,13 +152,8 @@ class PlatformVideoResolver {
                   .whereType<String>()
                   .toList()
               : noteImageUrls(item);
-          final videoInfo = item['video'];
-          final cover = douyin && videoInfo is Map
-              ? mediaUrl(videoInfo['dynamic_cover'] ??
-                  videoInfo['dynamicCover'] ??
-                  videoInfo['cover'] ??
-                  videoInfo['origin_cover'] ??
-                  videoInfo['originCover'])
+          final cover = douyin
+              ? douyinCoverUrl(item)
               : (images.isEmpty ? null : images.first);
           final user = item[douyin ? 'author' : 'user'];
           if (video != null || gallery && images.isNotEmpty) {

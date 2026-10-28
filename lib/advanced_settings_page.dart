@@ -1,7 +1,7 @@
 import 'android_selection_menu.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'log_text.dart';
+import 'live_log_view.dart';
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -41,23 +41,11 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   String _externalApiUrl = '';
   List<Map<String, dynamic>> _bots = const [];
   final Map<String, String> _boundBotNames = {};
-  Timer? _ticker;
-  final _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _load();
-    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted && _logging) {
-        setState(() {});
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scroll.hasClients) {
-            _scroll.jumpTo(_scroll.position.maxScrollExtent);
-          }
-        });
-      }
-    });
   }
 
   Future<void> _load() async {
@@ -607,16 +595,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   }
 
   @override
-  void dispose() {
-    _ticker?.cancel();
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    final logs = AppLogService.instance.entries;
     return TideBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -818,27 +798,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                             color: theme.surfaceVariant,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(color: theme.border)),
-                        child: logs.isEmpty
-                            ? Center(
-                                child: Text('等待日志输出…',
-                                    style: TextStyle(
-                                        fontFamily: 'TideFont',
-                                        color: theme.textFaint)))
-                            : ListView.builder(
-                                controller: _scroll,
-                                itemCount: logs.length,
-                                itemBuilder: (_, i) {
-                                  final log = logs[i];
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: LogText(
-                                      '[${log.time.toIso8601String()}] ${log.level}  ${log.message}',
-                                      fontSize: 11,
-                                      color: theme.textStrong,
-                                    ),
-                                  );
-                                },
-                              ),
+                        child: LiveLogView(color: theme.textStrong),
                       ),
                     ],
                     const SizedBox(height: 12),

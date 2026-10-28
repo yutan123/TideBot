@@ -1,5 +1,8 @@
+import 'chat_image.dart';
 import 'tide_popover.dart';
 import 'video_input.dart';
+import 'chat_video.dart';
+import 'video_poster.dart';
 import 'android_selection_menu.dart';
 import 'send_voice_cooldown.dart';
 import 'chat_typing_state.dart';
@@ -1180,6 +1183,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         return;
       }
     }
+    if (!noUserBubble && documents.any(isVideoAttachment)) {
+      try {
+        documents = await _persistChatVideos(documents);
+      } catch (error) {
+        if (mounted) GlobalNotice.show('视频保存失败：$error');
+        return;
+      }
+      if (!mounted) return;
+    }
     final botId = _bot['id']?.toString() ?? '';
     final now = DateTime.now().millisecondsSinceEpoch;
     final userMessages = _buildAttachmentMessages(
@@ -1391,9 +1403,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   _bot['video_model']?.toString() ??
                   '')
               .trim();
-          if (mounted && !sharedVideos.containsKey(path))
-            GlobalNotice.show(modelId.isEmpty ? '正在提取视频画面与音频…' : '正在使用视频解析模型…');
           try {
+            AppLogService.instance.add('VIDEO',
+                '开始处理视频 mode=${modelId.isEmpty ? 'frames_audio' : 'original'}');
             final prepared = await prepareVideoInput(
                 path: path, botId: botId, modelId: modelId, userText: text);
             preparedVideos.add(prepared);
@@ -1404,6 +1416,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               'timestamp': DateTime.now().millisecondsSinceEpoch,
               'duration':
                   prepared.temporaryMedia?.duration ?? prepared.duration,
+              'analysis_context': prepared.context,
               'frame_paths': prepared.frames,
               'original_video_path': path,
               'chat_attachment': !sharedVideos.containsKey(path),
@@ -1418,6 +1431,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
             framePaths.addAll(prepared.frames);
           } catch (error) {
+            AppLogService.instance.add('VIDEO', '视频处理失败：$error');
             if (!sharedVideos.containsKey(path)) rethrow;
             AppLogService.instance.add('PLATFORM_MEDIA', '分享视频分析失败：$error');
             documentNotices
@@ -1704,7 +1718,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         if (path != null && path.isNotEmpty) {
           if (type == 'image') {
             images.add(path);
-          } else if (type == 'document') {
+          } else if (type == 'document' || type == 'video') {
             documents.add(path);
           }
         }
@@ -1741,7 +1755,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }) {
     final attachments = <Map<String, String>>[
       for (final path in images) {'type': 'image', 'path': path},
-      for (final path in documents) {'type': 'document', 'path': path},
+      for (final path in documents)
+        {'type': isVideoAttachment(path) ? 'video' : 'document', 'path': path},
     ];
     if (attachments.isEmpty) {
       return [
@@ -2055,9 +2070,37 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       await File(video.path).copy(destination);
       if (!mounted) return;
       setState(() => _pendingDocuments.add(destination));
+      unawaited(VideoPosterService.load(destination)
+          .then<void>((_) {}, onError: (Object error, StackTrace stack) {}));
     } catch (error) {
       if (mounted) GlobalNotice.show('添加视频失败：$error');
     }
+  }
+
+  Future<List<String>> _persistChatVideos(List<String> paths) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final folder = Directory('${directory.path}/chat_media/videos');
+    await folder.create(recursive: true);
+    final stored = <String>[];
+    for (final path in paths) {
+      if (!isVideoAttachment(path)) {
+        stored.add(path);
+        continue;
+      }
+      final source = File(path);
+      if (!await source.exists()) throw FileSystemException('所选视频不可访问', path);
+      final destination = source.parent.path == folder.path
+          ? path
+          : p.join(folder.path,
+              '${DateTime.now().microsecondsSinceEpoch}_${p.basename(path)}');
+      if (destination != path) await source.copy(destination);
+      stored.add(destination);
+      unawaited(VideoPosterService.load(destination).then<void>((_) {},
+          onError: (Object error, StackTrace stack) {
+        AppLogService.instance.add('VIDEO', '视频封面生成失败：$error');
+      }));
+    }
+    return stored;
   }
 
   Future<List<String>> _persistChatImages(List<String> paths) async {
@@ -2492,7 +2535,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                         _modelPicker(ctx, providers, curVideo, (v) async {
                           curVideo = v;
                           await pickModel('video_model_$botId', v);
-                        }, includePrimaryVision: true),
+                        }, includePrimaryVideo: true),
                         _mLabel('TTS模型'),
                         _modelPicker(ctx, ttsProviders, curTts, (v) async {
                           curTts = v;
@@ -2676,12 +2719,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     String cur,
     Function(String) onPick, {
     bool includePrimaryVision = false,
+    bool includePrimaryVideo = false,
     bool includePrimaryStt = false,
   }) {
     final sel = providers.firstWhereOrNull((p) => p['id'] == cur);
     final String disp;
     if (cur == '__use_primary_vision__') {
-      disp = '使用主模型识图';
+      disp = includePrimaryVideo ? '使用主模型解析' : '使用主模型识图';
     } else if (cur == '__use_primary_stt__') {
       disp = '使用主模型识别';
     } else if (sel != null) {
@@ -2721,11 +2765,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   Navigator.pop(ctx);
                 },
               ),
-              if (includePrimaryVision)
+              if (includePrimaryVision || includePrimaryVideo)
                 ListTile(
                   leading: const Icon(Icons.visibility_rounded),
-                  title: const Text('使用主模型识图（需要主模型支持识图）',
-                      style: TextStyle(fontFamily: 'TideFont', fontSize: 14)),
+                  title: Text(
+                      includePrimaryVideo ? '使用主模型解析' : '使用主模型识图（需要主模型支持识图）',
+                      style: const TextStyle(
+                          fontFamily: 'TideFont', fontSize: 14)),
                   trailing: cur == '__use_primary_vision__'
                       ? Icon(Icons.check, color: TideTheme.of(ctx).primary)
                       : null,
@@ -3648,7 +3694,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final emojiAsset = m['type'] == 'emoji' ? filePath : null;
         final audioPath =
             m['audio']?.toString() ?? (m['type'] == 'audio' ? filePath : null);
-        final documentPath = m['type'] == 'document' ? filePath : null;
+        final videoPath = (m['type'] == 'video' ||
+                (m['type'] == 'document' &&
+                    filePath != null &&
+                    isVideoAttachment(filePath)))
+            ? filePath
+            : null;
+        final hasVideo = videoPath?.isNotEmpty == true;
+        final documentPath =
+            m['type'] == 'document' && !hasVideo ? filePath : null;
         final hasImg = imagePath?.isNotEmpty == true;
         final hasAudio = audioPath?.isNotEmpty == true;
         final hasDocument = documentPath?.isNotEmpty == true;
@@ -3685,6 +3739,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             hasImg ||
             hasAudio ||
             hasDocument ||
+            hasVideo ||
             replyId?.isNotEmpty == true ||
             sharedPost != null;
         final showTimeHere = _showMessageTime &&
@@ -3777,6 +3832,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                               size: 28,
                                             ),
                                     ),
+                                  if (hasVideo) ChatVideoCard(path: videoPath!),
                                   if (hasDocument) ...[
                                     if (hasPreviousDocument)
                                       Padding(
@@ -3925,21 +3981,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                                         child: ClipRRect(
                                           borderRadius:
                                               BorderRadius.circular(12),
-                                          child: SizedBox(
-                                            width: isSticker ? 112 : 144,
-                                            height: isSticker ? 112 : 144,
-                                            child: isSticker
-                                                ? _localStickerPreview(
+                                          child: isSticker
+                                              ? SizedBox(
+                                                  width: 112,
+                                                  height: 112,
+                                                  child: _localStickerPreview(
                                                     imagePath,
                                                     fit: BoxFit.cover,
                                                     cacheWidth: 224,
-                                                  )
-                                                : Image.file(
-                                                    File(imagePath),
-                                                    fit: BoxFit.cover,
-                                                    cacheWidth: 288,
                                                   ),
-                                          ),
+                                                )
+                                              : ChatImage(path: imagePath),
                                         ),
                                       ),
                                     )

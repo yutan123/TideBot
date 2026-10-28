@@ -148,8 +148,8 @@ class BotVitalSignsService {
       'weight': weight,
       'base_weight': weight,
       'temperature': 36.5,
-      'heart': 72,
-      'base_heart': 72,
+      'heart': 60,
+      'base_heart': 60,
       'mood': 65.0,
       'stress': 3.0,
       'energy': 75.0,
@@ -239,7 +239,6 @@ class BotVitalSignsService {
           final ranges = {
             'height': [80.0, 240.0],
             'weight': [15.0, 250.0],
-            'heart': [45.0, 100.0],
             'temperature': [36.0, 37.2]
           };
           for (final k in ranges.keys) {
@@ -248,7 +247,6 @@ class BotVitalSignsService {
                   vitalDouble(initial[k]).clamp(ranges[k]![0], ranges[k]![1]);
           }
           s['base_weight'] = s['weight'];
-          s['base_heart'] = s['heart'];
           s['initialized_by_model'] = true;
         }
         final entries =
@@ -537,14 +535,15 @@ class BotVitalSignsService {
         }
         // One settled hourly mean; reopening the page never rerolls the value.
         s['heart'] = hourlyMeanHeartRate(
-          previous: vitalDouble(s['heart'], 72),
-          baseline: vitalDouble(s['base_heart'], 72),
+          previous: vitalDouble(s['heart'], 60),
+          baseline: vitalDouble(s['base_heart'], 60),
           asleep: inSleep,
           activity: activity,
           stress: stress.toDouble(),
           sleepQuality: quality,
           temperature: vitalDouble(s['temperature'], 36.5),
           noise: _rng.nextDouble() * 6 - 3,
+          random: _rng,
         );
         s['steps'] = max(0, steps);
         s['activity'] = activity;
@@ -676,8 +675,10 @@ class BotVitalSignsService {
       s['height'] = height;
       s['weight'] = weight;
       s['temperature'] = temperature;
+      if (heart != vitalInt(s['heart'], 60)) {
+        s['base_heart'] = heart;
+      }
       s['heart'] = heart;
-      s['base_heart'] = heart;
       s['base_weight'] = weight;
       // Manual values also prevent first-schedule initialization from replacing them.
       s['initialized_by_model'] = true;

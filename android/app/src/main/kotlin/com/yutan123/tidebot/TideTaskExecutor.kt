@@ -104,51 +104,28 @@ object TideTaskExecutor {
         }
 
         val model = botConfig.chatModel
-        if (model == null) {
-            markExecutionFinished(context, executionId, "failed", null, "No chat model configured")
-            return
-        }
 
         val initialDue = TideStore.open(context).use { TideStore.kv(it, "proactive_due_at_$botId") }
         val latestUser = TideStore.open(context).use { db ->
             TideStore.rows(db, "SELECT id FROM chat_history WHERE bot_id=? AND role='user' ORDER BY timestamp DESC,id DESC LIMIT 1", botId).firstOrNull()?.optString("id")
         }
 
-        // 构建提示词
-        val systemPrompt = TidePromptContext.system(context, botConfig) + "\n\n" +
-            "【主动回复触发：不是用户新消息】\n" +
-            "当前本地时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(java.util.Date())}。\n" +
-            "请结合最近对话、忙碌或休息状态判断是否适合联系。不适合时调用 choose_silence，不输出正文；适合时自然接续话题。不要提及触发或系统指令。回复限 1-3 个短句、80 字内。"
-
-        // 读取最近对话历史
-        val recentMessages = getRecentMessages(context, botId, limit = 10)
-
-        // 发送 AI 请求
-        val request = TideAiClient.AiRequest(
-            baseUrl = model.baseUrl,
-            apiKey = model.apiKey,
-            model = model.model,
-            messages = listOf(
-                TideAiClient.Message("system", systemPrompt)
-            ) + recentMessages.map {
-                TideAiClient.Message(
-                    role = it.optString("role", "user"),
-                    content = it.optString("content", ""),
-                    sentAt = it.optLong("timestamp")
-                )
-            },
-            maxTokens = botConfig.maxTokens,
-            allowSilence = true
-        )
-
         val requestStarted = android.os.SystemClock.elapsedRealtime()
         val lateMs = (System.currentTimeMillis() - taskConfig.optLong("scheduled_time", System.currentTimeMillis())).coerceAtLeast(0)
-        val detail = if (TideBackgroundLog.enabled(context)) {
-            "\n发往模型提供商的完整请求（已脱敏）：\n" + JSONObject(TideAiClient.buildRequestBody(request)).toString(2)
-        } else ""
-        TideBackgroundLog.add(context, "主动回复到期请求：bot=$botId，execution=$executionId，model=${model.model}，延迟=${lateMs}ms$detail", "PROACTIVE_REQUEST")
-        val result = TideAiClient.sendRequest(request)
-
+        TideBackgroundLog.add(context, "主动回复到期请求：bot=$botId，execution=$executionId，model=${model?.model.orEmpty()}，延迟=${lateMs}ms，使用普通聊天请求链路", "PROACTIVE_REQUEST")
+        val result = runCatching {
+            TideProactiveReplyEngine.generate(context, botId).also { response ->
+                if (TideBackgroundLog.enabled(context)) {
+                    response.optJSONArray("request_logs")?.let { logs ->
+                        for (index in 0 until logs.length()) {
+                            val entry = logs.optJSONObject(index) ?: continue
+                            TideBackgroundLog.add(context, entry.optString("message"), entry.optString("level", "PROACTIVE_REQUEST"))
+                        }
+                    }
+                }
+                check(response.optBoolean("success")) { response.optString("error", "Proactive request failed") }
+            }
+        }.onFailure { if (it is CancellationException) throw it }
 
         TideStore.open(context).use { db ->
             TideStore.transaction(db) {
@@ -163,9 +140,9 @@ object TideTaskExecutor {
                     return@transaction
                 }
                 val response = result.getOrNull()
-                val sent = response != null && !response.silent
+                val sent = response != null && !response.optBoolean("silent") && (response.optString("reply").isNotBlank() || response.optString("image_path").isNotBlank() || response.optJSONObject("sticker") != null)
                 if (sent) {
-                    publishMessage(db, botId, taskConfig.getString("task_id"), response!!.content, executionId)
+                    publishMessage(db, botId, taskConfig.getString("task_id"), response!!.optString("reply"), executionId, response)
                     val count = TideStore.kv(db, "proactive_unanswered_$botId")?.toIntOrNull() ?: 0
                     TideStore.put(db, "proactive_unanswered_$botId", (count + 1).toString())
                 } else {
@@ -174,7 +151,7 @@ object TideTaskExecutor {
                 }
                 TideStore.put(db, "proactive_last_result_$botId", if (sent) "sent" else if (response != null) "model_silence" else "request_failed")
                 TideBackgroundLog.add(context, "主动回复结束：bot=$botId，execution=$executionId，结果=${if (sent) "sent" else if (response != null) "model_silence" else "request_failed"}，耗时=${android.os.SystemClock.elapsedRealtime() - requestStarted}ms" +
-                    (if (TideBackgroundLog.enabled(context)) "\n响应：${response?.content.orEmpty()}\n错误：${result.exceptionOrNull()?.message.orEmpty()}" else ""),
+                    (if (TideBackgroundLog.enabled(context)) "\n响应：${response?.optString("reply").orEmpty()}\n错误：${result.exceptionOrNull()?.message.orEmpty()}" else ""),
                     if (result.isFailure) "PROACTIVE_ERROR" else "PROACTIVE_NATIVE")
                 TideStore.put(db, "proactive_due_at_$botId", TideProactiveTasks.nextDeadline(db, !sent).toString())
             }
@@ -379,17 +356,53 @@ object TideTaskExecutor {
     }
 
 
-    internal fun publishMessage(db: SQLiteDatabase, botId: String, taskId: String, content: String, executionId: String) {
+    internal fun publishMessage(db: SQLiteDatabase, botId: String, taskId: String, content: String, executionId: String, reply: JSONObject? = null) {
                 // A reclaimed execution must never publish a late result.
                 val lease = TideStore.rows(db, "SELECT status FROM background_task_executions WHERE execution_id=?", executionId).firstOrNull()
                 check(lease?.optString("status") == "running") { "Execution lease expired" }
                 val messageId = "background:$executionId"
                 val now = System.currentTimeMillis()
-                db.execSQL("INSERT OR IGNORE INTO background_messages (message_id,bot_id,task_id,role,content,timestamp,displayed,synced_to_chat) VALUES (?,?,?,'assistant',?,?,0,1)",
-                    arrayOf(messageId,botId,taskId,content,now))
-                db.execSQL("INSERT OR IGNORE INTO chat_history (id,bot_id,role,type,content,timestamp) VALUES (?,?,'assistant','text',?,?)",
-                    arrayOf(messageId,botId,content,now))
-                db.execSQL("UPDATE bots SET last_msg_time=MAX(COALESCE(last_msg_time,0),?) WHERE id=?",arrayOf(now,botId))
+                val segments = reply?.optJSONArray("reply_segments")?.let { array ->
+                    (0 until array.length()).map { array.optString(it).trim() }.filter { it.isNotEmpty() }
+                }?.takeIf { it.isNotEmpty() } ?: listOf(content).filter { it.isNotBlank() }
+                val groupId = "reply:$executionId"
+                val mood = reply?.optString("mood")?.takeIf { it.isNotBlank() }
+                val thought = reply?.optString("inner_thought").orEmpty()
+                if (thought.isNotBlank() && TideStore.kv(db, "inner_thought_enabled") == "true") {
+                    db.execSQL("INSERT OR IGNORE INTO chat_history (id,bot_id,role,type,content,timestamp,reply_group_id,mood) VALUES (?,?,'assistant','inner_thought',?,?,?,?)",
+                        arrayOf("$messageId:thought",botId,thought,now,groupId,mood))
+                }
+                for ((index, segment) in segments.withIndex()) {
+                    val id = if (index == 0) messageId else "$messageId:segment:$index"
+                    val timestamp = now + index + 1
+                    db.execSQL("INSERT OR IGNORE INTO background_messages (message_id,bot_id,task_id,role,content,timestamp,displayed,synced_to_chat) VALUES (?,?,?,'assistant',?,?,0,1)",
+                        arrayOf(id,botId,taskId,segment,timestamp))
+                    db.execSQL("INSERT OR IGNORE INTO chat_history (id,bot_id,role,type,content,timestamp,reply_group_id,mood) VALUES (?,?,'assistant','text',?,?,?,?)",
+                        arrayOf(id,botId,segment,timestamp,groupId,mood))
+                }
+                val assets = mutableListOf<Triple<String, String, String>>()
+                reply?.optString("image_path")?.takeIf { it.isNotBlank() }?.let {
+                    assets.add(Triple("image", "", it))
+                }
+                reply?.optJSONObject("sticker")?.let { sticker ->
+                    val path = sticker.optString("file_path")
+                    if (path.isNotBlank()) assets.add(Triple("sticker", sticker.optString("emotion"), path))
+                }
+                for ((index, asset) in assets.withIndex()) {
+                    val id = "$messageId:asset:$index"
+                    val timestamp = now + segments.size + index + 1
+                    db.execSQL("INSERT OR IGNORE INTO chat_history (id,bot_id,role,type,content,file_path,timestamp,reply_group_id,mood) VALUES (?,?,'assistant',?,?,?,?,?,?)",
+                        arrayOf(id,botId,asset.first,asset.second,asset.third,timestamp,groupId,mood))
+                    db.execSQL("INSERT OR IGNORE INTO background_messages (message_id,bot_id,task_id,role,content,timestamp,displayed,synced_to_chat) VALUES (?,?,?,'assistant',?,?,0,1)",
+                        arrayOf(id,botId,taskId,if (asset.first == "image") "[图片]" else "[表情包]",timestamp))
+                }
+                reply?.optJSONArray("sources")?.let { sources ->
+                    if (segments.isNotEmpty()) {
+                        val id = if (segments.size == 1) messageId else "$messageId:segment:${segments.size - 1}"
+                        db.execSQL("UPDATE chat_history SET sources_json=? WHERE id=?", arrayOf(sources.toString(), id))
+                    }
+                }
+                db.execSQL("UPDATE bots SET last_msg_time=MAX(COALESCE(last_msg_time,0),?) WHERE id=?",arrayOf(now + segments.size + assets.size,botId))
                 db.execSQL("UPDATE background_task_executions SET status='success',finished_at=?,result_json=? WHERE execution_id=?",arrayOf(now,content,executionId))
     }
 

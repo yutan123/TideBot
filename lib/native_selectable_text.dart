@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,17 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show PlatformViewHitTestBehavior;
 import 'package:flutter/services.dart';
+
+/// Page-scoped measurements survive lazy list item destruction.
+class NativeTextHeightCache {
+  final _heights = <String, double>{};
+  double? read(String key) => _heights[key];
+  void write(String key, double height) {
+    _heights.remove(key);
+    _heights[key] = height;
+    if (_heights.length > 512) _heights.remove(_heights.keys.first);
+  }
+}
 
 /// Android owns selection and its action menu; Flutter owns the scroll layout.
 class NativeSelectableText extends StatefulWidget {
@@ -14,6 +26,7 @@ class NativeSelectableText extends StatefulWidget {
     this.style,
     this.textAlign = TextAlign.start,
     this.nativeInteraction = false,
+    this.heightCache,
   });
 
   final String data;
@@ -22,6 +35,7 @@ class NativeSelectableText extends StatefulWidget {
 
   /// Use a real Android view and immediately deliver touches for native selection.
   final bool nativeInteraction;
+  final NativeTextHeightCache? heightCache;
 
   @override
   State<NativeSelectableText> createState() => _NativeSelectableTextState();
@@ -34,6 +48,51 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
   double _width = 0;
   int _revision = 0;
   Drag? _scrollDrag;
+
+  Animation<double>? _routeAnimation;
+  Animation<double>? _secondaryAnimation;
+  bool _nativeVisible = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _routeAnimation?.removeStatusListener(_routeStatusChanged);
+    _secondaryAnimation?.removeStatusListener(_routeStatusChanged);
+    final route = ModalRoute.of(context);
+    _routeAnimation = route?.animation;
+    _secondaryAnimation = route?.secondaryAnimation;
+    _routeAnimation?.addStatusListener(_routeStatusChanged);
+    _secondaryAnimation?.addStatusListener(_routeStatusChanged);
+    _nativeVisible = _routeIsSettled;
+    unawaited(_setNativeVisible(_nativeVisible));
+  }
+
+  bool get _routeIsSettled =>
+      (_routeAnimation == null ||
+          _routeAnimation!.status == AnimationStatus.completed) &&
+      (_secondaryAnimation == null ||
+          _secondaryAnimation!.status == AnimationStatus.dismissed);
+
+  void _routeStatusChanged(AnimationStatus status) {
+    final visible = _routeIsSettled;
+    if (!mounted || visible == _nativeVisible) return;
+    // Hide the Android overlay at the start of the transition, before Flutter
+    // draws the preceding page. A Flutter text layer follows the route instead.
+    unawaited(_setNativeVisible(visible));
+    setState(() => _nativeVisible = visible);
+  }
+
+  Future<void> _setNativeVisible(bool visible) async {
+    final channel = _channel;
+    if (channel == null || !widget.nativeInteraction) return;
+    try {
+      await channel.invokeMethod<void>('setVisible', {'visible': visible});
+    } on MissingPluginException {
+      // The platform view may already have been removed by route disposal.
+    } on PlatformException {
+      // A late visibility update must not outlive its platform view.
+    }
+  }
 
   Future<dynamic> _onNativeCall(MethodCall call) async {
     if (!mounted) return;
@@ -81,6 +140,7 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
         _nativeHeight == height) {
       return;
     }
+    widget.heightCache?.write(jsonEncode(_params), height);
     setState(() => _nativeHeight = height);
   }
 
@@ -96,11 +156,15 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
     await channel.invokeMethod<void>('update', {
       ..._params,
       'revision': _revision,
+      'visible': !widget.nativeInteraction || _nativeVisible,
     });
   }
 
   @override
   void dispose() {
+    _routeAnimation?.removeStatusListener(_routeStatusChanged);
+    _secondaryAnimation?.removeStatusListener(_routeStatusChanged);
+    unawaited(_setNativeVisible(false));
     _scrollDrag?.cancel();
     _channel?.setMethodCallHandler(null);
     super.dispose();
@@ -154,7 +218,7 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
       if (!mapEquals(params, _params)) {
         _params = params;
         _width = width;
-        _nativeHeight = null;
+        _nativeHeight = widget.heightCache?.read(jsonEncode(params));
         _revision++;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_updateNative());
@@ -168,31 +232,44 @@ class _NativeSelectableTextState extends State<NativeSelectableText> {
           width: width,
           height:
               _nativeHeight ?? _estimatedHeight(nativeStyle, width, direction),
-          child: PlatformViewLink(
-            viewType: 'tidebot/native_selectable_text',
-            surfaceFactory: (context, controller) => AndroidViewSurface(
-              controller: controller as AndroidViewController,
-              hitTestBehavior: PlatformViewHitTestBehavior.opaque,
-              gestureRecognizers: const {
-                Factory<OneSequenceGestureRecognizer>(
-                    EagerGestureRecognizer.new),
-              },
-            ),
-            onCreatePlatformView: (params) {
-              final controller = PlatformViewsService.initExpensiveAndroidView(
-                id: params.id,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (!_nativeVisible)
+                Text(widget.data,
+                    style: resolvedStyle, textAlign: widget.textAlign),
+              PlatformViewLink(
                 viewType: 'tidebot/native_selectable_text',
-                layoutDirection: direction,
-                creationParams: {..._params, 'revision': _revision},
-                creationParamsCodec: const StandardMessageCodec(),
-                onFocus: () => params.onFocusChanged(true),
-              );
-              controller.addOnPlatformViewCreatedListener(
-                  params.onPlatformViewCreated);
-              controller.addOnPlatformViewCreatedListener(_onCreated);
-              unawaited(controller.create());
-              return controller;
-            },
+                surfaceFactory: (context, controller) => AndroidViewSurface(
+                  controller: controller as AndroidViewController,
+                  hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+                  gestureRecognizers: const {
+                    Factory<OneSequenceGestureRecognizer>(
+                        EagerGestureRecognizer.new),
+                  },
+                ),
+                onCreatePlatformView: (params) {
+                  final controller =
+                      PlatformViewsService.initExpensiveAndroidView(
+                    id: params.id,
+                    viewType: 'tidebot/native_selectable_text',
+                    layoutDirection: direction,
+                    creationParams: {
+                      ..._params,
+                      'revision': _revision,
+                      'visible': _nativeVisible
+                    },
+                    creationParamsCodec: const StandardMessageCodec(),
+                    onFocus: () => params.onFocusChanged(true),
+                  );
+                  controller.addOnPlatformViewCreatedListener(
+                      params.onPlatformViewCreated);
+                  controller.addOnPlatformViewCreatedListener(_onCreated);
+                  unawaited(controller.create());
+                  return controller;
+                },
+              ),
+            ],
           ),
         );
       }

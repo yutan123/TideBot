@@ -103,7 +103,7 @@ String metricNote(Map<String, dynamic> s, int index) {
     case 2:
       return '${stressLevel(vitalDouble(s['stress'], 3))} · ${s['activity'] ?? '日常活动'}';
     case 3:
-      return '${vitalDouble(s['temperature'], 36.5).toStringAsFixed(1)} °C · ${vitalInt(s['heart'], 72)} 次/分';
+      return '${vitalDouble(s['temperature'], 36.5).toStringAsFixed(1)} °C · ${vitalInt(s['heart'], 60)} 次/分';
     case 4:
       return '${s['activity'] ?? '根据日程逐时累计'}';
     default:
@@ -1012,7 +1012,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
         info('体重', '${vitalDouble(data!['weight']).toStringAsFixed(1)} kg'),
         info(
             '体温', '${vitalDouble(data!['temperature']).toStringAsFixed(1)} °C'),
-        info('平均心率', '${vitalInt(data!['heart'], 72)} 次/分'),
+        info('平均心率', '${vitalInt(data!['heart'], 60)} 次/分'),
       ]));
 
   Widget _buildDisplayBodyCard(TideTheme theme) => GestureDetector(
@@ -1059,7 +1059,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
     _weightCtrl.text = vitalDouble(data!['weight']).toStringAsFixed(1);
     _temperatureCtrl.text =
         vitalDouble(data!['temperature']).toStringAsFixed(1);
-    _heartCtrl.text = '${vitalInt(data!['heart'], 72)}';
+    _heartCtrl.text = '${vitalInt(data!['heart'], 60)}';
     final preview = _bodyReadOnly(TideTheme.of(context));
     setState(() {
       _bodyEditing = true;

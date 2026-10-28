@@ -98,6 +98,27 @@ String? mediaUrl(dynamic value) {
   return null;
 }
 
+String? douyinCoverUrl(Map item) {
+  final video = item['video'];
+  for (final value in [
+    item['cover'],
+    item['origin_cover'],
+    item['originCover'],
+    item['dynamic_cover'],
+    item['dynamicCover'],
+    if (video is Map) video['cover'],
+    if (video is Map) video['origin_cover'],
+    if (video is Map) video['originCover'],
+    if (video is Map) video['dynamic_cover'],
+    if (video is Map) video['dynamicCover'],
+    if (item['images'] is List) item['images'],
+  ]) {
+    final url = mediaUrl(value);
+    if (url != null) return url;
+  }
+  return null;
+}
+
 String? douyinVideoUrl(Map item) {
   final video = item['video'];
   if (video is! Map) return null;

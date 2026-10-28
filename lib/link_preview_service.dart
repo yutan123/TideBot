@@ -125,16 +125,8 @@ class LinkPreviewService {
           final author = item['author'];
           if (author is Map)
             description = author['nickname']?.toString() ?? description;
-          final video = item['video'];
-          if (video is Map) {
-            image = mediaUrl(video['dynamic_cover'] ??
-                    video['dynamicCover'] ??
-                    video['cover'] ??
-                    video['origin_cover'] ??
-                    video['originCover']) ??
-                image;
-          }
-          image = mediaUrl(item['images']) ?? image;
+          image = douyinCoverUrl(item) ?? image;
+          image ??= mediaUrl(item['images']);
           break;
         }
       } else if (type == LinkType.xiaohongshu) {
@@ -201,7 +193,7 @@ class LinkPreviewService {
 
   static String? videoId(String url) {
     final uri = Uri.tryParse(url);
-    return RegExp(r'/(?:video|note|slides)/(\d+)')
+    return RegExp(r'/(?:share/video|video|note|slides)/(\d+)')
             .firstMatch(uri?.path ?? '')
             ?.group(1) ??
         uri?.queryParameters['modal_id'] ??

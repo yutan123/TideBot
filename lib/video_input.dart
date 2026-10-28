@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'ai.dart';
+import 'video_request.dart';
 import 'video_processing_service.dart';
 
 bool isVideoAttachment(String path) => const {
@@ -38,18 +39,21 @@ Future<PreparedVideoInput> prepareVideoInput({
 }) async {
   final duration = await (readDuration?.call() ??
       VideoProcessingService.instance.getVideoDuration(path));
-  if (duration <= 0) throw StateError('无法读取视频时长，请重新选择视频');
-  if (modelId.trim().isNotEmpty && duration <= 300) {
+  // A local probe failure must not prevent a capable remote model from seeing
+  // the original file. Only the extraction path requires a known duration.
+  if (shouldSendOriginalVideo(modelId, duration)) {
     final analysis = await (analyzeOriginal?.call() ??
             AIManager().describeVideoForBot(
               videoPath: path,
+              botId: botId,
               providerId: modelId.trim(),
               userText: userText,
             ))
         .timeout(const Duration(minutes: 5));
     return PreparedVideoInput('[视频解析模型分析]\n$analysis', duration: duration);
   }
-  final result = await (extractMedia?.call() ?? _extract(path))
+  if (!duration.isFinite || duration <= 0) throw StateError('无法读取视频时长，请重新选择视频');
+  final result = await (extractMedia?.call() ?? _extract(path, duration))
       .timeout(const Duration(minutes: 5));
   try {
     final transcript = result.audioPath == null
@@ -76,23 +80,30 @@ Future<PreparedVideoInput> prepareVideoInput({
   }
 }
 
-Future<VideoProcessingResult> _extract(String path) async {
+Future<VideoProcessingResult> _extract(String path, double duration) async {
   final service = VideoProcessingService.instance;
-  final duration = await service.getVideoDuration(path);
-  if (duration <= 0) throw StateError('无法读取视频时长，请重新选择视频');
   final config = service.calculateFrameConfig(duration);
-  final frames = await service.extractFrames(
-      videoPath: path, frameCount: config.frameCount, duration: duration);
-  if (frames.isEmpty) throw StateError('视频抽帧失败，请检查视频格式后重试');
+  List<String> frames = [];
+  String? audio;
   try {
-    final audio = await service.extractAudio(path);
+    // Wait for both tasks so cleanup cannot race ongoing extraction.
+    await Future.wait<void>([
+      () async {
+        frames = await service.extractFrames(
+            videoPath: path, frameCount: config.frameCount, duration: duration);
+      }(),
+      () async {
+        audio = await service.extractAudio(path);
+      }(),
+    ]);
+    if (frames.isEmpty) throw StateError('视频抽帧失败，请检查视频格式后重试');
     return VideoProcessingResult(
         framePaths: frames,
         audioPath: audio,
         duration: duration,
         isPreview: config.isPreview);
   } catch (_) {
-    await service.cleanupTempFiles(frames);
+    await service.cleanupTempFiles([...frames, if (audio != null) audio!]);
     rethrow;
   }
 }

@@ -181,22 +181,23 @@ List<Map<String, dynamic>> stepPlan(
   return result;
 }
 
-/// Continue from the latest value without reverting to an initial baseline.
+/// Keep hourly variation within ten beats of the saved resting baseline.
 int hourlyMeanHeartRate(
     {required double previous,
-    double? baseline,
+    double baseline = 60,
     required bool asleep,
     required String activity,
     required double stress,
     required double sleepQuality,
     required double temperature,
-    required double noise}) {
+    required double noise,
+    Random? random}) {
   final exertion = RegExp('跑步|健身|运动|骑行|游泳|球').hasMatch(activity)
       ? 24.0
       : RegExp('散步|步行|逛街|通勤').hasMatch(activity)
           ? 9.0
           : 0.0;
-  final target = (baseline ?? previous) +
+  final target = baseline +
       (asleep ? -8 : exertion) +
       (asleep ? 0 : (stress.clamp(0, 10) - 3) * .8) +
       (sleepQuality < 60 && !asleep ? 4 : 0) +
@@ -208,6 +209,11 @@ int hourlyMeanHeartRate(
     final direction = noise > 0 ? 1 : -1;
     next = (next + direction).clamp(45, 135);
     if (next == previous.round()) next -= direction;
+  }
+  if ((previous - baseline).abs() > 10 || (next - baseline).abs() > 10) {
+    final lower = max(45, (baseline - 10).ceil());
+    final upper = min(135, (baseline + 10).floor());
+    next = lower + (random ?? Random()).nextInt(upper - lower + 1);
   }
   return next;
 }

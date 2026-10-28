@@ -4,6 +4,7 @@ import 'package:tide_bot/bot_vital_model.dart';
 void main() {
   int advance(
     double heart, {
+    double baseline = 55,
     bool asleep = false,
     String activity = '休息',
     double stress = 3,
@@ -13,6 +14,7 @@ void main() {
   }) =>
       hourlyMeanHeartRate(
         previous: heart,
+        baseline: baseline,
         asleep: asleep,
         activity: activity,
         stress: stress,
@@ -25,7 +27,7 @@ void main() {
     for (final edited in [55, 95]) {
       var current = edited;
       for (var hour = 0; hour < 48; hour++) {
-        current = advance(current.toDouble());
+        current = advance(current.toDouble(), baseline: edited.toDouble());
         expect(current, edited, reason: 'hour $hour after editing to $edited');
       }
     }
@@ -34,11 +36,11 @@ void main() {
   test('activity and sleep change the latest value instead of resetting it',
       () {
     var current = advance(55, activity: '跑步');
-    expect(current, 57);
+    expect(current, 61);
     current = advance(current.toDouble(), activity: '散步');
-    expect(current, 58);
+    expect(current, 62);
     current = advance(current.toDouble(), asleep: true);
-    expect(current, 57);
+    expect(current, 58);
   });
 
   test('stress, poor sleep and fever affect the current heart rate gradually',
@@ -49,7 +51,7 @@ void main() {
     expect(
         advance(55,
             activity: '运动', stress: 10, quality: 40, temperature: 40, noise: 2),
-        59);
+        61);
   });
 
   test('hourly changes remain bounded during repeated simulation', () {
@@ -59,13 +61,14 @@ void main() {
         final previous = current;
         current = advance(
           previous.toDouble(),
+          baseline: initial.toDouble(),
           asleep: hour % 24 < 8,
           activity: hour % 24 == 12 ? '运动' : '休息',
           stress: (hour % 11).toDouble(),
           noise: hour.isEven ? 2 : -2,
         );
         expect(current, inInclusiveRange(45, 135));
-        expect((current - previous).abs(), lessThanOrEqualTo(4));
+        expect((current - initial).abs(), lessThanOrEqualTo(10));
       }
     }
   });

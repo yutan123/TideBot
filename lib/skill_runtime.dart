@@ -154,24 +154,64 @@ class TideSkillValidator {
   }
 }
 
+String mcpToolName(Object? serverId, Object? toolName) =>
+    'mcp_${serverId}_$toolName';
+
+Map<String, dynamic>? resolveMcpTool(
+    Iterable<Map<String, dynamic>> rows, String name) {
+  for (final row in rows) {
+    if (mcpToolName(row['server_id'], row['name']) == name) return row;
+  }
+  return null;
+}
+
 class McpClient {
-  static Map<String, dynamic> parseResponseBody(String body) {
-    final trimmed = body.trim();
-    if (trimmed.isEmpty) throw const FormatException('MCP 返回为空');
-    final dataLines = trimmed
-        .split(RegExp(r'\r?\n'))
-        .where((line) => line.startsWith('data:'))
-        .map((line) => line.substring(5).trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    final decoded = jsonDecode(dataLines.isEmpty ? trimmed : dataLines.last);
+  static Map<String, dynamic> _decodeResponse(String data,
+      {Object? expectedId}) {
+    final decoded = jsonDecode(data);
     if (decoded is! Map) throw const FormatException('MCP 响应格式无效');
     final map = Map<String, dynamic>.from(decoded);
+    if (expectedId != null && map['id'] != expectedId) {
+      throw const FormatException('MCP 响应编号不匹配');
+    }
     if (map['error'] != null) throw StateError('MCP ${map['error']}');
     return map['result'] is Map
         ? Map<String, dynamic>.from(map['result'] as Map)
         : map;
   }
+
+  static Map<String, dynamic> parseResponseBody(String body,
+      {Object? expectedId}) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) throw const FormatException('MCP 返回为空');
+    if (trimmed.startsWith('{')) {
+      return _decodeResponse(trimmed, expectedId: expectedId);
+    }
+    for (final event in trimmed.split(RegExp(r'\r?\n\r?\n'))) {
+      final data = event
+          .split(RegExp(r'\r?\n'))
+          .where((line) => line.startsWith('data:'))
+          .map((line) => line.substring(5).replaceFirst(RegExp(r'^ '), ''))
+          .join('\n');
+      if (data.isEmpty) continue;
+      final decoded = jsonDecode(data);
+      if (decoded is! Map) continue;
+      if (expectedId != null && decoded['id'] != expectedId) continue;
+      if (!decoded.containsKey('result') && !decoded.containsKey('error'))
+        continue;
+      return _decodeResponse(data, expectedId: expectedId);
+    }
+    throw const FormatException('MCP 未返回对应请求的结果');
+  }
+
+  Map<String, String> get _headers => {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        if (sessionId != null) 'Mcp-Session-Id': sessionId!,
+        if (negotiatedProtocolVersion != null)
+          'MCP-Protocol-Version': negotiatedProtocolVersion!,
+      };
 
   final String url;
   final Map<String, String> headers;
@@ -264,14 +304,12 @@ class McpClient {
     final currentSession = sessionId;
     if (currentSession == null) return;
     try {
-      await _httpClient.delete(
-        Uri.parse(url),
-        headers: {
-          'Accept': 'application/json, text/event-stream',
-          'Mcp-Session-Id': currentSession,
-          ...headers,
-        },
-      ).timeout(timeout);
+      await _httpClient
+          .delete(
+            Uri.parse(url),
+            headers: _headers,
+          )
+          .timeout(timeout);
     } finally {
       sessionId = null;
       negotiatedProtocolVersion = null;
@@ -307,19 +345,17 @@ class McpClient {
   }
 
   Future<void> _notify(String method, Map<String, dynamic> params) async {
-    await _httpClient
+    final response = await _httpClient
         .post(
           Uri.parse(url),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            if (sessionId != null) 'Mcp-Session-Id': sessionId!,
-            ...headers,
-          },
+          headers: _headers,
           body: jsonEncode(
               {'jsonrpc': '2.0', 'method': method, 'params': params}),
         )
         .timeout(timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError('MCP HTTP ${response.statusCode} ($method)');
+    }
   }
 
   Future<Map<String, dynamic>> _request(
@@ -327,24 +363,57 @@ class McpClient {
     Map<String, dynamic> params,
   ) async {
     final id = _nextId++;
-    final response = await _httpClient
-        .post(
-          Uri.parse(url),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            if (sessionId != null) 'Mcp-Session-Id': sessionId!,
-            ...headers,
-          },
-          body: jsonEncode(
-              {'jsonrpc': '2.0', 'id': id, 'method': method, 'params': params}),
-        )
-        .timeout(timeout);
+    return _sendRequest(method, params, id).timeout(timeout);
+  }
+
+  Future<Map<String, dynamic>> _sendRequest(
+      String method, Map<String, dynamic> params, int id) async {
+    final request = http.Request('POST', Uri.parse(url))
+      ..headers.addAll(_headers)
+      ..body = jsonEncode({
+        'jsonrpc': '2.0',
+        'id': id,
+        'method': method,
+        'params': params,
+      });
+    final response = await _httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('MCP HTTP ${response.statusCode}');
+      await response.stream.listen((_) {}).cancel();
+      throw StateError('MCP HTTP ${response.statusCode} ($method)');
     }
     sessionId ??= response.headers['mcp-session-id'];
-    final body = response.body.trim();
-    return parseResponseBody(body);
+    final isSse = response.headers['content-type']
+            ?.toLowerCase()
+            .contains('text/event-stream') ==
+        true;
+    if (!isSse) {
+      return parseResponseBody(await response.stream.bytesToString(),
+          expectedId: id);
+    }
+    // Return when the matching response arrives, even if the server keeps SSE open.
+    final lines = response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(timeout);
+    final data = <String>[];
+    await for (final line in lines) {
+      if (line.isEmpty) {
+        if (data.isEmpty) continue;
+        final event = data.join('\n');
+        data.clear();
+        final decoded = jsonDecode(event);
+        if (decoded is Map &&
+            decoded['id'] == id &&
+            (decoded.containsKey('result') || decoded.containsKey('error'))) {
+          return _decodeResponse(event, expectedId: id);
+        }
+      } else if (line.startsWith('data:')) {
+        data.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
+      }
+    }
+    if (data.isNotEmpty) {
+      return _decodeResponse(data.join('\n'), expectedId: id);
+    }
+    throw const FormatException('MCP 未返回对应请求的结果');
   }
 }

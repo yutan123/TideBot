@@ -575,7 +575,8 @@ class _CallPageState extends State<CallPage>
       forceSingleReply: true,
       persistResponse: false,
       cancellationToken: token,
-      extraSystemPrompt: '$systemPrompt\n不要输出内心独白。'
+      isVoiceCall: true,
+      extraSystemPrompt: '$systemPrompt'
           '\n本次通话最近的对话仅供上下文参考：\n${recent.join('\n')}'
           '${emotional ? '\n$callSpeechPrompt' : ''}',
       includeChatHistory: true,
@@ -766,7 +767,8 @@ class _CallPageState extends State<CallPage>
       'call_id': callId,
       'call_status': 'ended',
       'call_duration': duration.inSeconds,
-      'content': '[语音通话，通话时长${_formatDuration(duration)}]',
+      'content':
+          '[通话已结束，通话时长${_formatDuration(duration)}，通话摘要：${transcript.isEmpty ? '本次通话未获取到有用信息。' : '摘要生成中'}]',
       'duration': duration.inSeconds,
       'timestamp': now,
     };
@@ -863,7 +865,7 @@ class _CallPageState extends State<CallPage>
       await DBManager().updateVoiceCallRecord(callId, summary: summary);
       await DBManager().updateMessageContent(
         'card_$callId',
-        '[语音通话，通话时长$durationText，通话摘要：$summary]',
+        '[通话已结束，通话时长$durationText，通话摘要：$summary]',
       );
       AppLogService.instance
           .add('VOICE_CALL', '通话摘要已更新：$callId，failed=$failed');

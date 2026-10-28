@@ -103,7 +103,6 @@ class ChatCacheDiagnostics {
       'messages_sha256': _digest(messageBody),
       'tools_sha256': _digest(toolBody),
       'message_count': messages.length,
-      'message_roles': roles,
       'system_message_indices': [
         for (var i = 0; i < roles.length; i++)
           if (roles[i] == 'system') i,

@@ -13,6 +13,7 @@ const logTextStyle = TextStyle(
   fontSize: 12,
   height: 1.5,
   fontWeight: FontWeight.w400,
+  textBaseline: TextBaseline.alphabetic,
 );
 
 /// Android owns log selection, handles and the standard contextual action menu.
@@ -22,17 +23,20 @@ class LogText extends StatelessWidget {
     super.key,
     required this.color,
     this.fontSize = 12,
+    this.heightCache,
   });
 
   final String data;
   final Color color;
   final double fontSize;
+  final NativeTextHeightCache? heightCache;
 
   @override
   Widget build(BuildContext context) {
     return NativeSelectableText(
       data,
       nativeInteraction: true,
+      heightCache: heightCache,
       style: logTextStyle.copyWith(color: color, fontSize: fontSize),
     );
   }

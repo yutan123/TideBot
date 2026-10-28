@@ -243,7 +243,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
                         title: Text(bot['name']?.toString() ?? '未命名机器人',
                             style: const TextStyle(fontFamily: 'TideFont')),
                         subtitle: Text(
-                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}（含消息数据和媒体）',
+                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}',
                             style: const TextStyle(fontFamily: 'TideFont')),
                         controlAffinity: ListTileControlAffinity.leading),
                   if (_bots.isEmpty)
