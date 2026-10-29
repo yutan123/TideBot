@@ -5,6 +5,8 @@ import 'request_execution_lease.dart';
 import 'ai_request_task.dart';
 import 'proactive_contact.dart';
 import 'memory_prompt_policy.dart';
+import 'memory_retrieval_service.dart';
+import 'memory_retrieval_policy.dart';
 export 'ai_request_task.dart';
 import 'diary_output.dart';
 import 'daily_quote_output.dart';
@@ -33,6 +35,7 @@ import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 import 'video_processing_service.dart';
 import 'video_request.dart';
+import 'video_response.dart';
 import 'app_log_service.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
@@ -856,7 +859,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
       // 读取三个核心设定字段（独立于普通世界书条目）
       final allMemories = activeGame == null
-          ? await db.queryMemories(botId, limit: 200)
+          ? await db.queryMemories(botId)
           : <Map<String, dynamic>>[];
 
       String? botViewOfUser; // 你眼中的对方（原"角色眼中的你"）
@@ -879,7 +882,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 构建核心设定提示
       final coreSettings = [
-        if (activeGame == null) recentMemoryReference(allMemories),
+        if (activeGame == null)
+          recentMemoryReference(recentOrdinaryMemories(allMemories)),
         if (botViewOfUser?.isNotEmpty == true)
           '【你眼中的对方】\n$botViewOfUser'
         else
@@ -902,31 +906,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ].join('\n')
           : '\n$coreSettings';
 
-      // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
-      final conversationForMatch =
-          '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}';
-      final worldBookEntries = activeGame == null
-          ? await WorldBookService.instance.activateEntriesIntelligent(
-              botId: botId,
-              conversationText: conversationForMatch,
-              maxResults: 10,
-            )
-          : <WorldBookEntry>[];
-
-      final worldBookContext =
-          WorldBookService.formatActivatedEntries(worldBookEntries);
-
-      // 第三层：如果世界书匹配少于3条，在系统提示中增加记忆库候选列表
-      String memoryContextHint = '';
-      if (worldBookEntries.length < 3 && activeGame == null) {
-        final recentMemories = await db.queryMemories(botId, limit: 15);
-        if (recentMemories.isNotEmpty) {
-          final candidateList = recentMemories
-              .map((m) =>
-                  '- [记录时间：${memoryRecordedTime(m)}] ${m['title'] ?? '未命名'}: ${m['content']}')
-              .join('\n');
-          memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
-        }
+      final recentMemories = recentOrdinaryMemories(allMemories);
+      final conversationForMatch = memoryConversationQuery(text, history);
+      final matchedMemories = activeGame == null
+          ? await MemoryRetrievalService.instance.search(
+              botId, conversationForMatch,
+              exclude: recentMemories, limit: 5, semanticQuery: text)
+          : <Map<String, dynamic>>[];
+      final worldBookContext = MemoryRetrievalService.format(matchedMemories);
+      if (activeGame == null) {
+        AppLogService.instance.add('MEMORY',
+            '记忆注入 recent=${recentMemories.map((r) => r['id']).toList()} matched=${matchedMemories.map(memoryIdentity).toList()}');
       }
       final stickerPlan = allowTools && allowStickers
           ? await _planStickerForTurn(db)
@@ -1102,7 +1092,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (!diaryTask && !quoteTask) deviceContextPrompt,
         if (!diaryTask && !quoteTask) emotionContext,
         if (!diaryTask && !quoteTask) recentThoughtsContext,
-        memoryContextHint, // 第三层增强：记忆库候选列表
       ].where((item) => item.trim().isNotEmpty).join('\n\n');
 
       messages = <Map<String, dynamic>>[
@@ -2255,13 +2244,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               data);
         },
       );
-      if (response.statusCode != 200) {
-        throw StateError(
-            '视频解析模型请求失败（HTTP ${response.statusCode}），请确认该模型支持视频输入');
-      }
-      final body = jsonDecode(utf8.decode(response.bodyBytes));
-      final text = body is Map ? _extractChatContent(body) : '';
-      if (text.isEmpty) throw StateError('视频解析模型未返回分析内容，请重试或检查模型设置');
+      final text = parseVideoAnalysisResponse(utf8.decode(response.bodyBytes),
+          statusCode: response.statusCode);
+      AppLogService.instance.addJson('VIDEO', '视频分析正文已接收', {
+        'characters': text.length,
+        'content_type': response.headers['content-type'],
+        'request_id':
+            response.headers['x-request-id'] ?? response.headers['request-id'],
+      });
       return text;
     } catch (error) {
       AppLogService.instance.add('VIDEO', '视频分析失败：$error');
@@ -4060,6 +4050,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 'type': 'string',
                 'description': '新增条目写具体事实；更新条目写保留旧有效信息后的完整内容'
               },
+              'importance': {
+                'type': 'integer',
+                'minimum': 1,
+                'maximum': 5,
+                'description': '记忆优先级：1低，3普通，5重要；仅相关记忆参与排序'
+              },
+              'keys': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': '用于检索的关键词，不填写则自动从正文匹配'
+              },
               'memory_id': {
                 'type': 'string',
                 'description': '更新已有条目时填写最近世界书或搜索结果中的 id；新建时省略。不得跨类别覆盖。'
@@ -4969,7 +4970,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             botId: botId,
             id: memoryId.isEmpty ? null : memoryId,
             title: previous?['title']?.toString() ?? '',
-            importance: (previous?['importance'] as num?)?.toInt() ?? 3,
+            importance: (args['importance'] as num?)?.toInt(),
+            keys: args['keys'] is List
+                ? (args['keys'] as List).whereType<String>().toList()
+                : null,
             expiresAt: (previous?['expires_at'] as num?)?.toInt(),
             type: previous?['type']?.toString() ?? type,
             content: content,

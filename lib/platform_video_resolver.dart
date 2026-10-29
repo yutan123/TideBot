@@ -1,3 +1,4 @@
+import 'douyin_detail.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -48,8 +49,7 @@ class PlatformVideoResolver {
 
   static const _mobileUA =
       'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
-  static const _shareUA =
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  static const _shareUA = douyinShareUserAgent;
   static const _desktopUA =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -95,6 +95,7 @@ class PlatformVideoResolver {
               description: result.description ?? result.author,
               imageUrl: result.coverUrl ?? result.imageUrls.firstOrNull,
               imageHeaders: result.headers,
+              videoUrl: result.videoUrl,
             ));
       }
       return result;
@@ -118,6 +119,37 @@ class PlatformVideoResolver {
       'Accept':
           'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
     };
+    final directId = douyin ? LinkPreviewService.videoId(url) : null;
+    Future<PlatformVideoResult?> detail(String id) async {
+      final item = await fetchDouyinDetail(_client, id);
+      if (item == null) return null;
+      final images =
+          (item['images'] is List ? item['images'] as List : const [])
+              .map(mediaUrl)
+              .whereType<String>()
+              .toList();
+      final video = douyinVideoUrl(item);
+      if (video == null && images.isEmpty) return null;
+      final author = item['author'];
+      return PlatformVideoResult(
+        platform: 'douyin',
+        resolvedUrl:
+            'https://www.douyin.com/${images.isEmpty ? 'video' : 'note'}/$id',
+        title: (item['desc'] ?? '').toString(),
+        description: item['desc']?.toString(),
+        author: author is Map ? (author['nickname'] ?? '').toString() : '',
+        videoUrl: images.isEmpty ? video : null,
+        coverUrl: douyinCoverUrl(item),
+        imageUrls: images,
+        isGallery: images.isNotEmpty,
+        headers: headers,
+      );
+    }
+
+    if (directId != null) {
+      final result = await detail(directId);
+      if (result != null) return result;
+    }
     var page = await fetchLinkPage(_client, Uri.parse(url), headers);
     final id = douyin
         ? LinkPreviewService.videoId(page.uri.toString()) ??
@@ -125,6 +157,10 @@ class PlatformVideoResolver {
         : RegExp(r'/(?:explore|discovery/item)/([^/?]+)')
             .firstMatch(page.uri.path)
             ?.group(1);
+    if (douyin && id != null && id != directId) {
+      final result = await detail(id);
+      if (result != null) return result;
+    }
     final candidates = <Uri>[
       if (douyin && id != null)
         Uri.parse('https://www.douyin.com/share/video/$id/'),

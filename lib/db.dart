@@ -1326,7 +1326,8 @@ class DBManager {
   }
 
   // ================= Bots CRUD =================
-  Future<List<Map<String, dynamic>>> getAllBots() async {
+  Future<List<Map<String, dynamic>>> getAllBots(
+      {bool throwOnError = false}) async {
     final db = await database;
     try {
       return await db.query('bots', orderBy: 'created_at DESC');
@@ -1336,6 +1337,7 @@ class DBManager {
         return await db.query('bots');
       } catch (fallbackError) {
         print('[db] getAllBots fallback failed: $fallbackError');
+        if (throwOnError) rethrow;
         return const [];
       }
     }
@@ -2163,7 +2165,9 @@ class DBManager {
   // 需要在文件顶部已 import 'dart:io';
 
   // 别名：新代码统一用 queryBots
-  Future<List<Map<String, dynamic>>> queryBots() async => getAllBots();
+  Future<List<Map<String, dynamic>>> queryBots(
+          {bool throwOnError = false}) async =>
+      getAllBots(throwOnError: throwOnError);
 
   // 别名：新代码用 insertMessage
   Future<void> insertMessage(Map<String, dynamic> msg) async =>
@@ -2400,7 +2404,7 @@ class DBManager {
       {String? type, int? limit, bool includeExpired = false}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final whereParts = <String>['bot_id = ?'];
+    final whereParts = <String>['bot_id = ?', 'COALESCE(is_deleted, 0) = 0'];
     final whereArgs = <dynamic>[botId];
     if (type != null) {
       whereParts.add('type = ?');
@@ -2414,7 +2418,7 @@ class DBManager {
     return await db.query('memories',
         where: whereParts.join(' AND '),
         whereArgs: whereArgs,
-        orderBy: 'timestamp DESC',
+        orderBy: 'timestamp DESC, id DESC',
         limit: limit);
   }
 
@@ -2659,14 +2663,15 @@ class DBManager {
     String? id,
     String title = '',
     String category = '记忆',
-    int importance = 3,
+    int? importance,
+    List<String>? keys,
     int? expiresAt,
     int? timestamp,
   }) async {
     final normalized = content.replaceAll(RegExp(r'\s+'), '').trim();
     if (normalized.isEmpty) return;
     final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
-    final existing = await queryMemories(botId, type: type, limit: 80);
+    final existing = await queryMemories(botId, type: type);
     Map<String, dynamic>? duplicate;
     for (final item in existing) {
       // Similar wording in a profile and an event does not make them the same
@@ -2685,31 +2690,51 @@ class DBManager {
     }
     final targetId = (id ?? '').trim();
     if (targetId.isNotEmpty) {
+      final oldRows = await queryMemories(botId, includeExpired: true);
+      final old = oldRows.where((r) => r['id'] == targetId).firstOrNull;
       await insertMemory({
+        'keys_json':
+            keys == null ? (old?['keys_json'] ?? '[]') : jsonEncode(keys),
         'id': targetId,
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': importance.clamp(1, 5),
+        'importance': (importance ?? (old?['importance'] as num?)?.toInt() ?? 3)
+            .clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
       });
     } else if (duplicate != null) {
-      // Exact duplicates are a no-op. In particular, do not refresh updated_at:
-      // a repeated model memory tag is not a meaningful memory modification.
       final previous = duplicate['content']?.toString().trim() ?? '';
       if (previous.replaceAll(RegExp(r'\s+'), '').contains(normalized)) {
-        return; // Repeating a shorter excerpt must not erase older details.
+        // Preserve the longer fact and its recency. Explicit metadata edits
+        // still take effect without treating a repetition as a new event.
+        final metadata = <String, dynamic>{};
+        if (importance != null &&
+            importance.clamp(1, 5) != duplicate['importance']) {
+          metadata['importance'] = importance.clamp(1, 5);
+        }
+        if (keys != null && jsonEncode(keys) != duplicate['keys_json']) {
+          metadata['keys_json'] = jsonEncode(keys);
+        }
+        if (metadata.isNotEmpty) {
+          metadata['updated_at'] = now;
+          await updateMemory(duplicate['id'].toString(), metadata);
+        }
+        return;
       }
       if (previous != content.trim()) {
         await updateMemory(duplicate['id'].toString(), {
           'title': title.isEmpty ? duplicate['title'] : title,
+          if (keys != null) 'keys_json': jsonEncode(keys),
           'content': content.trim(),
           'category': category,
-          'importance': importance.clamp(1, 5),
+          'importance':
+              (importance ?? (duplicate['importance'] as num?)?.toInt() ?? 3)
+                  .clamp(1, 5),
           'expires_at': expiresAt,
           'timestamp': now,
           'updated_at': now,
@@ -2718,12 +2743,13 @@ class DBManager {
     } else {
       await insertMemory({
         'id': 'mem_${botId}_${now}_${normalized.hashCode.abs()}',
+        'keys_json': jsonEncode(keys ?? <String>[]),
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': importance.clamp(1, 5),
+        'importance': (importance ?? 3).clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
@@ -2735,6 +2761,14 @@ class DBManager {
         .where((row) => !const ['角色眼中的你', '角色的自我认知', '关系', '角色档案']
             .contains(row['category']))
         .toList();
+    rows.sort((a, b) {
+      final importance = ((b['importance'] as num?) ?? 3)
+          .compareTo((a['importance'] as num?) ?? 3);
+      return importance != 0
+          ? importance
+          : ((b['timestamp'] as num?) ?? 0)
+              .compareTo((a['timestamp'] as num?) ?? 0);
+    });
     if (rows.length > cap) {
       for (final item in rows.skip(cap)) {
         await deleteMemory(item['id'].toString());

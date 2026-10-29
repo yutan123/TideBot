@@ -115,6 +115,7 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        TideMemoryEmbedding.register(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         selectionMenu?.dispose()
         selectionMenu = NativeSelectionMenu(this, flutterEngine.dartExecutor.binaryMessenger)
         flutterEngine.platformViewsController.registry.registerViewFactory(
