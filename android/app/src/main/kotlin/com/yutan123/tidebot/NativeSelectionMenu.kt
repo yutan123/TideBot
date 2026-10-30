@@ -111,7 +111,12 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                 "copy" -> activity.getText(android.R.string.copy)
                 "paste" -> activity.getText(android.R.string.paste)
                 "selectAll" -> activity.getText(android.R.string.selectAll)
-                "share" -> activity.getText(android.R.string.shareText)
+                "share" -> {
+                    // shareText is an internal framework string, not a public R.string field.
+                    // Resolve it at runtime and retain Flutter's localized label as a fallback.
+                    val resourceId = activity.resources.getIdentifier("shareText", "string", "android")
+                    if (resourceId != 0) activity.getText(resourceId) else item["label"]?.toString()
+                }
                 else -> item["label"]?.toString()
             }
             if (label.isNullOrBlank()) return@forEachIndexed

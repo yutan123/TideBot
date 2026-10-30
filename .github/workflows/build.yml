@@ -24,12 +24,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/tidebot-dev.keystore
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
+      - name: 准备临时签名路径
+        run: echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/tidebot-dev.keystore" >> "$GITHUB_ENV"
+
       - name: 获取源码
         uses: actions/checkout@v4
 
