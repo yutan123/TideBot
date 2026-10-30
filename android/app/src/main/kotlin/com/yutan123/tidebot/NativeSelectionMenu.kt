@@ -11,13 +11,14 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.roundToInt
 
-/** Draw only the Android toolbar; Flutter keeps its text and edit callbacks. */
+/** Android owns toolbar labels; Flutter retains text and editing callbacks. */
 class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMessenger) {
     private val channel = MethodChannel(messenger, "tidebot/selection_menu")
     private var mode: ActionMode? = null
     private var session = -1
     private var anchor = Rect()
     private var items: List<Map<*, *>> = emptyList()
+    private val actionIndices = mutableMapOf<Int, Int>()
 
     init {
         channel.setMethodCallHandler { call, result ->
@@ -39,6 +40,7 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                         anchor = Rect(x, y, x + 1, y + 1)
                         items = call.argument<List<Map<*, *>>>("items") ?: emptyList()
                         if (session == id && mode != null) {
+                            mode?.hide(0)
                             mode?.invalidate()
                             mode?.invalidateContentRect()
                         } else {
@@ -60,7 +62,7 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                                 override fun onActionItemClicked(actionMode: ActionMode, item: MenuItem): Boolean {
                                     if (mode !== actionMode) return false
                                     val selectedSession = id
-                                    val index = item.itemId - 1
+                                    val index = actionIndices[item.itemId] ?: return false
                                     close()
                                     channel.invokeMethod("action", mapOf("id" to selectedSession, "index" to index))
                                     return true
@@ -75,6 +77,12 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                         }
                         result.success(mode != null)
                     }
+                }
+                "suspend" -> {
+                    // Hide only the toolbar window. Finishing ActionMode here would
+                    // dismiss Flutter's menu while a selection handle is being dragged.
+                    if (session == id) mode?.hide(Long.MAX_VALUE)
+                    result.success(null)
                 }
                 "hide" -> {
                     if (session == id) close()
@@ -96,8 +104,27 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
     }
 
     private fun fill(menu: Menu) {
+        actionIndices.clear()
         items.forEachIndexed { index, item ->
-            menu.add(Menu.NONE, index + 1, index, item["label"]?.toString().orEmpty()).apply {
+            val label = when (item["type"]) {
+                "cut" -> activity.getText(android.R.string.cut)
+                "copy" -> activity.getText(android.R.string.copy)
+                "paste" -> activity.getText(android.R.string.paste)
+                "selectAll" -> activity.getText(android.R.string.selectAll)
+                "share" -> activity.getText(android.R.string.shareText)
+                else -> item["label"]?.toString()
+            }
+            if (label.isNullOrBlank()) return@forEachIndexed
+            val actionId = when (item["type"]) {
+                "cut" -> android.R.id.cut
+                "copy" -> android.R.id.copy
+                "paste" -> android.R.id.paste
+                "selectAll" -> android.R.id.selectAll
+                "share" -> android.R.id.shareText
+                else -> index + 1
+            }
+            actionIndices[actionId] = index
+            menu.add(Menu.NONE, actionId, index, label).apply {
                 isEnabled = item["enabled"] != false
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
             }

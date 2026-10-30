@@ -66,14 +66,17 @@ def check_model(folder):
     import onnxruntime as ort
     from tokenizers import Tokenizer
     ort.set_default_logger_severity(3)
-    native = (ROOT / 'android/app/src/main/kotlin/com/yutan123/tidebot/TideMemoryEmbedding.kt').read_text()
+    native = (ROOT / 'android/app/src/main/kotlin/com/yutan123/tidebot/TideMemoryEmbeddingEngine.kt').read_text()
     for name, size, digest in re.findall(r'Triple\("([^"]+)", (\d+)L, "([0-9a-f]+)"\)', native):
         data = (folder / name.split('/')[-1]).read_bytes()
         assert len(data) == int(size)
         assert hashlib.sha256(data).hexdigest() == digest
     tokenizer = Tokenizer.from_file(str(folder / 'tokenizer.json'))
     options = ort.SessionOptions()
-    options.intra_op_num_threads = 2
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    options.enable_cpu_mem_arena = False
+    options.enable_mem_pattern = False
     options.log_severity_level = 3
     session = ort.InferenceSession(str(folder / 'model_int8.onnx'), options, providers=['CPUExecutionProvider'])
     assert {x.name for x in session.get_inputs()} == {'input_ids', 'attention_mask', 'token_type_ids'}

@@ -1,197 +1,167 @@
 package com.yutan123.tidebot
 
+import android.app.ActivityManager
+import android.os.Build
+import android.content.ComponentName
 import android.content.Context
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Message
+import android.os.Messenger
+import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
-import android.os.Handler
-import android.os.Looper
-import java.io.File
-import java.security.MessageDigest
-import java.util.concurrent.Executors
-import kotlin.math.sqrt
 
-/** Bundled model extraction and CPU inference use one serialized worker. */
+/** IPC only: this object must never load ONNX/JNI into a Flutter process. */
 object TideMemoryEmbedding {
-    private const val REV = "75c43b069aac4d136ba6bc1122f995fedcfd2781"
-    private val worker = Executors.newSingleThreadExecutor()
+    private const val EMBED = 1
+    private const val TIMEOUT_MS = 60000L
     private val main = Handler(Looper.getMainLooper())
-    @Volatile private var unavailable = false
-    private var session: OrtSession? = null
-    private var vocab: Map<String, Int>? = null
-    private val files = listOf(
-        Triple("onnx/model_int8.onnx", 23903394L, "b9837c19ce154ff0726d398ee77abbc03a7faf0476c6f93016c84e531be7ebb5"),
-        Triple("vocab.txt", 109540L, "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c")
-    )
+    private var unavailableReason: String? = null
+    private var app: Context? = null
+    private var connection: ServiceConnection? = null
+    private var remote: Messenger? = null
+    private var nextId = 0
+    private var boundAt = 0L
+    private data class Pending(val texts: List<String>, val result: MethodChannel.Result, val timeout: Runnable)
+    private val pending = linkedMapOf<Int, Pending>()
+    private val idle = Runnable { if (pending.isEmpty()) unbind() }
+    private val replies = Messenger(Handler(Looper.getMainLooper()) { message ->
+        if (message.what == EMBED && pending.containsKey(message.arg1)) {
+            val data = message.data
+            val error = data.getString("error")
+            if (error != null) {
+                fail(error)
+            } else {
+                val request = pending.getValue(message.arg1)
+                val vectors = (0 until data.getInt("count")).map { data.getDoubleArray("vector_$it") }
+                if (vectors.size != request.texts.size || vectors.any { v ->
+                        v == null || v.size != 512 || v.any { !it.isFinite() }
+                    }) {
+                    fail("Invalid embedding response")
+                } else {
+                    pending.remove(message.arg1)
+                    main.removeCallbacks(request.timeout)
+                    request.result.success(vectors.map { checkNotNull(it).toList() })
+                    if (pending.isEmpty()) main.postDelayed(idle, TIMEOUT_MS)
+                }
+            }
+        }
+        true
+    })
+
     fun register(context: Context, messenger: BinaryMessenger) {
-        val app = context.applicationContext
+        app = context.applicationContext
         MethodChannel(messenger, "tidebot.memory.embedding").setMethodCallHandler { call, result ->
-            if (call.method == "status") {
-                // Status does not load JNI or allocate a model on every message.
-                result.success(!unavailable)
-                return@setMethodCallHandler
-            }
-            if (call.method != "embed") {
-                result.notImplemented()
-                return@setMethodCallHandler
-            }
-            worker.execute {
-                try {
-                    check(!unavailable) { "Local embeddings unavailable for this process" }
+            when (call.method) {
+                "status" -> result.success(unavailableReason == null)
+                "embed" -> {
                     val texts = call.argument<List<String>>("texts").orEmpty()
-                    require(texts.size <= 16) { "Embedding batch too large" }
-                    val dir = File(app.filesDir, "memory_embedding/$REV").apply { mkdirs() }
-                    installBundled(app, dir)
-                    load(dir)
-                    val vectors = texts.map { embed(it) }
-                    main.post { result.success(vectors) }
-                } catch (error: LinkageError) {
-                    // JNI/ABI failures must also reach the keyword fallback.
-                    unavailable = true
-                    main.post { result.error("MEMORY_EMBEDDING", "Native runtime unavailable", null) }
-                } catch (error: OutOfMemoryError) {
-                    unavailable = true
-                    runCatching { session?.close() }
-                    session = null
-                    vocab = null
-                    main.post { result.error("MEMORY_EMBEDDING", "Insufficient memory for local embeddings", null) }
-                } catch (error: Exception) {
-                    unavailable = true
-                    main.post { result.error("MEMORY_EMBEDDING", error.message, null) }
+                    if (texts.isEmpty()) result.success(emptyList<List<Double>>())
+                    else if (texts.size > 8 || pending.size >= 4) {
+                        result.error("MEMORY_EMBEDDING_BUSY", "Embedding request limit reached", null)
+                    } else if (unavailableReason != null) {
+                        result.error("MEMORY_EMBEDDING", unavailableReason, null)
+                    } else {
+                        // The tokenizer already accepts at most 20,000 code points. Bound IPC too.
+                        val bounded = texts.map { text ->
+                            text.substring(0, text.offsetByCodePoints(0, minOf(20000, text.codePointCount(0, text.length))))
+                        }
+                        if (bounded.sumOf { it.length } > 100000) {
+                            result.error("MEMORY_EMBEDDING_SIZE", "Embedding IPC payload too large", null)
+                        } else enqueue(bounded, result)
+                    }
                 }
+                else -> result.notImplemented()
             }
         }
     }
 
-    private fun installBundled(context: Context, dir: File) {
-        if (session != null) return
-        for ((remote, size, hash) in files) {
-            val name = remote.substringAfterLast('/')
-            val target = File(dir, name)
-            if (valid(target, size, hash)) continue
-            val part = File(dir, "$name.part")
-            try {
-                context.assets.open("memory_embedding/$name").use { input ->
-                    part.outputStream().use { output -> input.copyTo(output, 65536) }
-                }
-                check(valid(part, size, hash)) { "Bundled embedding model failed verification" }
-                check(part.renameTo(target)) { "Cannot install bundled embedding model" }
-            } finally {
-                part.delete()
-            }
-        }
+    private fun enqueue(texts: List<String>, result: MethodChannel.Result) {
+        main.removeCallbacks(idle)
+        val id = ++nextId
+        val timeout = Runnable { if (pending.containsKey(id)) fail("Local embedding process timed out") }
+        pending[id] = Pending(texts, result, timeout)
+        main.postDelayed(timeout, TIMEOUT_MS)
+        if (remote != null) send(id)
+        else if (connection == null) bind()
     }
 
-    private fun valid(file: File, size: Long, hash: String): Boolean {
-        if (!file.isFile || file.length() != size) return false
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(65536)
-            while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) } == hash
-    }
-    private fun load(dir: File) {
-        if (session != null) return
-        for ((remote, size, hash) in files) {
-            check(valid(File(dir, remote.substringAfterLast('/')), size, hash)) { "内置向量模型校验失败" }
-        }
-        val words = File(dir, "vocab.txt").readLines(Charsets.UTF_8)
-        check(words.size == 21128) { "分词词表不匹配" }
-        vocab = words.withIndex().associate { it.value to it.index }
-        OrtSession.SessionOptions().use { options ->
-            options.setIntraOpNumThreads(2)
-            options.setInterOpNumThreads(1)
-            options.setCPUArenaAllocator(false)
-            options.setMemoryPatternOptimization(false)
-            session = OrtEnvironment.getEnvironment().createSession(File(dir, "model_int8.onnx").absolutePath, options)
-        }
-    }
-    private fun chinese(cp: Int): Boolean = cp in 0x4E00..0x9FFF || cp in 0x3400..0x4DBF ||
-        cp in 0x20000..0x2A6DF || cp in 0x2A700..0x2B73F || cp in 0x2B740..0x2B81F ||
-        cp in 0x2B820..0x2CEAF || cp in 0x2F800..0x2FA1F || cp in 0xF900..0xFAFF
-    private fun punctuation(cp: Int): Boolean {
-        val kind = Character.getType(cp)
-        return cp in 33..47 || cp in 58..64 || cp in 91..96 || cp in 123..126 ||
-            kind in listOf(Character.CONNECTOR_PUNCTUATION.toInt(), Character.DASH_PUNCTUATION.toInt(),
-                Character.START_PUNCTUATION.toInt(), Character.END_PUNCTUATION.toInt(),
-                Character.INITIAL_QUOTE_PUNCTUATION.toInt(), Character.FINAL_QUOTE_PUNCTUATION.toInt(),
-                Character.OTHER_PUNCTUATION.toInt())
-    }
-    // BertTokenizer: case is preserved, accents are preserved, Chinese characters and punctuation split.
-    private fun tokenize(text: String): LongArray {
-        val v = checkNotNull(vocab)
-        val basic = mutableListOf<String>()
-        val word = StringBuilder()
-        fun flush() { if (word.isNotEmpty()) { basic.add(word.toString()); word.setLength(0) } }
-        val specialTokens = listOf("[CLS]", "[SEP]", "[PAD]", "[UNK]", "[MASK]")
-        var offset = 0
-        var processed = 0
-        while (offset < text.length && processed++ < 20000) {
-            val special = specialTokens.firstOrNull { text.startsWith(it, offset) }
-            if (special != null) {
-                flush(); basic.add(special); offset += special.length
-                continue
-            }
-            val cp = text.codePointAt(offset)
-            offset += Character.charCount(cp)
-            val type = Character.getType(cp)
-            when {
-                cp == 32 || cp == 9 || cp == 10 || cp == 13 || type == Character.SPACE_SEPARATOR.toInt() -> flush()
-                cp == 0 || cp == 0xFFFD || type in listOf(Character.CONTROL.toInt(), Character.FORMAT.toInt(),
-                    Character.PRIVATE_USE.toInt(), Character.SURROGATE.toInt(), Character.UNASSIGNED.toInt()) -> Unit
-                chinese(cp) || punctuation(cp) -> { flush(); basic.add(String(Character.toChars(cp))) }
-                else -> word.appendCodePoint(cp)
-            }
-        }
-        flush()
-        val ids = mutableListOf(v.getValue("[CLS]").toLong())
-        for (token in basic) {
-            if (ids.size >= 511) break
-            val pieces = mutableListOf<Int>()
-            var start = 0
-            if (token.codePointCount(0, token.length) > 100) pieces.add(v.getValue("[UNK]"))
-            else while (start < token.length) {
-                var end = token.length
-                var found: Int? = null
-                while (end > start) {
-                    found = v[(if (start > 0) "##" else "") + token.substring(start, end)]
-                    if (found != null) break
-                    end = token.offsetByCodePoints(end, -1)
+    private fun bind() {
+        val context = checkNotNull(app)
+        val client = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                if (connection !== this) return
+                remote = Messenger(binder)
+                for (id in pending.keys.toList()) {
+                    if (unavailableReason != null) break
+                    send(id)
                 }
-                if (found == null) { pieces.clear(); pieces.add(v.getValue("[UNK]")); break }
-                pieces.add(found)
-                start = end
             }
-            for (id in pieces) { if (ids.size >= 511) break; ids.add(id.toLong()) }
+            override fun onServiceDisconnected(name: ComponentName) {
+                if (connection === this) fail("Local embedding process exited during inference")
+            }
+            override fun onBindingDied(name: ComponentName) {
+                if (connection === this) fail("Local embedding process binding died")
+            }
+            override fun onNullBinding(name: ComponentName) {
+                if (connection === this) fail("Local embedding process returned no binder")
+            }
         }
-        ids.add(v.getValue("[SEP]").toLong())
-        return ids.toLongArray()
-    }
-    private fun embed(text: String): List<Double> {
-        val ids = tokenize(text)
-        val env = OrtEnvironment.getEnvironment()
-        val tensors = mutableMapOf<String, OnnxTensor>()
+        connection = client
+        boundAt = System.currentTimeMillis()
         try {
-            tensors["input_ids"] = OnnxTensor.createTensor(env, arrayOf(ids))
-            tensors["attention_mask"] = OnnxTensor.createTensor(env, arrayOf(LongArray(ids.size) { 1L }))
-            if (checkNotNull(session).inputNames.contains("token_type_ids")) {
-                tensors["token_type_ids"] = OnnxTensor.createTensor(env, arrayOf(LongArray(ids.size)))
+            if (!context.bindService(Intent(context, TideMemoryEmbeddingService::class.java), client,
+                    Context.BIND_AUTO_CREATE or Context.BIND_WAIVE_PRIORITY)) {
+                fail("Cannot bind local embedding process")
             }
-            checkNotNull(session).run(tensors).use { output ->
-                // BGE sentence embedding uses the first (CLS) token, followed by L2 normalization.
-                // Read only CLS instead of materializing every token as Java arrays.
-                val tensor = output[0] as OnnxTensor
-                val shape = tensor.info.shape
-                check(shape.size == 3 && shape[0] == 1L && shape[2] == 512L) { "向量维度不匹配" }
-                val cls = FloatArray(512)
-                checkNotNull(tensor.floatBuffer) { "模型输出类型不匹配" }.get(cls)
-                val norm = sqrt(cls.fold(0.0) { acc, x -> acc + x.toDouble() * x })
-                check(norm > 0 && norm.isFinite()) { "模型返回无效向量" }
-                return cls.map { it / norm }
-            }
-        } finally { tensors.values.forEach { it.close() } }
+        } catch (error: Exception) {
+            fail("Cannot bind local embedding process: ${error.message}")
+        }
+    }
+
+    private fun send(id: Int) {
+        val request = pending[id] ?: return
+        try {
+            checkNotNull(remote).send(Message.obtain(null, EMBED, id, 0).apply {
+                replyTo = replies
+                data = Bundle().apply { putStringArrayList("texts", ArrayList(request.texts)) }
+            })
+        } catch (error: Exception) {
+            fail("Local embedding IPC failed: ${error.message}")
+        }
+    }
+
+    private fun fail(reason: String) {
+        // Same-UID exit history is available without the shell's DUMP permission.
+        val exit = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) runCatching {
+            val context = checkNotNull(app)
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            manager.getHistoricalProcessExitReasons(context.packageName, 0, 8).firstOrNull {
+                it.processName == "${context.packageName}:memory_embedding" && it.timestamp >= boundAt
+            }?.let { " (reason=${it.reason}, status=${it.status}, ${it.description})" }
+        }.getOrNull().orEmpty() else ""
+        val diagnostic = reason + exit
+        unavailableReason = diagnostic
+        Log.e("TideMemoryEmbedding", diagnostic)
+        val requests = pending.values.toList()
+        pending.clear()
+        unbind()
+        for (request in requests) {
+            main.removeCallbacks(request.timeout)
+            request.result.error("MEMORY_EMBEDDING", diagnostic, null)
+        }
+    }
+
+    private fun unbind() {
+        main.removeCallbacks(idle)
+        val client = connection
+        connection = null
+        remote = null
+        if (client != null) runCatching { app?.unbindService(client) }
     }
 }

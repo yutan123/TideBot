@@ -1,5 +1,6 @@
 package com.yutan123.tidebot
 
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
@@ -35,6 +36,14 @@ class TideApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The inference process owns no scheduling, network observer or Flutter engine.
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+                .runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
+        }
+        if (processName == "$packageName:memory_embedding") return
         // WorkManager's initializer runs before Application.onCreate. Neither
         // recovery nor the watchdog requires an Activity or a persistent FGS.
         runCatching {

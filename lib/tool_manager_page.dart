@@ -262,6 +262,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       var name = item?['name']?.toString() ?? '';
       var url = item?['url']?.toString() ?? '';
       var token = originalToken;
+      var showToken = false;
       var timeoutSeconds =
           (((item?['timeout_ms'] as num?)?.toInt() ?? 20000) ~/ 1000)
               .toString();
@@ -333,16 +334,29 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                               : '请输入有效的 HTTP 或 HTTPS 地址';
                         }),
                     const SizedBox(height: 12),
-                    TextFormField(
+                    StatefulBuilder(
+                      builder: (context, setTokenState) => TextFormField(
                         contextMenuBuilder: androidTextContextMenu,
                         initialValue: token,
                         onChanged: (value) => token = value,
-                        obscureText: true,
+                        obscureText: !showToken,
                         autocorrect: false,
                         enableSuggestions: false,
                         style: TextStyle(color: theme.textStrong),
                         cursorColor: theme.primary,
-                        decoration: decoration('Bearer Token（可选）')),
+                        decoration: decoration('Bearer Token（可选）').copyWith(
+                          suffixIcon: IconButton(
+                            tooltip: showToken ? '隐藏 Token' : '显示 Token',
+                            color: theme.textWeak,
+                            icon: Icon(showToken
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                            onPressed: () =>
+                                setTokenState(() => showToken = !showToken),
+                          ),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     TextFormField(
                         contextMenuBuilder: androidTextContextMenu,
