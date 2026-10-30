@@ -23,6 +23,25 @@ if (flutterVersionName == null) {
     flutterVersionName = "1.0"
 }
 
+def releaseSigning = [
+    storePath: System.getenv('ANDROID_KEYSTORE_PATH'),
+    storePassword: System.getenv('ANDROID_KEYSTORE_PASSWORD'),
+    alias: System.getenv('ANDROID_KEY_ALIAS'),
+    keyPassword: System.getenv('ANDROID_KEY_PASSWORD'),
+]
+def hasReleaseSigning = releaseSigning.values().every { it != null && !it.trim().isEmpty() }
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.project == project && it.name.toLowerCase().contains('release') }) {
+        if (!hasReleaseSigning) {
+            throw new GradleException('Release signing requires ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.')
+        }
+        if (!project.file(releaseSigning.storePath).isFile()) {
+            throw new GradleException('Release signing keystore file does not exist.')
+        }
+    }
+}
+
 android {
     namespace = "com.yutan123.tidebot"
     compileSdk = flutter.compileSdkVersion
@@ -40,7 +59,7 @@ android {
         jvmTarget = '17'
     }
     defaultConfig {
-        applicationId = "com.yutan123.tidebot"
+        applicationId = "com.yutan123.tidebot.dev"
         minSdkVersion = 26
 
         targetSdk = flutter.targetSdkVersion
@@ -50,12 +69,12 @@ android {
 
     signingConfigs {
         release {
-            // This keystore is tracked with the repository so CI and local release
-            // builds use the same signing identity without a separate config file.
-            storeFile project.file('tidebot.keystore')
-            storePassword 'tidebot123'
-            keyAlias 'tidebot'
-            keyPassword 'tidebot123'
+            if (hasReleaseSigning) {
+                storeFile project.file(releaseSigning.storePath)
+                storePassword releaseSigning.storePassword
+                keyAlias releaseSigning.alias
+                keyPassword releaseSigning.keyPassword
+            }
         }
     }
 
