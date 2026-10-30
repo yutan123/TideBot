@@ -3,9 +3,9 @@ import 'package:tide_bot/chat_stream_pacing.dart';
 
 void main() {
   test('chat speed remains readable throughout the settings range', () {
-    expect(chatStreamInterval(1).inMilliseconds, 320);
-    expect(chatStreamInterval(50).inMilliseconds, 201);
-    expect(chatStreamInterval(100).inMilliseconds, 80);
+    expect(chatStreamInterval(1).inMilliseconds, 300);
+    expect(chatStreamInterval(50).inMilliseconds, 189);
+    expect(chatStreamInterval(100).inMilliseconds, 75);
   });
 
   test('large provider chunks are consumed one visible character at a time',

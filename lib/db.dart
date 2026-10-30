@@ -1284,8 +1284,12 @@ class DBManager {
       (await database).query('mcp_tools',
           where: 'server_id = ?', whereArgs: [serverId], orderBy: 'name');
 
-  Future<void> updateMcpServer(String id, Map<String, dynamic> values) async =>
-      (await database).update(
+  Future<void> updateMcpServer(String id, Map<String, dynamic> values,
+      {bool clearTools = false}) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // UPDATE preserves child rows; REPLACE can cascade-delete tool settings.
+      final count = await txn.update(
           'mcp_servers',
           {
             ...values,
@@ -1293,6 +1297,12 @@ class DBManager {
           },
           where: 'id = ?',
           whereArgs: [id]);
+      if (count != 1) throw StateError('MCP server no longer exists');
+      if (clearTools) {
+        await txn.delete('mcp_tools', where: 'server_id = ?', whereArgs: [id]);
+      }
+    });
+  }
 
   Future<void> saveMcpMetadata(
     String id, {

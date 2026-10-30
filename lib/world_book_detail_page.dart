@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'db.dart';
-import 'memory_retrieval_service.dart';
 import 'memory_retrieval_policy.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -32,9 +31,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
   List<Map<String, dynamic>> _entries = [];
   List<Map<String, dynamic>> _categories = [];
   bool _loading = true;
-  bool _modelReady = false;
-  bool _modelBusy = false;
-  String? _modelError;
   final Set<String> _expanded = {};
   static const _presetCategories = <String>[
     '记忆',
@@ -82,7 +78,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
   void initState() {
     super.initState();
     _load();
-    _loadModelStatus();
   }
 
   @override
@@ -90,69 +85,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     _search.dispose();
     super.dispose();
   }
-
-  Future<void> _loadModelStatus() async {
-    final ready = await MemoryRetrievalService.instance.modelReady();
-    if (mounted) setState(() => _modelReady = ready);
-  }
-
-  Future<void> _prepareLocalModel() async {
-    if (_modelBusy) return;
-    setState(() {
-      _modelBusy = true;
-      _modelError = null;
-    });
-    try {
-      await MemoryRetrievalService.instance.downloadModel();
-      if (mounted) setState(() => _modelReady = true);
-      await MemoryRetrievalService.instance.rebuildIndex(widget.botId);
-    } catch (error) {
-      final ready = await MemoryRetrievalService.instance.modelReady();
-      if (mounted) {
-        setState(() {
-          _modelReady = ready;
-          _modelError = ready
-              ? '模型已就绪，记忆索引未完成，可重试；检索时会补建索引，失败时使用关键词。$error'
-              : '本地向量暂不可用，可重试；当前继续关键词检索。$error';
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _modelBusy = false);
-    }
-  }
-
-  Widget _localModelCard(TideTheme theme) => _GlassPanel(
-        radius: 22,
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('记忆检索',
-              style: TextStyle(
-                  color: theme.textStrong,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15)),
-          const SizedBox(height: 8),
-          Text(
-              _modelReady
-                  ? '关键词＋本地语义检索 · 每轮最近5条＋匹配最多5条'
-                  : '关键词检索已启用 · 下载模型后增加本地语义检索',
-              style:
-                  TextStyle(color: theme.textWeak, fontSize: 12, height: 1.5)),
-          const SizedBox(height: 6),
-          Text('免费中文模型约24 MB，仅下载模型文件，记忆在手机上计算。优先级在编辑条目中调整。',
-              style:
-                  TextStyle(color: theme.textWeak, fontSize: 12, height: 1.5)),
-          if (_modelError != null)
-            Text(_modelError!,
-                style: TextStyle(color: theme.textWeak, fontSize: 12)),
-          const SizedBox(height: 12),
-          TideDialogs.glassButton(
-              _modelBusy
-                  ? '正在准备模型和记忆索引…'
-                  : (_modelReady ? '检查模型并更新索引' : '下载本地语义模型'),
-              onTap: _prepareLocalModel,
-              color: theme.primary),
-        ]),
-      );
 
   Future<void> _load() async {
     final results = await Future.wait<dynamic>([
@@ -1057,8 +989,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                               userView: userView,
                               relationship: relationship,
                             ),
-                            const SizedBox(height: 22),
-                            _localModelCard(theme),
                             const SizedBox(height: 22),
                             _sectionHeader(theme),
                             const SizedBox(height: 10),

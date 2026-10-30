@@ -8,23 +8,17 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import android.os.Handler
 import android.os.Looper
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import kotlin.math.sqrt
 
-/** All downloads and CPU inference run on their own serialized worker. No text leaves the device. */
+/** Bundled model extraction and CPU inference use one serialized worker. */
 object TideMemoryEmbedding {
     private const val REV = "75c43b069aac4d136ba6bc1122f995fedcfd2781"
-    private const val BASE = "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/$REV/"
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
-    private val client = OkHttpClient.Builder().connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS).callTimeout(8, TimeUnit.MINUTES).build()
-    @Volatile private var installing = false
+    @Volatile private var unavailable = false
     private var session: OrtSession? = null
     private var vocab: Map<String, Int>? = null
     private val files = listOf(
@@ -34,63 +28,62 @@ object TideMemoryEmbedding {
     fun register(context: Context, messenger: BinaryMessenger) {
         val app = context.applicationContext
         MethodChannel(messenger, "tidebot.memory.embedding").setMethodCallHandler { call, result ->
-            if (call.method == "status" && installing) {
-                result.success(false)
+            if (call.method == "status") {
+                // Status does not load JNI or allocate a model on every message.
+                result.success(!unavailable)
                 return@setMethodCallHandler
             }
-            if (call.method == "download") installing = true
+            if (call.method != "embed") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
             worker.execute {
                 try {
+                    check(!unavailable) { "Local embeddings unavailable for this process" }
+                    val texts = call.argument<List<String>>("texts").orEmpty()
+                    require(texts.size <= 16) { "Embedding batch too large" }
                     val dir = File(app.filesDir, "memory_embedding/$REV").apply { mkdirs() }
-                    val value: Any? = when (call.method) {
-                        "status" -> runCatching { load(dir); true }.getOrDefault(false)
-                        "download" -> {
-                            for ((remote, size, hash) in files) {
-                                val target = File(dir, remote.substringAfterLast('/'))
-                                if (!valid(target, size, hash)) {
-                                    val part = File(dir, target.name + ".part")
-                                    try {
-                                        client.newCall(Request.Builder().url(BASE + remote).build()).execute().use { response ->
-                                            check(response.isSuccessful) { "模型下载 HTTP ${response.code}" }
-                                            val body = checkNotNull(response.body)
-                                            body.byteStream().use { input -> part.outputStream().use { output ->
-                                                val buffer = ByteArray(65536)
-                                                var total = 0L
-                                                while (true) {
-                                                    val n = input.read(buffer)
-                                                    if (n < 0) break
-                                                    total += n
-                                                    check(total <= size) { "模型文件大小异常" }
-                                                    output.write(buffer, 0, n)
-                                                }
-                                            } }
-                                        }
-                                        check(valid(part, size, hash)) { "模型校验失败，请重新下载" }
-                                        check(part.renameTo(target)) { "模型保存失败" }
-                                    } finally { part.delete() }
-                                }
-                            }
-                            // Initialize now so a broken model cannot be shown as ready.
-                            load(dir)
-                            true
-                        }
-                        "embed" -> {
-                            load(dir)
-                            val texts = call.argument<List<String>>("texts").orEmpty()
-                            require(texts.size <= 16) { "Embedding batch too large" }
-                            texts.map { embed(it) }
-                        }
-                        else -> throw IllegalArgumentException("Unknown embedding method")
-                    }
-                    main.post { result.success(value) }
+                    installBundled(app, dir)
+                    load(dir)
+                    val vectors = texts.map { embed(it) }
+                    main.post { result.success(vectors) }
+                } catch (error: LinkageError) {
+                    // JNI/ABI failures must also reach the keyword fallback.
+                    unavailable = true
+                    main.post { result.error("MEMORY_EMBEDDING", "Native runtime unavailable", null) }
+                } catch (error: OutOfMemoryError) {
+                    unavailable = true
+                    runCatching { session?.close() }
+                    session = null
+                    vocab = null
+                    main.post { result.error("MEMORY_EMBEDDING", "Insufficient memory for local embeddings", null) }
                 } catch (error: Exception) {
+                    unavailable = true
                     main.post { result.error("MEMORY_EMBEDDING", error.message, null) }
-                } finally {
-                    if (call.method == "download") installing = false
                 }
             }
         }
     }
+
+    private fun installBundled(context: Context, dir: File) {
+        if (session != null) return
+        for ((remote, size, hash) in files) {
+            val name = remote.substringAfterLast('/')
+            val target = File(dir, name)
+            if (valid(target, size, hash)) continue
+            val part = File(dir, "$name.part")
+            try {
+                context.assets.open("memory_embedding/$name").use { input ->
+                    part.outputStream().use { output -> input.copyTo(output, 65536) }
+                }
+                check(valid(part, size, hash)) { "Bundled embedding model failed verification" }
+                check(part.renameTo(target)) { "Cannot install bundled embedding model" }
+            } finally {
+                part.delete()
+            }
+        }
+    }
+
     private fun valid(file: File, size: Long, hash: String): Boolean {
         if (!file.isFile || file.length() != size) return false
         val digest = MessageDigest.getInstance("SHA-256")
@@ -103,13 +96,16 @@ object TideMemoryEmbedding {
     private fun load(dir: File) {
         if (session != null) return
         for ((remote, size, hash) in files) {
-            check(valid(File(dir, remote.substringAfterLast('/')), size, hash)) { "本地向量模型未下载或校验失败" }
+            check(valid(File(dir, remote.substringAfterLast('/')), size, hash)) { "内置向量模型校验失败" }
         }
         val words = File(dir, "vocab.txt").readLines(Charsets.UTF_8)
         check(words.size == 21128) { "分词词表不匹配" }
         vocab = words.withIndex().associate { it.value to it.index }
         OrtSession.SessionOptions().use { options ->
             options.setIntraOpNumThreads(2)
+            options.setInterOpNumThreads(1)
+            options.setCPUArenaAllocator(false)
+            options.setMemoryPatternOptimization(false)
             session = OrtEnvironment.getEnvironment().createSession(File(dir, "model_int8.onnx").absolutePath, options)
         }
     }
@@ -186,10 +182,12 @@ object TideMemoryEmbedding {
             }
             checkNotNull(session).run(tensors).use { output ->
                 // BGE sentence embedding uses the first (CLS) token, followed by L2 normalization.
-                @Suppress("UNCHECKED_CAST")
-                val hidden = output[0].value as Array<Array<FloatArray>>
-                val cls = hidden[0][0]
-                check(cls.size == 512) { "向量维度不匹配" }
+                // Read only CLS instead of materializing every token as Java arrays.
+                val tensor = output[0] as OnnxTensor
+                val shape = tensor.info.shape
+                check(shape.size == 3 && shape[0] == 1L && shape[2] == 512L) { "向量维度不匹配" }
+                val cls = FloatArray(512)
+                checkNotNull(tensor.floatBuffer) { "模型输出类型不匹配" }.get(cls)
                 val norm = sqrt(cls.fold(0.0) { acc, x -> acc + x.toDouble() * x })
                 check(norm > 0 && norm.isFinite()) { "模型返回无效向量" }
                 return cls.map { it / norm }

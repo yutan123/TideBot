@@ -13,26 +13,11 @@ class MemoryRetrievalService {
   static final instance = MemoryRetrievalService();
   static const _channel = MethodChannel('tidebot.memory.embedding');
   static const model = 'bge-small-zh-v1.5:75c43b0:int8:cls:512:v1';
-  bool downloading = false;
-  Future<void>? _download;
-
   Future<bool> modelReady() async {
-    if (downloading) return false;
     try {
       return await _channel.invokeMethod<bool>('status') == true;
     } catch (_) {
       return false;
-    }
-  }
-
-  Future<void> downloadModel() =>
-      _download ??= _downloadModel().whenComplete(() => _download = null);
-  Future<void> _downloadModel() async {
-    downloading = true;
-    try {
-      await _channel.invokeMethod<bool>('download');
-    } finally {
-      downloading = false;
     }
   }
 
@@ -129,7 +114,7 @@ class MemoryRetrievalService {
     return vectors;
   }
 
-  /// Called after download to build existing memories, and lazily after any change.
+  /// Reconciles the built-in model index against current memory content.
   Future<int> rebuildIndex(String botId) async {
     final candidates = await _candidates(botId);
     return (await _index(botId, candidates)).length;
@@ -143,7 +128,9 @@ class MemoryRetrievalService {
     final similarities = <String, double>{};
     var mode = 'keyword';
     final semanticText = (semanticQuery ?? query).trim();
-    if (semanticText.isNotEmpty && await modelReady()) {
+    if (candidates.isNotEmpty &&
+        semanticText.isNotEmpty &&
+        await modelReady()) {
       try {
         final queryVector =
             (await _embed(['为这个句子生成表示以用于检索相关文章：$semanticText'])).single;
