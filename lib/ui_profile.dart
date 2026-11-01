@@ -13,6 +13,7 @@ import 'persistent_service_coordinator.dart';
 import 'app_permissions.dart';
 import 'ui_components.dart';
 import 'db.dart';
+import 'data_transfer.dart';
 import 'ai.dart';
 import 'global_notice.dart';
 import 'legal_pages.dart';
@@ -300,45 +301,29 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _exportSelectedChat() async {
     final botId = await _pickDataBot('选择要导出的机器人');
     if (botId == null) return;
-    final db = DBManager();
-    String? targetPath;
-    var cancelled = false;
     try {
-      final export = await db.buildChatExport(botId);
-      // 通过系统的保存对话框写入公共目录（默认落到 Download），兼容 scoped storage。
-      final picked = await FilePicker.platform.saveFile(
-        dialogTitle: '保存聊天记录到 Download',
-        fileName: export.fileName,
-        type: FileType.custom,
-        allowedExtensions: const ['zip'],
-        // Android/iOS 的 SAF 保存器要求调用方直接传入字节；它返回的路径
-        // 可能只是 content URI，不能再使用 dart:io File(path) 写入。
-        bytes: export.bytes,
-      );
-      if (picked == null) {
-        cancelled = true;
-      } else {
-        // bytes 已由 saveFile 写入；Android/iOS 上 picked 可能为 content URI，
-        // 不能再用 File(picked) 进行第二次写入。
-        targetPath = picked;
-      }
-    } on StateError catch (e) {
-      if (!mounted) return;
-      GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
-      TideHaptics.error();
-      return;
+      await DataTransfer.exclusive(() async {
+        GlobalNotice.show('正在导出聊天记录，请稍候');
+        final export = await DBManager().buildChatExport(botId);
+        try {
+          final saved = await DataTransfer.save(
+            export.file,
+            export.fileName,
+            'application/zip',
+          );
+          if (mounted && saved != null) {
+            GlobalNotice.show('聊天记录已导出');
+            TideHaptics.confirm();
+          }
+        } finally {
+          await export.file.parent.delete(recursive: true);
+        }
+      });
     } catch (e) {
-      if (!mounted) return;
-      GlobalNotice.show('导出失败：$e', color: const Color(0xFFE74C3C));
-      TideHaptics.error();
-      return;
-    }
-    if (!mounted || cancelled) return;
-    if (targetPath != null) {
-      GlobalNotice.show('已导出到系统下载目录：$targetPath');
-      TideHaptics.confirm();
-    } else {
-      GlobalNotice.show('已取消导出');
+      if (mounted) {
+        GlobalNotice.show('导出失败：$e', color: const Color(0xFFE74C3C));
+        TideHaptics.error();
+      }
     }
   }
 
@@ -349,7 +334,8 @@ class _ProfilePageState extends State<ProfilePage> {
     if (!confirmed) return;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['json'],
+      allowedExtensions: const ['zip', 'json'],
+      withData: false,
     );
     final path = result?.files.single.path;
     if (path == null) return;
@@ -358,9 +344,9 @@ class _ProfilePageState extends State<ProfilePage> {
       if (!mounted) return;
       GlobalNotice.show('已导入 $count 条聊天记录');
       TideHaptics.confirm();
-    } on FormatException catch (e) {
+    } catch (e) {
       if (mounted) {
-        GlobalNotice.show(e.message, color: const Color(0xFFE74C3C));
+        GlobalNotice.show('导入失败：$e', color: const Color(0xFFE74C3C));
         TideHaptics.error();
       }
     }
@@ -422,17 +408,20 @@ class _ProfilePageState extends State<ProfilePage> {
     final botId = await _pickDataBot('选择要导出世界书的机器人');
     if (botId == null) return;
     try {
-      final export = await DBManager().buildMemoryExport(botId);
-      final path = await FilePicker.platform.saveFile(
-        dialogTitle: '保存世界书到 Download',
-        fileName: export.fileName,
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
-        bytes: utf8.encode(export.content),
-      );
-      if (!mounted || path == null) return;
-      GlobalNotice.show('世界书已导出');
-      TideHaptics.confirm();
+      await DataTransfer.exclusive(() async {
+        GlobalNotice.show('正在导出世界书，请稍候');
+        final export = await DBManager().buildMemoryExport(botId);
+        try {
+          final saved = await DataTransfer.save(
+            export.file,
+            export.fileName,
+            'application/json',
+          );
+          if (mounted && saved != null) GlobalNotice.show('世界书已导出');
+        } finally {
+          await export.file.parent.delete(recursive: true);
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       GlobalNotice.show('导出失败：$e', color: const Color(0xFFE74C3C));

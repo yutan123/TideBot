@@ -79,14 +79,6 @@ String? mediaUrl(dynamic value) {
       'master_url',
       'url_list',
       'urlList',
-      'UrlList',
-      'urls',
-      'Url',
-      'imageURL',
-      'imageUrl',
-      'displayImage',
-      'originImage',
-      'downloadImage',
       'urlDefault',
       'url_default',
       'url',
@@ -108,60 +100,44 @@ String? mediaUrl(dynamic value) {
 
 String? douyinCoverUrl(Map item) {
   final video = item['video'];
-  for (final source in [if (video is Map) video, item]) {
-    for (final key in [
-      'cover',
-      'origin_cover',
-      'originCover',
-      'cover_url',
-      'coverUrl',
-      'poster',
-      'dynamic_cover',
-      'dynamicCover',
-      'animated_cover',
-      'animatedCover'
-    ]) {
-      final url = mediaUrl(source[key]);
-      if (url != null) return url;
-    }
+  for (final value in [
+    item['cover'],
+    item['origin_cover'],
+    item['originCover'],
+    item['dynamic_cover'],
+    item['dynamicCover'],
+    if (video is Map) video['cover'],
+    if (video is Map) video['origin_cover'],
+    if (video is Map) video['originCover'],
+    if (video is Map) video['dynamic_cover'],
+    if (video is Map) video['dynamicCover'],
+    if (item['images'] is List) item['images'],
+  ]) {
+    final url = mediaUrl(value);
+    if (url != null) return url;
   }
-  return mediaUrl(item['images']);
+  return null;
 }
 
 String? douyinVideoUrl(Map item) {
   final video = item['video'];
   if (video is! Map) return null;
-  String? address(dynamic value) {
-    final uri = value is Map ? value['uri'] : null;
-    if (uri is! String || uri.trim().isEmpty) return mediaUrl(value);
-    final url = mediaUrl(uri);
-    if (url != null) return url;
-    // Share pages sometimes expose only the opaque video ID, not a URL.
-    if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(uri)) return mediaUrl(value);
-    return Uri.https('www.douyin.com', '/aweme/v1/play/', {'video_id': uri})
-        .toString();
-  }
-
   for (final key in [
     'play_addr',
     'playAddr',
-    'PlayAddr',
-    'PlayAddrStruct',
     'play_addr_h264',
     'playAddrH264',
-    'play_addr_265',
     'download_addr',
     'downloadAddr'
   ]) {
-    final url = address(video[key]);
+    final url = mediaUrl(video[key]);
     if (url != null) return url;
   }
   final rates = video['bit_rate'] ?? video['bitRate'];
   if (rates is List) {
     for (final rate in rates) {
       if (rate is! Map) continue;
-      final url =
-          address(rate['play_addr'] ?? rate['playAddr'] ?? rate['PlayAddr']);
+      final url = mediaUrl(rate['play_addr'] ?? rate['playAddr']);
       if (url != null) return url;
     }
   }

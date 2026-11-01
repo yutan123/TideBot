@@ -71,6 +71,7 @@ flutter:
     - assets/images/
     - assets/fonts/
     - assets/icons/
+    - assets/emoji/
     - assets/emojitwo/
     - assets/skills/
   fonts:

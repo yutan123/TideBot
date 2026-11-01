@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'full_backup_service.dart';
 import 'db.dart';
+import 'data_transfer.dart';
 import 'ops.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -81,6 +82,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   }
 
   Future<void> _clearCache() async {
+    if (DataTransfer.isBusy) return;
     final temp = await getTemporaryDirectory();
     if (await temp.exists()) {
       await for (final item in temp.list(followLinks: false)) {
@@ -97,6 +99,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   }
 
   Future<void> _deleteSelected() async {
+    if (DataTransfer.isBusy) return;
     if (_selected.isEmpty) return;
     for (final id in _selected) {
       await DBManager().clearChatHistory(id);
@@ -111,7 +114,8 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
 
   Future<void> _backupAll() async {
     try {
-      await FullBackupService.export();
+      final saved = await FullBackupService.export();
+      if (!saved) return;
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('完整备份已导出')));
@@ -143,7 +147,8 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
         false;
     if (!confirmed) return;
     try {
-      await FullBackupService.restore();
+      final restored = await FullBackupService.restore();
+      if (!restored) return;
       await _loadAsync();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

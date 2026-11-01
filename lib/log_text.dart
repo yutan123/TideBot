@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
-import 'android_selection_menu.dart';
+import 'native_selectable_text.dart';
 
-/// Use the same bundled fonts and line metrics while reading and during routes.
+/// Bundle Android's monospace faces explicitly: Droid Sans Mono and
+/// Noto Sans CJK SC Regular. Both font files have a default weight of 400.
+/// A variable font's default axis can otherwise be Thin even when TextStyle
+/// requests FontWeight.w400.
 const logTextStyle = TextStyle(
   inherit: false,
   fontFamily: 'LogMono',
@@ -13,28 +16,28 @@ const logTextStyle = TextStyle(
   textBaseline: TextBaseline.alphabetic,
 );
 
-/// Flutter owns layout and scrolling; Android provides the selection menu.
-/// Native asynchronous height reports must not resize long, lazy log rows.
+/// Android owns log selection, handles and the standard contextual action menu.
 class LogText extends StatelessWidget {
   const LogText(
     this.data, {
     super.key,
     required this.color,
     this.fontSize = 12,
+    this.heightCache,
   });
 
   final String data;
   final Color color;
   final double fontSize;
+  final NativeTextHeightCache? heightCache;
 
   @override
   Widget build(BuildContext context) {
-    return SelectionArea(
-      contextMenuBuilder: androidSelectionContextMenu,
-      child: Text(
-        data,
-        style: logTextStyle.copyWith(color: color, fontSize: fontSize),
-      ),
+    return NativeSelectableText(
+      data,
+      nativeInteraction: true,
+      heightCache: heightCache,
+      style: logTextStyle.copyWith(color: color, fontSize: fontSize),
     );
   }
 }

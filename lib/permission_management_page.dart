@@ -120,7 +120,6 @@ class _PermissionManagementPageState extends State<PermissionManagementPage>
   Widget _row(IconData icon, String title, String description,
       {Permission? permission,
       String? nativeKey,
-      String? actionLabel,
       Future<void> Function()? open}) {
     final theme = TideTheme.of(context);
     final status = _statuses[permission];
@@ -159,12 +158,11 @@ class _PermissionManagementPageState extends State<PermissionManagementPage>
           Text(
               _loading
                   ? '读取中'
-                  : actionLabel ??
-                      (granted
-                          ? '已授权'
-                          : limited
-                              ? '部分授权'
-                              : '去授权'),
+                  : granted
+                      ? '已授权'
+                      : limited
+                          ? '部分授权'
+                          : '去授权',
               style: TextStyle(
                   fontFamily: 'TideFont',
                   fontSize: 11,
@@ -246,11 +244,6 @@ class _PermissionManagementPageState extends State<PermissionManagementPage>
             FrostCard(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(children: [
-                  _row(Icons.restart_alt_rounded, '自启动',
-                      '允许开机启动和后台恢复；请在系统中开启自启动、关联启动或后台运行',
-                      actionLabel: '去设置',
-                      open: () => DeviceCapabilityService.instance
-                          .openPermissionSettings('autostart')),
                   _row(Icons.alarm_rounded, '精确闹钟', '让已设置的后台任务在指定时间唤醒',
                       permission: Permission.scheduleExactAlarm),
                   _row(Icons.query_stats_rounded, '使用情况访问',

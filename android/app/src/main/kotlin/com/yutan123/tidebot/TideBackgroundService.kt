@@ -219,13 +219,6 @@ class TideBackgroundService : Service() {
         stopSelf()
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        // Abrupt process death has no callback; persisted Workers cover it.
-        runCatching { TideRecoveryWork.enqueue(applicationContext, 10) }
-            .onFailure { Log.e(TAG, "Cannot enqueue task-removal recovery", it) }
-        super.onTaskRemoved(rootIntent)
-    }
-
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {

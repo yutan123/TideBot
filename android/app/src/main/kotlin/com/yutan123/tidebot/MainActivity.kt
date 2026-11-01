@@ -41,6 +41,11 @@ import java.io.File
 import java.io.FileOutputStream
 
 class MainActivity: FlutterActivity() {
+    private var dataTransfer: DataTransfer? = null
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (dataTransfer?.onActivityResult(requestCode, resultCode, data) == true) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
     private val backgroundCoordinator = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun backgroundResult(result: MethodChannel.Result, code: String, action: () -> Any?) {
@@ -68,6 +73,7 @@ class MainActivity: FlutterActivity() {
     }
     
     override fun onDestroy() {
+        dataTransfer?.dispose()
         selectionMenu?.dispose()
         selectionMenu = null
         TideNativeNotifications.activityVisible = false
@@ -115,7 +121,8 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        TideMemoryEmbedding.register(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        dataTransfer?.dispose()
+        dataTransfer = DataTransfer(this, flutterEngine.dartExecutor.binaryMessenger)
         selectionMenu?.dispose()
         selectionMenu = NativeSelectionMenu(this, flutterEngine.dartExecutor.binaryMessenger)
         flutterEngine.platformViewsController.registry.registerViewFactory(
@@ -298,11 +305,6 @@ class MainActivity: FlutterActivity() {
                 }
                 "openPermissionSettings" -> {
                     val kind = call.argument<String>("kind")
-                    if (kind == "autostart") {
-                        if (TideAutoStartSettings.open(this)) result.success(null)
-                        else result.error("settings_unavailable", "无法打开自启动设置", null)
-                        return@setMethodCallHandler
-                    }
                     val action = when (kind) {
                         "battery" -> Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
                         "alarm" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM else Settings.ACTION_APPLICATION_DETAILS_SETTINGS

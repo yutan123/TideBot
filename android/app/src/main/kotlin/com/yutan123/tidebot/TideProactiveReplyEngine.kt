@@ -18,7 +18,6 @@ object TideProactiveReplyEngine {
         loader.startInitialization(context.applicationContext)
         loader.ensureInitializationComplete(context.applicationContext, null)
         val engine = FlutterEngine(context.applicationContext)
-        TideMemoryEmbedding.register(context.applicationContext, engine.dartExecutor.binaryMessenger)
         val channel = MethodChannel(engine.dartExecutor.binaryMessenger, "tidebot/proactive_reply")
         val native = MethodChannel(engine.dartExecutor.binaryMessenger, "tidebot.native.channel")
         val completed = CompletableDeferred<JSONObject>()

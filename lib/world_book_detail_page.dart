@@ -1,12 +1,10 @@
 import 'android_selection_menu.dart';
 import 'dart:math' as math;
 import 'dart:ui';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import 'db.dart';
-import 'memory_retrieval_policy.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
@@ -479,9 +477,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
       text: row == null ? '' : _text(row, 'content'),
     );
     var category = row == null ? '记忆' : _category(row);
-    var importance = memoryImportance(row ?? {});
-    final keywords =
-        TextEditingController(text: memoryKeys(row?['keys_json']).join('、'));
     final saved = await showTideDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -552,21 +547,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                   minLines: 5,
                   maxLines: 10,
                 ),
-                const SizedBox(height: 16),
-                _sheetField(theme,
-                    controller: keywords,
-                    label: '检索关键词',
-                    hint: '用顿号或逗号分隔；留空也会匹配正文'),
-                const SizedBox(height: 16),
-                Text('优先级（1低 · 3普通 · 5重要）',
-                    style: TextStyle(color: theme.textStrong, fontSize: 13)),
-                const SizedBox(height: 10),
-                Wrap(spacing: 8, children: [
-                  for (var level = 1; level <= 5; level++)
-                    _categoryChoice(theme, '$level',
-                        selected: importance == level,
-                        onTap: () => setDialogState(() => importance = level)),
-                ]),
                 const SizedBox(height: 20),
                 Row(
                   children: [
@@ -606,13 +586,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
         'type': row?['type']?.toString() ?? 'long',
         'content': content.text.trim(),
         'category': category,
-        'importance': importance,
-        'keys_json': jsonEncode(keywords.text
-            .split(RegExp(r'[、,，;；\n]+'))
-            .map((v) => v.trim())
-            .where((v) => v.isNotEmpty)
-            .toSet()
-            .toList()),
+        'importance': row?['importance'] ?? 3,
         'timestamp': row?['timestamp'] ?? now,
         'updated_at': now,
       };
@@ -627,7 +601,6 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
       }
       await _load();
     }
-    keywords.dispose();
     title.dispose();
     content.dispose();
   }
@@ -1517,7 +1490,7 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            '$category · 优先级${memoryImportance(row)}',
+                            category,
                             style: TextStyle(
                               color: color,
                               fontFamily: 'TideFont',

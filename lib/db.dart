@@ -2,12 +2,12 @@ import 'native_background_coordinator.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:archive/archive.dart';
+import 'data_transfer.dart';
+import 'json_records.dart';
 import 'chat_event_bus.dart';
 import 'voice_call_schema.dart';
 
@@ -1284,12 +1284,8 @@ class DBManager {
       (await database).query('mcp_tools',
           where: 'server_id = ?', whereArgs: [serverId], orderBy: 'name');
 
-  Future<void> updateMcpServer(String id, Map<String, dynamic> values,
-      {bool clearTools = false}) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      // UPDATE preserves child rows; REPLACE can cascade-delete tool settings.
-      final count = await txn.update(
+  Future<void> updateMcpServer(String id, Map<String, dynamic> values) async =>
+      (await database).update(
           'mcp_servers',
           {
             ...values,
@@ -1297,12 +1293,6 @@ class DBManager {
           },
           where: 'id = ?',
           whereArgs: [id]);
-      if (count != 1) throw StateError('MCP server no longer exists');
-      if (clearTools) {
-        await txn.delete('mcp_tools', where: 'server_id = ?', whereArgs: [id]);
-      }
-    });
-  }
 
   Future<void> saveMcpMetadata(
     String id, {
@@ -1336,8 +1326,7 @@ class DBManager {
   }
 
   // ================= Bots CRUD =================
-  Future<List<Map<String, dynamic>>> getAllBots(
-      {bool throwOnError = false}) async {
+  Future<List<Map<String, dynamic>>> getAllBots() async {
     final db = await database;
     try {
       return await db.query('bots', orderBy: 'created_at DESC');
@@ -1347,7 +1336,6 @@ class DBManager {
         return await db.query('bots');
       } catch (fallbackError) {
         print('[db] getAllBots fallback failed: $fallbackError');
-        if (throwOnError) rethrow;
         return const [];
       }
     }
@@ -1751,379 +1739,389 @@ class DBManager {
 
   Future<List<Map<String, dynamic>>> exportableBots() async => queryBots();
 
-  Future<List<Map<String, dynamic>>> _queryAllMessages(String botId) async {
-    final db = await database;
-    return db.query(
-      'chat_history',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'timestamp ASC',
-    );
-  }
-
-  /// 导出单个机器人的可移植 TideBot ZIP，包含聊天记录 JSON 和所有图片、视频、音频文件。
-  ///
-  /// 返回「建议文件名 + ZIP 字节数组」。真正的落盘由调用方决定。
-  Future<({String fileName, Uint8List bytes})> buildChatExport(
-      String botId) async {
+  /// Writes bounded pages to JSON, then archives files without loading media.
+  Future<({String fileName, File file})> buildChatExport(String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
-    final messages = await _queryAllMessages(botId);
-    final safeName = (bot['name']?.toString() ?? 'bot')
-        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = 'tidebot_chat_${safeName}_$timestamp.zip';
-
-    // 收集所有图片、视频和音频文件路径。
-    final mediaFiles = <String>{};
-    final prefs = await SharedPreferences.getInstance();
-    final videoHistory = prefs.getStringList('video_history_$botId') ?? [];
-    for (final raw in videoHistory) {
-      try {
-        final item = jsonDecode(raw);
-        if (item is! Map) continue;
-        final original = item['original_video_path']?.toString().trim() ?? '';
-        if (original.isNotEmpty && await File(original).exists()) {
-          mediaFiles.add(original);
-        }
-        final audio = item['audio_path']?.toString().trim() ?? '';
-        if (audio.isNotEmpty && await File(audio).exists())
-          mediaFiles.add(audio);
-        final frames = item['frame_paths'];
-        if (frames is List) {
-          for (final value in frames) {
-            final path = value.toString().trim();
-            if (path.isNotEmpty && await File(path).exists())
-              mediaFiles.add(path);
-          }
-        }
-      } catch (_) {}
-    }
-    for (final msg in messages) {
-      final type = msg['type']?.toString() ?? '';
-      final filePath = msg['file_path']?.toString() ?? '';
-      if (filePath.isNotEmpty &&
-          const {'image', 'video', 'audio', 'shared_post'}.contains(type)) {
-        if (await File(filePath).exists()) {
-          mediaFiles.add(filePath);
-        }
-      }
-    }
-
-    // 创建 JSON 导出内容
-    final jsonContent = jsonEncode({
-      'format': 'tidebot.chat',
-      'version': 2, // 版本升级到 2，表示支持 ZIP 格式
-      'exported_at': DateTime.now().toIso8601String(),
-      'bot': {'id': botId, 'name': bot['name']?.toString() ?? ''},
-      'video_history': videoHistory
-          .map((raw) {
-            try {
-              return jsonDecode(raw);
-            } catch (_) {
-              return null;
-            }
-          })
-          .whereType<Map>()
-          .toList(),
-      'messages': messages
-          .map((m) => {
-                'id': m['id'],
-                'role': m['role'],
-                'type': m['type'],
-                'content': m['content'],
-                'file_path': m['file_path'],
-                'mood': m['mood'],
-                'duration': m['duration'],
-                'reply_to_id': m['reply_to_id'],
-                'reply_group_id': m['reply_group_id'],
-                'sources_json': m['sources_json'],
-                'timestamp': m['timestamp'],
-              })
-          .toList(),
-    });
-
-    // 创建 ZIP 归档
-    final archive = Archive();
-
-    // 添加 JSON 文件
-    final jsonBytes = utf8.encode(jsonContent);
-    archive.addFile(ArchiveFile(
-      'chat_history.json',
-      jsonBytes.length,
-      jsonBytes,
-    ));
-
-    // 添加媒体文件到 media/ 目录
-    for (final filePath in mediaFiles) {
-      try {
-        final file = File(filePath);
-        final bytes = await file.readAsBytes();
-        final fileName = p.basename(filePath);
-        archive.addFile(ArchiveFile(
-          'media/$fileName',
-          bytes.length,
-          bytes,
-        ));
-      } catch (_) {
-        // 文件读取失败时跳过
-      }
-    }
-
-    // 编码为 ZIP
-    final zipBytes = ZipEncoder().encode(archive);
-    if (zipBytes.isEmpty) {
-      throw StateError('ZIP 编码失败');
-    }
-
-    return (fileName: fileName, bytes: Uint8List.fromList(zipBytes));
-  }
-
-  /// 兼容旧调用：写入导出的 ZIP 到应用内部目录并返回其绝对路径（兜底用）。
-  Future<String> exportBotChat(String botId) async {
-    final export = await buildChatExport(botId);
-    final dir = await getApplicationDocumentsDirectory();
-    final downloadDir = Directory('${dir.path}/TideBot/exports');
-    await downloadDir.create(recursive: true);
-    final file = File('${downloadDir.path}/${export.fileName}');
-    await file.writeAsBytes(export.bytes);
-    return file.path;
-  }
-
-  Future<int> importBotChat(String botId, String sourcePath) async {
-    final source = File(sourcePath);
-    final bytes = await source.readAsBytes();
-
-    // 尝试解压 ZIP
-    Archive? archive;
+    final work = await DataTransfer.workspace();
     try {
-      archive = ZipDecoder().decodeBytes(bytes);
-    } catch (_) {
-      // 不是 ZIP，尝试作为旧版 JSON 导入
-      final raw = jsonDecode(await source.readAsString());
-      return _importFromLegacyJson(botId, raw);
-    }
-
-    // ZIP 格式：提取 JSON 和媒体文件
-    final jsonFile = archive.findFile('chat_history.json');
-    if (jsonFile == null) {
-      throw const FormatException('ZIP 中未找到 chat_history.json');
-    }
-
-    final jsonContent = utf8.decode(jsonFile.content as List<int>);
-    final raw = jsonDecode(jsonContent);
-
-    if (raw is! Map || raw['format'] != 'tidebot.chat') {
-      throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
-    }
-
-    final version = raw['version'] as int? ?? 1;
-
-    // 提取媒体文件到临时目录
-    final tempDir = await getTemporaryDirectory();
-    final mediaDir = Directory(
-        '${tempDir.path}/tidebot_import_${DateTime.now().millisecondsSinceEpoch}');
-    await mediaDir.create(recursive: true);
-
-    final mediaPathMap = <String, String>{}; // 原文件名 -> 新路径
-
-    if (version >= 2) {
-      for (final file in archive.files) {
-        if (file.name.startsWith('media/') && !file.isFile) continue;
-        if (file.name.startsWith('media/')) {
-          final fileName = p.basename(file.name);
-          final newPath = '${mediaDir.path}/$fileName';
-          final newFile = File(newPath);
-          await newFile.writeAsBytes(file.content as List<int>);
-          mediaPathMap[fileName] = newPath;
-        }
-      }
-    }
-
-    return _importMessages(botId, raw, mediaPathMap);
-  }
-
-  Future<int> _importFromLegacyJson(String botId, Map raw) async {
-    if (raw['format'] != 'tidebot.chat' || raw['version'] != 1) {
-      throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
-    }
-    return _importMessages(botId, raw, {});
-  }
-
-  Future<int> _importMessages(
-    String botId,
-    Map raw,
-    Map<String, String> mediaPathMap,
-  ) async {
-    final list = raw['messages'];
-    if (list is! List) throw const FormatException('聊天记录内容无效');
-    final items = list.whereType<Map>().toList();
-    final base = DateTime.now().microsecondsSinceEpoch;
-    final idMap = <String, String>{};
-    for (var i = 0; i < items.length; i++) {
-      final oldId = items[i]['id']?.toString() ?? '';
-      if (oldId.isNotEmpty) idMap[oldId] = 'import_${base}_$i';
-    }
-    final db = await database;
-    await db.transaction((txn) async {
-      await txn.delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
-      for (var i = 0; i < items.length; i++) {
-        final item = items[i];
-        final oldId = item['id']?.toString() ?? '';
-        final timestamp = (item['timestamp'] as num?)?.toInt() ??
-            DateTime.now().millisecondsSinceEpoch + i;
-        final oldReplyId = item['reply_to_id']?.toString() ?? '';
-        final oldFilePath = item['file_path']?.toString() ?? '';
-        // 映射媒体文件路径
-        final newFilePath = oldFilePath.isNotEmpty &&
-                mediaPathMap.containsKey(p.basename(oldFilePath))
-            ? mediaPathMap[p.basename(oldFilePath)]!
-            : oldFilePath;
-        await txn.insert('chat_history', {
-          'id': idMap[oldId] ?? 'import_${base}_$i',
-          'bot_id': botId,
-          'role': item['role']?.toString() ?? 'user',
-          'type': item['type']?.toString() ?? 'text',
-          'content': item['content']?.toString() ?? '',
-          'file_path': newFilePath,
-          'mood': item['mood']?.toString(),
-          'duration': item['duration'],
-          'reply_to_id': idMap[oldReplyId],
-          'reply_group_id': item['reply_group_id']?.toString(),
-          'sources_json': item['sources_json']?.toString(),
-          'timestamp': timestamp + i,
-        });
-      }
-      final latest = items.fold<int>(0, (value, item) {
-        final timestamp = (item['timestamp'] as num?)?.toInt() ?? 0;
-        return timestamp > value ? timestamp : value;
+      final safeName = (bot['name']?.toString() ?? 'bot').replaceAll(
+        RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'),
+        '_',
+      );
+      final fileName =
+          'tidebot_chat_${safeName}_${DateTime.now().millisecondsSinceEpoch}.zip';
+      final json = File('${work.path}/chat_history.json');
+      final sink = json.openWrite();
+      final files = <String, String>{'chat_history.json': json.path};
+      final mediaNames = <String, String>{};
+      String mediaName(String path) => mediaNames.putIfAbsent(path, () {
+        final name = '${mediaNames.length}_${p.basename(path)}';
+        files['media/$name'] = path;
+        return name;
       });
-      await txn.update('bots', {'last_msg_time': latest},
-          where: 'id = ?', whereArgs: [botId]);
-    });
-    final importedVideoHistory = raw['video_history'];
-    if (importedVideoHistory is List) {
-      final restored = <String>[];
-      String mapMediaPath(String path) =>
-          mediaPathMap[p.basename(path)] ?? path;
-      for (final value in importedVideoHistory) {
-        if (value is! Map) continue;
-        final item = Map<String, dynamic>.from(value);
-        final original = item['original_video_path']?.toString() ?? '';
-        if (original.isNotEmpty) {
-          item['original_video_path'] = mapMediaPath(original);
+      Future<String> mapPath(String path) async {
+        if (path.isEmpty) return path;
+        if (!await File(path).exists()) {
+          throw FileSystemException('媒体文件不存在，导出已停止以避免生成不完整备份', path);
         }
-        final audio = item['audio_path']?.toString() ?? '';
-        if (audio.isNotEmpty) item['audio_path'] = mapMediaPath(audio);
-        final frames = item['frame_paths'];
-        if (frames is List) {
-          item['frame_paths'] =
-              frames.map((frame) => mapMediaPath(frame.toString())).toList();
-        }
-        restored.add(jsonEncode(item));
+        return mediaName(path);
       }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList('video_history_$botId', restored);
+
+      try {
+        sink.write('{"format":"tidebot.chat","version":2,"exported_at":');
+        sink.write(jsonEncode(DateTime.now().toIso8601String()));
+        sink.write(
+          ',"bot":${jsonEncode({'id': botId, 'name': bot['name']})},"video_history":[',
+        );
+        final prefs = await SharedPreferences.getInstance();
+        var firstVideo = true;
+        for (final encoded
+            in prefs.getStringList('video_history_$botId') ?? <String>[]) {
+          dynamic decoded;
+          try {
+            decoded = jsonDecode(encoded);
+          } on FormatException {
+            continue;
+          }
+          if (decoded is! Map) continue;
+          final item = Map<String, dynamic>.from(decoded);
+          for (final key in ['original_video_path', 'audio_path']) {
+            final path = item[key]?.toString() ?? '';
+            if (path.isNotEmpty) item[key] = await mapPath(path);
+          }
+          if (item['frame_paths'] is List) {
+            item['frame_paths'] = await Future.wait(
+              (item['frame_paths'] as List).map(
+                (value) => mapPath(value.toString()),
+              ),
+            );
+          }
+          if (!firstVideo) sink.write(',');
+          firstVideo = false;
+          sink.write(jsonEncode(item));
+          await sink.flush();
+        }
+        sink.write('],"messages":[');
+        final db = await database;
+        await db.transaction((txn) async {
+          var offset = 0;
+          var first = true;
+          while (true) {
+            final page = await txn.query(
+              'chat_history',
+              where: 'bot_id = ?',
+              whereArgs: [botId],
+              orderBy: 'timestamp ASC, id ASC',
+              limit: 100,
+              offset: offset,
+            );
+            if (page.isEmpty) break;
+            for (final row in page) {
+              final msg = Map<String, dynamic>.from(row)..remove('bot_id');
+              final path = msg['file_path']?.toString() ?? '';
+              if (path.isNotEmpty &&
+                  const {
+                    'image',
+                    'video',
+                    'audio',
+                    'shared_post',
+                  }.contains(msg['type'])) {
+                msg['file_path'] = await mapPath(path);
+              }
+              if (!first) sink.write(',');
+              first = false;
+              sink.write(jsonEncode(msg));
+            }
+            await sink.flush();
+            offset += page.length;
+          }
+        });
+        sink.write(']}');
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      final file = File('${work.path}/$fileName');
+      await DataTransfer.ensureSpace(
+        work,
+        await DataTransfer.totalBytes(files.values),
+      );
+      await DataTransfer.zip(file.path, files);
+      return (fileName: fileName, file: file);
+    } catch (_) {
+      await work.delete(recursive: true);
+      rethrow;
     }
-    return items.length;
   }
 
-  Future<({String fileName, String content})> buildMemoryExport(
-      String botId) async {
+  Future<String> exportBotChat(String botId) =>
+      DataTransfer.exclusive(() async {
+        final export = await buildChatExport(botId);
+        try {
+          final dir = await getApplicationDocumentsDirectory();
+          final target = File('${dir.path}/TideBot/exports/${export.fileName}');
+          await target.parent.create(recursive: true);
+          await export.file.copy(target.path);
+          return target.path;
+        } finally {
+          await export.file.parent.delete(recursive: true);
+        }
+      });
+  Future<int> importBotChat(
+    String botId,
+    String sourcePath,
+  ) => DataTransfer.exclusive(() async {
+    final work = await DataTransfer.workspace();
+    Directory? installedMedia;
+    var committed = false;
+    try {
+      final source = File(sourcePath);
+      final handle = await source.open();
+      late List<int> signature;
+      try {
+        signature = await handle.read(4);
+      } finally {
+        await handle.close();
+      }
+      File json = source;
+      if (signature.length == 4 &&
+          signature[0] == 0x50 &&
+          signature[1] == 0x4b) {
+        await DataTransfer.extract(sourcePath, work.path);
+        json = File('${work.path}/chat_history.json');
+      }
+      if (!await json.exists()) throw const FormatException('未找到聊天记录');
+      String? format;
+      int? version;
+      var hasMessages = false;
+      // Validate the entire stream before replacing any existing rows.
+      await for (final record in JsonRecords.read(json)) {
+        if (record.key == 'format') format = record.value as String?;
+        if (record.key == 'version') version = record.value as int?;
+        if (record.key == 'messages') {
+          hasMessages = true;
+          if (record.element && record.value is! Map)
+            throw const FormatException('聊天消息格式无效');
+        }
+      }
+      if (format != 'tidebot.chat' ||
+          !const [1, 2].contains(version) ||
+          !hasMessages) {
+        throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
+      }
+      final media = Directory('${work.path}/media');
+      if (await media.exists()) {
+        final docs = await getApplicationDocumentsDirectory();
+        installedMedia = Directory(
+          '${docs.path}/imported_media/${DateTime.now().microsecondsSinceEpoch}',
+        );
+        await installedMedia.parent.create(recursive: true);
+        installedMedia = await media.rename(installedMedia.path);
+      }
+      String mapPath(String old) {
+        if (old.isEmpty || installedMedia == null) return old;
+        final path = '${installedMedia.path}/${p.basename(old)}';
+        return File(path).existsSync() ? path : old;
+      }
+
+      final base = DateTime.now().microsecondsSinceEpoch;
+      var count = 0;
+      var latest = 0;
+      final videos = <String>[];
+      final db = await database;
+      await db.transaction((txn) async {
+        await txn.delete(
+          'chat_history',
+          where: 'bot_id = ?',
+          whereArgs: [botId],
+        );
+        await for (final record in JsonRecords.read(json)) {
+          if (!record.element) continue;
+          if (record.key == 'video_history' && record.value is Map) {
+            final item = Map<String, dynamic>.from(record.value as Map);
+            for (final key in ['original_video_path', 'audio_path']) {
+              if (item[key] is String) item[key] = mapPath(item[key] as String);
+            }
+            if (item['frame_paths'] is List) {
+              item['frame_paths'] = (item['frame_paths'] as List)
+                  .map((v) => mapPath(v.toString()))
+                  .toList();
+            }
+            videos.add(jsonEncode(item));
+          }
+          if (record.key != 'messages') continue;
+          final item = record.value as Map;
+          final oldId = item['id']?.toString() ?? '';
+          final reply = item['reply_to_id']?.toString() ?? '';
+          final timestamp =
+              (item['timestamp'] as num?)?.toInt() ?? base ~/ 1000 + count;
+          if (timestamp > latest) latest = timestamp;
+          await txn.insert('chat_history', {
+            'id': oldId.isEmpty
+                ? 'import_${base}_row_$count'
+                : 'import_${base}_id_$oldId',
+            'bot_id': botId,
+            'role': item['role']?.toString() ?? 'user',
+            'type': item['type']?.toString() ?? 'text',
+            'content': item['content']?.toString() ?? '',
+            'file_path': mapPath(item['file_path']?.toString() ?? ''),
+            'mood': item['mood'],
+            'duration': item['duration'],
+            'reply_to_id': reply.isEmpty ? null : 'import_${base}_id_$reply',
+            'reply_group_id': item['reply_group_id'],
+            'sources_json': item['sources_json'],
+            'timestamp': timestamp,
+          });
+          count++;
+        }
+        await txn.update(
+          'bots',
+          {'last_msg_time': latest},
+          where: 'id = ?',
+          whereArgs: [botId],
+        );
+      });
+      committed = true;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('video_history_$botId', videos);
+      return count;
+    } finally {
+      if (!committed &&
+          installedMedia != null &&
+          await installedMedia.exists()) {
+        await installedMedia.delete(recursive: true);
+      }
+      await work.delete(recursive: true);
+    }
+  });
+
+  Future<({String fileName, File file})> buildMemoryExport(String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
-    final db = await database;
-    final memories = await db.query('memories',
-        where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
-    final kv = await db.query('kv_store',
-        where: 'key LIKE ? OR key LIKE ?',
-        whereArgs: ['%_$botId', '%_${botId}_%']);
-    final safeName = (bot['name']?.toString() ?? 'bot')
-        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]'), '_');
-    return (
-      fileName:
-          'tidebot_memory_${safeName}_${DateTime.now().millisecondsSinceEpoch}.json',
-      content: jsonEncode({
-        'format': 'tidebot.memory',
-        'version': 1,
-        'bot': {
-          'id': botId,
-          'name': bot['name'],
-          'created_at': bot['created_at'],
-          'daily_quote': bot['daily_quote'],
-        },
-        'memories': memories,
-        'kv': kv,
-      })
-    );
+    final work = await DataTransfer.workspace();
+    try {
+      final name =
+          'tidebot_memory_${DateTime.now().millisecondsSinceEpoch}.json';
+      final file = File('${work.path}/$name');
+      final sink = file.openWrite();
+      try {
+        sink.write(
+          '{"format":"tidebot.memory","version":1,"bot":${jsonEncode({'id': botId, 'name': bot['name'], 'created_at': bot['created_at'], 'daily_quote': bot['daily_quote']})},',
+        );
+        final db = await database;
+        await db.transaction((txn) async {
+          for (final table in ['memories', 'kv_store']) {
+            sink.write(table == 'memories' ? '"memories":[' : ',"kv":[');
+            var offset = 0;
+            var first = true;
+            while (true) {
+              final rows = await txn.query(
+                table,
+                where: table == 'memories'
+                    ? 'bot_id = ?'
+                    : 'key LIKE ? OR key LIKE ?',
+                whereArgs: table == 'memories'
+                    ? [botId]
+                    : ['%_$botId', '%_${botId}_%'],
+                orderBy: table == 'memories'
+                    ? 'timestamp ASC, id ASC'
+                    : 'key ASC',
+                limit: 100,
+                offset: offset,
+              );
+              if (rows.isEmpty) break;
+              for (final row in rows) {
+                if (!first) sink.write(',');
+                first = false;
+                sink.write(jsonEncode(row));
+              }
+              await sink.flush();
+              offset += rows.length;
+            }
+            sink.write(']');
+          }
+        });
+        sink.write('}');
+      } finally {
+        await sink.close();
+      }
+      return (fileName: name, file: file);
+    } catch (_) {
+      await work.delete(recursive: true);
+      rethrow;
+    }
   }
 
-  Future<int> importBotMemory(String botId, String sourcePath,
-      {bool merge = false}) async {
-    final raw = jsonDecode(await File(sourcePath).readAsString());
-    if (raw is! Map ||
-        raw['format'] != 'tidebot.memory' ||
-        raw['version'] != 1) {
+  Future<int> importBotMemory(
+    String botId,
+    String sourcePath, {
+    bool merge = false,
+  }) => DataTransfer.exclusive(() async {
+    final source = File(sourcePath);
+    String? format;
+    int? version;
+    Map bot = {};
+    final sections = <String>{};
+    const arrays = {'memories', 'kv'};
+    await for (final record in JsonRecords.read(source, arrays: arrays)) {
+      if (record.key == 'format') format = record.value as String?;
+      if (record.key == 'version') version = record.value as int?;
+      if (record.key == 'bot' && record.value is Map) bot = record.value as Map;
+      if (arrays.contains(record.key)) {
+        sections.add(record.key);
+        if (record.element && record.value is! Map)
+          throw const FormatException('世界书内容无效');
+      }
+    }
+    if (format != 'tidebot.memory' || version != 1 || sections.length != 2) {
       throw const FormatException('仅支持 TideBot 导出的世界书文件');
     }
-    final memories = raw['memories'];
-    final kvRows = raw['kv'];
-    if (memories is! List || kvRows is! List) {
-      throw const FormatException('世界书内容无效');
-    }
-    final sourceBotId =
-        (raw['bot'] is Map ? raw['bot']['id'] : '')?.toString() ?? '';
+    final sourceBotId = bot['id']?.toString() ?? '';
+    var count = 0;
+    final base = DateTime.now().microsecondsSinceEpoch;
     final db = await database;
     await db.transaction((txn) async {
       if (!merge) {
-        // 覆盖模式：删除现有数据
         await txn.delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
-        await txn.delete('kv_store',
-            where: 'key LIKE ? OR key LIKE ?',
-            whereArgs: ['%_$botId', '%_${botId}_%']);
+        await txn.delete(
+          'kv_store',
+          where: 'key LIKE ? OR key LIKE ?',
+          whereArgs: ['%_$botId', '%_${botId}_%'],
+        );
       }
-      for (var i = 0; i < memories.length; i++) {
-        final item = memories[i];
-        if (item is! Map) continue;
-        final row = Map<String, dynamic>.from(item);
-        row['bot_id'] = botId;
-
-        if (merge) {
-          // 合并模式：根据时间戳智能插入
-          row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
-          await txn.insert('memories', row,
-              conflictAlgorithm: ConflictAlgorithm.replace);
-        } else {
-          // 覆盖模式：直接替换
-          row['id'] = 'import_mem_${DateTime.now().microsecondsSinceEpoch}_$i';
-          await txn.insert('memories', row,
-              conflictAlgorithm: ConflictAlgorithm.replace);
+      await for (final record in JsonRecords.read(source, arrays: arrays)) {
+        if (!record.element) continue;
+        final item = record.value as Map;
+        if (record.key == 'memories') {
+          final row = Map<String, dynamic>.from(item);
+          row['bot_id'] = botId;
+          row['id'] = 'import_mem_${base}_${count++}';
+          await txn.insert(
+            'memories',
+            row,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        } else if (record.key == 'kv' && item['key'] != null) {
+          var key = item['key'].toString();
+          if (sourceBotId.isNotEmpty) key = key.replaceAll(sourceBotId, botId);
+          await txn.insert('kv_store', {
+            'key': key,
+            'value': item['value']?.toString(),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
-      }
-      for (final item in kvRows) {
-        if (item is! Map || item['key'] == null) continue;
-        var key = item['key'].toString();
-        if (sourceBotId.isNotEmpty) key = key.replaceAll(sourceBotId, botId);
-        await txn.insert(
-            'kv_store', {'key': key, 'value': item['value']?.toString()},
-            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       if (!merge) {
-        final botInfo = raw['bot'];
-        if (botInfo is Map) {
-          await txn.update(
-              'bots',
-              {
-                'created_at': botInfo['created_at'],
-                'daily_quote': botInfo['daily_quote'],
-              },
-              where: 'id = ?',
-              whereArgs: [botId]);
-        }
+        await txn.update(
+          'bots',
+          {'created_at': bot['created_at'], 'daily_quote': bot['daily_quote']},
+          where: 'id = ?',
+          whereArgs: [botId],
+        );
       }
     });
-    return memories.whereType<Map>().length;
-  }
+    return count;
+  });
 
   Future<void> markBotRead(String botId) async {
     if (botId.isEmpty) return;
@@ -2146,38 +2144,47 @@ class DBManager {
   }
 
   // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。
-  Future<void> exportToMarkdown() async {
+  Future<void> exportToMarkdown() => DataTransfer.exclusive(() async {
     final db = await database;
-    final bots = await db.query('bots');
-    final buf = StringBuffer();
-    buf.writeln('# TideBot 数据导出');
-    buf.writeln('导出时间: ${DateTime.now()}');
-    buf.writeln();
-    for (var bot in bots) {
-      final botId = bot['id'] as String;
-      buf.writeln('## ${bot['name']}');
-      buf.writeln('> ${bot['desc']}');
-      buf.writeln();
-      final msgs = await db.query('chat_history',
-          where: 'bot_id = ?', whereArgs: [botId], orderBy: 'timestamp ASC');
-      for (var m in msgs) {
-        final role = m['role'] == 'user' ? '用户' : bot['name'];
-        buf.writeln('**$role**: ${m['content']}');
-        buf.writeln();
-      }
-    }
     final dir = await getDatabasesPath();
     final file = File('$dir/tidebot_export.md');
-    await file.writeAsString(buf.toString());
-  }
-
+    final sink = file.openWrite();
+    try {
+      sink.writeln('# TideBot 数据导出');
+      sink.writeln('导出时间: ${DateTime.now()}');
+      await db.transaction((txn) async {
+        for (final bot in await txn.query('bots')) {
+          sink.writeln('## ${bot['name']}');
+          sink.writeln('> ${bot['desc']}');
+          var offset = 0;
+          while (true) {
+            final page = await txn.query(
+              'chat_history',
+              where: 'bot_id = ?',
+              whereArgs: [bot['id']],
+              orderBy: 'timestamp ASC, id ASC',
+              limit: 100,
+              offset: offset,
+            );
+            if (page.isEmpty) break;
+            for (final message in page) {
+              final role = message['role'] == 'user' ? '用户' : bot['name'];
+              sink.writeln('**$role**: ${message['content']}\n');
+            }
+            await sink.flush();
+            offset += page.length;
+          }
+        }
+      });
+    } finally {
+      await sink.close();
+    }
+  });
   // 添加 path 依赖的导入需要确认已存在; File 来自 dart:io
   // 需要在文件顶部已 import 'dart:io';
 
   // 别名：新代码统一用 queryBots
-  Future<List<Map<String, dynamic>>> queryBots(
-          {bool throwOnError = false}) async =>
-      getAllBots(throwOnError: throwOnError);
+  Future<List<Map<String, dynamic>>> queryBots() async => getAllBots();
 
   // 别名：新代码用 insertMessage
   Future<void> insertMessage(Map<String, dynamic> msg) async =>
@@ -2414,7 +2421,7 @@ class DBManager {
       {String? type, int? limit, bool includeExpired = false}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final whereParts = <String>['bot_id = ?', 'COALESCE(is_deleted, 0) = 0'];
+    final whereParts = <String>['bot_id = ?'];
     final whereArgs = <dynamic>[botId];
     if (type != null) {
       whereParts.add('type = ?');
@@ -2428,7 +2435,7 @@ class DBManager {
     return await db.query('memories',
         where: whereParts.join(' AND '),
         whereArgs: whereArgs,
-        orderBy: 'timestamp DESC, id DESC',
+        orderBy: 'timestamp DESC',
         limit: limit);
   }
 
@@ -2673,15 +2680,14 @@ class DBManager {
     String? id,
     String title = '',
     String category = '记忆',
-    int? importance,
-    List<String>? keys,
+    int importance = 3,
     int? expiresAt,
     int? timestamp,
   }) async {
     final normalized = content.replaceAll(RegExp(r'\s+'), '').trim();
     if (normalized.isEmpty) return;
     final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
-    final existing = await queryMemories(botId, type: type);
+    final existing = await queryMemories(botId, type: type, limit: 80);
     Map<String, dynamic>? duplicate;
     for (final item in existing) {
       // Similar wording in a profile and an event does not make them the same
@@ -2700,51 +2706,31 @@ class DBManager {
     }
     final targetId = (id ?? '').trim();
     if (targetId.isNotEmpty) {
-      final oldRows = await queryMemories(botId, includeExpired: true);
-      final old = oldRows.where((r) => r['id'] == targetId).firstOrNull;
       await insertMemory({
-        'keys_json':
-            keys == null ? (old?['keys_json'] ?? '[]') : jsonEncode(keys),
         'id': targetId,
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': (importance ?? (old?['importance'] as num?)?.toInt() ?? 3)
-            .clamp(1, 5),
+        'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
       });
     } else if (duplicate != null) {
+      // Exact duplicates are a no-op. In particular, do not refresh updated_at:
+      // a repeated model memory tag is not a meaningful memory modification.
       final previous = duplicate['content']?.toString().trim() ?? '';
       if (previous.replaceAll(RegExp(r'\s+'), '').contains(normalized)) {
-        // Preserve the longer fact and its recency. Explicit metadata edits
-        // still take effect without treating a repetition as a new event.
-        final metadata = <String, dynamic>{};
-        if (importance != null &&
-            importance.clamp(1, 5) != duplicate['importance']) {
-          metadata['importance'] = importance.clamp(1, 5);
-        }
-        if (keys != null && jsonEncode(keys) != duplicate['keys_json']) {
-          metadata['keys_json'] = jsonEncode(keys);
-        }
-        if (metadata.isNotEmpty) {
-          metadata['updated_at'] = now;
-          await updateMemory(duplicate['id'].toString(), metadata);
-        }
-        return;
+        return; // Repeating a shorter excerpt must not erase older details.
       }
       if (previous != content.trim()) {
         await updateMemory(duplicate['id'].toString(), {
           'title': title.isEmpty ? duplicate['title'] : title,
-          if (keys != null) 'keys_json': jsonEncode(keys),
           'content': content.trim(),
           'category': category,
-          'importance':
-              (importance ?? (duplicate['importance'] as num?)?.toInt() ?? 3)
-                  .clamp(1, 5),
+          'importance': importance.clamp(1, 5),
           'expires_at': expiresAt,
           'timestamp': now,
           'updated_at': now,
@@ -2753,13 +2739,12 @@ class DBManager {
     } else {
       await insertMemory({
         'id': 'mem_${botId}_${now}_${normalized.hashCode.abs()}',
-        'keys_json': jsonEncode(keys ?? <String>[]),
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': (importance ?? 3).clamp(1, 5),
+        'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
@@ -2771,14 +2756,6 @@ class DBManager {
         .where((row) => !const ['角色眼中的你', '角色的自我认知', '关系', '角色档案']
             .contains(row['category']))
         .toList();
-    rows.sort((a, b) {
-      final importance = ((b['importance'] as num?) ?? 3)
-          .compareTo((a['importance'] as num?) ?? 3);
-      return importance != 0
-          ? importance
-          : ((b['timestamp'] as num?) ?? 0)
-              .compareTo((a['timestamp'] as num?) ?? 0);
-    });
     if (rows.length > cap) {
       for (final item in rows.skip(cap)) {
         await deleteMemory(item['id'].toString());
