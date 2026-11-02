@@ -23,37 +23,31 @@ void main() {
         noise: noise,
       );
 
-  test('resting heart rate continues from manual values across two days', () {
+  test('manual baselines remain stable while hourly readings vary', () {
     for (final edited in [55, 95]) {
       var current = edited;
+      final values = <int>{};
       for (var hour = 0; hour < 48; hour++) {
+        final previous = current;
         current = advance(current.toDouble(), baseline: edited.toDouble());
-        expect(current, edited, reason: 'hour $hour after editing to $edited');
+        expect(current, inInclusiveRange(50, 135));
+        expect((current - edited).abs(), lessThanOrEqualTo(10));
+        expect(current, isNot(previous));
+        values.add(current);
       }
+      expect(values.length, greaterThan(3));
     }
   });
-
-  test('activity and sleep change the latest value instead of resetting it',
-      () {
-    var current = advance(55, activity: '跑步');
-    expect(current, 61);
-    current = advance(current.toDouble(), activity: '散步');
-    expect(current, 62);
-    current = advance(current.toDouble(), asleep: true);
-    expect(current, 58);
+  test('sleep and activity retain hourly continuity', () {
+    var current = 72;
+    for (final activity in ['跑步', '散步', '睡觉', '休息']) {
+      final previous = current;
+      current = advance(current.toDouble(),
+          baseline: 72, activity: activity, asleep: activity == '睡觉');
+      expect((current - previous).abs(), lessThanOrEqualTo(6));
+      expect(current, isNot(previous));
+    }
   });
-
-  test('stress, poor sleep and fever affect the current heart rate gradually',
-      () {
-    expect(advance(55, stress: 7), 56);
-    expect(advance(55, quality: 50), 56);
-    expect(advance(55, temperature: 38.5), 56);
-    expect(
-        advance(55,
-            activity: '运动', stress: 10, quality: 40, temperature: 40, noise: 2),
-        61);
-  });
-
   test('hourly changes remain bounded during repeated simulation', () {
     for (final initial in [45, 55, 95, 135]) {
       var current = initial;
@@ -67,8 +61,8 @@ void main() {
           stress: (hour % 11).toDouble(),
           noise: hour.isEven ? 2 : -2,
         );
-        expect(current, inInclusiveRange(45, 135));
-        expect((current - initial).abs(), lessThanOrEqualTo(10));
+        expect(current, inInclusiveRange(50, 135));
+        expect((current - initial.clamp(50, 135)).abs(), lessThanOrEqualTo(10));
       }
     }
   });

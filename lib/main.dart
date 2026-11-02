@@ -14,7 +14,6 @@ import 'app_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'legal_pages.dart';
 import 'theme.dart';
 import 'chat_sidebar.dart';
 import 'tool_manager_page.dart';
@@ -45,7 +44,7 @@ import 'external_api_service.dart';
 import 'persistent_service_coordinator.dart';
 import 'mcp_connection_service.dart';
 
-import 'daily_launch_animation.dart';
+import 'first_launch_flow.dart';
 import 'bot_state.dart';
 
 // Kept as a root-library entry point for Android's background Flutter engine.
@@ -68,7 +67,6 @@ void main() async {
     debugPrint('[startup] theme bootstrap skipped: $error');
   }
   runApp(const TideBotApp());
-  unawaited(_startBackgroundServices(loadTheme: false));
 }
 
 Future<void> _startBackgroundServices({bool loadTheme = true}) async {
@@ -85,12 +83,16 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   );
   unawaited(_runStartupTask('haptics', TideHaptics.load));
   unawaited(
-      _runStartupTask('app log', AppLogService.instance.restoreForLaunch));
-  unawaited(_runStartupTask(
-      'built_in_skills', BuiltInSkillLoader.ensureBuiltInSkills));
-  unawaited(McpConnectionService.instance.connectAuto().catchError((e, st) {
-    debugPrint('[startup] MCP auto-connect skipped: $e');
-  }));
+    _runStartupTask('app log', AppLogService.instance.restoreForLaunch),
+  );
+  unawaited(
+    _runStartupTask('built_in_skills', BuiltInSkillLoader.ensureBuiltInSkills),
+  );
+  unawaited(
+    McpConnectionService.instance.connectAuto().catchError((e, st) {
+      debugPrint('[startup] MCP auto-connect skipped: $e');
+    }),
+  );
 
   // 外部 API 服务已移到后台 isolate 启动，这里只记录日志
   final externalApiEnabled = await _readStartupKV('external_api_enabled');
@@ -109,9 +111,14 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
 
   // Schedule daily AlarmManager tasks for diary and schedule generation
   unawaited(
-      _runStartupTask('diary_alarm', DiaryService.instance.scheduleDailyAlarm));
-  unawaited(_runStartupTask(
-      'schedule_alarm', LifeScheduleService.instance.scheduleDailyAlarm));
+    _runStartupTask('diary_alarm', DiaryService.instance.scheduleDailyAlarm),
+  );
+  unawaited(
+    _runStartupTask(
+      'schedule_alarm',
+      LifeScheduleService.instance.scheduleDailyAlarm,
+    ),
+  );
 
   // Notification callbacks need the root navigator, which runApp has now
   // created. All startup work remains best-effort.
@@ -123,7 +130,7 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
 
   final restorePersistentService =
       (await _readStartupKV('persistent_notification')) == 'true' ||
-          externalApiEnabled == 'true';
+      externalApiEnabled == 'true';
   unawaited(
     _initPersistentService(
       restoreAfterUserOptIn: restorePersistentService,
@@ -166,7 +173,8 @@ Future<void> _initPersistentService({
     final plugin = FlutterLocalNotificationsPlugin();
     await plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(channel);
     await service.configure(
       androidConfiguration: AndroidConfiguration(
@@ -253,13 +261,17 @@ void onStart(ServiceInstance service) async {
     final started = DateTime.now().millisecondsSinceEpoch;
     try {
       await task().timeout(timeout);
-      await DBManager().setKV('persistent_service_task_${name}_success_at',
-          '${DateTime.now().millisecondsSinceEpoch}');
+      await DBManager().setKV(
+        'persistent_service_task_${name}_success_at',
+        '${DateTime.now().millisecondsSinceEpoch}',
+      );
     } catch (error, stack) {
       await recordError(name, error, stack);
     } finally {
-      await DBManager().setKV('persistent_service_task_${name}_duration_ms',
-          '${DateTime.now().millisecondsSinceEpoch - started}');
+      await DBManager().setKV(
+        'persistent_service_task_${name}_duration_ms',
+        '${DateTime.now().millisecondsSinceEpoch - started}',
+      );
     }
   }
 
@@ -274,10 +286,16 @@ void onStart(ServiceInstance service) async {
           if (id.isNotEmpty) await DailyQuoteService.instance.get(id);
         }
       }, timeout: const Duration(minutes: 30));
-      await runTask('cognition_review', CognitionReviewService.instance.runDue,
-          timeout: const Duration(minutes: 30));
-      await runTask('diary', DiaryService.instance.catchUp,
-          timeout: const Duration(minutes: 30));
+      await runTask(
+        'cognition_review',
+        CognitionReviewService.instance.runDue,
+        timeout: const Duration(minutes: 30),
+      );
+      await runTask(
+        'diary',
+        DiaryService.instance.catchUp,
+        timeout: const Duration(minutes: 30),
+      );
     } finally {
       dailyTasksRunning = false;
     }
@@ -291,15 +309,22 @@ void onStart(ServiceInstance service) async {
       final now = DateTime.now().millisecondsSinceEpoch;
       await db.setKV('persistent_service_last_tick_started_at', '$now');
       await db.setKV('persistent_service_heartbeat', '$now');
-      final keepRunning = await db.getKV('persistent_notification') == 'true' ||
+      final keepRunning =
+          await db.getKV('persistent_notification') == 'true' ||
           await db.getKV('external_api_enabled') == 'true';
       if (!keepRunning) {
         await runTask('vital_signs', BotVitalSignsService.instance.runDue);
         await dailyTasks();
-        await runTask('schedule_generation', _generateMissingLifeSchedules,
-            timeout: const Duration(minutes: 10));
-        await runTask('proactive_replies', _runDueProactiveReplies,
-            timeout: const Duration(minutes: 6));
+        await runTask(
+          'schedule_generation',
+          _generateMissingLifeSchedules,
+          timeout: const Duration(minutes: 10),
+        );
+        await runTask(
+          'proactive_replies',
+          _runDueProactiveReplies,
+          timeout: const Duration(minutes: 6),
+        );
         // An exact AlarmManager wake may start this service while the user has
         // deliberately disabled continuous foreground operation. Consume due
         // tasks once before stopping; otherwise alarm wakes would immediately
@@ -332,22 +357,30 @@ void onStart(ServiceInstance service) async {
           AppLogService.instance.add('SERVICE', '后台服务已提升为前台服务');
         } catch (e) {
           await db.setKV(
-              'persistent_service_state', 'foreground_promotion_failed');
+            'persistent_service_state',
+            'foreground_promotion_failed',
+          );
           AppLogService.instance.add('SERVICE', '提升前台服务失败：$e');
           // 继续执行任务，不要因为前台服务失败就停止
         }
       } else {
-        await db.setKV('persistent_service_state',
-            isForeground ? 'running' : 'running_background');
+        await db.setKV(
+          'persistent_service_state',
+          isForeground ? 'running' : 'running_background',
+        );
       }
 
       unawaited(dailyTasks());
       await runTask('vital_signs', BotVitalSignsService.instance.runDue);
       await runTask('schedule_generation', _generateMissingLifeSchedules);
       await runTask(
-          'mcp_auto_connect', McpConnectionService.instance.connectAuto);
+        'mcp_auto_connect',
+        McpConnectionService.instance.connectAuto,
+      );
       await runTask(
-          'due_end_events', LifeScheduleService.instance.runDueEndEvents);
+        'due_end_events',
+        LifeScheduleService.instance.runDueEndEvents,
+      );
       await runTask(
         'proactive_replies',
         _runDueProactiveReplies,
@@ -355,16 +388,20 @@ void onStart(ServiceInstance service) async {
       );
       if (!futureTasksRunning) {
         futureTasksRunning = true;
-        unawaited(runTask('future_tasks', () async {
-          try {
-            await _runDueFutureTasks();
-          } finally {
-            futureTasksRunning = false;
-          }
-        }));
+        unawaited(
+          runTask('future_tasks', () async {
+            try {
+              await _runDueFutureTasks();
+            } finally {
+              futureTasksRunning = false;
+            }
+          }),
+        );
       }
-      await db.setKV('persistent_service_last_tick_finished_at',
-          '${DateTime.now().millisecondsSinceEpoch}');
+      await db.setKV(
+        'persistent_service_last_tick_finished_at',
+        '${DateTime.now().millisecondsSinceEpoch}',
+      );
     } catch (error, stack) {
       await recordError('tick', error, stack);
     } finally {
@@ -384,9 +421,9 @@ void onStart(ServiceInstance service) async {
       .listen((_) => unawaited(tick()));
 
   // Handle periodic WorkManager wake to ensure background tasks run even when app is killed
-  service
-      .on('com.yutan123.tidebot.ACTION_PERIODIC_QUEUE_WAKE')
-      .listen((_) async {
+  service.on('com.yutan123.tidebot.ACTION_PERIODIC_QUEUE_WAKE').listen((
+    _,
+  ) async {
     debugPrint('[service] WorkManager periodic wake received');
     if (!tickRunning) {
       unawaited(tick());
@@ -432,12 +469,16 @@ void onStart(ServiceInstance service) async {
 
   unawaited(() async {
     final db = DBManager();
-    final restarts = int.tryParse(
-            await db.getKV('persistent_service_restart_count') ?? '0') ??
+    final restarts =
+        int.tryParse(
+          await db.getKV('persistent_service_restart_count') ?? '0',
+        ) ??
         0;
     await db.setKV('persistent_service_restart_count', '${restarts + 1}');
-    await db.setKV('persistent_service_started_at',
-        '${DateTime.now().millisecondsSinceEpoch}');
+    await db.setKV(
+      'persistent_service_started_at',
+      '${DateTime.now().millisecondsSinceEpoch}',
+    );
     await db.setKV('persistent_service_state', 'starting');
     await tick();
   }());
@@ -483,14 +524,12 @@ Future<void> _runDueFutureTasks() async {
       if (result['success'] != true) {
         throw StateError(result['error']?.toString() ?? '任务请求失败');
       }
-      await db.completeFutureTask(
-        task,
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      await db.completeFutureTask(task, DateTime.now().millisecondsSinceEpoch);
       if (task['frequency']?.toString() == 'daily') {
         final next = await db.querySchedules(botId);
-        final matches =
-            next.where((item) => item['id']?.toString() == id).toList();
+        final matches = next
+            .where((item) => item['id']?.toString() == id)
+            .toList();
         if (matches.isNotEmpty) {
           await FutureTaskScheduler.schedule(matches.first);
         }
@@ -500,7 +539,9 @@ Future<void> _runDueFutureTasks() async {
       final failedAt = DateTime.now().millisecondsSinceEpoch;
       await db.retryFutureTask(task, error, failedAt);
       await db.setKV(
-          'persistent_service_last_error', 'future_task $id: $error');
+        'persistent_service_last_error',
+        'future_task $id: $error',
+      );
     }
   }
 }
@@ -541,12 +582,13 @@ Future<void> _runDeviceEventTriggeredReply() async {
   final allowed = type == 'new_notification'
       ? whitelist.contains('new_notification')
       : type == 'app_opened'
-          ? whitelist.contains('app_opened')
-          : whitelist.contains('screen_event');
+      ? whitelist.contains('app_opened')
+      : whitelist.contains('screen_event');
   if (!allowed) {
     return;
   }
-  final eventTime = (event['time'] as num?)?.toInt() ??
+  final eventTime =
+      (event['time'] as num?)?.toInt() ??
       (event['postedAt'] as num?)?.toInt() ??
       0;
   final seenKey = 'operation_event_seen_$botId';
@@ -554,7 +596,7 @@ Future<void> _runDeviceEventTriggeredReply() async {
   if (eventTime <= seen) return;
   final last =
       int.tryParse(await db.getKV('operation_proactive_last_$botId') ?? '') ??
-          0;
+      0;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - last < const Duration(minutes: 45).inMilliseconds) {
     return;
@@ -589,8 +631,10 @@ Future<void> _runDeviceEventTriggeredReply() async {
       AppLogService.instance.add('PROACTIVE', '设备事件触发：模型返回空回复');
       return;
     }
-    await db.setKV('operation_proactive_last_$botId',
-        '${DateTime.now().millisecondsSinceEpoch}');
+    await db.setKV(
+      'operation_proactive_last_$botId',
+      '${DateTime.now().millisecondsSinceEpoch}',
+    );
     await db.setKV(seenKey, '$eventTime');
     await db.setKV(
       'proactive_unanswered_$botId',
@@ -614,14 +658,14 @@ Future<void> _runDueProactiveReplies() async {
   await db.setKV('proactive_last_run_at', '$now');
   final minMinutes =
       (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60).clamp(
-    1,
-    1440,
-  );
+        1,
+        1440,
+      );
   final maxMinutes =
       (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90).clamp(
-    minMinutes,
-    1440,
-  );
+        minMinutes,
+        1440,
+      );
   for (final bot in await db.getAllBots()) {
     final botId = bot['id']?.toString() ?? '';
     if (botId.isEmpty) continue;
@@ -756,10 +800,10 @@ class FlowGlassBg extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => TideBackground(
-        backgroundPath: backgroundPath,
-        opacity: opacity,
-        child: child,
-      );
+    backgroundPath: backgroundPath,
+    opacity: opacity,
+    child: child,
+  );
 }
 
 class TideBotApp extends StatefulWidget {
@@ -769,34 +813,21 @@ class TideBotApp extends StatefulWidget {
 }
 
 class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
-  // Existing installs must remain usable if preferences are temporarily
-  // unavailable. A fresh install is redirected once its preferences load.
-  bool _hasSeenOnboarding = true;
-  bool _hasAcceptedLegal = true;
-
+  bool _servicesReady = false;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_loadLaunchPreferences());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(DiaryService.instance.catchUp());
       unawaited(tideTheme.precacheGlobalBackground(context));
     });
   }
 
-  Future<void> _loadLaunchPreferences() async {
-    try {
-      final prefs = await SharedPreferences.getInstance()
-          .timeout(const Duration(seconds: 5));
-      _hasSeenOnboarding = prefs.getBool('seen_onboarding') ?? false;
-      _hasAcceptedLegal =
-          (prefs.getBool('legal_agreement_accepted') ?? false) &&
-              (prefs.getBool('legal_age_confirmed') ?? false);
-    } catch (error) {
-      debugPrint('[startup] launch preferences skipped: $error');
-    }
-    if (mounted) setState(() {});
+  void _activateServices() {
+    if (_servicesReady) return;
+    _servicesReady = true;
+    unawaited(_startBackgroundServices(loadTheme: false));
+    unawaited(DiaryService.instance.catchUp());
   }
 
   @override
@@ -808,7 +839,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppState.updateLifecycle(state);
-    if (state == AppLifecycleState.resumed) {
+    if (_servicesReady && state == AppLifecycleState.resumed) {
       unawaited(DiaryService.instance.catchUp());
       unawaited(CognitionReviewService.instance.runDue());
       unawaited(McpConnectionService.instance.connectAuto());
@@ -919,213 +950,8 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
             );
             return FlowGlassBg(child: routeChild);
           },
-          home: !_hasSeenOnboarding
-              ? const OnboardingScreen()
-              : !_hasAcceptedLegal
-                  ? const LegalAgreementPage(requiredAcceptance: true)
-                  : const DailyLaunchAnimation(child: TideMainScaffold()),
+          home: FirstLaunchFlow(onReady: _activateServices),
         ),
-      ),
-    );
-  }
-}
-
-class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
-  @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
-}
-
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  final PageController _pc = PageController();
-  int _cur = 0;
-  final _pages = [
-    {
-      "icon": Icons.shield_rounded,
-      "t": "绝对隐私",
-      "s": "零服务器架构，你的数字伴侣与记忆\n100% 安全留存本地。",
-    },
-    {
-      "icon": Icons.api_rounded,
-      "t": "配置 API",
-      "s": "先去「我的」→「API 设置」添加模型，\n支持 OpenAI 兼容接口。",
-    },
-    {
-      "icon": Icons.person_add_rounded,
-      "t": "创建机器人",
-      "s": "在聊天页点击右下角 +，\n定制专属 AI 伴侣的人设和风格。",
-    },
-    {
-      "icon": Icons.auto_awesome_rounded,
-      "t": "多模态交互",
-      "s": "文字、语音、图片、文件——\n唤起电话式通话，体验超现实连接。",
-    },
-    {
-      "icon": Icons.palette_rounded,
-      "t": "极致美学",
-      "s": "沉浸式 iOS 风格设计，\n莫兰迪配色，流光溢彩的数字陪伴。",
-    },
-  ];
-
-  Future<void> _finish() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('seen_onboarding', true);
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (c, a, s) =>
-            const LegalAgreementPage(requiredAcceptance: true),
-        transitionsBuilder: (c, a, s, child) =>
-            FadeTransition(opacity: a, child: child),
-        transitionDuration: const Duration(milliseconds: 600),
-      ),
-    );
-  }
-
-  void _next() {
-    if (_cur < _pages.length - 1) {
-      _pc.animateToPage(
-        _cur + 1,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOutCubic,
-      );
-    } else {
-      _finish();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        body: FlowGlassBg(
-          child: SafeArea(
-            child: Column(
-              children: [
-                const SizedBox(height: 40),
-                Expanded(
-                  child: PageView.builder(
-                    controller: _pc,
-                    onPageChanged: (i) => setState(() => _cur = i),
-                    itemCount: _pages.length,
-                    itemBuilder: (c, i) => _buildP(i),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(
-                      _pages.length,
-                      (i) => AnimatedContainer(
-                        duration: const Duration(milliseconds: 350),
-                        width: _cur == i ? 28 : 8,
-                        height: 8,
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(4),
-                          color: _cur == i
-                              ? TideTheme.of(context).primary
-                              : const Color(0xFFD4D4D8),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(32, 0, 32, 48),
-                  child: BouncyTap(
-                    onTap: _next,
-                    child: Container(
-                      width: double.infinity,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(26),
-                        gradient: LinearGradient(
-                          colors: [
-                            TideTheme.of(context).primary,
-                            TideTheme.of(context).primaryLight,
-                          ],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: TideTheme.of(
-                              context,
-                            ).primary.withValues(alpha: 0.35),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          _cur == _pages.length - 1 ? '开始体验' : '下一步',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-
-  Widget _buildP(int i) {
-    final p = _pages[i];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 48),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 100,
-            height: 100,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [
-                  TideTheme.of(context).primary,
-                  TideTheme.of(context).primaryLight,
-                ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: TideTheme.of(context).primary.withValues(alpha: 0.3),
-                  blurRadius: 30,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-            child: Icon(p["icon"] as IconData, color: Colors.white, size: 44),
-          ),
-          const SizedBox(height: 36),
-          Text(
-            p["t"] as String,
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'TideFont',
-              color: TideTheme.of(context).textStrong,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            p["s"] as String,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 15,
-              height: 1.5,
-              fontFamily: 'TideFont',
-              color: TideTheme.of(context).textWeak,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1196,25 +1022,33 @@ class _JellyDockState extends State<JellyDock>
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
     _width = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: _baseW, end: _growW)
-            .chain(CurveTween(curve: Curves.easeOutCubic)),
+        tween: Tween(
+          begin: _baseW,
+          end: _growW,
+        ).chain(CurveTween(curve: Curves.easeOutCubic)),
         weight: 55,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: _growW, end: _baseW)
-            .chain(CurveTween(curve: Curves.easeInOutCubic)),
+        tween: Tween(
+          begin: _growW,
+          end: _baseW,
+        ).chain(CurveTween(curve: Curves.easeInOutCubic)),
         weight: 45,
       ),
     ]).animate(_controller);
     _scale = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: 1.0, end: 1.12)
-            .chain(CurveTween(curve: Curves.easeOutBack)),
+        tween: Tween(
+          begin: 1.0,
+          end: 1.12,
+        ).chain(CurveTween(curve: Curves.easeOutBack)),
         weight: 60,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: 1.12, end: 1.0)
-            .chain(CurveTween(curve: Curves.easeInOutCubic)),
+        tween: Tween(
+          begin: 1.12,
+          end: 1.0,
+        ).chain(CurveTween(curve: Curves.easeInOutCubic)),
         weight: 40,
       ),
     ]).animate(_controller);
@@ -1250,8 +1084,8 @@ class _JellyDockState extends State<JellyDock>
         color: useDockGlass
             ? Colors.transparent
             : (isDark
-                ? const Color(0xB9172A31)
-                : Colors.white.withValues(alpha: 0.35)),
+                  ? const Color(0xB9172A31)
+                  : Colors.white.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(28),
         border: useDockGlass
             ? null
@@ -1289,15 +1123,16 @@ class _JellyDockState extends State<JellyDock>
                     decoration: BoxDecoration(
                       color: theme.useLiquidGlass
                           ? (theme.isDark
-                              ? const Color(0x261D2C33)
-                              : const Color(0x24FFFFFF))
+                                ? const Color(0x261D2C33)
+                                : const Color(0x24FFFFFF))
                           : theme.primary.withValues(
                               alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
                             ),
                       borderRadius: BorderRadius.circular(20),
                       border: theme.useLiquidGlass
                           ? Border.all(
-                              color: Colors.white.withValues(alpha: .34))
+                              color: Colors.white.withValues(alpha: .34),
+                            )
                           : null,
                       boxShadow: theme.useLiquidGlass
                           ? [
@@ -1308,24 +1143,21 @@ class _JellyDockState extends State<JellyDock>
                               ),
                             ]
                           : (isDark
-                              ? [
-                                  BoxShadow(
-                                    color: theme.primary.withValues(
-                                      alpha: _lifting ? 0.42 : 0.20,
+                                ? [
+                                    BoxShadow(
+                                      color: theme.primary.withValues(
+                                        alpha: _lifting ? 0.42 : 0.20,
+                                      ),
+                                      blurRadius: _lifting ? 18 : 10,
+                                      spreadRadius: _lifting ? 1 : 0,
+                                      offset: const Offset(0, -2),
                                     ),
-                                    blurRadius: _lifting ? 18 : 10,
-                                    spreadRadius: _lifting ? 1 : 0,
-                                    offset: const Offset(0, -2),
-                                  ),
-                                ]
-                              : null),
+                                  ]
+                                : null),
                     ),
                   );
                   final selectedPill = theme.useLiquidGlass
-                      ? TideLiquidGlass.accentCapsule(
-                          radius: 20,
-                          child: pill,
-                        )
+                      ? TideLiquidGlass.accentCapsule(radius: 20, child: pill)
                       : pill;
                   return Positioned(
                     left: pillX,
@@ -1355,8 +1187,9 @@ class _JellyDockState extends State<JellyDock>
                           children: [
                             Icon(
                               _icons[i],
-                              color:
-                                  act ? theme.primary : const Color(0xFFAEAEB2),
+                              color: act
+                                  ? theme.primary
+                                  : const Color(0xFFAEAEB2),
                               size: 22,
                             ),
                             if (i == 0 && widget.unreadCount > 0)
@@ -1444,12 +1277,15 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   }
 
   Future<void> _maybePromptNotificationPermission() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('seen_onboarding') != true) return;
     final db = DBManager();
     if (await db.getKV('notification_permission_prompt_disabled') == 'true') {
       return;
     }
     if (await Permission.notification.status == PermissionStatus.granted ||
-        !mounted) return;
+        !mounted)
+      return;
     var neverAsk = false;
     final authorize = await TideDialogs.show<bool>(
       context: context,
@@ -1586,15 +1422,16 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
                     PageRouteBuilder(
                       pageBuilder: (c, a, s) => const CreateBotPage(),
                       transitionsBuilder: (c, a, s, child) => SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, 0.3),
-                          end: Offset.zero,
-                        ).animate(
-                          CurvedAnimation(
-                            parent: a,
-                            curve: Curves.easeOutCubic,
-                          ),
-                        ),
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(0, 0.3),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: a,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
                         child: FadeTransition(opacity: a, child: child),
                       ),
                     ),
@@ -1661,7 +1498,7 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
             builder: (context, _) {
               final bot = _sidebar.bot;
               final progress = _sidebar.progress;
-              if (!_sidebar.isOpen || bot == null || progress == null) {
+              if (!_sidebar.isOpen || progress == null) {
                 return const SizedBox.shrink();
               }
               return Positioned.fill(
@@ -1678,13 +1515,15 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
                   onOpenManager: (kind) async {
                     await _sidebar.close();
                     if (!mounted) return;
-                    Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => ToolManagerPage(
-                        kind: kind == 'skill'
-                            ? ToolManagerKind.skill
-                            : ToolManagerKind.mcp,
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ToolManagerPage(
+                          kind: kind == 'skill'
+                              ? ToolManagerKind.skill
+                              : ToolManagerKind.mcp,
+                        ),
                       ),
-                    ));
+                    );
                   },
                 ),
               );

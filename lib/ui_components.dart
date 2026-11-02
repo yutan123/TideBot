@@ -190,6 +190,7 @@ class TideDialogSurface extends StatelessWidget {
   final EdgeInsetsGeometry margin;
   final EdgeInsetsGeometry? contentPadding;
   final Color? backgroundColor;
+  final AlignmentGeometry alignment;
 
   const TideDialogSurface({
     super.key,
@@ -200,6 +201,7 @@ class TideDialogSurface extends StatelessWidget {
     this.margin = const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
     this.contentPadding,
     this.backgroundColor,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -228,7 +230,8 @@ class TideDialogSurface extends StatelessWidget {
           ),
         );
     return SafeArea(
-      child: Center(
+      child: Align(
+        alignment: alignment,
         child: Padding(
           padding: margin,
           child: Material(type: MaterialType.transparency, child: body),

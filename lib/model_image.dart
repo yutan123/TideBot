@@ -3,8 +3,13 @@ import 'dart:typed_data';
 import 'package:heif_converter/heif_converter.dart';
 import 'bot_reference_image.dart';
 
-/// Use real PNG bytes for every vision request, including older attachments.
-Future<Uint8List> modelImageBytes(String path) async {
+/// Compress uploads to JPEG by default; disabling preserves original bytes.
+Future<Uint8List> modelImageBytes(String path, {bool compress = true}) async {
+  if (!compress) {
+    final bytes = await File(path).readAsBytes();
+    if (bytes.isEmpty) throw const FormatException('图片为空');
+    return bytes;
+  }
   var source = path;
   final lower = path.toLowerCase();
   if (lower.endsWith('.heic') || lower.endsWith('.heif')) {

@@ -26,7 +26,9 @@ import 'bot_data_page.dart';
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
   final PageController? pageController;
-  const SpacePage({super.key, this.pageController});
+  /// Uses the real space layout with example content, without loading services.
+  final bool previewOnly;
+  const SpacePage({super.key, this.pageController, this.previewOnly = false});
   @override
   State<SpacePage> createState() => _SpacePageState();
 }
@@ -49,7 +51,16 @@ class _SpacePageState extends State<SpacePage> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    if (widget.previewOnly) {
+      _botId = 'background_preview';
+      _botName = '伙伴';
+      _dailyQuote = '潮起有时，陪伴无期。';
+      _daysSince = 128;
+      _vitalSigns = {};
+      _loading = false;
+    } else {
+      _loadData();
+    }
   }
 
   @override

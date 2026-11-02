@@ -212,11 +212,21 @@ class _PermissionManagementPageState extends State<PermissionManagementPage>
           children: [
             Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 18),
-                child: Text('权限由你掌控\n按需开启，返回此页后自动更新授权状态。',
-                    style: TextStyle(
-                        fontFamily: 'TideFont',
-                        color: theme.textWeak,
-                        height: 1.7))),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('权限由你掌控',
+                          style: TextStyle(
+                              fontFamily: 'TideFont',
+                              color: theme.textWeak,
+                              height: 1.7)),
+                      const SizedBox(height: 8),
+                      Text('建议开启的权限',
+                          style: TextStyle(
+                              fontFamily: 'TideFont',
+                              fontWeight: FontWeight.w600,
+                              color: theme.textStrong)),
+                    ])),
             FrostCard(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Column(children: [

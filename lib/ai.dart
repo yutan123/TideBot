@@ -1,3 +1,5 @@
+import 'chat_message_debounce.dart';
+import 'image_upload_format.dart';
 import 'deepseek_search.dart';
 import 'minimax_tts.dart';
 import 'call_speech.dart';
@@ -194,6 +196,8 @@ class AIManager {
     String? audioPath,
     String? activeGame,
     bool persistResponse = true,
+    Set<String> currentMessageIds = const {},
+    bool Function()? beginResponseCommit,
     bool includeChatHistory = true,
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
@@ -291,6 +295,8 @@ class AIManager {
               audioPath: audioPath,
               activeGame: activeGame,
               persistResponse: persistResponse,
+              currentMessageIds: currentMessageIds,
+              beginResponseCommit: beginResponseCommit,
               includeChatHistory: includeChatHistory,
               requestHistory: requestHistory,
               enableAutoSummary: enableAutoSummary,
@@ -513,7 +519,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (baseUrl.isEmpty || modelName.isEmpty) return '';
 
       // Current user content is supplied separately, not duplicated as history.
-      final priorHistory = !proactive && history.isNotEmpty &&
+      final priorHistory = !proactive &&
+              history.isNotEmpty &&
               history.last['role'] == 'user' &&
               history.last['content'] == text
           ? history.sublist(0, history.length - 1)
@@ -751,6 +758,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String? audioPath,
     String? activeGame,
     bool persistResponse = true,
+    Set<String> currentMessageIds = const {},
+    bool Function()? beginResponseCommit,
     bool includeChatHistory = true,
     List<Map<String, dynamic>>? requestHistory,
     bool enableAutoSummary = true,
@@ -770,14 +779,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     String forcedLocalId = '',
     String forcedProviderId = '',
   }) async {
+    http.Client? responseClient;
+    void Function()? cancelResponse;
     final db = DBManager();
     final requestId =
         '${DateTime.now().microsecondsSinceEpoch}_${_requestSequence++}';
     final windowDiagnostic = <String, dynamic>{};
-    final voiceEnabled = persistResponse && !task.internal && !isVoiceCall &&
+    final voiceEnabled = persistResponse &&
+        !task.internal &&
+        !isVoiceCall &&
         await db.getKV('voice_reply_enabled') == 'true';
     final voiceChance = voiceEnabled
-        ? (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50).clamp(1, 100)
+        ? (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
+            .clamp(1, 100)
         : 0;
 
     cancellationToken?.throwIfCancelled();
@@ -791,7 +805,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
     final ttsModel = bot['tts_model']?.toString().trim() ?? '';
     // Decide once before generation so the model can provide speech direction.
-    final randomVoice = voiceEnabled && ttsModel.isNotEmpty &&
+    final randomVoice = voiceEnabled &&
+        ttsModel.isNotEmpty &&
         Random.secure().nextInt(100) < voiceChance;
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     // A newly added provider is usable immediately. Only fill an empty model;
@@ -861,12 +876,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       ];
     } else {
       final timeAware = (await db.getKV('time_awareness')) != 'false';
-      final history = requestHistory ??
-          (includeChatHistory
-              ? await db
-                  .getChatHistory(botId)
-                  .timeout(const Duration(seconds: 8))
-              : <Map<String, dynamic>>[]);
+      final history = historyBeforeCurrentBatch(
+          requestHistory ??
+              (includeChatHistory
+                  ? await db
+                      .getChatHistory(botId)
+                      .timeout(const Duration(seconds: 8))
+                  : <Map<String, dynamic>>[]),
+          currentMessageIds);
       // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
       // 读取三个核心设定字段（独立于普通世界书条目）
       final allMemories = activeGame == null
@@ -1149,7 +1166,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       Map<String, dynamic>? currentHistoryMessage;
       // Separate the current user turn before trimming or marking history.
-      if (task != AIRequestTask.proactiveChat &&
+      if (currentMessageIds.isEmpty &&
+          task != AIRequestTask.proactiveChat &&
           historyMessages.isNotEmpty &&
           history.isNotEmpty &&
           history.last['role'] == 'user' &&
@@ -1228,8 +1246,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             for (final path in effectiveImagePaths) {
               final file = File(path);
               if (!file.existsSync()) continue;
-              final bytes = await modelImageBytes(path);
-              const mime = 'image/png';
+              final bytes = await modelImageBytes(path,
+                  compress:
+                      await DBManager().getKV('image_compression_enabled') !=
+                          'false');
+              final mime = imageUploadMime(bytes);
               parts.add({
                 'type': 'image_url',
                 'image_url': {
@@ -1273,7 +1294,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               now: DateTime.now(),
               unansweredCount: int.tryParse(
                     await db.getKV('proactive_unanswered_$botId') ?? '',
-                  ) ?? 0,
+                  ) ??
+                  0,
               trigger: text,
             ),
           });
@@ -1334,7 +1356,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         DateTime? previousAt;
         if (history.isNotEmpty) {
           final current = history.last;
-          final currentIsThisTurn = current['role']?.toString() == 'user' &&
+          final currentIsThisTurn = currentMessageIds.isEmpty &&
+              current['role']?.toString() == 'user' &&
               current['content']?.toString() == text;
           final candidate = currentIsThisTurn && history.length > 1
               ? history[history.length - 2]
@@ -1385,7 +1408,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty)
           'tool_choice': randomVoice
-              ? {'type': 'function', 'function': {'name': 'request_voice_reply'}}
+              ? {
+                  'type': 'function',
+                  'function': {'name': 'request_voice_reply'}
+                }
               : 'auto',
         if (onDelta != null) 'stream': true,
       });
@@ -1446,6 +1472,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       int statusCode;
       final token = cancellationToken;
       final client = http.Client();
+      responseClient = client;
       final request = http.Request(
         'POST',
         Uri.parse('$baseUrl/chat/completions'),
@@ -1456,16 +1483,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         })
         ..body = jsonEncode(payload);
       void cancelRequest() => client.close();
+      cancelResponse = cancelRequest;
       token?.addOnCancel(cancelRequest);
       AppLogService.instance.add('AI_TRACE',
           'HTTP 请求开始 model=$modelName url=$baseUrl/chat/completions stream=${onDelta != null}');
       final httpStarted = DateTime.now();
-      http.StreamedResponse streamedResponse;
-      try {
-        streamedResponse = await client.send(request);
-      } finally {
-        token?.removeOnCancel(cancelRequest);
-      }
+      final streamedResponse = await client.send(request);
       token?.throwIfCancelled();
       statusCode = streamedResponse.statusCode;
       responseMetadata.addAll({
@@ -1592,6 +1615,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               entry.key: entry.value.toString(),
             'tool_calls': streamedToolCalls,
           });
+          token?.throwIfCancelled();
+          if (persistResponse &&
+              beginResponseCommit != null &&
+              !beginResponseCommit()) {
+            throw const AICancelledException();
+          }
           await _runStreamedTools(
             db: db,
             botId: botId,
@@ -1616,9 +1645,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             stickerSetter: (sticker) => toolSticker = sticker,
             moodSetter: (mood) => toolMood = mood,
             voiceSetter: (style) {
-                toolRequestedVoice = true;
-                voiceSpeechStyle = style;
-              },
+              toolRequestedVoice = true;
+              voiceSpeechStyle = style;
+            },
             requestTools: tools,
             requiredToolNames: const {},
             allowedStickerTypes:
@@ -1694,6 +1723,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                   responseMetadata: responseMetadata);
             hadToolCalls = true;
             messages.add(toolAssistantMessage(message));
+            token?.throwIfCancelled();
+            if (persistResponse &&
+                beginResponseCommit != null &&
+                !beginResponseCommit()) {
+              throw const AICancelledException();
+            }
             await _runStreamedTools(
               db: db,
               botId: botId,
@@ -1871,7 +1906,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         Map<String, dynamic>? sticker = persistedSticker;
         String? audioPath;
         if (persistResponse) {
-          final shouldVoice = voiceEnabled && ttsModel.isNotEmpty &&
+          final shouldVoice = voiceEnabled &&
+              ttsModel.isNotEmpty &&
               (toolRequestedVoice || randomVoice) &&
               (!allowTools || voiceSpeechStyle != null);
           if (shouldVoice) {
@@ -1894,6 +1930,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           settingEnabled: await db.getKV('inner_thought_enabled') == 'true',
         );
 
+        token?.throwIfCancelled();
+        if (persistResponse &&
+            beginResponseCommit != null &&
+            !beginResponseCommit()) {
+          throw const AICancelledException();
+        }
         if (persistResponse) {
           // 先插入内心独白气泡（如果有）
           if (innerThoughtEnabled && hasInnerThought) {
@@ -2060,6 +2102,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'error_log': e.toString(),
         'error_code': 'network',
       };
+    } finally {
+      if (cancelResponse != null)
+        cancellationToken?.removeOnCancel(cancelResponse);
+      responseClient?.close();
     }
   }
 
@@ -2334,7 +2380,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String userText,
   }) async {
     try {
-      final bytes = await modelImageBytes(imagePath);
+      final bytes = await modelImageBytes(imagePath,
+          compress:
+              await DBManager().getKV('image_compression_enabled') != 'false');
       final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
                 RegExp(r'/+$'),
                 '',
@@ -2370,7 +2418,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                     {
                       'type': 'image_url',
                       'image_url': {
-                        'url': 'data:image/png;base64,${base64Encode(bytes)}',
+                        'url':
+                            'data:${imageUploadMime(bytes)};base64,${base64Encode(bytes)}',
                       },
                     },
                   ],
@@ -3476,8 +3525,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         AppLogService.instance.add('IMAGE_GEN', '已选择图改，但未设置人像参考图，取消请求');
         return null;
       }
-      final reference =
-          isImageEdit ? await modelImageBytes(referencePath) : null;
+      final reference = isImageEdit
+          ? await modelImageBytes(referencePath,
+              compress: await db.getKV('image_compression_enabled') != 'false')
+          : null;
       AppLogService.instance.addJson('IMAGE_GEN', '开始请求生图', {
         'bot_id': botId,
         'mode': userImageEdit != null
@@ -5103,11 +5154,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (name == 'request_voice_reply') {
       if (parseVoiceMessageSpeech(args['speech']) == null) {
-        return {'result': {'ok': false, 'error': '请填写 speech 情绪和演绎参数后重试。'}};
+        return {
+          'result': {'ok': false, 'error': '请填写 speech 情绪和演绎参数后重试。'}
+        };
       }
       return {
-        'result': {'ok': true, 'speech': args['speech'],
-          'message': '本轮最终文字回复将按指定情绪生成语音；参数不要写进正文。'},
+        'result': {
+          'ok': true,
+          'speech': args['speech'],
+          'message': '本轮最终文字回复将按指定情绪生成语音；参数不要写进正文。'
+        },
       };
     }
     if (name == 'write_diary') {

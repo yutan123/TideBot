@@ -64,8 +64,9 @@ object TideVitalSigns {
         fun explicit(units: String) = Regex("(\\d+(?:\\.\\d+)?)\\s*(?:$units)").find(prompt)?.groupValues?.get(1)?.toDoubleOrNull()
         val height = explicit("cm|厘米") ?: (160 + Random.nextInt(16)).toDouble()
         val weight = explicit("kg|公斤|千克") ?: height * height / 10000 * (20 + Random.nextDouble() * 3)
+        val heart = Random.nextInt(64, 81)
         return JSONObject().put("height", height).put("weight", weight).put("base_weight", weight)
-            .put("temperature", 36.5).put("heart", 72).put("systolic", 118).put("diastolic", 78)
+            .put("temperature", 36.5).put("heart", heart).put("base_heart", heart).put("systolic", 118).put("diastolic", 78)
             .put("mood", 65).put("stress", 3).put("energy", 75).put("health", "健康").put("illness", "")
             .put("recovery", 100).put("last_hour", 0).put("last_chat", 0)
             .put("samples", JSONArray()).put("sleep_history", JSONArray()).put("plans", JSONArray())
@@ -73,6 +74,13 @@ object TideVitalSigns {
     }
 
     private fun advance(db: SQLiteDatabase, id: String, s: JSONObject, now: Long) {
+        // Repair old drifting state even when no new hour is due. Preserve manual baselines.
+        if (!s.has("base_heart")) s.put("base_heart", Random.nextInt(64, 81))
+        s.put("base_heart", number(s, "base_heart", 72.0).coerceIn(50.0, 135.0))
+        s.put("heart", number(s, "heart", 72.0).coerceIn(50.0, 135.0).roundToInt())
+        for (sample in objects(s.optJSONArray("samples"))) {
+            sample.put("heart", number(sample, "heart", 72.0).coerceIn(50.0, 135.0).roundToInt())
+        }
         var sleep = s.optJSONObject("sleep")
         if (sleep == null) for (p in objects(s.optJSONArray("sleep_plans"))) {
             if (p.optBoolean("done") || p.optLong("start") > now) continue
@@ -182,17 +190,9 @@ object TideVitalSigns {
                     .put("temperature",if(sick) 37.3+Random.nextDouble()*.8 else 36.3+Random.nextDouble()*.5)
                     .put("systolic",112+Random.nextInt(15)+(if(stress>7) 5 else 0)).put("diastolic",72+Random.nextInt(10)).put("body_day",day)
             }
-            // Match Dart's hourlyMeanHeartRate: continue from the saved value,
-            // including manual edits, without resetting it when the day changes.
-            val exertion = if (Regex("跑步|健身|运动|骑行|游泳|球").containsMatchIn(activity)) 24.0
-                else if (Regex("散步|步行|逛街|通勤").containsMatchIn(activity)) 9.0 else 0.0
-            val change = (if (sleeping) -1.0 else exertion / 12) +
-                (if (sleeping) 0.0 else (stress.coerceIn(0.0, 10.0) - 3) * .25) +
-                (if (quality < 60 && !sleeping) 1.0 else 0.0) +
-                max(0.0, number(s, "temperature", 36.5) - 37) * .8 +
-                (Random.nextDouble() * 4 - 2)
-            s.put("heart", (number(s, "heart", 72.0) + change.coerceIn(-4.0, 4.0))
-                .coerceIn(45.0, 135.0).roundToInt())
+            s.put("heart", hourlyHeart(s, sleeping, activity, stress, quality,
+                samples.asReversed().asSequence().filter { it.optString("activity") != "当日步数结算" }
+                    .take(24).map { it.optInt("heart") }.toList()))
             s.put("steps",max(0,steps)).put("activity",activity)
                 .put("energy",(number(s,"energy",75.0)+(if(sleeping) 4.0 else -1.5)+(if(relaxing) 1 else 0)-(if(stress>7) 1 else 0)).coerceIn(0.0,100.0))
             val sample = JSONObject().put("time",t).put("day",day)
@@ -201,6 +201,35 @@ object TideVitalSigns {
         }
         s.put("last_hour",hour).put("samples",array(samples.takeLast(2160)))
         if (s.optJSONObject("sleep") == null && objects(s.optJSONArray("pending")).isNotEmpty() && now >= s.optLong("retry_at")) s.put("pending_reason","morning")
+    }
+
+    // Same bounds, target, hourly continuity and repetition policy as Dart.
+    private fun hourlyHeart(s: JSONObject, asleep: Boolean, activity: String,
+                            stress: Double, quality: Double, recent: List<Int>): Int {
+        val previous = number(s, "heart", 72.0)
+        val base = number(s, "base_heart", 72.0).coerceIn(50.0, 135.0)
+        val lower = max(50, ceil(base - 10).toInt())
+        val upper = min(135, floor(base + 10).toInt())
+        val exertion = if (Regex("跑步|健身|运动|骑行|游泳|球").containsMatchIn(activity)) 24.0
+            else if (Regex("散步|步行|逛街|通勤").containsMatchIn(activity)) 9.0 else 0.0
+        val target = (base + (if (asleep) -8.0 else exertion) +
+            (if (asleep) 0.0 else (stress.coerceIn(0.0, 10.0) - 3) * .8) +
+            (if (quality < 60 && !asleep) 4.0 else 0.0) +
+            max(0.0, number(s, "temperature", 36.5) - 37) * 4).coerceIn(lower.toDouble(), upper.toDouble())
+        val center = (previous + ((target - previous) * .25 + Random.nextDouble() * 6 - 3)
+            .coerceIn(-6.0, 6.0)).coerceIn(lower.toDouble(), upper.toDouble())
+        val counts = recent.takeLast(24).groupingBy { it }.eachCount()
+        var candidates = (lower..upper).filter { it != previous.roundToInt() &&
+            (previous < lower || previous > upper || abs(it - previous) <= 6) }
+        val lessUsed = candidates.filter { (counts[it] ?: 0) < 3 }
+        if (lessUsed.isNotEmpty()) candidates = lessUsed
+        val weights = candidates.map { 1.0 / (1 + abs(it - center) * .5) / (1 + (counts[it] ?: 0) * 2) }
+        var pick = Random.nextDouble() * weights.sum()
+        for (i in candidates.indices) {
+            pick -= weights[i]
+            if (pick <= 0) return candidates[i]
+        }
+        return candidates.last()
     }
 
     private fun settle(sleep: JSONObject): JSONObject {

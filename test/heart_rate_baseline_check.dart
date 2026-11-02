@@ -19,7 +19,9 @@ void main() {
           noise: random.nextDouble() * 6 - 3,
           random: random,
         );
-        if ((next - baseline).abs() > 10 || next < 45 || next > 135) {
+        if ((next - baseline.clamp(50, 135)).abs() > 10 ||
+            next < 50 ||
+            next > 135) {
           throw StateError('Out of bounds: $baseline/$previous/$next');
         }
         if (baseline == 60 && start == 160 && hour == 0) recovered.add(next);

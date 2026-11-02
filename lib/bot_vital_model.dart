@@ -181,41 +181,61 @@ List<Map<String, dynamic>> stepPlan(
   return result;
 }
 
-/// Keep hourly variation within ten beats of the saved resting baseline.
-int hourlyMeanHeartRate(
-    {required double previous,
-    double baseline = 60,
-    required bool asleep,
-    required String activity,
-    required double stress,
-    required double sleepQuality,
-    required double temperature,
-    required double noise,
-    Random? random}) {
+/// Settle once per hour around a stable baseline, discouraging repeated values.
+int hourlyMeanHeartRate({
+  required double previous,
+  double baseline = 60,
+  required bool asleep,
+  required String activity,
+  required double stress,
+  required double sleepQuality,
+  required double temperature,
+  required double noise,
+  Random? random,
+  Iterable<int> recent = const [],
+}) {
+  final rng = random ?? Random();
+  final base = baseline.clamp(50, 135).toDouble();
+  final lower = max(50, (base - 10).ceil());
+  final upper = min(135, (base + 10).floor());
   final exertion = RegExp('跑步|健身|运动|骑行|游泳|球').hasMatch(activity)
       ? 24.0
       : RegExp('散步|步行|逛街|通勤').hasMatch(activity)
           ? 9.0
           : 0.0;
-  final target = baseline +
-      (asleep ? -8 : exertion) +
-      (asleep ? 0 : (stress.clamp(0, 10) - 3) * .8) +
-      (sleepQuality < 60 && !asleep ? 4 : 0) +
-      max(0.0, temperature - 37) * 4;
-  final change = (target - previous) * .25 + noise.clamp(-3, 3);
-  var next = (previous + change.clamp(-6, 6)).clamp(45, 135).round();
-  // Preserve small hourly fluctuations that integer rounding would erase.
-  if (next == previous.round() && noise != 0) {
-    final direction = noise > 0 ? 1 : -1;
-    next = (next + direction).clamp(45, 135);
-    if (next == previous.round()) next -= direction;
+  final target = (base +
+          (asleep ? -8 : exertion) +
+          (asleep ? 0 : (stress.clamp(0, 10) - 3) * .8) +
+          (sleepQuality < 60 && !asleep ? 4 : 0) +
+          max(0.0, temperature - 37) * 4)
+      .clamp(lower, upper);
+  final center =
+      (previous + ((target - previous) * .25 + noise.clamp(-3, 3)).clamp(-6, 6))
+          .clamp(lower, upper);
+  final counts = <int, int>{};
+  final history = recent.toList();
+  for (final value in history.skip(max(0, history.length - 24))) {
+    counts[value] = (counts[value] ?? 0) + 1;
   }
-  if ((previous - baseline).abs() > 10 || (next - baseline).abs() > 10) {
-    final lower = max(45, (baseline - 10).ceil());
-    final upper = min(135, (baseline + 10).floor());
-    next = lower + (random ?? Random()).nextInt(upper - lower + 1);
+  var candidates = [
+    for (var v = lower; v <= upper; v++)
+      if (v != previous.round() &&
+          (previous < lower || previous > upper || (v - previous).abs() <= 6))
+        v
+  ];
+  // Cap repeats at three of the last 24 samples whenever the range permits.
+  final lessUsed = candidates.where((v) => (counts[v] ?? 0) < 3).toList();
+  if (lessUsed.isNotEmpty) candidates = lessUsed;
+  final weights = [
+    for (final v in candidates)
+      1 / (1 + (v - center).abs() * .5) / (1 + (counts[v] ?? 0) * 2)
+  ];
+  var pick = rng.nextDouble() * weights.fold(0.0, (a, b) => a + b);
+  for (var i = 0; i < candidates.length; i++) {
+    pick -= weights[i];
+    if (pick <= 0) return candidates[i];
   }
-  return next;
+  return candidates.last;
 }
 
 /// Daily temperature continues from the saved value with small changes.

@@ -35,6 +35,7 @@ class TransferProgress {
         return PopScope(
           canPop: false,
           child: TideDialogSurface(
+            alignment: Alignment.bottomCenter,
             content: Row(
               children: [
                 SizedBox(

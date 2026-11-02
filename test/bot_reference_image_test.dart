@@ -6,60 +6,63 @@ import 'package:tide_bot/bot_reference_image.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test('JPEG with EXIF rotation converts to PNG without output-size decoding',
-      () async {
-    final jpeg = base64Decode(
-        '/9j/4AAQSkZJRgABAQAAAAAAAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAANAAcDAREAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCIrqSAP//Z');
-    // APP1 Exif: little-endian TIFF, orientation 6 (90 degrees clockwise).
-    final rotated = Uint8List.fromList([
-      ...jpeg.take(2),
-      0xff,
-      0xe1,
-      0,
-      34,
-      69,
-      120,
-      105,
-      102,
-      0,
-      0,
-      73,
-      73,
-      42,
-      0,
-      8,
-      0,
-      0,
-      0,
-      1,
-      0,
-      18,
-      1,
-      3,
-      0,
-      1,
-      0,
-      0,
-      0,
-      6,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      ...jpeg.skip(2),
-    ]);
-    final result = await prepareBotReferenceImage(rotated);
-    expect(result.take(8), [137, 80, 78, 71, 13, 10, 26, 10]);
-    final codec = await ui.instantiateImageCodec(result);
-    final frame = await codec.getNextFrame();
-    expect(frame.image.width, 13);
-    expect(frame.image.height, 7);
-    frame.image.dispose();
-    codec.dispose();
-  });
+  test(
+    'JPEG with EXIF rotation converts to JPEG without output-size decoding',
+    () async {
+      final jpeg = base64Decode(
+        '/9j/4AAQSkZJRgABAQAAAAAAAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAANAAcDAREAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCIrqSAP//Z',
+      );
+      // APP1 Exif: little-endian TIFF, orientation 6 (90 degrees clockwise).
+      final rotated = Uint8List.fromList([
+        ...jpeg.take(2),
+        0xff,
+        0xe1,
+        0,
+        34,
+        69,
+        120,
+        105,
+        102,
+        0,
+        0,
+        73,
+        73,
+        42,
+        0,
+        8,
+        0,
+        0,
+        0,
+        1,
+        0,
+        18,
+        1,
+        3,
+        0,
+        1,
+        0,
+        0,
+        0,
+        6,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        ...jpeg.skip(2),
+      ]);
+      final result = await prepareBotReferenceImage(rotated);
+      expect(result.take(3), [255, 216, 255]);
+      final codec = await ui.instantiateImageCodec(result);
+      final frame = await codec.getNextFrame();
+      expect(frame.image.width, 13);
+      expect(frame.image.height, 7);
+      frame.image.dispose();
+      codec.dispose();
+    },
+  );
 
   Future<Uint8List> imageBytes(int width, int height) async {
     final recorder = ui.PictureRecorder();
@@ -75,35 +78,81 @@ void main() {
     }
   }
 
-  test('reference image preserves small image dimensions and PNG encoding',
-      () async {
-    final result = await prepareBotReferenceImage(await imageBytes(80, 40));
-    expect(result.take(8), [137, 80, 78, 71, 13, 10, 26, 10]);
-    final codec = await ui.instantiateImageCodec(result);
-    final frame = await codec.getNextFrame();
-    expect(frame.image.width, 80);
-    expect(frame.image.height, 40);
-    frame.image.dispose();
-    codec.dispose();
-  });
+  test(
+    'reference image preserves small image dimensions and JPEG encoding',
+    () async {
+      final result = await prepareBotReferenceImage(await imageBytes(80, 40));
+      expect(result.take(3), [255, 216, 255]);
+      final codec = await ui.instantiateImageCodec(result);
+      final frame = await codec.getNextFrame();
+      expect(frame.image.width, 80);
+      expect(frame.image.height, 40);
+      frame.image.dispose();
+      codec.dispose();
+    },
+  );
 
-  test('reference image limits longest dimension and keeps aspect ratio',
-      () async {
-    final result = await prepareBotReferenceImage(await imageBytes(3000, 1500));
-    final codec = await ui.instantiateImageCodec(result);
-    final frame = await codec.getNextFrame();
-    expect(frame.image.width, 2048);
-    expect(frame.image.height, 1024);
-    frame.image.dispose();
-    codec.dispose();
-  });
+  test(
+    'reference image limits longest dimension and keeps aspect ratio',
+    () async {
+      final result = await prepareBotReferenceImage(
+        await imageBytes(3000, 1500),
+      );
+      final codec = await ui.instantiateImageCodec(result);
+      final frame = await codec.getNextFrame();
+      expect(frame.image.width, 1920);
+      expect(frame.image.height, 960);
+      frame.image.dispose();
+      codec.dispose();
+    },
+  );
+
+  test(
+    'transparent PNG is composited onto white before JPEG encoding',
+    () async {
+      final recorder = ui.PictureRecorder();
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(8, 8);
+      try {
+        final png = await image.toByteData(format: ui.ImageByteFormat.png);
+        final result = await prepareBotReferenceImage(
+          png!.buffer.asUint8List(),
+        );
+        final codec = await ui.instantiateImageCodec(result);
+        try {
+          final frame = await codec.getNextFrame();
+          try {
+            final pixels = await frame.image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            );
+            expect(pixels!.getUint8(0), greaterThan(245));
+            expect(pixels.getUint8(1), greaterThan(245));
+            expect(pixels.getUint8(2), greaterThan(245));
+          } finally {
+            frame.image.dispose();
+          }
+        } finally {
+          codec.dispose();
+        }
+      } finally {
+        image.dispose();
+        picture.dispose();
+      }
+    },
+  );
 
   test('reference image rejects empty, oversized and invalid data', () async {
     await expectLater(
-        prepareBotReferenceImage(Uint8List(0)), throwsFormatException);
-    await expectLater(prepareBotReferenceImage(Uint8List(20 * 1024 * 1024 + 1)),
-        throwsFormatException);
-    await expectLater(prepareBotReferenceImage(Uint8List.fromList([1, 2, 3])),
-        throwsA(isA<Exception>()));
+      prepareBotReferenceImage(Uint8List(0)),
+      throwsFormatException,
+    );
+    await expectLater(
+      prepareBotReferenceImage(Uint8List(20 * 1024 * 1024 + 1)),
+      throwsFormatException,
+    );
+    await expectLater(
+      prepareBotReferenceImage(Uint8List.fromList([1, 2, 3])),
+      throwsA(isA<Exception>()),
+    );
   });
 }

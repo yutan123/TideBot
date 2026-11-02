@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,6 +10,8 @@ import 'chat_background_defaults.dart';
 import 'db.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme.dart';
+import 'main.dart' show JellyDock;
+import 'ui_space_square.dart' show SpacePage;
 
 class GlobalBackgroundPage extends StatefulWidget {
   const GlobalBackgroundPage({super.key});
@@ -39,8 +42,9 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       await directory.create(recursive: true);
       // The picker may return a content URI without a useful extension.
       final extension = image.path.split('.').last.toLowerCase();
-      final safeExtension =
-          RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension) ? extension : 'jpg';
+      final safeExtension = RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension)
+          ? extension
+          : 'jpg';
       final file = File(
         '${directory.path}/background_${DateTime.now().millisecondsSinceEpoch}.$safeExtension',
       );
@@ -50,9 +54,9 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       if (mounted) setState(() => _path = file.path);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('无法选择背景图：$error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('无法选择背景图：$error')));
       }
     }
   }
@@ -87,9 +91,9 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
       if (mounted) Navigator.pop(context);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存背景图失败：$error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存背景图失败：$error')));
       }
     }
   }
@@ -157,7 +161,9 @@ class _GlobalBackgroundPageState extends State<GlobalBackgroundPage> {
   }
 }
 
-class _BackgroundAppPreview extends StatelessWidget {
+/// Renders a device-sized app scene, then scales the entire scene for display.
+/// The actual space widgets, dock, background and theme rules are shared.
+class _BackgroundAppPreview extends StatefulWidget {
   const _BackgroundAppPreview({
     required this.theme,
     required this.hasImage,
@@ -165,192 +171,96 @@ class _BackgroundAppPreview extends StatelessWidget {
     required this.opacity,
     required this.enableLiquidGlass,
   });
-
   final TideTheme theme;
   final bool hasImage;
   final String path;
   final double opacity;
   final bool enableLiquidGlass;
+  @override
+  State<_BackgroundAppPreview> createState() => _BackgroundAppPreviewState();
+}
+
+class _BackgroundAppPreviewState extends State<_BackgroundAppPreview> {
+  final TideTheme _previewTheme = TideTheme();
+  @override
+  void initState() {
+    super.initState();
+    _updatePreview();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BackgroundAppPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _updatePreview();
+  }
+
+  void _updatePreview() {
+    _previewTheme.configureBackgroundPreview(
+      widget.theme,
+      path: widget.hasImage ? widget.path : '',
+      opacity: widget.opacity,
+      enableLiquidGlass: widget.enableLiquidGlass,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_previewTheme.precacheGlobalBackground(context));
+    });
+  }
+
+  @override
+  void dispose() {
+    // Invalidate any pending image warm-up before disposing its notifier.
+    _previewTheme.configureBackgroundPreview(
+      widget.theme,
+      path: '',
+      opacity: widget.opacity,
+      enableLiquidGlass: false,
+      notify: false,
+    );
+    _previewTheme.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final text = hasImage ? theme.onBackgroundStrong : theme.textStrong;
-    final muted = hasImage ? theme.onBackgroundWeak : theme.textWeak;
-    final useGlass = hasImage && enableLiquidGlass;
-    final card = useGlass
-        ? Colors.white.withValues(alpha: theme.isDark ? .24 : .72)
-        : theme.glass.withValues(alpha: .7);
-
-    return AspectRatio(
-      aspectRatio: .72,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: .12),
-            border: Border.all(color: Colors.white.withValues(alpha: .38)),
-          ),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              ColoredBox(
-                color: theme.isDark
-                    ? const Color(0xFF151820)
-                    : const Color(0xFFF3F5FA),
-              ),
-              if (hasImage) Image.file(File(path), fit: BoxFit.cover),
-              if (hasImage)
-                ColoredBox(
-                  color: Colors.black.withValues(alpha: opacity),
-                ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '伊伊',
-                            style: TextStyle(
-                              color: text,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 22,
-                              fontFamily: 'TideFont',
-                            ),
-                          ),
-                        ),
-                        Icon(Icons.more_horiz_rounded, color: text),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      '早上好',
-                      style: TextStyle(
-                        color: text,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 18,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '这是全局背景下的界面效果。',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _PreviewMessage(
-                      alignment: Alignment.centerLeft,
-                      color: card,
-                      textColor: text,
-                      message: '今天想聊些什么？',
-                    ),
-                    const SizedBox(height: 10),
-                    _PreviewMessage(
-                      alignment: Alignment.centerRight,
-                      color: theme.primary.withValues(alpha: .88),
-                      textColor: Colors.white,
-                      message: '看看这个背景效果。',
-                    ),
-                    const Spacer(),
-                    Container(
-                      height: 46,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: card,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.white
-                              .withValues(alpha: useGlass ? .34 : .0),
-                        ),
-                      ),
-                      child: Row(
+    final media = MediaQuery.of(context);
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: media.size.width,
+          height: media.size.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: RepaintBoundary(
+              child: IgnorePointer(
+                child: MediaQuery(
+                  data: media.copyWith(viewInsets: EdgeInsets.zero),
+                  child: TideBotThemeProvider(
+                    theme: _previewTheme,
+                    child: TideBackground(
+                      child: Stack(
                         children: [
-                          Icon(Icons.add_rounded, color: muted),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '发送消息',
-                              style: TextStyle(
-                                color: muted,
-                                fontSize: 12,
-                                fontFamily: 'TideFont',
-                              ),
-                            ),
+                          const Positioned.fill(
+                            child: SpacePage(previewOnly: true),
                           ),
-                          Icon(
-                            Icons.arrow_upward_rounded,
-                            color: theme.primary,
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: media.padding.bottom + 24,
+                            child: JellyDock(currentIndex: 1, onTap: (_) {}),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Container(
-                      height: 42,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: card,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white
-                              .withValues(alpha: useGlass ? .34 : .0),
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          Icon(Icons.chat_bubble_outline_rounded, size: 19),
-                          Icon(Icons.grid_view_rounded, size: 19),
-                          Icon(Icons.explore_outlined, size: 19),
-                          Icon(Icons.person_outline_rounded, size: 19),
-                        ],
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
-}
-
-class _PreviewMessage extends StatelessWidget {
-  const _PreviewMessage({
-    required this.alignment,
-    required this.color,
-    required this.textColor,
-    required this.message,
-  });
-
-  final Alignment alignment;
-  final Color color;
-  final Color textColor;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Align(
-        alignment: alignment,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 190),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Text(message,
-              style: TextStyle(
-                  color: textColor, fontSize: 12, fontFamily: 'TideFont')),
-        ),
-      );
 }
 
 class _TopBar extends StatelessWidget {
@@ -418,8 +328,9 @@ class _ControlSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shape =
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+    );
     return Material(
       color: theme.surface.withValues(alpha: theme.isDark ? 0.94 : 0.92),
       elevation: 10,
@@ -437,8 +348,10 @@ class _ControlSurface extends StatelessWidget {
             ),
             if (hasImage)
               ListTile(
-                leading: const Icon(Icons.delete_outline_rounded,
-                    color: Color(0xFFFF3B30)),
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFFF3B30),
+                ),
                 title: const Text('清除全局背景图'),
                 onTap: onClear,
               ),

@@ -1,9 +1,11 @@
+import 'photo_image_provider.dart';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'bot_reference_image.dart';
+import 'image_upload_format.dart';
 import 'db.dart';
 import 'theme.dart';
 
@@ -54,13 +56,32 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
       final bytes = picked.bytes ??
           (picked.path == null ? null : await File(picked.path!).readAsBytes());
       if (bytes == null) throw const FormatException('无法读取所选图片，请先保存到本机再选择');
-      final png = await prepareBotReferenceImage(bytes);
+      // Validate decodability but preserve the original for the send-time switch.
+      var displayBytes = bytes;
+      if (picked.path != null) {
+        try {
+          final displayFile = await photoDisplayFile(picked.path!);
+          if (displayFile.path != picked.path) {
+            displayBytes = await displayFile.readAsBytes();
+          }
+        } catch (_) {
+          // Document providers may supply bytes without a usable local path.
+        }
+      }
+      final codec = await ui.instantiateImageCodec(displayBytes);
+      try {
+        final frame = await codec.getNextFrame();
+        frame.image.dispose();
+      } finally {
+        codec.dispose();
+      }
+      final image = bytes;
       final dir = await getApplicationDocumentsDirectory();
       final folder = Directory('${dir.path}/bot_reference_images');
       await folder.create(recursive: true);
       saved =
-          File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}.png');
-      await saved.writeAsBytes(png, flush: true);
+          File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}.${imageUploadExtension(imageUploadMime(image))}');
+      await saved.writeAsBytes(image, flush: true);
       await DBManager().setKV('bot_image_reference_$id', saved.path);
       if (mounted) setState(() => _paths[id] = saved!.path);
       saved = null;
@@ -105,7 +126,7 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
                     maxScale: 5,
                     child: Hero(
                       tag: 'bot_reference_$id',
-                      child: Image.file(File(path),
+                      child: Image(image: photoImageProvider(path),
                           fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) => const Text('图片已失效',
                               style: TextStyle(color: Colors.white70))),
@@ -196,7 +217,7 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
                                             style: TextStyle(
                                                 color: theme.textWeak,
                                                 fontSize: 13)))
-                                    : Image.file(File(path),
+                                    : Image(image: photoImageProvider(path),
                                         fit: BoxFit.cover,
                                         errorBuilder: (_, __, ___) => Center(
                                             child: Text('失效',

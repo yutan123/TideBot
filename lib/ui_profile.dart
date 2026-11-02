@@ -4,10 +4,10 @@ import 'bot_reference_images_page.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
 import 'persistent_service_coordinator.dart';
 import 'app_permissions.dart';
@@ -273,7 +273,11 @@ class _ProfilePageState extends State<ProfilePage> {
       '正在读取机器人列表…',
       () => DBManager().exportableBots(),
     );
-    if (!mounted || bots.isEmpty) return null;
+    if (!mounted) return null;
+    if (bots.isEmpty) {
+      GlobalNotice.show('当前没有可选机器人');
+      return null;
+    }
     return showTideSheet<String>(
       context: context,
       height: 420,
@@ -354,16 +358,10 @@ class _ProfilePageState extends State<ProfilePage> {
       final count = await TransferProgress.run<int?>(
         context,
         '正在读取并导入聊天记录…',
-        () async {
-          final result = await FilePicker.platform.pickFiles(
-            type: FileType.custom,
-            allowedExtensions: const ['zip', 'json'],
-            withData: false,
-          );
-          final path = result?.files.single.path;
-          if (path == null) return null;
-          return DBManager().importBotChat(botId, path);
-        },
+        () => DataTransfer.pickImport<int>(const [
+          'zip',
+          'json',
+        ], (path) => DBManager().importBotChat(botId, path)),
       );
       if (!mounted || count == null) return;
       GlobalNotice.show('已导入 $count 条聊天记录');
@@ -505,20 +503,11 @@ class _ProfilePageState extends State<ProfilePage> {
       final count = await TransferProgress.run<int?>(
         context,
         '正在读取并导入世界书…',
-        () async {
-          final result = await FilePicker.platform.pickFiles(
-            type: FileType.custom,
-            allowedExtensions: const ['json'],
-            withData: false,
-          );
-          final path = result?.files.single.path;
-          if (path == null) return null;
-          return DBManager().importBotMemory(
-            botId,
-            path,
-            merge: mode == 'merge',
-          );
-        },
+        () => DataTransfer.pickImport<int>(
+          const ['json'],
+          (path) =>
+              DBManager().importBotMemory(botId, path, merge: mode == 'merge'),
+        ),
       );
       if (!mounted || count == null) return;
       GlobalNotice.show(
@@ -2338,36 +2327,43 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   final _presets = [
     {
       'name': 'MiniMax',
+      'key_url': 'https://platform.minimaxi.com/',
       'url': 'https://api.minimax.cn/v1',
       'models': 'MiniMax-M3.1-Flash',
     },
     {
       'name': 'DeepSeek',
+      'key_url': 'https://platform.deepseek.com/api_keys',
       'url': 'https://api.deepseek.com/v1',
       'models': 'deepseek-chat',
     },
     {
       'name': 'SiliconFlow',
+      'key_url': 'https://cloud.siliconflow.cn/account/ak',
       'url': 'https://api.siliconflow.cn/v1',
       'models': 'Qwen/Qwen2.5-7B-Instruct',
     },
     {
       'name': '阿里云百炼',
+      'key_url': 'https://bailian.console.aliyun.com/',
       'url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       'models': 'qwen-plus',
     },
     {
       'name': 'Mimo',
+      'key_url': 'https://platform.xiaomimimo.com/',
       'url': 'https://api.xiaomimimo.com/v1',
       'models': 'mimo-v2-flash',
     },
     {
       'name': 'Kimi',
+      'key_url': 'https://platform.moonshot.cn/',
       'url': 'https://api.moonshot.cn/v1',
       'models': 'moonshot-v1-8k',
     },
     {
       'name': 'Gitee AI',
+      'key_url': 'https://ai.gitee.com/',
       'url': 'https://ai.gitee.com/v1',
       'models': 'Qwen2.5-7B-Instruct',
     },
@@ -2375,18 +2371,21 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   final _sttPresets = [
     {
       'name': 'SiliconFlow STT',
+      'key_url': 'https://cloud.siliconflow.cn/account/ak',
       'url': 'https://api.siliconflow.cn/v1',
       'models': 'FunAudioLLM/SenseVoiceSmall',
       'protocol': 'openai',
     },
     {
       'name': 'MiMo STT',
+      'key_url': 'https://platform.xiaomimimo.com/',
       'url': 'https://api.xiaomimimo.com/v1',
       'models': 'mimo-v2.5-asr',
       'protocol': 'mimo',
     },
     {
       'name': 'MiniMax STT',
+      'key_url': 'https://platform.minimaxi.com/',
       // MiniMax does not publish an official ASR endpoint in its current API
       // reference. Keep this as an editable OpenAI-compatible preset instead
       // of sending a fabricated request to an unrelated legacy endpoint.
@@ -2398,6 +2397,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   final _ttsPresets = [
     {
       'name': 'SiliconFlow TTS',
+      'key_url': 'https://cloud.siliconflow.cn/account/ak',
       'url': 'https://api.siliconflow.cn/v1',
       'models': 'FunAudioLLM/CosyVoice2-0.5B',
       'voice': 'default',
@@ -2405,6 +2405,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     },
     {
       'name': 'MiMo TTS',
+      'key_url': 'https://platform.xiaomimimo.com/',
       'url': 'https://api.xiaomimimo.com/v1/chat/completions',
       'models': 'mimo-v2.5-tts',
       'voice': 'default',
@@ -2412,6 +2413,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     },
     {
       'name': 'MiniMax TTS',
+      'key_url': 'https://platform.minimaxi.com/',
       'url': 'https://api.minimax.cn/v1',
       'models': 'speech-02-turbo',
       'voice': 'male-qn-qingse',
@@ -2728,6 +2730,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     String models,
     bool isTts,
   ) {
+    final preset = _findPreset(name, url);
     final nCtrl = TextEditingController(text: name);
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
@@ -2754,7 +2757,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _f('API 地址', uCtrl),
             const SizedBox(height: 8),
-            _f('API Key', kCtrl, obscure: true),
+            _f('API Key', kCtrl, obscure: true, keyUrl: preset?['key_url']),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 16),
@@ -2788,6 +2791,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       setState(() {
                         final p = {
                           'name': nCtrl.text.trim(),
+                          'preset_name': preset?['name'],
+                          'is_custom': preset == null,
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
                           'model': model,
@@ -2816,6 +2821,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     String model, {
     String protocol = 'openai',
   }) {
+    final preset = _findPreset(name, url);
     final nCtrl = TextEditingController(text: name);
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
@@ -2842,7 +2848,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _f('API 地址', uCtrl),
             const SizedBox(height: 8),
-            _f('API Key', kCtrl, obscure: true),
+            _f('API Key', kCtrl, obscure: true, keyUrl: preset?['key_url']),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 16),
@@ -2870,6 +2876,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       setState(
                         () => _sttProviders.add({
                           'name': nCtrl.text.trim(),
+                          'preset_name': preset?['name'],
+                          'is_custom': preset == null,
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
                           'model': mCtrl.text.trim(),
@@ -2898,6 +2906,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     String voice, {
     String protocol = 'openai',
   }) {
+    final preset = _findPreset(name, url);
     final nCtrl = TextEditingController(text: name);
     final uCtrl = TextEditingController(text: url);
     final kCtrl = TextEditingController(text: key);
@@ -2926,7 +2935,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _f('API 地址', uCtrl),
             const SizedBox(height: 8),
-            _f('API Key', kCtrl, obscure: true),
+            _f('API Key', kCtrl, obscure: true, keyUrl: preset?['key_url']),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 8),
@@ -2979,6 +2988,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       setState(() {
                         final p = {
                           'name': nCtrl.text.trim(),
+                          'preset_name': preset?['name'],
+                          'is_custom': preset == null,
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
                           'model': model,
@@ -3431,7 +3442,51 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     );
   }
 
-  Widget _f(String label, TextEditingController c, {bool obscure = false}) {
+  Iterable<Map<String, String>> get _allProviderPresets => [
+    ..._presets,
+    ..._sttPresets,
+    ..._ttsPresets,
+  ];
+
+  Map<String, String>? _findPreset(String name, String url) {
+    for (final preset in _allProviderPresets) {
+      if (preset['name'] == name && preset['url'] == url) return preset;
+    }
+    return null;
+  }
+
+  String? _providerKeyUrl(Map<String, dynamic> provider) {
+    if (provider['is_custom'] == true) return null;
+    final presetName = provider['preset_name'];
+    if (presetName != null) {
+      for (final preset in _allProviderPresets) {
+        if (preset['name'] == presetName) return preset['key_url'];
+      }
+      return null;
+    }
+    // Older records predate preset identity; require both original name and URL.
+    return _findPreset(
+      provider['name']?.toString() ?? '',
+      provider['url']?.toString() ?? '',
+    )?['key_url'];
+  }
+
+  Future<void> _openKeyPlatform(String url) async {
+    try {
+      if (await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication))
+        return;
+    } catch (_) {
+      // Report a missing browser or platform launch failure without closing the form.
+    }
+    if (mounted) GlobalNotice.show('无法打开开放平台，请检查是否安装浏览器后重试');
+  }
+
+  Widget _f(
+    String label,
+    TextEditingController c, {
+    bool obscure = false,
+    String? keyUrl,
+  }) {
     // Keep this outside the builder: declaring it inside rebuilds resets the
     // field to hidden before the eye button state can be painted.
     var hidden = obscure;
@@ -3440,13 +3495,32 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: TideTheme.of(context).textWeak,
-                fontFamily: 'TideFont',
-              ),
+            Wrap(
+              spacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: TideTheme.of(context).textWeak,
+                    fontFamily: 'TideFont',
+                  ),
+                ),
+                if (keyUrl != null)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: TideTheme.of(context).primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () => _openKeyPlatform(keyUrl),
+                    child: const Text(
+                      '没有APIkey?去获取',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 4),
             Container(
@@ -3521,7 +3595,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
               _f('API 地址', uCtrl),
             ],
             const SizedBox(height: 8),
-            _f('API Key', kCtrl, obscure: true),
+            _f('API Key', kCtrl, obscure: true, keyUrl: _providerKeyUrl(p)),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             if (hasVoice) ...[const SizedBox(height: 8), _f('音色', vCtrl)],
@@ -3541,6 +3615,14 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   child: TideDialogs.glassButton(
                     '保存',
                     onTap: () {
+                      if (!p.containsKey('is_custom')) {
+                        final preset = _findPreset(
+                          p['name']?.toString() ?? '',
+                          p['url']?.toString() ?? '',
+                        );
+                        p['preset_name'] = preset?['name'];
+                        p['is_custom'] = preset == null;
+                      }
                       p['name'] = nCtrl.text.trim();
                       p['url'] = uCtrl.text.trim();
                       p['key'] = kCtrl.text.trim();

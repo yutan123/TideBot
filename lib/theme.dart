@@ -190,6 +190,30 @@ class TideTheme extends ChangeNotifier {
     _globalBackgroundReady = true;
   }
 
+  /// Updates an isolated preview without writing preferences or the live theme.
+  void configureBackgroundPreview(TideTheme source, {
+    required String path,
+    required double opacity,
+    required bool enableLiquidGlass,
+    bool notify = true,
+  }) {
+    _name = source._name;
+    _mode = source._mode;
+    _manualMode = source._manualMode;
+    _primary = source._primary;
+    _primaryLight = source._primaryLight;
+    if (_globalBackground != path) {
+      _globalBackground = path;
+      _setGlobalBackgroundImage(path);
+      if (path == source.globalBackground) {
+        _backgroundLightness.addAll(source._backgroundLightness);
+      }
+    }
+    _globalBackgroundOpacity = opacity.clamp(.18, .70);
+    _enableLiquidGlass = enableLiquidGlass;
+    if (notify) notifyListeners();
+  }
+
   ImageConfiguration _imageConfiguration(BuildContext context) {
     final media = MediaQuery.maybeOf(context);
     return createLocalImageConfiguration(

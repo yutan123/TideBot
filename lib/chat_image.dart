@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'photo_image_provider.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -30,11 +30,8 @@ class _ChatImageState extends State<ChatImage> {
     }, onError: (Object error, StackTrace? stack) {});
   }
 
-  ImageProvider get _provider => ResizeImage.resizeIfNeeded(
-        720,
-        null,
-        FileImage(File(widget.path)),
-      );
+  ImageProvider get _provider =>
+      ResizeImage.resizeIfNeeded(720, null, photoImageProvider(widget.path));
 
   void _resolve() {
     _stream?.removeListener(_listener);
@@ -74,9 +71,8 @@ class _ChatImageState extends State<ChatImage> {
         image: _provider,
         fit: BoxFit.cover,
         alignment: Alignment.topCenter,
-        errorBuilder: (_, __, ___) => const Center(
-          child: Icon(Icons.broken_image_outlined),
-        ),
+        errorBuilder: (_, __, ___) =>
+            const Center(child: Icon(Icons.broken_image_outlined)),
       ),
     );
   }

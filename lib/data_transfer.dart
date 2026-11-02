@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'transfer_archive.dart';
+import 'transfer_import_cache.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Only file paths cross the platform channel; file contents never do.
@@ -20,6 +22,22 @@ class DataTransfer {
     } finally {
       _busy = false;
     }
+  }
+
+  /// Keeps the provider's cached input only while the importer is reading it.
+  static Future<T?> pickImport<T>(
+    List<String> extensions,
+    Future<T> Function(String path) read,
+  ) async {
+    final temporary = await getTemporaryDirectory();
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: extensions,
+      withData: false,
+    );
+    final path = picked?.files.single.path;
+    if (path == null) return null;
+    return consumePickedImport(path, temporary, () => read(path));
   }
 
   static Future<Directory> workspace() async =>

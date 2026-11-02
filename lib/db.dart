@@ -1918,18 +1918,7 @@ class DBManager {
             continue;
           }
           if (decoded is! Map) continue;
-          final item = Map<String, dynamic>.from(decoded);
-          for (final key in ['original_video_path', 'audio_path']) {
-            final path = item[key]?.toString() ?? '';
-            if (path.isNotEmpty) item[key] = await mapPath(path);
-          }
-          if (item['frame_paths'] is List) {
-            item['frame_paths'] = await Future.wait(
-              (item['frame_paths'] as List).map(
-                (value) => mapPath(value.toString()),
-              ),
-            );
-          }
+          final item = await mapTransferValue(decoded, mapPath);
           if (!firstVideo) sink.write(',');
           firstVideo = false;
           sink.write(jsonEncode(item));
@@ -1951,17 +1940,10 @@ class DBManager {
             );
             if (page.isEmpty) break;
             for (final row in page) {
-              final msg = Map<String, dynamic>.from(row)..remove('bot_id');
-              final path = msg['file_path']?.toString() ?? '';
-              if (path.isNotEmpty &&
-                  const {
-                    'image',
-                    'video',
-                    'audio',
-                    'shared_post',
-                  }.contains(msg['type'])) {
-                msg['file_path'] = await mapPath(path);
-              }
+              final msg = await mapTransferValue(
+                Map<String, dynamic>.from(row)..remove('bot_id'),
+                mapPath,
+              );
               if (!first) sink.write(',');
               first = false;
               sink.write(jsonEncode(msg));
@@ -2056,11 +2038,15 @@ class DBManager {
         await installedMedia.parent.create(recursive: true);
         installedMedia = await media.rename(installedMedia.path);
       }
-      String mapPath(String old) {
-        if (old.isEmpty || installedMedia == null) return old;
-        final path = '${installedMedia.path}/${p.basename(old)}';
-        return File(path).existsSync() ? path : old;
-      }
+      final mediaMapper = installedMedia == null
+          ? null
+          : ImportedMedia(installedMedia, allowLegacyBasename: true);
+      Future<dynamic> mapRecord(dynamic value) => mapTransferValue(
+        value,
+        (path) async => mediaMapper == null
+            ? path
+            : await mediaMapper.mapPath(path),
+      );
 
       final base = DateTime.now().microsecondsSinceEpoch;
       var count = 0;
@@ -2076,19 +2062,11 @@ class DBManager {
         await for (final record in JsonRecords.read(json)) {
           if (!record.element) continue;
           if (record.key == 'video_history' && record.value is Map) {
-            final item = Map<String, dynamic>.from(record.value as Map);
-            for (final key in ['original_video_path', 'audio_path']) {
-              if (item[key] is String) item[key] = mapPath(item[key] as String);
-            }
-            if (item['frame_paths'] is List) {
-              item['frame_paths'] = (item['frame_paths'] as List)
-                  .map((v) => mapPath(v.toString()))
-                  .toList();
-            }
+            final item = await mapRecord(record.value) as Map;
             videos.add(jsonEncode(item));
           }
           if (record.key != 'messages') continue;
-          final item = record.value as Map;
+          final item = await mapRecord(record.value) as Map;
           final oldId = item['id']?.toString() ?? '';
           final reply = item['reply_to_id']?.toString() ?? '';
           final timestamp =
@@ -2102,7 +2080,7 @@ class DBManager {
             'role': item['role']?.toString() ?? 'user',
             'type': item['type']?.toString() ?? 'text',
             'content': item['content']?.toString() ?? '',
-            'file_path': mapPath(item['file_path']?.toString() ?? ''),
+            'file_path': item['file_path']?.toString() ?? '',
             'mood': item['mood'],
             'duration': item['duration'],
             'reply_to_id': reply.isEmpty ? null : 'import_${base}_id_$reply',

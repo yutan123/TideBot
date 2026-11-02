@@ -28,6 +28,7 @@ class AdvancedSettingsPage extends StatefulWidget {
 }
 
 class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
+  bool _imageCompression = true;
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
   bool _extraContext = false;
@@ -69,6 +70,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         botNames[feature] = bot['name']?.toString() ?? id;
       }
     }
+    final imageCompression =
+        await db.getKV('image_compression_enabled') != 'false';
     final externalEnabled = await db.getKV('external_api_enabled') == 'true';
     final externalPort = await db.getKV('external_api_port') ?? '6666';
     final externalKey = await db.getKV('external_api_key') ?? '';
@@ -81,6 +84,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         .preferredBaseUrl(port: int.tryParse(externalPort));
     if (mounted) {
       setState(() {
+        _imageCompression = imageCompression;
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
         _extraContext = prefs.getBool('extra_context_enabled') ?? false;
@@ -613,6 +617,28 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
           children: [
+            FrostCard(
+              padding: const EdgeInsets.all(16),
+              child: SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: Text('自动压缩画质',
+                    style: TextStyle(
+                        fontFamily: 'TideFont', color: theme.textStrong)),
+                subtitle: Text(
+                    '默认开启，发送照片时等比压缩至 1080p（横图不超过 1920×1080，竖图不超过 1080×1920），并转换为 JPEG；小图不放大。关闭后发送原图。',
+                    style: TextStyle(
+                        fontFamily: 'TideFont',
+                        color: theme.textWeak,
+                        fontSize: 12)),
+                value: _imageCompression,
+                activeThumbColor: theme.primary,
+                onChanged: (value) async {
+                  await DBManager().setKV('image_compression_enabled', '$value');
+                  if (mounted) setState(() => _imageCompression = value);
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
             FrostCard(
               padding: const EdgeInsets.all(16),
               child: Column(

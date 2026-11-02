@@ -6,11 +6,13 @@ import 'voice_call_detail_page.dart';
 class VoiceCallCard extends StatelessWidget {
   final Map<String, dynamic> message;
   final String botName;
+  final VoidCallback? onLongPress;
 
   const VoiceCallCard({
     super.key,
     required this.message,
     required this.botName,
+    this.onLongPress,
   });
 
   String _formatDuration(int seconds) {
@@ -59,6 +61,8 @@ class VoiceCallCard extends StatelessWidget {
     final isUser = message['role'] == 'user';
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: onLongPress,
       onTap: () {
         if (callId.isNotEmpty && status == 'ended') {
           Navigator.push(

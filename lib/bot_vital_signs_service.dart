@@ -128,8 +128,14 @@ class BotVitalSignsService {
         state['samples'] = vitalList(state['samples'])
             .map((sample) => sample
               ..remove('systolic')
-              ..remove('diastolic'))
+              ..remove('diastolic')
+              ..update('heart', (value) => vitalInt(value, 70).clamp(50, 135),
+                  ifAbsent: () => 70))
             .toList();
+        state['base_heart'] =
+            vitalDouble(state['base_heart'], 64 + _rng.nextInt(17).toDouble())
+                .clamp(50, 135);
+        state['heart'] = vitalInt(state['heart'], 70).clamp(50, 135);
         return state;
       }
     } catch (_) {}
@@ -143,13 +149,14 @@ class BotVitalSignsService {
     final height = explicit('cm|厘米') ?? (160 + _rng.nextInt(16)).toDouble();
     final weight = explicit('kg|公斤|千克') ??
         height * height / 10000 * (20 + _rng.nextDouble() * 3);
+    final heart = 64 + _rng.nextInt(17);
     return {
       'height': height,
       'weight': weight,
       'base_weight': weight,
       'temperature': 36.5,
-      'heart': 60,
-      'base_heart': 60,
+      'heart': heart,
+      'base_heart': heart,
       'mood': 65.0,
       'stress': 3.0,
       'energy': 75.0,
@@ -544,6 +551,10 @@ class BotVitalSignsService {
           temperature: vitalDouble(s['temperature'], 36.5),
           noise: _rng.nextDouble() * 6 - 3,
           random: _rng,
+          recent: samples.reversed
+              .where((e) => e['activity'] != '当日步数结算')
+              .take(24)
+              .map((e) => vitalInt(e['heart'])),
         );
         s['steps'] = max(0, steps);
         s['activity'] = activity;
@@ -670,6 +681,7 @@ class BotVitalSignsService {
       required double weight,
       required double temperature,
       required int heart}) async {
+    heart = heart.clamp(50, 135);
     await _serial(id, () async {
       final s = await _read(id);
       s['height'] = height;

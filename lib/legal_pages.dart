@@ -1,5 +1,6 @@
 import 'android_selection_menu.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart';
@@ -54,7 +55,12 @@ TideBot 的原创源代码、应用界面、文档及项目自有资源，除另
 问题与建议可通过应用内的“反馈与建议”入口提交。请勿在公开反馈中上传私人数据或服务密钥。争议依适用法律处理，由依法具有管辖权的机构解决；个别条款无效不影响其他条款依法适用。''';
 
 class LegalAgreementPage extends StatefulWidget {
-  const LegalAgreementPage({super.key, required this.requiredAcceptance});
+  const LegalAgreementPage({
+    super.key,
+    required this.requiredAcceptance,
+    this.onAccepted,
+  });
+  final VoidCallback? onAccepted;
   final bool requiredAcceptance;
   @override
   State<LegalAgreementPage> createState() => _LegalAgreementPageState();
@@ -62,17 +68,56 @@ class LegalAgreementPage extends StatefulWidget {
 
 class _LegalAgreementPageState extends State<LegalAgreementPage> {
   bool _agreed = false;
-  bool _adult = false;
+  bool _readToEnd = false;
+  bool _saving = false;
+  final ScrollController _scroll = ScrollController();
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_checkEnd);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkEnd());
+  }
+
+  void _checkEnd() {
+    if (!_readToEnd &&
+        _scroll.hasClients &&
+        _scroll.position.extentAfter <= 2) {
+      setState(() => _readToEnd = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   Future<void> _confirm() async {
-    if (!_agreed || !_adult) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('legal_agreement_accepted', true);
-    await prefs.setBool('legal_age_confirmed', true);
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const TideMainScaffold()),
-      (_) => false,
-    );
+    if (!_agreed || !_readToEnd || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.setBool('legal_agreement_accepted', true) ||
+          !await prefs.setBool('legal_age_confirmed', true)) {
+        throw StateError('Could not save consent');
+      }
+      if (!mounted) return;
+      if (widget.onAccepted != null) {
+        widget.onAccepted!();
+      } else {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const TideBotApp()),
+          (_) => false,
+        );
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('无法保存同意状态，请重试')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -93,6 +138,7 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
               children: [
                 Expanded(
                   child: SingleChildScrollView(
+                    controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
                     // Keep long legal content in Flutter's scroll layout.
                     // One tall Android platform view can exceed texture limits.
@@ -115,29 +161,62 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                     child: Column(
                       children: [
+                        if (!_readToEnd)
+                          Text(
+                            '请滑动至底部，阅读全部条款',
+                            style: TextStyle(color: theme.textWeak),
+                          ),
                         CheckboxListTile(
+                          activeColor: theme.primary,
                           value: _agreed,
-                          onChanged: (v) =>
-                              setState(() => _agreed = v ?? false),
+                          onChanged: _readToEnd && !_saving
+                              ? (value) =>
+                                    setState(() => _agreed = value ?? false)
+                              : null,
                           title: const Text(
-                            '我同意用户协议与免责声明',
+                            '我已满十八周岁且同意以上全部条款',
                             style: TextStyle(fontFamily: 'TideFont'),
                           ),
                         ),
-                        CheckboxListTile(
-                          value: _adult,
-                          onChanged: (v) => setState(() => _adult = v ?? false),
-                          title: const Text(
-                            '我确认我已满18周岁',
-                            style: TextStyle(fontFamily: 'TideFont'),
-                          ),
-                        ),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed: _agreed && _adult ? _confirm : null,
-                            child: const Text('确认并进入 TideBot'),
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: theme.textStrong,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                                onPressed: _saving
+                                    ? null
+                                    : () => SystemNavigator.pop(),
+                                child: const Text('不同意'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: theme.primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                                onPressed: _agreed && _readToEnd && !_saving
+                                    ? _confirm
+                                    : null,
+                                child: Text(_saving ? '正在保存…' : '继续'),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -194,7 +273,9 @@ class TideBotAboutPage extends StatelessWidget {
                         '面向个人的本地优先 AI 伴侣与智能交互工具。',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                            fontFamily: 'TideFont', color: theme.textWeak),
+                          fontFamily: 'TideFont',
+                          color: theme.textWeak,
+                        ),
                       ),
                       const SizedBox(height: 32),
                       Align(
@@ -244,7 +325,8 @@ class TideBotAboutPage extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (_) => const LegalAgreementPage(
-                                requiredAcceptance: false),
+                              requiredAcceptance: false,
+                            ),
                           ),
                         ),
                         child: const Text('查看用户协议与免责声明'),

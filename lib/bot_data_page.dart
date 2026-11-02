@@ -1161,10 +1161,10 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                     t < 30 ||
                     t > 45 ||
                     hr == null ||
-                    hr < 45 ||
+                    hr < 50 ||
                     hr > 135) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('请输入有效的身体指标，平均心率范围为 45–135')));
+                      content: Text('请输入有效的身体指标，平均心率范围为 50–135')));
                   return;
                 }
                 refresh(() => _savingBody = true);

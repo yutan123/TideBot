@@ -1,3 +1,6 @@
+import 'chat_message_debounce.dart';
+import 'photo_image_provider.dart';
+import 'onboarding_reply.dart';
 import 'chat_image.dart';
 import 'tide_popover.dart';
 import 'video_input.dart';
@@ -196,10 +199,14 @@ class _StableLinkPreviewCardState extends State<_StableLinkPreviewCard> {
 class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
   final String? initialMessageId;
+  final bool openModelSettings;
+  final VoidCallback? onReplyCompleted;
   const ChatRoomPage({
     super.key,
     required this.botData,
     this.initialMessageId,
+    this.openModelSettings = false,
+    this.onReplyCompleted,
   });
   @override
   State<ChatRoomPage> createState() => _ChatRoomPageState();
@@ -297,9 +304,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   final Map<String, String> _emojiNamesByGlyph = <String, String>{};
   bool _stickersLoaded = false;
 
-  // ===== 防抖/合并：请求代次 + 待重发队列 =====
-  // 用户连续发送多条时，递增代次让在途请求的渲染结果作废，并把新文本并入
-  // 队列；旧请求返回后若代次过期则拦截，再由 finally 用合并文本统一重发。
+  // Collect consecutive sends before generation; input activity extends the
+  // quiet window. Supersede only turns that have not committed a reply/tool.
   int _requestGen = 0;
   String _queuedText = '';
   final List<String> _queuedImages = [];
@@ -307,6 +313,28 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   String? _queuedMediaContext;
 
   bool _queued = false;
+
+  final _messageDebounce = ChatMessageDebounce();
+  final _debounceClock = Stopwatch()..start();
+  final List<Map<String, dynamic>> _queuedMessages = [];
+  int _pendingQueueWrites = 0;
+  String _lastInputText = '';
+  TextRange _lastComposing = TextRange.empty;
+  AICancellationToken? _activeRequestToken;
+  ChatTurnCommit? _activeTurn;
+  String? _queuedAudioPath;
+  bool _queuedForceSingleReply = false;
+
+  Future<void> _waitForMessagePause() async {
+    // A saved turn must still be sent if the user leaves this page. Navigation
+    // ends the input wait, but queued inserts must finish before the snapshot.
+    while ((mounted &&
+            _messageDebounce.remaining(_debounceClock.elapsed) >
+                Duration.zero) ||
+        _pendingQueueWrites > 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
 
   ChatTypingLease? _typingLease;
   void _setTypingState(bool value) {
@@ -340,7 +368,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   void _msgChanged() {
-    if (mounted) setState(() => _hasText = _msgC.text.isNotEmpty);
+    final value = _msgC.value;
+    // Focus and cursor movement are not typing. Include IME composing changes.
+    final changed =
+        value.text != _lastInputText || value.composing != _lastComposing;
+    _lastInputText = value.text;
+    _lastComposing = value.composing;
+    if (changed) {
+      _messageDebounce.inputChanged(
+          hasText: value.text.isNotEmpty, now: _debounceClock.elapsed);
+    }
+    if (mounted) setState(() => _hasText = value.text.isNotEmpty);
   }
 
   @override
@@ -378,6 +416,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _refreshTypingState();
     _loadBg();
     _loadChatPreferences();
+    if (widget.openModelSettings) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showModelSettings();
+      });
+    }
     // Proactive replies are scheduled by the persistent background service.
     // The chat page only refreshes persisted results.
 
@@ -1156,17 +1199,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     bool noUserBubble = false,
     String? queuedText,
     Map<String, dynamic>? retryTarget,
+    List<Map<String, dynamic>>? batchedMessages,
   }) async {
-    final text = queuedText ?? _msgC.text.trim();
+    var text = queuedText ?? (noUserBubble ? '' : _msgC.text.trim());
     final preparedVideos = <PreparedVideoInput>[];
     final unregisteredSharedVideos = <String>{};
     AppLogService.instance.add('AI_TRACE',
         '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
 
-    images = List<String>.from(images ?? _pendingImages);
-    documents = List<String>.from(documents ?? _pendingDocuments);
-    mediaContext ??= _pendingMediaContext;
-    expression ??= _pendingExpression;
+    images =
+        List<String>.from(images ?? (noUserBubble ? const [] : _pendingImages));
+    documents = List<String>.from(
+        documents ?? (noUserBubble ? const [] : _pendingDocuments));
+    if (!noUserBubble) {
+      mediaContext ??= _pendingMediaContext;
+      expression ??= _pendingExpression;
+    }
     if (text.isEmpty &&
         images.isEmpty &&
         documents.isEmpty &&
@@ -1194,13 +1242,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     }
     final botId = _bot['id']?.toString() ?? '';
     final now = DateTime.now().millisecondsSinceEpoch;
-    final userMessages = _buildAttachmentMessages(
-      botId: botId,
-      timestamp: now,
-      text: text,
-      images: images,
-      documents: documents,
-    );
+    final userMessages = batchedMessages ??
+        _buildAttachmentMessages(
+          botId: botId,
+          timestamp: now,
+          text: text,
+          images: images,
+          documents: documents,
+        );
     if (expression != null) {
       userMessages.add(expression.toMessage(botId: botId, timestamp: now + 1));
       final expressionContext = expression.modelContext;
@@ -1215,15 +1264,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
     // 检测告别词，立即触发世界书判断；否则重置5分钟计时器
     final farewellWords = ['再见', '拜拜', '晚安', '早点休息', 'bye', 'goodbye', '886'];
-    final isFarewell =
-        farewellWords.any((word) => text.toLowerCase().contains(word));
     // Keep the idle fallback; farewell review runs after this reply is persisted.
     WorldBookService.instance.resetConversationTimer(botId);
 
-    // ===== 防抖/合并 =====
-    // 上一条请求还在飞（机器人尚未回完）时再发消息：不再像旧实现那样直接丢弃，
-    // 而是作废在途请求的渲染（_requestGen++），把新文本并入待重发队列，先上屏
-    // 气泡并入库存档；等旧请求 finally 结束后用合并文本统一重发一次。
+    // Save each bubble immediately; collect the turn before requesting.
+    if (batchedMessages == null || !_messageDebounce.hasMessages) {
+      _messageDebounce.addMessage(text, _debounceClock.elapsed);
+    }
     if (_loading) {
       final queuedMessages = userMessages;
       if (_queued) {
@@ -1242,9 +1289,16 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           mediaContext
         ].join('\n');
       }
+      _queuedMessages.addAll(userMessages);
+      _queuedAudioPath = audioPath ?? _queuedAudioPath;
+      _queuedForceSingleReply |= forceSingleReply;
       _queued = true;
-      _requestGen++; // 作废在途请求的渲染结果
-      if (mounted) {
+      if (_activeTurn?.supersede() ?? true) {
+        _requestGen++;
+        _activeRequestToken?.cancel();
+      }
+      _pendingQueueWrites++;
+      if (mounted && !noUserBubble) {
         setState(() {
           _msgs.addAll(queuedMessages);
           _msgC.clear();
@@ -1257,7 +1311,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         _scrollDown();
       }
       try {
-        for (final queuedMessage in queuedMessages) {
+        for (final queuedMessage
+            in noUserBubble ? <Map<String, dynamic>>[] : queuedMessages) {
           await MessageDeliveryService.instance.insert({
             'id': queuedMessage['id'],
             'bot_id': botId,
@@ -1271,17 +1326,22 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         }
       } catch (e) {
         debugPrint('[send] persist queued user message failed: $e');
+      } finally {
+        _pendingQueueWrites--;
       }
       return;
     }
 
     // 本次请求的代次快照；若请求期间用户又发了新消息（_requestGen 变化），
     // 渲染前检测到过期则拦截本次结果，交由 finally 用合并文本统一重发。
-    final myGen = _requestGen;
-    // 被合并拦截的过期请求不再落库，避免聊天记录顺序混乱。
-    final persistThisReply = myGen == _requestGen;
+    var myGen = _requestGen;
+    var turn = ChatTurnCommit();
+    _activeTurn = turn;
+    var batchText = text;
+    var batchImages = [...images];
+    var batchDocuments = [...documents];
+    var batchContext = mediaContext;
 
-    final msg = userMessages.first;
     if (!noUserBubble) {
       setState(() {
         _loading = true;
@@ -1301,17 +1361,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       setState(() {
         _loading = true;
         _msgsLoading = false;
-        if (queuedText == null) {
-          _msgC.clear();
-          _hasText = false;
-        }
       });
     }
     _scrollDown();
 
     try {
-      // Media preprocessing belongs to the same visible request as the reply.
-      _setTypingState(true);
       if (!noUserBubble) {
         try {
           // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
@@ -1332,6 +1386,32 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           debugPrint('[send] persist user message failed: $e');
         }
       }
+      await _waitForMessagePause();
+      if (_queued) {
+        text = [text, _queuedText].where((part) => part.isNotEmpty).join('\n');
+        images.addAll(_queuedImages);
+        documents.addAll(_queuedDocuments);
+        mediaContext = [
+          if (mediaContext != null) mediaContext,
+          if (_queuedMediaContext != null) _queuedMediaContext
+        ].join('\n');
+        userMessages.addAll(_queuedMessages);
+        audioPath = _queuedAudioPath ?? audioPath;
+        forceSingleReply |= _queuedForceSingleReply;
+        _clearMessageQueue();
+      }
+      myGen = _requestGen;
+      turn = ChatTurnCommit();
+      _activeTurn = turn;
+      batchText = text;
+      batchImages = [...images];
+      batchDocuments = [...documents];
+      batchContext = mediaContext;
+      _messageDebounce.reset();
+      _activeRequestToken = AICancellationToken();
+      _setTypingState(true);
+      AppLogService.instance.add('AI_TRACE',
+          '连续消息结算 bot=$botId messages=${userMessages.length} generation=$myGen');
       final cm = _bot['chat_model']?.toString().trim() ?? '';
       if (cm.isEmpty) {
         final providers = await DBManager().queryChatProviders();
@@ -1347,7 +1427,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // for the model, without extra user bubbles or download notifications.
       final resolver = PlatformVideoResolver();
       for (final link in resolver.extractLinks(text)) {
-        if (!mounted || myGen != _requestGen) return;
+        if (myGen != _requestGen) return;
         try {
           final result =
               await resolver.parse(link).timeout(const Duration(seconds: 45));
@@ -1397,7 +1477,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           documentNotices.add('分享链接 $link 的媒体获取失败；原文和链接仍有效，不得声称已观看视频。');
         }
       }
-      if (!mounted || myGen != _requestGen) return;
+      if (myGen != _requestGen) return;
       for (final path in documents) {
         if (isVideoAttachment(path)) {
           final prefs = await SharedPreferences.getInstance();
@@ -1457,7 +1537,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ? preparedContext
               : '${_emojiToModelText(text)}\n$preparedContext');
 
-      if (!mounted || myGen != _requestGen) {
+      if (myGen != _requestGen) {
         AppLogService.instance.add('AI_TRACE',
             '媒体处理后停止发送 mounted=$mounted generation=$myGen current=$_requestGen queued=$_queued');
         return;
@@ -1474,14 +1554,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               .clamp(1, 100);
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
-      final requestToken = AICancellationToken();
+      final requestToken = _activeRequestToken!;
       final result = await AIManager()
           .sendMessage(
         botId: botId,
         text: modelText,
         imagePaths: [...images, ...framePaths],
         audioPath: audioPath,
-        persistResponse: persistThisReply,
+        currentMessageIds:
+            userMessages.map((row) => row['id'].toString()).toSet(),
+        beginResponseCommit: () {
+          if (myGen != _requestGen || requestToken.isCancelled) return false;
+          return turn.beginCommit();
+        },
         forceSingleReply: forceSingleReply,
         notifyResponse: true,
         useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
@@ -1493,8 +1578,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         throw TimeoutException('请求超过5分钟，已停止');
       }).whenComplete(() => _setTypingState(false));
 
+      if (myGen != _requestGen && !turn.isCommitted) return;
       if (result['success'] == true) {
-        if (isFarewell && myGen == _requestGen && persistThisReply) {
+        if (farewellWords.any((word) => text.toLowerCase().contains(word)) &&
+            myGen == _requestGen &&
+            turn.isCommitted) {
           unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
         }
         for (final item in userMessages) {
@@ -1506,27 +1594,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         final errorLog = result['error_log']?.toString() ?? errorText;
         AppLogService.instance.add('ERROR', '聊天请求失败：$errorLog');
         if (mounted) GlobalNotice.show(errorText);
-        if (!noUserBubble || retryTarget != null) {
-          final failedMessage = retryTarget ?? msg;
-          failedMessage['error_log'] = errorLog;
-          failedMessage['error_code'] = result['error_code']?.toString();
-          failedMessage['error_text'] = errorText;
-          failedMessage['send_status'] = 'failed';
-          failedMessage.remove('is_retrying');
-        }
-        if (mounted) setState(() {});
-        if (!noUserBubble || retryTarget != null) {
-          try {
-            await DBManager()
-                .updateMessageError(
-                  (retryTarget ?? msg)['id'].toString(),
-                  errorLog: errorLog,
-                  errorCode: result['error_code']?.toString(),
-                  errorMessage: errorText,
-                )
-                .timeout(const Duration(seconds: 5));
-          } catch (_) {}
-        }
+        await _markTurnFailed(
+          retryTarget == null ? userMessages : [retryTarget],
+          errorLog: errorLog,
+          errorText: errorText,
+          errorCode: result['error_code']?.toString(),
+        );
         return;
       }
 
@@ -1610,13 +1683,19 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       }
       _deferredPersistedMessageIds.removeAll(persistedIds);
       await _syncLatestMessages();
+      if (mounted && myGen == _requestGen && isOnboardingReply(result)) {
+        widget.onReplyCompleted?.call();
+      }
       // Images and stickers are included in `messages` after being persisted by
       // AIManager. Rendering result metadata again would duplicate the same
       // media in the visible conversation.
       if (mounted) {
         unawaited(_markReadIfVisible());
       }
+    } on AICancelledException {
+      // Superseded turns are replayed without an error notice.
     } catch (e, st) {
+      if (myGen != _requestGen && !turn.isCommitted) return;
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
       AppLogService.instance.add('ERROR', '发送流程失败：$e\n$st');
@@ -1627,27 +1706,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               : '处理或请求失败：$e';
       if (mounted) GlobalNotice.show(errorText);
       final errorLog = '${e.toString()}\n${st.toString()}';
-      if (!noUserBubble || retryTarget != null) {
-        final failedMessage = retryTarget ?? msg;
-        failedMessage['error_log'] = errorLog;
-        failedMessage['error_code'] = 'local';
-        failedMessage['error_text'] = errorText;
-        failedMessage['send_status'] = 'failed';
-        failedMessage.remove('is_retrying');
-      }
-      if (mounted) setState(() {});
-      if (!noUserBubble || retryTarget != null) {
-        try {
-          await DBManager()
-              .updateMessageError(
-                (retryTarget ?? msg)['id'].toString(),
-                errorLog: errorLog,
-                errorCode: 'local',
-                errorMessage: errorText,
-              )
-              .timeout(const Duration(seconds: 5));
-        } catch (_) {}
-      }
+      await _markTurnFailed(
+        retryTarget == null ? userMessages : [retryTarget],
+        errorLog: errorLog,
+        errorText: errorText,
+        errorCode: 'local',
+      );
     } finally {
       for (final path in unregisteredSharedVideos) {
         try {
@@ -1672,34 +1736,95 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _setTypingState(false);
       _deferredPersistedMessageIds.clear();
       if (mounted) setState(() {});
-      final shouldResend = _queued &&
-          mounted &&
-          (_queuedText.trim().isNotEmpty ||
-              _queuedImages.isNotEmpty ||
-              _queuedDocuments.isNotEmpty);
-      if (shouldResend) {
+      _activeRequestToken = null;
+      if (_queued && myGen != _requestGen && !turn.isCommitted) {
+        // Replay the complete uncommitted turn, including its original photos.
+        _queuedText = [batchText, _queuedText]
+            .where((part) => part.isNotEmpty)
+            .join('\n');
+        _queuedImages.insertAll(0, batchImages);
+        _queuedDocuments.insertAll(0, batchDocuments);
+        _queuedMediaContext = [
+          if (batchContext != null) batchContext,
+          if (_queuedMediaContext != null) _queuedMediaContext
+        ].join('\n');
+        _queuedMessages.insertAll(0, userMessages);
+        _queuedAudioPath ??= audioPath;
+        _queuedForceSingleReply |= forceSingleReply;
+      }
+      if (_queued) {
+        _loading = true;
+        while (_pendingQueueWrites > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         final mergedText = _queuedText;
         final mergedImages = [..._queuedImages];
         final mergedDocuments = [..._queuedDocuments];
         final mergedContext = _queuedMediaContext;
-        _queuedImages.clear();
-        _queuedDocuments.clear();
-        _queuedMediaContext = null;
-        _queuedText = '';
-        _queued = false;
-        _requestGen++;
+        final mergedMessages = [..._queuedMessages];
+        final mergedAudio = _queuedAudioPath;
+        final singleReply = _queuedForceSingleReply;
+        _clearMessageQueue();
+        _loading = false;
         await _send(
           noUserBubble: true,
           queuedText: mergedText,
           images: mergedImages,
           documents: mergedDocuments,
           mediaContext: mergedContext,
+          audioPath: mergedAudio,
+          forceSingleReply: singleReply,
+          batchedMessages: mergedMessages,
         );
       } else {
         await _syncLatestMessages();
         if (mounted) _scrollDown();
       }
     }
+  }
+
+  Future<void> _markTurnFailed(
+    List<Map<String, dynamic>> messages, {
+    required String errorLog,
+    required String errorText,
+    String? errorCode,
+  }) async {
+    for (final message in messages) {
+      final id = message['id'].toString();
+      final rows = [
+        message,
+        ..._msgs.where((row) => row['id'].toString() == id)
+      ];
+      for (final row in rows) {
+        row['error_log'] = errorLog;
+        row['error_code'] = errorCode;
+        row['error_text'] = errorText;
+        row['send_status'] = 'failed';
+        row.remove('is_retrying');
+      }
+      try {
+        await DBManager()
+            .updateMessageError(
+              id,
+              errorLog: errorLog,
+              errorCode: errorCode,
+              errorMessage: errorText,
+            )
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _clearMessageQueue() {
+    _queuedText = '';
+    _queuedImages.clear();
+    _queuedDocuments.clear();
+    _queuedMessages.clear();
+    _queuedMediaContext = null;
+    _queuedAudioPath = null;
+    _queuedForceSingleReply = false;
+    _queued = false;
   }
 
   Future<void> _retryMessage(Map<String, dynamic> message) async {
@@ -1812,6 +1937,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       setState(() => _loading = true);
       _scrollDown();
     }
+    _activeTurn = null;
     _setTypingState(true);
 
     try {
@@ -1822,6 +1948,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         await _send(
           mediaContext: '[用户发送了一段语音]',
           audioPath: audioPath,
+          batchedMessages: [message],
           noUserBubble: true,
           forceSingleReply: true,
         );
@@ -1850,6 +1977,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       // the transcript as model context so no duplicate document bubble exists.
       await _send(
         mediaContext: modelContext,
+        batchedMessages: [message],
         noUserBubble: true,
         forceSingleReply: true,
       );
@@ -2015,7 +2143,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       try {
         final photo = await ImagePicker().pickImage(source: ImageSource.camera);
         if (photo == null || !mounted) return;
-        final fixed = await _fixHeic(photo.path);
+        final fixed = photo.path;
         if (mounted) setState(() => _pendingImages.add(fixed));
       } catch (error) {
         debugPrint('[camera] capture failed: $error');
@@ -2027,7 +2155,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (selected.isNotEmpty) {
         final fixed = <String>[];
         for (final image in selected) {
-          fixed.add(await _fixHeic(image.path));
+          fixed.add(image.path);
         }
         if (mounted) setState(() => _pendingImages.addAll(fixed));
       }
@@ -2134,17 +2262,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       stored.add(destination.path);
     }
     return stored;
-  }
-
-  Future<String> _fixHeic(String path) async {
-    final l = path.toLowerCase();
-    if (l.endsWith('.heic') || l.endsWith('.heif')) {
-      try {
-        final converted = await HeifConverter.convert(path);
-        if (converted != null) return converted;
-      } catch (_) {}
-    }
-    return path;
   }
 
   final Set<String> _expandedThoughtIds = {};
@@ -2260,7 +2377,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           ),
           body: Center(
             child: InteractiveViewer(
-              child: Image.file(File(path), fit: BoxFit.contain),
+              child:
+                  Image(image: photoImageProvider(path), fit: BoxFit.contain),
             ),
           ),
         ),
@@ -3118,6 +3236,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     required String content,
     required int duration,
     required bool failed,
+    required VoidCallback onLongPress,
   }) {
     final theme = TideTheme.of(context);
     final hours = duration ~/ 3600;
@@ -3139,6 +3258,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(7),
+          onLongPress: onLongPress,
           onTap: failed
               ? null
               : () => Navigator.of(context).push(
@@ -3691,6 +3811,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                 VoiceCallCard(
                   message: m,
                   botName: _bot['name']?.toString() ?? '',
+                  onLongPress: () => _msgLongPress(m),
                 ),
               ],
             ),
@@ -3784,6 +3905,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     content: txt,
                     duration: m['duration'] as int? ?? 0,
                     failed: m['mood'] == 'failed',
+                    onLongPress: () => _msgLongPress(m),
                   )
                 : Align(
                     alignment:
@@ -4374,7 +4496,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: isImage
-                        ? Image.file(File(path), fit: BoxFit.cover)
+                        ? Image(
+                            image: photoImageProvider(path), fit: BoxFit.cover)
                         : Tooltip(
                             message: path.split(Platform.pathSeparator).last,
                             child: Container(

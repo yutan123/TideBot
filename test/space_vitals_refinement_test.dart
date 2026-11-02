@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tide_bot/bot_vital_model.dart';
@@ -24,7 +25,7 @@ void main() {
     });
   });
   group('hourly average heart rate', () {
-    int rate(
+    double rate(
             {bool asleep = false,
             String activity = '休息',
             double stress = 3,
@@ -32,15 +33,19 @@ void main() {
             double temperature = 36.5,
             double baseline = 72,
             double previous = 72}) =>
-        hourlyMeanHeartRate(
-            previous: previous,
-            baseline: baseline,
-            asleep: asleep,
-            activity: activity,
-            stress: stress,
-            sleepQuality: quality,
-            temperature: temperature,
-            noise: 0);
+        List.generate(
+            2000,
+            (seed) => hourlyMeanHeartRate(
+                previous: previous,
+                baseline: baseline,
+                asleep: asleep,
+                activity: activity,
+                stress: stress,
+                sleepQuality: quality,
+                temperature: temperature,
+                noise: 0,
+                random: Random(seed))).reduce((a, b) => a + b) /
+        2000;
     test('sleep lowers the mean; exercise raises it without abrupt jumps', () {
       expect(rate(asleep: true), lessThan(rate()));
       expect(rate(activity: '跑步运动'), greaterThan(rate()));
@@ -59,7 +64,7 @@ void main() {
             activity: '运动',
             temperature: 38.5,
             previous: previous);
-        expect(next, inInclusiveRange(45, 135));
+        expect(next, inInclusiveRange(50, 135));
         expect(next, inInclusiveRange(62, 82));
         previous = next.toDouble();
       }
@@ -70,7 +75,7 @@ void main() {
         for (var hour = 0; hour < 48; hour++) {
           current = rate(previous: current, baseline: initial).toDouble();
         }
-        expect(current, initial);
+        expect((current - initial.clamp(50, 135)).abs(), lessThanOrEqualTo(10));
       }
     });
     test('temperature continues from the saved value', () {

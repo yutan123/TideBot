@@ -439,8 +439,7 @@ class ChatListPageState extends State<ChatListPage> {
         final sidebar = widget.sidebar;
         if (sidebar == null ||
             sidebar.isOpen ||
-            details.globalPosition.dx > 28 ||
-            _bots.isEmpty) {
+            details.globalPosition.dx > 28) {
           return;
         }
         sidebar.beginDrag();

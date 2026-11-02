@@ -83,8 +83,9 @@ void main() {
             stress: 3,
             sleepQuality: 80,
             temperature: 36.5,
-            noise: random.nextDouble() * 6 - 3);
-        expect(next, inInclusiveRange(45, 135));
+            noise: random.nextDouble() * 6 - 3,
+            random: random);
+        expect(next, inInclusiveRange(50, 135));
         expect(next, isNot(previous.round()));
         expect((next - previous).abs(), lessThanOrEqualTo(6));
         previous = next.toDouble();
