@@ -18,11 +18,12 @@ Future<File> photoDisplayFile(String path) async {
   return File(path);
 }
 
-ImageProvider photoImageProvider(String path) {
+ImageProvider<Object> photoImageProvider(String path) {
   final lower = path.toLowerCase();
-  return lower.endsWith('.heic') || lower.endsWith('.heif')
-      ? _HeifDisplayImage(path)
-      : FileImage(File(path));
+  if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
+    return _HeifDisplayImage(path);
+  }
+  return FileImage(File(path));
 }
 
 class _HeifDisplayImage extends ImageProvider<_HeifDisplayImage> {
@@ -37,11 +38,12 @@ class _HeifDisplayImage extends ImageProvider<_HeifDisplayImage> {
   ImageStreamCompleter loadImage(
     _HeifDisplayImage key,
     ImageDecoderCallback decode,
-  ) => MultiFrameImageStreamCompleter(
-    codec: _decode(decode),
-    scale: 1,
-    debugLabel: path,
-  );
+  ) =>
+      MultiFrameImageStreamCompleter(
+        codec: _decode(decode),
+        scale: 1,
+        debugLabel: path,
+      );
 
   Future<ui.Codec> _decode(ImageDecoderCallback decode) async {
     final file = await photoDisplayFile(path);
