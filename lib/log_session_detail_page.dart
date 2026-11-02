@@ -1,3 +1,4 @@
+import 'native_selectable_text.dart';
 import 'package:flutter/material.dart';
 import 'log_text.dart';
 import 'app_log_service.dart';
@@ -11,14 +12,7 @@ class LogSessionDetailPage extends StatefulWidget {
 }
 
 class _LogSessionDetailPageState extends State<LogSessionDetailPage> {
-  final _scrollController = ScrollController();
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
+  final _heights = NativeTextHeightCache();
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -32,9 +26,8 @@ class _LogSessionDetailPageState extends State<LogSessionDetailPage> {
                 style: TextStyle(
                     fontFamily: 'TideFont', color: theme.textStrong))),
         body: ListView.builder(
-          key: PageStorageKey('log_session_${widget.session.id}'),
-          controller: _scrollController,
-          // Focusing selectable content must not reveal an entire tall row.
+          // Native selection focus must not ask the viewport to reveal an
+          // entire (potentially very tall) log entry during a drag.
           physics: const HistoryLogScrollPhysics(),
           padding: const EdgeInsets.all(16),
           itemCount: widget.session.entries.length,
@@ -44,6 +37,7 @@ class _LogSessionDetailPageState extends State<LogSessionDetailPage> {
               padding: const EdgeInsets.only(bottom: 12),
               child: LogText(
                 '[${e.time.toLocal()}] ${e.level}\n${e.message}',
+                heightCache: _heights,
                 color: e.level.toUpperCase().contains('ERROR')
                     ? Colors.redAccent
                     : theme.textStrong,
@@ -56,7 +50,7 @@ class _LogSessionDetailPageState extends State<LogSessionDetailPage> {
   }
 }
 
-/// Preserve explicit gestures while rejecting selection focus reveal requests.
+/// Preserve explicit gestures while rejecting native focus reveal requests.
 class HistoryLogScrollPhysics extends ScrollPhysics {
   const HistoryLogScrollPhysics({super.parent});
   @override

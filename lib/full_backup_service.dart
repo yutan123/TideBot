@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import 'data_transfer.dart';
 import 'json_records.dart';
 import 'db.dart';
+import 'transfer_media.dart';
 
 class FullBackupService {
   static const _dbName = 'tidebot.db';
@@ -20,6 +21,16 @@ class FullBackupService {
       final snapshot = File('${work.path}/$_dbName');
       final docs = await getApplicationDocumentsDirectory();
       final files = <String, String>{'tidebot.db': snapshot.path};
+      final collector = TransferMedia(
+        documents: docs,
+        temporary: await getTemporaryDirectory(),
+        files: files,
+      );
+      Future<String> collect(String path) async {
+        await collector.collect(path);
+        return path;
+      }
+
       if (await docs.exists()) {
         await for (final item in docs.list(
           recursive: true,
@@ -27,9 +38,7 @@ class FullBackupService {
         )) {
           if (item is! File) continue;
           final relative = p.relative(item.path, from: docs.path);
-          if (relative == 'tidebot_dev_logs.json' ||
-              relative.startsWith('TideBot/exports/'))
-            continue;
+          if (relative.startsWith('TideBot/exports/')) continue;
           files['documents/$relative'] = item.path;
         }
       }
@@ -50,6 +59,7 @@ class FullBackupService {
       }, exclusive: true);
       final copy = await openDatabase(snapshot.path, singleInstance: false);
       try {
+        await _mapDatabase(copy, collect, write: false);
         final result = await copy.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
         if (result.isNotEmpty && (result.first.values.first as num) != 0) {
           throw StateError('数据库快照忙，请稍后重试');
@@ -66,6 +76,7 @@ class FullBackupService {
         for (final key in prefs.getKeys()) {
           if (!first) sink.write(',');
           first = false;
+          await mapTransferValue(prefs.get(key), collect);
           sink.write('${jsonEncode(key)}:${jsonEncode(prefs.get(key))}');
           await sink.flush();
         }
@@ -74,6 +85,16 @@ class FullBackupService {
         await sink.close();
       }
       files['preferences.json'] = preferences.path;
+      final manifest = File('${work.path}/media_manifest.json');
+      await manifest.writeAsString(
+        jsonEncode({
+          'version': 1,
+          'documents_root': docs.path,
+          'references': collector.references,
+        }),
+        flush: true,
+      );
+      files['media_manifest.json'] = manifest.path;
       final name =
           'tidebot_backup_${DateTime.now().millisecondsSinceEpoch}.zip';
       final file = File('${work.path}/$name');
@@ -125,26 +146,30 @@ class FullBackupService {
       if (!await source.exists() || !await preferences.exists()) {
         throw const FormatException('不是有效的 TideBot 完整备份');
       }
-      // Validate one preference at a time; retaining the complete decoded map
-      // doubled the live preferences during a full restore.
+      final values = <String, dynamic>{};
       await for (final record in JsonRecords.read(
         preferences,
         arrays: const {},
       )) {
-        final value = record.value;
-        if (value is! bool &&
-            value is! num &&
-            value is! String &&
-            !(value is List && value.every((item) => item is String))) {
-          throw const FormatException('备份设置格式无效');
-        }
+        values[record.key] = record.value;
       }
-      final check = await openDatabase(
-        source.path,
-        readOnly: true,
-        singleInstance: false,
+      final docs = await getApplicationDocumentsDirectory();
+      final mediaDestination = Directory(
+        '${docs.path}/restored_media/${DateTime.now().microsecondsSinceEpoch}',
       );
+      final restoredMedia = await BackupMediaRestore.load(
+        archive: work,
+        documents: docs,
+        media: mediaDestination,
+      );
+      final relocate = restoredMedia.mapPath;
+      for (final key in values.keys.toList()) {
+        values[key] = await mapTransferValue(values[key], relocate);
+      }
+      final check = await openDatabase(source.path, singleInstance: false);
       try {
+        await check.transaction((txn) => _mapDatabase(txn, relocate));
+        await check.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
         final result = await check.rawQuery('PRAGMA quick_check');
         if (result.length != 1 || result.first.values.first != 'ok') {
           throw const FormatException('备份数据库损坏');
@@ -153,27 +178,12 @@ class FullBackupService {
         await check.close();
       }
       final dbPath = '${await getDatabasesPath()}/$_dbName';
-      final docs = await getApplicationDocumentsDirectory();
       await DataTransfer.ensureSpace(
         docs,
         await DataTransfer.directoryBytes(work),
       );
       final prefs = await SharedPreferences.getInstance();
-      final oldPrefs = File('${work.path}/old_preferences.json');
-      final oldSink = oldPrefs.openWrite();
-      try {
-        oldSink.write('{');
-        var first = true;
-        for (final key in prefs.getKeys()) {
-          if (!first) oldSink.write(',');
-          first = false;
-          oldSink.write('${jsonEncode(key)}:${jsonEncode(prefs.get(key))}');
-          await oldSink.flush();
-        }
-        oldSink.write('}');
-      } finally {
-        await oldSink.close();
-      }
+      final oldPrefs = {for (final key in prefs.getKeys()) key: prefs.get(key)};
       final rollback = Directory('${work.path}/rollback');
       await rollback.create();
       await DBManager().close();
@@ -195,7 +205,12 @@ class FullBackupService {
         final restored = Directory('${work.path}/documents');
         if (await restored.exists())
           await DataTransfer.copyDirectory(restored, docs);
-        await _setPreferences(prefs, preferences);
+        final media = Directory('${work.path}/media');
+        if (await media.exists()) {
+          await mediaDestination.create(recursive: true);
+          await DataTransfer.copyDirectory(media, mediaDestination);
+        }
+        await _setPreferences(prefs, values);
       } catch (_) {
         try {
           await DBManager().close();
@@ -225,29 +240,65 @@ class FullBackupService {
     }
   });
 
+  /// Page through every user table so KV JSON, avatars, stickers, calls,
+  /// reference images and future media-bearing columns share one path policy.
+  static Future<void> _mapDatabase(
+    DatabaseExecutor db,
+    Future<String> Function(String) mapper, {
+    bool write = true,
+  }) async {
+    final tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    );
+    for (final table in tables) {
+      final name = (table['name'] as String).replaceAll('"', '""');
+      var offset = 0;
+      while (true) {
+        final rows = await db.rawQuery(
+          'SELECT rowid AS __transfer_rowid, * FROM "$name" ORDER BY rowid LIMIT 100 OFFSET ?',
+          [offset],
+        );
+        if (rows.isEmpty) break;
+        for (final row in rows) {
+          final changes = <String, Object?>{};
+          for (final entry in row.entries) {
+            if (entry.value is! String) continue;
+            final mapped = await mapTransferValue(entry.value, mapper);
+            if (mapped != entry.value) changes[entry.key] = mapped;
+          }
+          if (write && changes.isNotEmpty) {
+            await db.update(
+              table['name'] as String,
+              changes,
+              where: 'rowid = ?',
+              whereArgs: [row['__transfer_rowid']],
+            );
+          }
+        }
+        offset += rows.length;
+      }
+    }
+  }
+
   static Future<void> _setPreferences(
     SharedPreferences prefs,
-    File values,
+    Map values,
   ) async {
-    if (!await prefs.clear()) throw StateError('无法清理旧设置');
-    await for (final entry in JsonRecords.read(values, arrays: const {})) {
-      final key = entry.key;
+    await prefs.clear();
+    for (final entry in values.entries) {
+      final key = entry.key.toString();
       final value = entry.value;
-      bool saved;
       if (value is bool) {
-        saved = await prefs.setBool(key, value);
+        await prefs.setBool(key, value);
       } else if (value is int) {
-        saved = await prefs.setInt(key, value);
+        await prefs.setInt(key, value);
       } else if (value is double) {
-        saved = await prefs.setDouble(key, value);
+        await prefs.setDouble(key, value);
       } else if (value is String) {
-        saved = await prefs.setString(key, value);
-      } else if (value is List && value.every((item) => item is String)) {
-        saved = await prefs.setStringList(key, value.cast<String>());
-      } else {
-        throw const FormatException('备份设置格式无效');
+        await prefs.setString(key, value);
+      } else if (value is List) {
+        await prefs.setStringList(key, value.map((e) => e.toString()).toList());
       }
-      if (!saved) throw StateError('无法恢复设置：$key');
     }
   }
 }

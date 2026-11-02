@@ -1,4 +1,3 @@
-import 'platform_share_cover.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'link_preview_models.dart';
@@ -214,22 +213,27 @@ class VideoShareCard extends StatelessWidget {
             children: [
               AspectRatio(
                 aspectRatio: 16 / 9,
-                child: Stack(fit: StackFit.expand, children: [
-                  PlatformShareCover(
-                      data: data, placeholder: _placeholderCover(theme, info)),
-                  Center(
-                      child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.36),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white54),
-                    ),
-                    child: const Icon(Icons.open_in_new_rounded,
-                        size: 20, color: Colors.white),
-                  )),
-                ]),
+                child: data.imageUrl?.isNotEmpty == true
+                    ? Stack(fit: StackFit.expand, children: [
+                        Image.network(data.imageUrl!,
+                            headers: data.imageHeaders,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                _placeholderCover(theme, info)),
+                        Center(
+                            child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.36),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white54),
+                          ),
+                          child: const Icon(Icons.open_in_new_rounded,
+                              size: 20, color: Colors.white),
+                        )),
+                      ])
+                    : _placeholderCover(theme, info),
               ),
               Padding(
                 padding: const EdgeInsets.all(12),

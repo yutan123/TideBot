@@ -1310,8 +1310,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _scrollDown();
 
     try {
-      // Media preprocessing belongs to the same visible request as the reply.
-      _setTypingState(true);
       if (!noUserBubble) {
         try {
           // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
@@ -1429,8 +1427,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             if (history.length > 50)
               history.removeRange(0, history.length - 50);
             await prefs.setStringList('video_history_$botId', history);
-            AppLogService.instance.add('VIDEO',
-                '视频上下文已准备 video=$videoId characters=${prepared.context.length} frames=${prepared.frames.length}');
             unregisteredSharedVideos.remove(path);
             documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
             framePaths.addAll(prepared.frames);
@@ -1457,13 +1453,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               ? preparedContext
               : '${_emojiToModelText(text)}\n$preparedContext');
 
-      if (!mounted || myGen != _requestGen) {
-        AppLogService.instance.add('AI_TRACE',
-            '媒体处理后停止发送 mounted=$mounted generation=$myGen current=$_requestGen queued=$_queued');
-        return;
-      }
-      AppLogService.instance.add('AI_TRACE',
-          '媒体上下文交给聊天模型 bot=$botId videos=${preparedVideos.length} characters=${modelText.length}');
+      if (!mounted || myGen != _requestGen) return;
       // AIManager reads persisted, role-typed history. Partially revealed UI
       // rows must never be reused as a model transcript.
       debugPrint('[send] request start bot=$botId model=$cm');
@@ -1472,6 +1462,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       final streamSpeed =
           (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
               .clamp(1, 100);
+      _setTypingState(true);
       // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
       const requestTimeout = Duration(minutes: 5);
       final requestToken = AICancellationToken();
@@ -1504,8 +1495,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (result['success'] != true) {
         final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
         final errorLog = result['error_log']?.toString() ?? errorText;
-        AppLogService.instance.add('ERROR', '聊天请求失败：$errorLog');
-        if (mounted) GlobalNotice.show(errorText);
         if (!noUserBubble || retryTarget != null) {
           final failedMessage = retryTarget ?? msg;
           failedMessage['error_log'] = errorLog;
@@ -1619,7 +1608,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     } catch (e, st) {
       debugPrint('[send] failed: $e');
       debugPrint(st.toString());
-      AppLogService.instance.add('ERROR', '发送流程失败：$e\n$st');
       final errorText = e is TimeoutException
           ? '请求超过5分钟，已停止'
           : e is StateError

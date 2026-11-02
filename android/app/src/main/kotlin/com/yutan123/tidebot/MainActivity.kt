@@ -121,7 +121,6 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        TideMemoryEmbedding.register(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         dataTransfer?.dispose()
         dataTransfer = DataTransfer(this, flutterEngine.dartExecutor.binaryMessenger)
         selectionMenu?.dispose()
@@ -306,11 +305,6 @@ class MainActivity: FlutterActivity() {
                 }
                 "openPermissionSettings" -> {
                     val kind = call.argument<String>("kind")
-                    if (kind == "autostart") {
-                        if (TideAutoStartSettings.open(this)) result.success(null)
-                        else result.error("settings_unavailable", "无法打开自启动设置", null)
-                        return@setMethodCallHandler
-                    }
                     val action = when (kind) {
                         "battery" -> Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
                         "alarm" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM else Settings.ACTION_APPLICATION_DETAILS_SETTINGS

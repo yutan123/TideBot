@@ -47,9 +47,9 @@ class TideEnhancedBackgroundWork(
                 NORMAL_INTERVAL_MINUTES
             }
 
-            // Low-power mode already lowers frequency; never block recovery
-            // entirely on low battery.
-            val constraints = Constraints.Builder().build()
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(!lowPowerMode) // 低功耗模式下允许低电量执行
+                .build()
 
             val request = PeriodicWorkRequestBuilder<TideEnhancedBackgroundWork>(
                 intervalMinutes,
@@ -92,8 +92,6 @@ class TideEnhancedBackgroundWork(
             TideFutureTasks.reconcile(applicationContext)
             TideProactiveTasks.reconcile(applicationContext)
             for (id in TideConfigReader.getEnabledBotIds(applicationContext)) if (!TideMasterScheduler.isRegistered(applicationContext, "vitals:$id")) TideVitalSigns.tick(applicationContext,id)
-            // Repair deliveries for existing deadlines as well as new tasks.
-            TideMasterScheduler.restoreAllTasks(applicationContext)
             val due = TideStore.open(applicationContext).use { db ->
                 TideStore.rows(db, "SELECT task_id,trigger_time FROM background_tasks WHERE enabled=1 AND trigger_time<=? ORDER BY trigger_time LIMIT 16", System.currentTimeMillis().toString())
             }

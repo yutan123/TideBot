@@ -100,23 +100,21 @@ Map<String, dynamic>? extractPageState(String html, String marker) {
   return null;
 }
 
-Map<String, dynamic>? findVideoItem(dynamic node, {String? id}) {
+Map<String, dynamic>? findVideoItem(dynamic node) {
   if (node is Map) {
     if ((node['video'] is Map || node['images'] is List) &&
         (node.containsKey('aweme_id') ||
             node.containsKey('awemeId') ||
-            node.containsKey('desc')) &&
-        (id == null ||
-            '${node['aweme_id'] ?? node['awemeId'] ?? node['id']}' == id)) {
+            node.containsKey('desc'))) {
       return Map<String, dynamic>.from(node);
     }
     for (final value in node.values) {
-      final found = findVideoItem(value, id: id);
+      final found = findVideoItem(value);
       if (found != null) return found;
     }
   } else if (node is List) {
     for (final value in node) {
-      final found = findVideoItem(value, id: id);
+      final found = findVideoItem(value);
       if (found != null) return found;
     }
   }

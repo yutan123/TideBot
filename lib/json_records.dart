@@ -7,7 +7,12 @@ import 'dart:io';
 class JsonRecords {
   static Stream<({String key, dynamic value, bool element})> read(
     File file, {
-    Set<String> arrays = const {'messages', 'video_history'},
+    Set<String> arrays = const {
+      'messages',
+      'video_history',
+      'call_sessions',
+      'call_messages',
+    },
   }) async* {
     final reader = _Reader(file.openRead().transform(utf8.decoder));
     try {
@@ -96,52 +101,32 @@ class _Reader {
     var depth = 0;
     var string = false;
     var escaped = false;
-    while (await _rawPeek() != null) {
-      final start = _index;
-      var done = false;
-      // Scan synchronously inside each file chunk. Awaiting and allocating a
-      // one-character string per byte caused heavy GC during large imports.
-      while (_index < _chunk.length) {
-        final c = _chunk.codeUnitAt(_index);
-        if (!string &&
-            depth == 0 &&
-            (c == 44 ||
-                c == 93 ||
-                c == 125 ||
-                c == 32 ||
-                c == 10 ||
-                c == 13 ||
-                c == 9)) {
-          done = true;
-          break;
+    while (true) {
+      final c = await _rawPeek();
+      if (c == null) break;
+      if (!string &&
+          depth == 0 &&
+          (c == ',' || c == ']' || c == '}' || ' \n\r\t'.contains(c)))
+        break;
+      _index++;
+      buffer.write(c);
+      if (string) {
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          string = false;
+          if (depth == 0) break;
         }
-        _index++;
-        if (string) {
-          if (escaped) {
-            escaped = false;
-          } else if (c == 92) {
-            escaped = true;
-          } else if (c == 34) {
-            string = false;
-            if (depth == 0) {
-              done = true;
-              break;
-            }
-          }
-        } else if (c == 34) {
-          string = true;
-        } else if (c == 91 || c == 123) {
-          depth++;
-        } else if (c == 93 || c == 125) {
-          depth--;
-          if (depth == 0) {
-            done = true;
-            break;
-          }
-        }
+      } else if (c == '"') {
+        string = true;
+      } else if (c == '[' || c == '{') {
+        depth++;
+      } else if (c == ']' || c == '}') {
+        depth--;
+        if (depth == 0) break;
       }
-      buffer.write(_chunk.substring(start, _index));
-      if (done) break;
     }
     if (string || depth != 0 || buffer.isEmpty)
       throw const FormatException('JSON 不完整');

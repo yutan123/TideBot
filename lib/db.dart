@@ -7,8 +7,8 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'data_transfer.dart';
-import 'transfer_media.dart';
 import 'json_records.dart';
+import 'transfer_media.dart';
 import 'chat_event_bus.dart';
 import 'voice_call_schema.dart';
 
@@ -275,8 +275,7 @@ class DBManager {
   Future<bool> _shouldRepairSchema(Database db) async {
     try {
       final result = await db.rawQuery(
-        "SELECT value FROM kv_store WHERE key = 'schema_repair_version'",
-      );
+          "SELECT value FROM kv_store WHERE key = 'schema_repair_version'");
       if (result.isEmpty) return true;
       final stored = int.tryParse(result.first['value']?.toString() ?? '') ?? 0;
       return stored < 36; // 36：修复旧库通话时间字段和卡片关联字段
@@ -292,10 +291,11 @@ class DBManager {
           key TEXT PRIMARY KEY, value TEXT
         )
       ''');
-      await db.insert('kv_store', {
-        'key': 'schema_repair_version',
-        'value': '36',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.insert(
+        'kv_store',
+        {'key': 'schema_repair_version', 'value': '36'},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     } catch (error) {
       print('[db] mark schema repaired failed: $error');
     }
@@ -473,11 +473,8 @@ class DBManager {
         } else {
           await _ensureVoiceCallStorage(db);
         }
-        await db.update(
-          'memories',
-          {'category': '记忆'},
-          where: "category = 'fact' OR category IS NULL OR category = ''",
-        );
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -570,8 +567,7 @@ class DBManager {
           )
         ''');
         await db.execute(
-          'CREATE INDEX idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)',
-        );
+            'CREATE INDEX idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
         await db.execute('''
           CREATE TABLE ai_usage_events (
             id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT NOT NULL,
@@ -631,19 +627,13 @@ class DBManager {
       onDowngrade: (db, oldVersion, newVersion) async {
         print('[db] onDowngrade $oldVersion -> $newVersion; preserving data');
         await _repairExistingDatabase(db);
-        await db.update(
-          'memories',
-          {'category': '记忆'},
-          where: "category = 'fact' OR category IS NULL OR category = ''",
-        );
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         await _repairExistingDatabase(db);
-        await db.update(
-          'memories',
-          {'category': '记忆'},
-          where: "category = 'fact' OR category IS NULL OR category = ''",
-        );
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
         try {
           if (oldVersion < 2) {
             try {
@@ -653,48 +643,40 @@ class DBManager {
               await db.execute('ALTER TABLE bots ADD COLUMN daily_quote TEXT');
             } catch (_) {}
             try {
-              await db.execute(
-                'ALTER TABLE schedule_tasks ADD COLUMN note TEXT',
-              );
+              await db
+                  .execute('ALTER TABLE schedule_tasks ADD COLUMN note TEXT');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE posts ADD COLUMN comments INTEGER DEFAULT 0');
+            } catch (_) {}
+            try {
+              await db
+                  .execute('ALTER TABLE bots ADD COLUMN last_msg_time INTEGER');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE bots ADD COLUMN last_msg_time INTEGER',
-              );
-            } catch (_) {}
-            try {
-              await db.execute(
-                'ALTER TABLE bots ADD COLUMN is_pinned INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE bots ADD COLUMN is_pinned INTEGER DEFAULT 0');
             } catch (_) {}
           }
           if (oldVersion < 4) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN duration INTEGER',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN duration INTEGER');
             } catch (_) {}
           }
           if (oldVersion < 5) {
             try {
               await db.execute(
-                'ALTER TABLE posts ADD COLUMN user_liked INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE posts ADD COLUMN user_liked INTEGER DEFAULT 0');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE posts ADD COLUMN user_collected INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE posts ADD COLUMN user_collected INTEGER DEFAULT 0');
             } catch (_) {}
             await db.execute('''
             CREATE TABLE IF NOT EXISTS post_comments (
@@ -707,20 +689,17 @@ class DBManager {
           if (oldVersion < 6) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN error_log TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN error_log TEXT');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN error_code TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN error_code TEXT');
             } catch (_) {}
           }
           if (oldVersion < 7) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN error_message TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN error_message TEXT');
             } catch (_) {}
           }
           if (oldVersion < 8) {
@@ -747,15 +726,13 @@ class DBManager {
           if (oldVersion < 10) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN reply_to_id TEXT');
             } catch (_) {}
           }
           if (oldVersion < 11) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN sources_json TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN sources_json TEXT');
             } catch (_) {}
             await db.execute('''
             CREATE TABLE IF NOT EXISTS stickers (
@@ -766,64 +743,52 @@ class DBManager {
           }
           if (oldVersion < 12) {
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_stickers_emotion ON stickers(emotion)');
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_chat_history_bot_timestamp ON chat_history(bot_id, timestamp)');
           }
           if (oldVersion < 13) {
             try {
               await db.execute(
-                "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT '记忆'",
-              );
+                  "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT '记忆'");
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 3',
-              );
+                  'ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 3');
             } catch (_) {}
             try {
               await db.execute(
-                'ALTER TABLE memories ADD COLUMN expires_at INTEGER',
-              );
+                  'ALTER TABLE memories ADD COLUMN expires_at INTEGER');
             } catch (_) {}
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_memories_bot_type_timestamp ON memories(bot_id, type, timestamp)');
           }
           if (oldVersion < 16) {
             try {
               await db.execute(
-                'ALTER TABLE memories ADD COLUMN updated_at INTEGER',
-              );
+                  'ALTER TABLE memories ADD COLUMN updated_at INTEGER');
             } catch (_) {}
             await db.execute(
-              'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL',
-            );
+                'UPDATE memories SET updated_at = timestamp WHERE updated_at IS NULL');
           }
           if (oldVersion < 17) {
             try {
               await db.execute(
-                'ALTER TABLE post_comments ADD COLUMN parent_id TEXT',
-              );
+                  'ALTER TABLE post_comments ADD COLUMN parent_id TEXT');
             } catch (_) {}
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_post_comments_parent ON post_comments(post_id, parent_id, timestamp)');
           }
           if (oldVersion < 18) {
             try {
               await db.execute(
-                'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE bots ADD COLUMN last_read_at INTEGER DEFAULT 0');
             } catch (_) {}
           }
           if (oldVersion < 19) {
             try {
               await db.execute(
-                'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0',
-              );
+                  'ALTER TABLE bots ADD COLUMN is_disabled INTEGER DEFAULT 0');
             } catch (_) {}
           }
           if (oldVersion < 20) {
@@ -836,21 +801,17 @@ class DBManager {
             )
           ''');
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_bot_diaries_bot_date ON bot_diaries(bot_id, date_key)');
             await db.execute(
-              "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL",
-            );
+                "UPDATE memories SET type = 'long' WHERE type NOT IN ('long', 'short') OR type IS NULL");
           }
           if (oldVersion < 21) {
             try {
               await db.execute(
-                'ALTER TABLE chat_history ADD COLUMN reply_group_id TEXT',
-              );
+                  'ALTER TABLE chat_history ADD COLUMN reply_group_id TEXT');
             } catch (_) {}
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_chat_history_reply_group ON chat_history(reply_group_id, timestamp)');
           }
           if (oldVersion < 22) await _createSkillTables(db);
           if (oldVersion < 23) {
@@ -869,8 +830,7 @@ class DBManager {
           if (oldVersion < 24) {
             try {
               await db.execute(
-                'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0',
-              );
+                  'ALTER TABLE skill_tools ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0');
             } catch (_) {}
           }
 
@@ -883,9 +843,8 @@ class DBManager {
               'idempotency_key TEXT',
             ]) {
               try {
-                await db.execute(
-                  'ALTER TABLE schedule_tasks ADD COLUMN $column',
-                );
+                await db
+                    .execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
               } catch (_) {}
             }
             try {
@@ -924,8 +883,7 @@ class DBManager {
             // 初始化已有记忆的keys_json（从content提取简单关键词）
             try {
               await db.execute(
-                "UPDATE memories SET keys_json = '[]' WHERE keys_json IS NULL",
-              );
+                  "UPDATE memories SET keys_json = '[]' WHERE keys_json IS NULL");
             } catch (_) {}
           }
           if (oldVersion < 32) {
@@ -990,21 +948,16 @@ class DBManager {
               "frequency TEXT DEFAULT 'once'",
               "prompt TEXT DEFAULT ''",
               'run_at INTEGER',
-              "status TEXT DEFAULT 'pending'",
+              "status TEXT DEFAULT 'pending'"
             ]) {
               try {
-                await db.execute(
-                  'ALTER TABLE schedule_tasks ADD COLUMN $column',
-                );
+                await db
+                    .execute('ALTER TABLE schedule_tasks ADD COLUMN $column');
               } catch (_) {}
             }
             try {
-              await db.update(
-                'memories',
-                {'type': 'long'},
-                where: 'type = ?',
-                whereArgs: ['medium'],
-              );
+              await db.update('memories', {'type': 'long'},
+                  where: 'type = ?', whereArgs: ['medium']);
             } catch (_) {}
           }
           if (oldVersion < 14) {
@@ -1019,8 +972,7 @@ class DBManager {
             )
           ''');
             await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)',
-            );
+                'CREATE INDEX IF NOT EXISTS idx_life_schedule_bot_date ON bot_life_schedules(bot_id, date_key)');
           }
           if (oldVersion < 35) {
             // 添加视频解析模型字段
@@ -1032,11 +984,8 @@ class DBManager {
           print('[db] onUpgrade continued after error: $error');
         }
         await _repairExistingDatabase(db);
-        await db.update(
-          'memories',
-          {'category': '记忆'},
-          where: "category = 'fact' OR category IS NULL OR category = ''",
-        );
+        await db.update('memories', {'category': '记忆'},
+            where: "category = 'fact' OR category IS NULL OR category = ''");
       },
     );
     // Legacy summaries are optional cleanup. Schedule it after the database
@@ -1070,14 +1019,18 @@ class DBManager {
         final id = summary['id']?.toString() ?? '';
         final botId = summary['bot_id']?.toString() ?? '';
         if (id.isEmpty || botId.isEmpty) continue;
-        await db.insert('call_sessions', {
-          'id': 'legacy_$id',
-          'bot_id': botId,
-          'summary': summary['content']?.toString() ?? '',
-          'duration': (summary['duration'] as num?)?.toInt() ?? 0,
-          'status': 'completed',
-          'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
-        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        await db.insert(
+          'call_sessions',
+          {
+            'id': 'legacy_$id',
+            'bot_id': botId,
+            'summary': summary['content']?.toString() ?? '',
+            'duration': (summary['duration'] as num?)?.toInt() ?? 0,
+            'status': 'completed',
+            'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
     } catch (error) {
       // Preserve legacy rows if migration cannot complete. Database open must
@@ -1091,13 +1044,10 @@ class DBManager {
       id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, summary TEXT NOT NULL,
       duration INTEGER NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
       FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE)''');
-    await _execSql(
-      db,
-      '''CREATE TABLE IF NOT EXISTS call_messages (
+    await _execSql(db, '''CREATE TABLE IF NOT EXISTS call_messages (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
       content TEXT NOT NULL, timestamp INTEGER NOT NULL,
-      FOREIGN KEY(session_id) REFERENCES call_sessions(id) ON DELETE CASCADE)''',
-    );
+      FOREIGN KEY(session_id) REFERENCES call_sessions(id) ON DELETE CASCADE)''');
     await _execSql(
       db,
       'CREATE INDEX IF NOT EXISTS idx_call_sessions_bot_created ON call_sessions(bot_id, created_at DESC)',
@@ -1147,15 +1097,13 @@ class DBManager {
   Future<List<Map<String, dynamic>>> queryEnabledSkillTools() async {
     final db = await database;
     return db.rawQuery(
-      "SELECT * FROM skill_tools WHERE enabled = 1 AND (risk_level != 'sensitive' OR authorized = 1) AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)",
-    );
+        "SELECT * FROM skill_tools WHERE enabled = 1 AND (risk_level != 'sensitive' OR authorized = 1) AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)");
   }
 
   Future<List<Map<String, dynamic>>> queryEnabledMcpTools() async {
     final db = await database;
     return db.rawQuery(
-      'SELECT t.*, s.url, s.headers_key, s.timeout_ms FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1',
-    );
+        'SELECT t.*, s.url, s.headers_key, s.timeout_ms FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1');
   }
 
   Future<List<Map<String, dynamic>>> querySkills() async =>
@@ -1164,41 +1112,25 @@ class DBManager {
       (await database).query('mcp_servers', orderBy: 'updated_at DESC');
 
   Future<void> saveSkill(
-    Map<String, dynamic> skill,
-    List<Map<String, dynamic>> tools,
-  ) async {
+      Map<String, dynamic> skill, List<Map<String, dynamic>> tools) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.insert(
-        'skills',
-        skill,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-      await txn.delete(
-        'skill_tools',
-        where: 'skill_id = ?',
-        whereArgs: [skill['id']],
-      );
+      await txn.insert('skills', skill,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete('skill_tools',
+          where: 'skill_id = ?', whereArgs: [skill['id']]);
       for (final tool in tools)
-        await txn.insert(
-          'skill_tools',
-          tool,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('skill_tools', tool,
+            conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
   Future<void> saveMcpServer(Map<String, dynamic> server) async =>
-      (await database).insert(
-        'mcp_servers',
-        server,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      (await database).insert('mcp_servers', server,
+          conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> saveMcpTools(
-    String serverId,
-    List<Map<String, dynamic>> tools,
-  ) async {
+      String serverId, List<Map<String, dynamic>> tools) async {
     final db = await database;
     await db.transaction((txn) async {
       final previous = <String, int>{
@@ -1210,48 +1142,49 @@ class DBManager {
         ))
           row['name'].toString(): (row['enabled'] as num?)?.toInt() ?? 1,
       };
-      await txn.delete(
-        'mcp_tools',
-        where: 'server_id = ?',
-        whereArgs: [serverId],
-      );
+      await txn
+          .delete('mcp_tools', where: 'server_id = ?', whereArgs: [serverId]);
       final now = DateTime.now().millisecondsSinceEpoch;
       for (final tool in tools) {
         final name = tool['name']?.toString() ?? '';
         if (name.isEmpty) continue;
-        await txn.insert('mcp_tools', {
-          'id': 'mcp_tool_${serverId}_$name',
-          'server_id': serverId,
-          'name': name,
-          'description': tool['description']?.toString() ?? '',
-          'schema_json': jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
-          'enabled': previous[name] ?? 1,
-          'discovered_at': now,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+            'mcp_tools',
+            {
+              'id': 'mcp_tool_${serverId}_$name',
+              'server_id': serverId,
+              'name': name,
+              'description': tool['description']?.toString() ?? '',
+              'schema_json':
+                  jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
+              'enabled': previous[name] ?? 1,
+              'discovered_at': now,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await txn.update(
-        'mcp_servers',
-        {'status': 'connected', 'error': null, 'updated_at': now},
-        where: 'id = ?',
-        whereArgs: [serverId],
-      );
+          'mcp_servers',
+          {
+            'status': 'connected',
+            'error': null,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [serverId]);
     });
   }
 
-  Future<void> updateMcpStatus(
-    String id,
-    String status, [
-    String? error,
-  ]) async => (await database).update(
-    'mcp_servers',
-    {
-      'status': status,
-      'error': error,
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  Future<void> updateMcpStatus(String id, String status,
+          [String? error]) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            'status': status,
+            'error': error,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
 
   Future<void> insertToolAudit({
     required String source,
@@ -1260,16 +1193,17 @@ class DBManager {
     required String status,
     required int durationMs,
     String? error,
-  }) async => (await database).insert('tool_audit', {
-    'id': 'audit_${DateTime.now().microsecondsSinceEpoch}',
-    'source': source,
-    'tool_name': toolName,
-    'input_summary': inputSummary,
-    'status': status,
-    'duration_ms': durationMs,
-    'error': error,
-    'created_at': DateTime.now().millisecondsSinceEpoch,
-  });
+  }) async =>
+      (await database).insert('tool_audit', {
+        'id': 'audit_${DateTime.now().microsecondsSinceEpoch}',
+        'source': source,
+        'tool_name': toolName,
+        'input_summary': inputSummary,
+        'status': status,
+        'duration_ms': durationMs,
+        'error': error,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
 
   Future<void> removeLegacyVideoSkill() async {
     final db = await database;
@@ -1301,7 +1235,7 @@ class DBManager {
         'skills',
         {
           'enabled': enabled ? 1 : 0,
-          'updated_at': DateTime.now().millisecondsSinceEpoch,
+          'updated_at': DateTime.now().millisecondsSinceEpoch
         },
         where: 'id = ?',
         whereArgs: [id],
@@ -1344,84 +1278,56 @@ class DBManager {
       );
 
   Future<List<Map<String, dynamic>>> querySkillTools(String skillId) async =>
-      (await database).query(
-        'skill_tools',
-        where: 'skill_id = ?',
-        whereArgs: [skillId],
-        orderBy: 'name',
-      );
+      (await database).query('skill_tools',
+          where: 'skill_id = ?', whereArgs: [skillId], orderBy: 'name');
 
   Future<List<Map<String, dynamic>>> queryMcpTools(String serverId) async =>
-      (await database).query(
-        'mcp_tools',
-        where: 'server_id = ?',
-        whereArgs: [serverId],
-        orderBy: 'name',
-      );
+      (await database).query('mcp_tools',
+          where: 'server_id = ?', whereArgs: [serverId], orderBy: 'name');
 
-  Future<void> updateMcpServer(
-    String id,
-    Map<String, dynamic> values, {
-    bool clearTools = false,
-  }) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      // UPDATE preserves child rows; REPLACE can cascade-delete tool settings.
-      final count = await txn.update(
-        'mcp_servers',
-        {...values, 'updated_at': DateTime.now().millisecondsSinceEpoch},
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      if (count != 1) throw StateError('MCP server no longer exists');
-      if (clearTools) {
-        await txn.delete('mcp_tools', where: 'server_id = ?', whereArgs: [id]);
-      }
-    });
-  }
+  Future<void> updateMcpServer(String id, Map<String, dynamic> values) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            ...values,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
 
   Future<void> saveMcpMetadata(
     String id, {
     required List<Map<String, dynamic>> resources,
     required List<Map<String, dynamic>> prompts,
-  }) async => (await database).update(
-    'mcp_servers',
-    {
-      'resources_json': jsonEncode(resources),
-      'prompts_json': jsonEncode(prompts),
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  }) async =>
+      (await database).update(
+          'mcp_servers',
+          {
+            'resources_json': jsonEncode(resources),
+            'prompts_json': jsonEncode(prompts),
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'id = ?',
+          whereArgs: [id]);
 
   Future<Map<String, dynamic>?> getLifeSchedule(
-    String botId,
-    String dateKey,
-  ) async {
+      String botId, String dateKey) async {
     final db = await database;
-    final rows = await db.query(
-      'bot_life_schedules',
-      where: 'bot_id = ? AND date_key = ?',
-      whereArgs: [botId, dateKey],
-      limit: 1,
-    );
+    final rows = await db.query('bot_life_schedules',
+        where: 'bot_id = ? AND date_key = ?',
+        whereArgs: [botId, dateKey],
+        limit: 1);
     return rows.isEmpty ? null : rows.first;
   }
 
   Future<void> upsertLifeSchedule(Map<String, dynamic> schedule) async {
     final db = await database;
-    await db.insert(
-      'bot_life_schedules',
-      schedule,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('bot_life_schedules', schedule,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   // ================= Bots CRUD =================
-  Future<List<Map<String, dynamic>>> getAllBots({
-    bool throwOnError = false,
-  }) async {
+  Future<List<Map<String, dynamic>>> getAllBots() async {
     final db = await database;
     try {
       return await db.query('bots', orderBy: 'created_at DESC');
@@ -1431,7 +1337,6 @@ class DBManager {
         return await db.query('bots');
       } catch (fallbackError) {
         print('[db] getAllBots fallback failed: $fallbackError');
-        if (throwOnError) rethrow;
         return const [];
       }
     }
@@ -1445,12 +1350,8 @@ class DBManager {
   /// Returns a single bot for notification deep links, or null if it was deleted.
   Future<Map<String, dynamic>?> getBotById(String id) async {
     final db = await database;
-    final rows = await db.query(
-      'bots',
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
+    final rows =
+        await db.query('bots', where: 'id = ?', whereArgs: [id], limit: 1);
     return rows.isEmpty ? null : rows.first;
   }
 
@@ -1465,10 +1366,8 @@ class DBManager {
           'proactive_due_at_$id': '0',
           'proactive_unanswered_$id': '0',
         }.entries) {
-          await txn.insert('kv_store', {
-            'key': entry.key,
-            'value': entry.value,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('kv_store', {'key': entry.key, 'value': entry.value},
+              conflictAlgorithm: ConflictAlgorithm.replace);
         }
       });
       await NativeBackgroundCoordinator.synchronize();
@@ -1497,9 +1396,7 @@ class DBManager {
   }
 
   Future<void> updateMessageSources(
-    String id,
-    List<Map<String, String>> sources,
-  ) async {
+      String id, List<Map<String, String>> sources) async {
     final db = await database;
     await db.update(
       'chat_history',
@@ -1561,14 +1458,12 @@ class DBManager {
   Future<void> _publishMessageEvent(String id, ChatEventType type) async {
     final row = await getMessageById(id);
     if (row == null) return;
-    ChatEventBus.instance.publish(
-      ChatEvent(
-        type: type,
-        botId: row['bot_id']?.toString(),
-        messageId: id,
-        message: row,
-      ),
-    );
+    ChatEventBus.instance.publish(ChatEvent(
+      type: type,
+      botId: row['bot_id']?.toString(),
+      messageId: id,
+      message: row,
+    ));
   }
 
   Future<List<Map<String, dynamic>>> getChatHistory(String botId) async {
@@ -1581,30 +1476,20 @@ class DBManager {
   }) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.insert(
-        'chat_history',
-        msg,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-      final timestamp =
-          (msg['timestamp'] as num?)?.toInt() ??
+      await txn.insert('chat_history', msg,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      final timestamp = (msg['timestamp'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch;
-      await txn.update(
-        'bots',
-        {'last_msg_time': timestamp},
-        where: 'id = ?',
-        whereArgs: [msg['bot_id']],
-      );
+      await txn.update('bots', {'last_msg_time': timestamp},
+          where: 'id = ?', whereArgs: [msg['bot_id']]);
     });
     if (publishEvent) {
-      ChatEventBus.instance.publish(
-        ChatEvent(
-          type: ChatEventType.inserted,
-          botId: msg['bot_id']?.toString(),
-          messageId: msg['id']?.toString(),
-          message: Map<String, dynamic>.from(msg),
-        ),
-      );
+      ChatEventBus.instance.publish(ChatEvent(
+        type: ChatEventType.inserted,
+        botId: msg['bot_id']?.toString(),
+        messageId: msg['id']?.toString(),
+        message: Map<String, dynamic>.from(msg),
+      ));
     }
   }
 
@@ -1703,11 +1588,9 @@ class DBManager {
             if (audio.isNotEmpty) paths.add(audio);
             final frames = item['frame_paths'];
             if (frames is List) {
-              paths.addAll(
-                frames
-                    .map((path) => path.toString().trim())
-                    .where((path) => path.isNotEmpty),
-              );
+              paths.addAll(frames
+                  .map((path) => path.toString().trim())
+                  .where((path) => path.isNotEmpty));
             }
           } catch (_) {}
         }
@@ -1731,7 +1614,7 @@ class DBManager {
         return {
           for (final row in rows)
             row['bot_id']?.toString() ?? '':
-                (row['bytes'] as num?)?.toInt() ?? 0,
+                (row['bytes'] as num?)?.toInt() ?? 0
         };
       } catch (fallbackError) {
         print('[db] chatStorageByBot fallback failed: $fallbackError');
@@ -1762,39 +1645,27 @@ class DBManager {
   }) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.insert(
-        'call_sessions',
-        session,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('call_sessions', session,
+          conflictAlgorithm: ConflictAlgorithm.replace);
       for (final message in messages) {
-        await txn.insert(
-          'call_messages',
-          message,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('call_messages', message,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
   Future<List<Map<String, dynamic>>> queryCallSessions(String botId) async {
     final db = await database;
-    return db.query(
-      'call_sessions',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'created_at DESC',
-    );
+    return db.query('call_sessions',
+        where: 'bot_id = ?', whereArgs: [botId], orderBy: 'created_at DESC');
   }
 
   Future<List<Map<String, dynamic>>> queryCallMessages(String sessionId) async {
     final db = await database;
-    return db.query(
-      'call_messages',
-      where: 'session_id = ?',
-      whereArgs: [sessionId],
-      orderBy: 'timestamp ASC',
-    );
+    return db.query('call_messages',
+        where: 'session_id = ?',
+        whereArgs: [sessionId],
+        orderBy: 'timestamp ASC');
   }
 
   Future<void> clearChatHistory(String botId) async {
@@ -1815,11 +1686,8 @@ class DBManager {
 
   Future<void> insertSticker(Map<String, dynamic> sticker) async {
     final db = await database;
-    await db.insert(
-      'stickers',
-      sticker,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('stickers', sticker,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> deleteSticker(String id) async {
@@ -1829,12 +1697,10 @@ class DBManager {
 
   Future<List<String>> stickerEmotions() async {
     final db = await database;
-    final rows = await db.query(
-      'stickers',
-      columns: ['emotion'],
-      distinct: true,
-      orderBy: 'emotion COLLATE NOCASE',
-    );
+    final rows = await db.query('stickers',
+        columns: ['emotion'],
+        distinct: true,
+        orderBy: 'emotion COLLATE NOCASE');
     return rows
         .map((row) => row['emotion']?.toString().trim() ?? '')
         .where((emotion) => emotion.isNotEmpty)
@@ -1850,14 +1716,11 @@ class DBManager {
   // ================= KV 与 API 配置 =================
   Future<void> setKV(String key, String value) async {
     final db = await database;
-    await db.insert('kv_store', {
-      'key': key,
-      'value': value,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('kv_store', {'key': key, 'value': value},
+        conflictAlgorithm: ConflictAlgorithm.replace);
     if (key == 'proactive_min_minutes' || key == 'proactive_max_minutes') {
       await db.rawUpdate(
-        "UPDATE kv_store SET value = '0' WHERE key GLOB 'proactive_due_at_*'",
-      );
+          "UPDATE kv_store SET value = '0' WHERE key GLOB 'proactive_due_at_*'");
     }
     if (key == 'proactive_reply' ||
         key == 'proactive_min_minutes' ||
@@ -1878,9 +1741,7 @@ class DBManager {
   Future<List<Map<String, dynamic>>> exportableBots() async => queryBots();
 
   /// Writes bounded pages to JSON, then archives files without loading media.
-  Future<({String fileName, File file, int missingMedia})> buildChatExport(
-    String botId,
-  ) async {
+  Future<({String fileName, File file})> buildChatExport(String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
     final work = await DataTransfer.workspace();
@@ -1894,18 +1755,24 @@ class DBManager {
       final json = File('${work.path}/chat_history.json');
       final sink = json.openWrite();
       final files = <String, String>{'chat_history.json': json.path};
-      final media = TransferMedia(
-        await getApplicationDocumentsDirectory(),
-        await getTemporaryDirectory(),
-        files,
+      final collector = TransferMedia(
+        documents: await getApplicationDocumentsDirectory(),
+        temporary: await getTemporaryDirectory(),
+        files: files,
       );
-      final mapPath = media.mapPath;
+      Future<String> mapPath(String path) async {
+        final name = await collector.collect(path);
+        return name;
+      }
 
       try {
         sink.write('{"format":"tidebot.chat","version":2,"exported_at":');
         sink.write(jsonEncode(DateTime.now().toIso8601String()));
         sink.write(
-          ',"bot":${jsonEncode({'id': botId, 'name': bot['name']})},"video_history":[',
+          ',"bot":${jsonEncode({
+                'id': botId,
+                'name': bot['name']
+              })},"video_history":[',
         );
         final prefs = await SharedPreferences.getInstance();
         var firstVideo = true;
@@ -1919,23 +1786,19 @@ class DBManager {
           }
           if (decoded is! Map) continue;
           final item = Map<String, dynamic>.from(decoded);
-          for (final key in ['original_video_path', 'audio_path']) {
-            final path = item[key]?.toString() ?? '';
-            if (path.isNotEmpty) item[key] = await mapPath(path);
-          }
-          if (item['frame_paths'] is List) {
-            item['frame_paths'] = await Future.wait(
-              (item['frame_paths'] as List).map(
-                (value) => mapPath(value.toString()),
-              ),
-            );
-          }
+          final mapped = await mapTransferValue(item, mapPath);
           if (!firstVideo) sink.write(',');
           firstVideo = false;
-          sink.write(jsonEncode(item));
+          sink.write(jsonEncode(mapped));
           await sink.flush();
         }
-        sink.write('],"messages":[');
+        final mediaSettings = await mapTransferValue({
+          'avatar': bot['avatar'],
+          'reference_image': await getKV('bot_image_reference_$botId'),
+          'user_avatar': await getKV('user_avatar'),
+        }, mapPath);
+        sink.write(
+            '],"media_settings":${jsonEncode(mediaSettings)},"messages":[');
         final db = await database;
         await db.transaction((txn) async {
           var offset = 0;
@@ -1951,17 +1814,8 @@ class DBManager {
             );
             if (page.isEmpty) break;
             for (final row in page) {
-              final msg = Map<String, dynamic>.from(row)..remove('bot_id');
-              final path = msg['file_path']?.toString() ?? '';
-              if (path.isNotEmpty &&
-                  const {
-                    'image',
-                    'video',
-                    'audio',
-                    'shared_post',
-                  }.contains(msg['type'])) {
-                msg['file_path'] = await mapPath(path);
-              }
+              final msg = await mapTransferValue(
+                  Map<String, dynamic>.from(row)..remove('bot_id'), mapPath);
               if (!first) sink.write(',');
               first = false;
               sink.write(jsonEncode(msg));
@@ -1969,8 +1823,34 @@ class DBManager {
             await sink.flush();
             offset += page.length;
           }
+          for (final table in ['call_sessions', 'call_messages']) {
+            sink.write('],"$table":[');
+            var offset = 0;
+            var first = true;
+            while (true) {
+              final rows = table == 'call_sessions'
+                  ? await txn.query(table,
+                      where: 'bot_id = ?',
+                      whereArgs: [botId],
+                      orderBy: 'created_at, id',
+                      limit: 100,
+                      offset: offset)
+                  : await txn.rawQuery(
+                      'SELECT m.* FROM call_messages m JOIN call_sessions s ON s.id = m.session_id '
+                      'WHERE s.bot_id = ? ORDER BY m.timestamp, m.id LIMIT 100 OFFSET ?',
+                      [botId, offset]);
+              if (rows.isEmpty) break;
+              for (final row in rows) {
+                if (!first) sink.write(',');
+                first = false;
+                sink.write(jsonEncode(await mapTransferValue(row, mapPath)));
+              }
+              await sink.flush();
+              offset += rows.length;
+            }
+          }
         });
-        sink.write('],"missing_media_references":${media.missingReferences}}');
+        sink.write(']}');
         await sink.flush();
       } finally {
         await sink.close();
@@ -1981,11 +1861,7 @@ class DBManager {
         await DataTransfer.totalBytes(files.values),
       );
       await DataTransfer.zip(file.path, files);
-      return (
-        fileName: fileName,
-        file: file,
-        missingMedia: media.missingReferences,
-      );
+      return (fileName: fileName, file: file);
     } catch (_) {
       await work.delete(recursive: true);
       rethrow;
@@ -2008,131 +1884,218 @@ class DBManager {
   Future<int> importBotChat(
     String botId,
     String sourcePath,
-  ) => DataTransfer.exclusive(() async {
-    final work = await DataTransfer.workspace();
-    Directory? installedMedia;
-    var committed = false;
-    try {
-      final source = File(sourcePath);
-      final handle = await source.open();
-      late List<int> signature;
-      try {
-        signature = await handle.read(4);
-      } finally {
-        await handle.close();
-      }
-      File json = source;
-      if (signature.length == 4 &&
-          signature[0] == 0x50 &&
-          signature[1] == 0x4b) {
-        await DataTransfer.extract(sourcePath, work.path);
-        json = File('${work.path}/chat_history.json');
-      }
-      if (!await json.exists()) throw const FormatException('未找到聊天记录');
-      String? format;
-      int? version;
-      var hasMessages = false;
-      // Validate the entire stream before replacing any existing rows.
-      await for (final record in JsonRecords.read(json)) {
-        if (record.key == 'format') format = record.value as String?;
-        if (record.key == 'version') version = record.value as int?;
-        if (record.key == 'messages') {
-          hasMessages = true;
-          if (record.element && record.value is! Map)
-            throw const FormatException('聊天消息格式无效');
-        }
-      }
-      if (format != 'tidebot.chat' ||
-          !const [1, 2].contains(version) ||
-          !hasMessages) {
-        throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
-      }
-      final media = Directory('${work.path}/media');
-      if (await media.exists()) {
-        final docs = await getApplicationDocumentsDirectory();
-        installedMedia = Directory(
-          '${docs.path}/imported_media/${DateTime.now().microsecondsSinceEpoch}',
-        );
-        await installedMedia.parent.create(recursive: true);
-        installedMedia = await media.rename(installedMedia.path);
-      }
-      String mapPath(String old) {
-        if (old.isEmpty || installedMedia == null) return old;
-        final path = '${installedMedia.path}/${p.basename(old)}';
-        return File(path).existsSync() ? path : old;
-      }
-
-      final base = DateTime.now().microsecondsSinceEpoch;
-      var count = 0;
-      var latest = 0;
-      final videos = <String>[];
-      final db = await database;
-      await db.transaction((txn) async {
-        await txn.delete(
-          'chat_history',
-          where: 'bot_id = ?',
-          whereArgs: [botId],
-        );
-        await for (final record in JsonRecords.read(json)) {
-          if (!record.element) continue;
-          if (record.key == 'video_history' && record.value is Map) {
-            final item = Map<String, dynamic>.from(record.value as Map);
-            for (final key in ['original_video_path', 'audio_path']) {
-              if (item[key] is String) item[key] = mapPath(item[key] as String);
-            }
-            if (item['frame_paths'] is List) {
-              item['frame_paths'] = (item['frame_paths'] as List)
-                  .map((v) => mapPath(v.toString()))
-                  .toList();
-            }
-            videos.add(jsonEncode(item));
+  ) =>
+      DataTransfer.exclusive(() async {
+        final work = await DataTransfer.workspace();
+        Directory? installedMedia;
+        var committed = false;
+        try {
+          final source = File(sourcePath);
+          final handle = await source.open();
+          late List<int> signature;
+          try {
+            signature = await handle.read(4);
+          } finally {
+            await handle.close();
           }
-          if (record.key != 'messages') continue;
-          final item = record.value as Map;
-          final oldId = item['id']?.toString() ?? '';
-          final reply = item['reply_to_id']?.toString() ?? '';
-          final timestamp =
-              (item['timestamp'] as num?)?.toInt() ?? base ~/ 1000 + count;
-          if (timestamp > latest) latest = timestamp;
-          await txn.insert('chat_history', {
-            'id': oldId.isEmpty
-                ? 'import_${base}_row_$count'
-                : 'import_${base}_id_$oldId',
-            'bot_id': botId,
-            'role': item['role']?.toString() ?? 'user',
-            'type': item['type']?.toString() ?? 'text',
-            'content': item['content']?.toString() ?? '',
-            'file_path': mapPath(item['file_path']?.toString() ?? ''),
-            'mood': item['mood'],
-            'duration': item['duration'],
-            'reply_to_id': reply.isEmpty ? null : 'import_${base}_id_$reply',
-            'reply_group_id': item['reply_group_id'],
-            'sources_json': item['sources_json'],
-            'timestamp': timestamp,
-          });
-          count++;
-        }
-        await txn.update(
-          'bots',
-          {'last_msg_time': latest},
-          where: 'id = ?',
-          whereArgs: [botId],
-        );
-      });
-      committed = true;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList('video_history_$botId', videos);
-      return count;
-    } finally {
-      if (!committed &&
-          installedMedia != null &&
-          await installedMedia.exists()) {
-        await installedMedia.delete(recursive: true);
-      }
-      await work.delete(recursive: true);
-    }
-  });
+          File json = source;
+          if (signature.length == 4 &&
+              signature[0] == 0x50 &&
+              signature[1] == 0x4b) {
+            await DataTransfer.extract(sourcePath, work.path);
+            json = File('${work.path}/chat_history.json');
+          }
+          if (!await json.exists()) throw const FormatException('未找到聊天记录');
+          String? format;
+          int? version;
+          var hasMessages = false;
+          var hasCalls = false;
+          // Validate the entire stream before replacing any existing rows.
+          await for (final record in JsonRecords.read(json)) {
+            if (record.key == 'call_sessions') hasCalls = true;
+            if (record.key == 'format') format = record.value as String?;
+            if (record.key == 'version') version = record.value as int?;
+            if (record.key == 'messages') {
+              hasMessages = true;
+              if (record.element && record.value is! Map)
+                throw const FormatException('聊天消息格式无效');
+            }
+          }
+          if (format != 'tidebot.chat' ||
+              !const [1, 2].contains(version) ||
+              !hasMessages) {
+            throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
+          }
+          final media = Directory('${work.path}/media');
+          if (await media.exists()) {
+            final docs = await getApplicationDocumentsDirectory();
+            installedMedia = Directory(
+              '${docs.path}/imported_media/${DateTime.now().microsecondsSinceEpoch}',
+            );
+            await installedMedia.parent.create(recursive: true);
+            installedMedia = await media.rename(installedMedia.path);
+          }
+          String mapPath(String old) {
+            if (old.isEmpty) return old;
+            if (installedMedia == null) {
+              if (old.startsWith('media/'))
+                throw FormatException('聊天备份缺少媒体文件：$old');
+              return old;
+            }
+            final path = '${installedMedia.path}/${p.basename(old)}';
+            if (old.startsWith('media/') &&
+                (old != 'media/${p.basename(old)}' ||
+                    !File(path).existsSync())) {
+              throw FormatException('聊天备份缺少媒体文件：$old');
+            }
+            return File(path).existsSync() ? path : old;
+          }
 
+          final base = DateTime.now().microsecondsSinceEpoch;
+          var count = 0;
+          var latest = 0;
+          final videos = <String>[];
+          final db = await database;
+          await db.transaction((txn) async {
+            if (hasCalls) {
+              await txn.rawDelete(
+                  'DELETE FROM call_messages WHERE session_id IN '
+                  '(SELECT id FROM call_sessions WHERE bot_id = ?)',
+                  [botId]);
+              await txn.delete('call_sessions',
+                  where: 'bot_id = ?', whereArgs: [botId]);
+            }
+            await txn.delete(
+              'chat_history',
+              where: 'bot_id = ?',
+              whereArgs: [botId],
+            );
+            await for (final record in JsonRecords.read(json)) {
+              if (record.key == 'media_settings' && record.value is Map) {
+                final settings = await mapTransferValue(
+                    record.value,
+                    (path) async =>
+                        path.startsWith('media/') || isTransferPath(path)
+                            ? mapPath(path)
+                            : path) as Map;
+                if (settings['avatar'] is String) {
+                  await txn.update('bots', {'avatar': settings['avatar']},
+                      where: 'id = ?', whereArgs: [botId]);
+                }
+                for (final entry in {
+                  'bot_image_reference_$botId': settings['reference_image'],
+                  'user_avatar': settings['user_avatar'],
+                }.entries) {
+                  if (entry.value is String) {
+                    await txn.insert(
+                        'kv_store', {'key': entry.key, 'value': entry.value},
+                        conflictAlgorithm: ConflictAlgorithm.replace);
+                  }
+                }
+              }
+              if (!record.element) continue;
+              if (record.key == 'call_sessions' ||
+                  record.key == 'call_messages') {
+                if (record.value is! Map)
+                  throw const FormatException('通话记录格式无效');
+                final item = await mapTransferValue(
+                    record.value,
+                    (path) async =>
+                        path.startsWith('media/') || isTransferPath(path)
+                            ? mapPath(path)
+                            : path) as Map;
+                if (record.key == 'call_sessions') {
+                  await txn.insert('call_sessions', {
+                    'id': 'import_${base}_call_${item['id']}',
+                    'bot_id': botId,
+                    'summary': item['summary'],
+                    'duration': item['duration'],
+                    'status': item['status'],
+                    'created_at': item['created_at'],
+                  });
+                } else {
+                  await txn.insert('call_messages', {
+                    'id': 'import_${base}_callmsg_${item['id']}',
+                    'session_id': 'import_${base}_call_${item['session_id']}',
+                    'role': item['role'],
+                    'content': item['content'],
+                    'timestamp': item['timestamp'],
+                  });
+                }
+              }
+              if (record.key == 'video_history' && record.value is Map) {
+                final item = Map<String, dynamic>.from(record.value as Map);
+                final mapped = await mapTransferValue(
+                    item,
+                    (path) async =>
+                        path.startsWith('media/') || isTransferPath(path)
+                            ? mapPath(path)
+                            : path);
+                videos.add(jsonEncode(mapped));
+              }
+              if (record.key != 'messages') continue;
+              final item = await mapTransferValue(
+                  record.value,
+                  (path) async =>
+                      path.startsWith('media/') || isTransferPath(path)
+                          ? mapPath(path)
+                          : path) as Map;
+              final oldId = item['id']?.toString() ?? '';
+              final reply = item['reply_to_id']?.toString() ?? '';
+              final timestamp =
+                  (item['timestamp'] as num?)?.toInt() ?? base ~/ 1000 + count;
+              if (timestamp > latest) latest = timestamp;
+              await txn.insert('chat_history', {
+                'id': oldId.isEmpty
+                    ? 'import_${base}_row_$count'
+                    : 'import_${base}_id_$oldId',
+                'bot_id': botId,
+                'role': item['role']?.toString() ?? 'user',
+                'type': item['type']?.toString() ?? 'text',
+                'content': item['content']?.toString() ?? '',
+                'file_path': mapPath(item['file_path']?.toString() ?? ''),
+                'mood': item['mood'],
+                'duration': item['duration'],
+                'reply_to_id':
+                    reply.isEmpty ? null : 'import_${base}_id_$reply',
+                'reply_group_id': item['reply_group_id'],
+                'sources_json': item['sources_json'],
+                'inner_thought': item['inner_thought'],
+                'error_log': item['error_log'],
+                'error_code': item['error_code'],
+                'error_message': item['error_message'],
+                'retry_status': item['retry_status'] ?? 'none',
+                'call_id': item['call_id'] == null
+                    ? null
+                    : hasCalls
+                        ? 'import_${base}_call_${item['call_id']}'
+                        : item['call_id'],
+                'call_status': item['call_status'],
+                'call_duration': item['call_duration'],
+                'timestamp': timestamp,
+              });
+              count++;
+            }
+            await txn.update(
+              'bots',
+              {'last_msg_time': latest},
+              where: 'id = ?',
+              whereArgs: [botId],
+            );
+          });
+          committed = true;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setStringList('video_history_$botId', videos);
+          return count;
+        } finally {
+          if (!committed &&
+              installedMedia != null &&
+              await installedMedia.exists()) {
+            await installedMedia.delete(recursive: true);
+          }
+          await work.delete(recursive: true);
+        }
+      });
   Future<({String fileName, File file})> buildMemoryExport(String botId) async {
     final bot = await getBotById(botId);
     if (bot == null) throw StateError('机器人不存在');
@@ -2267,23 +2230,17 @@ class DBManager {
     // Assistant segments can be persisted a few milliseconds ahead of `now`.
     // Record the latest row actually visible in this room, otherwise that final
     // segment is incorrectly counted as unread immediately after leaving.
-    final rows = await db.rawQuery(
-      '''
+    final rows = await db.rawQuery('''
       SELECT COALESCE(MAX(timestamp), 0) AS latest FROM chat_history
       WHERE bot_id = ? AND role = 'assistant'
-    ''',
-      [botId],
-    );
+    ''', [botId]);
     final latest = (rows.first['latest'] as num?)?.toInt() ?? 0;
-    await db.update(
-      'bots',
-      {'last_read_at': latest > now ? latest : now},
-      where: 'id = ?',
-      whereArgs: [botId],
-    );
-    ChatEventBus.instance.publish(
-      ChatEvent(type: ChatEventType.read, botId: botId),
-    );
+    await db.update('bots', {'last_read_at': latest > now ? latest : now},
+        where: 'id = ?', whereArgs: [botId]);
+    ChatEventBus.instance.publish(ChatEvent(
+      type: ChatEventType.read,
+      botId: botId,
+    ));
   }
 
   // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。
@@ -2327,24 +2284,18 @@ class DBManager {
   // 需要在文件顶部已 import 'dart:io';
 
   // 别名：新代码统一用 queryBots
-  Future<List<Map<String, dynamic>>> queryBots({
-    bool throwOnError = false,
-  }) async => getAllBots(throwOnError: throwOnError);
+  Future<List<Map<String, dynamic>>> queryBots() async => getAllBots();
 
   // 别名：新代码用 insertMessage
   Future<void> insertMessage(Map<String, dynamic> msg) async =>
       insertChatMessage(msg);
 
   // 别名：新代码用 queryMessages，支持可选 limit 与倒序
-  Future<List<Map<String, dynamic>>> queryMessages(
-    String botId, {
-    int? limit,
-    bool descending = false,
-  }) async {
+  Future<List<Map<String, dynamic>>> queryMessages(String botId,
+      {int? limit, bool descending = false}) async {
     final db = await database;
-    final orderBy = descending
-        ? 'timestamp DESC, id DESC'
-        : 'timestamp ASC, id ASC';
+    final orderBy =
+        descending ? 'timestamp DESC, id DESC' : 'timestamp ASC, id ASC';
     try {
       return await db.query(
         'chat_history',
@@ -2376,22 +2327,16 @@ class DBManager {
     final db = await database;
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final messageRows = await db.rawQuery(
-      '''
+    final messageRows = await db.rawQuery('''
       SELECT COUNT(*) AS count FROM chat_history
       WHERE bot_id = ? AND role = 'assistant' AND type = 'text'
         AND timestamp >= ? AND COALESCE(error_log, '') = ''
         AND COALESCE(error_code, '') = ''
-    ''',
-      [botId, start],
-    );
-    final usageRows = await db.rawQuery(
-      '''
+    ''', [botId, start]);
+    final usageRows = await db.rawQuery('''
       SELECT COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage_events
       WHERE bot_id = ? AND timestamp >= ?
-    ''',
-      [botId, start],
-    );
+    ''', [botId, start]);
     return {
       'messages': (messageRows.first['count'] as num?)?.toInt() ?? 0,
       'tokens': (usageRows.first['tokens'] as num?)?.toInt() ?? 0,
@@ -2402,34 +2347,25 @@ class DBManager {
   Future<void> deleteMessages(String botId) async => clearChatHistory(botId);
 
   // 查询日程 (schedule_tasks 表)
-  Future<List<Map<String, dynamic>>> querySchedules(
-    String botId, {
-    int? limit,
-  }) async {
+  Future<List<Map<String, dynamic>>> querySchedules(String botId,
+      {int? limit}) async {
     final db = await database;
-    return await db.query(
-      'schedule_tasks',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'time ASC',
-      limit: limit,
-    );
+    return await db.query('schedule_tasks',
+        where: 'bot_id = ?',
+        whereArgs: [botId],
+        orderBy: 'time ASC',
+        limit: limit);
   }
 
   Future<void> insertFutureTask(Map<String, dynamic> task) async {
     final db = await database;
-    await db.insert(
-      'schedule_tasks',
-      task,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('schedule_tasks', task,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   // 读取后台消息（Kotlin 写入的主动回复等）
-  Future<List<Map<String, dynamic>>> getBackgroundMessages(
-    String botId, {
-    bool onlyUnread = true,
-  }) async {
+  Future<List<Map<String, dynamic>>> getBackgroundMessages(String botId,
+      {bool onlyUnread = true}) async {
     final db = await database;
     final where = onlyUnread ? 'bot_id = ? AND displayed = 0' : 'bot_id = ?';
     return db.query(
@@ -2453,9 +2389,7 @@ class DBManager {
 
   // 同步后台消息到聊天历史
   Future<void> syncBackgroundMessageToChat(
-    String messageId,
-    String chatMessageId,
-  ) async {
+      String messageId, String chatMessageId) async {
     final db = await database;
     await db.update(
       'background_messages',
@@ -2555,8 +2489,7 @@ class DBManager {
   }) async {
     final id = task['id']?.toString() ?? '';
     if (id.isEmpty) return;
-    final attempts =
-        (task['attempts'] as num?)?.toInt() ??
+    final attempts = (task['attempts'] as num?)?.toInt() ??
         int.tryParse(task['attempts']?.toString() ?? '') ??
         0;
     final nextAttempts = attempts + 1;
@@ -2584,67 +2517,53 @@ class DBManager {
   }
 
   // 查询记忆 (memories 表)
-  Future<List<Map<String, dynamic>>> queryMemories(
-    String botId, {
-    String? type,
-    int? limit,
-    bool includeExpired = false,
-  }) async {
+  Future<List<Map<String, dynamic>>> queryMemories(String botId,
+      {String? type, int? limit, bool includeExpired = false}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final whereParts = <String>['bot_id = ?', 'COALESCE(is_deleted, 0) = 0'];
+    final whereParts = <String>['bot_id = ?'];
     final whereArgs = <dynamic>[botId];
     if (type != null) {
       whereParts.add('type = ?');
       whereArgs.add(type);
     }
     if (!includeExpired) {
-      whereParts.add(
-        '(expires_at IS NULL OR expires_at <= 0 OR expires_at > ?)',
-      );
+      whereParts
+          .add('(expires_at IS NULL OR expires_at <= 0 OR expires_at > ?)');
       whereArgs.add(now);
     }
-    return await db.query(
-      'memories',
-      where: whereParts.join(' AND '),
-      whereArgs: whereArgs,
-      orderBy: 'timestamp DESC, id DESC',
-      limit: limit,
-    );
+    return await db.query('memories',
+        where: whereParts.join(' AND '),
+        whereArgs: whereArgs,
+        orderBy: 'timestamp DESC',
+        limit: limit);
   }
 
   Future<List<Map<String, dynamic>>> queryMemoriesRelevant(
-    String botId,
-    String query, {
-    int limit = 8,
-    bool includeExpired = false,
-  }) async {
+      String botId, String query,
+      {int limit = 8, bool includeExpired = false}) async {
     final tokens = _memorySearchTokens(query);
     if (tokens.isEmpty) return queryMemories(botId, limit: limit);
-    final candidates = await queryMemories(
-      botId,
-      includeExpired: includeExpired,
-    );
+    final candidates =
+        await queryMemories(botId, includeExpired: includeExpired);
     final scored = <Map<String, dynamic>>[];
     for (final row in candidates) {
-      final haystack = '${row['title'] ?? ''} ${row['content'] ?? ''}'
-          .toLowerCase();
+      final haystack =
+          '${row['title'] ?? ''} ${row['content'] ?? ''}'.toLowerCase();
       var hits = 0;
       for (final token in tokens) {
         if (haystack.contains(token)) hits++;
       }
       if (hits == 0) continue;
       final importance = (row['importance'] as num?)?.toInt() ?? 3;
-      final score =
-          hits * 100 +
+      final score = hits * 100 +
           importance * 8 +
           ((row['type']?.toString() == 'long') ? 12 : 0);
       final copy = Map<String, dynamic>.from(row)..['_relevance'] = score;
       scored.add(copy);
     }
     scored.sort(
-      (a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int),
-    );
+        (a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
     return scored.take(limit).map((row) {
       final copy = Map<String, dynamic>.from(row)..remove('_relevance');
       return copy;
@@ -2652,10 +2571,8 @@ class DBManager {
   }
 
   List<String> _memorySearchTokens(String query) {
-    final normalized = query.toLowerCase().replaceAll(
-      RegExp(r'[^\u3400-\u9fff\w]+'),
-      ' ',
-    );
+    final normalized =
+        query.toLowerCase().replaceAll(RegExp(r'[^\u3400-\u9fff\w]+'), ' ');
     final tokens = <String>{};
     for (final word in normalized.split(RegExp(r'\s+'))) {
       if (word.length >= 2) tokens.add(word);
@@ -2670,11 +2587,8 @@ class DBManager {
     return tokens.toList();
   }
 
-  Future<List<Map<String, dynamic>>> queryDiaryDates(
-    String botId, {
-    String? fromDate,
-    String? toDate,
-  }) async {
+  Future<List<Map<String, dynamic>>> queryDiaryDates(String botId,
+      {String? fromDate, String? toDate}) async {
     final db = await database;
     final where = <String>['bot_id = ?'];
     final args = <dynamic>[botId];
@@ -2686,65 +2600,55 @@ class DBManager {
       where.add('date_key <= ?');
       args.add(toDate);
     }
-    return db.query(
-      'bot_diaries',
-      columns: ['date_key'],
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: 'date_key ASC',
-    );
+    return db.query('bot_diaries',
+        columns: ['date_key'],
+        where: where.join(' AND '),
+        whereArgs: args,
+        orderBy: 'date_key ASC');
   }
 
   Future<Map<String, dynamic>?> getDiary(String botId, String dateKey) async {
     final db = await database;
-    final rows = await db.query(
-      'bot_diaries',
-      where: 'bot_id = ? AND date_key = ?',
-      whereArgs: [botId, dateKey],
-      limit: 1,
-    );
+    final rows = await db.query('bot_diaries',
+        where: 'bot_id = ? AND date_key = ?',
+        whereArgs: [botId, dateKey],
+        limit: 1);
     return rows.isEmpty ? null : rows.first;
   }
 
   Future<void> deleteDiary(String botId, String dateKey) async {
     final db = await database;
-    await db.delete(
-      'bot_diaries',
-      where: 'bot_id = ? AND date_key = ?',
-      whereArgs: [botId, dateKey],
-    );
+    await db.delete('bot_diaries',
+        where: 'bot_id = ? AND date_key = ?', whereArgs: [botId, dateKey]);
   }
 
-  Future<void> upsertDiary({
-    required String botId,
-    required String dateKey,
-    required String content,
-  }) async {
+  Future<void> upsertDiary(
+      {required String botId,
+      required String dateKey,
+      required String content}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await getDiary(botId, dateKey);
     final db = await database;
-    await db.insert('bot_diaries', {
-      'id': existing?['id']?.toString() ?? 'diary_${botId}_$dateKey',
-      'bot_id': botId,
-      'date_key': dateKey,
-      'content': content.trim(),
-      'created_at': existing?['created_at'] ?? now,
-      'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'bot_diaries',
+        {
+          'id': existing?['id']?.toString() ?? 'diary_${botId}_$dateKey',
+          'bot_id': botId,
+          'date_key': dateKey,
+          'content': content.trim(),
+          'created_at': existing?['created_at'] ?? now,
+          'updated_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Map<String, dynamic>>> queryDiaryRange(
-    String botId,
-    String fromDate,
-    String toDate,
-  ) async {
+      String botId, String fromDate, String toDate) async {
     final db = await database;
-    return db.query(
-      'bot_diaries',
-      where: 'bot_id = ? AND date_key >= ? AND date_key <= ?',
-      whereArgs: [botId, fromDate, toDate],
-      orderBy: 'date_key ASC',
-    );
+    return db.query('bot_diaries',
+        where: 'bot_id = ? AND date_key >= ? AND date_key <= ?',
+        whereArgs: [botId, fromDate, toDate],
+        orderBy: 'date_key ASC');
   }
 
   Future<void> _ensureVoiceCallStorage(Database db) async {
@@ -2772,94 +2676,65 @@ class DBManager {
   Future<void> saveVoiceCallRecord(Map<String, dynamic> record) async {
     final db = await database;
     await _ensureVoiceCallStorage(db);
-    await db.insert(
-      'voice_call_records',
-      record,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('voice_call_records', record,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// 获取通话记录
   Future<Map<String, dynamic>?> getVoiceCallRecord(String callId) async {
     final db = await database;
     await _ensureVoiceCallStorage(db);
-    final rows = await db.query(
-      'voice_call_records',
-      where: 'id = ?',
-      whereArgs: [callId],
-      limit: 1,
-    );
+    final rows = await db.query('voice_call_records',
+        where: 'id = ?', whereArgs: [callId], limit: 1);
     return rows.isEmpty ? null : rows.first;
   }
 
   /// 查询机器人的通话记录列表
-  Future<List<Map<String, dynamic>>> queryVoiceCallRecords(
-    String botId, {
-    int limit = 50,
-  }) async {
+  Future<List<Map<String, dynamic>>> queryVoiceCallRecords(String botId,
+      {int limit = 50}) async {
     final db = await database;
     await _ensureVoiceCallStorage(db);
-    return db.query(
-      'voice_call_records',
-      where: 'bot_id = ?',
-      whereArgs: [botId],
-      orderBy: 'timestamp DESC',
-      limit: limit,
-    );
+    return db.query('voice_call_records',
+        where: 'bot_id = ?',
+        whereArgs: [botId],
+        orderBy: 'timestamp DESC',
+        limit: limit);
   }
 
   /// 更新通话记录状态
   Future<void> updateVoiceCallStatus(
-    String callId,
-    String status,
-    int duration,
-  ) async {
+      String callId, String status, int duration) async {
     final db = await database;
     await _ensureVoiceCallStorage(db);
     await db.update(
-      'voice_call_records',
-      {'status': status, 'duration': duration},
-      where: 'id = ?',
-      whereArgs: [callId],
-    );
+        'voice_call_records', {'status': status, 'duration': duration},
+        where: 'id = ?', whereArgs: [callId]);
   }
 
   /// 更新通话摘要
   Future<void> updateVoiceCallSummary(
-    String callId,
-    String summary,
-    String transcript,
-  ) async {
+      String callId, String summary, String transcript) async {
     final db = await database;
     await _ensureVoiceCallStorage(db);
     await db.update(
-      'voice_call_records',
-      {'summary': summary, 'transcript': transcript},
-      where: 'id = ?',
-      whereArgs: [callId],
-    );
+        'voice_call_records', {'summary': summary, 'transcript': transcript},
+        where: 'id = ?', whereArgs: [callId]);
   }
 
-  Future<bool> claimBackgroundJob(
-    String key, {
-    Duration lease = const Duration(minutes: 30),
-  }) async {
+  Future<bool> claimBackgroundJob(String key,
+      {Duration lease = const Duration(minutes: 30)}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
     return db.transaction((txn) async {
-      final rows = await txn.query(
-        'kv_store',
-        where: 'key = ?',
-        whereArgs: ['job_lease_$key'],
-      );
+      final rows = await txn
+          .query('kv_store', where: 'key = ?', whereArgs: ['job_lease_$key']);
       final until = rows.isEmpty
           ? 0
           : int.tryParse(rows.first['value']?.toString() ?? '') ?? 0;
       if (until > now) return false;
-      await txn.insert('kv_store', {
-        'key': 'job_lease_$key',
-        'value': '${now + lease.inMilliseconds}',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('kv_store',
+          {'key': 'job_lease_$key', 'value': '${now + lease.inMilliseconds}'},
+          conflictAlgorithm: ConflictAlgorithm.replace);
       return true;
     });
   }
@@ -2870,11 +2745,8 @@ class DBManager {
 
   Future<List<String>> memoryCategories() async {
     final db = await database;
-    final rows = await db.query(
-      'kv_store',
-      where: 'key LIKE ?',
-      whereArgs: ['wb_category_%'],
-    );
+    final rows = await db
+        .query('kv_store', where: 'key LIKE ?', whereArgs: ['wb_category_%']);
     final used = await db.rawQuery('SELECT DISTINCT category FROM memories');
     return <String>{
       '记忆',
@@ -2895,11 +2767,8 @@ class DBManager {
 
   Future<void> insertMemory(Map<String, dynamic> memory) async {
     final db = await database;
-    await db.insert(
-      'memories',
-      memory,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('memories', memory,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// 新记忆按条写入前做轻量去重：同一机器人、同一层级内的相同内容不重复占用。
@@ -2911,15 +2780,14 @@ class DBManager {
     String? id,
     String title = '',
     String category = '记忆',
-    int? importance,
-    List<String>? keys,
+    int importance = 3,
     int? expiresAt,
     int? timestamp,
   }) async {
     final normalized = content.replaceAll(RegExp(r'\s+'), '').trim();
     if (normalized.isEmpty) return;
     final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
-    final existing = await queryMemories(botId, type: type);
+    final existing = await queryMemories(botId, type: type, limit: 80);
     Map<String, dynamic>? duplicate;
     for (final item in existing) {
       // Similar wording in a profile and an event does not make them the same
@@ -2938,52 +2806,31 @@ class DBManager {
     }
     final targetId = (id ?? '').trim();
     if (targetId.isNotEmpty) {
-      final oldRows = await queryMemories(botId, includeExpired: true);
-      final old = oldRows.where((r) => r['id'] == targetId).firstOrNull;
       await insertMemory({
-        'keys_json': keys == null
-            ? (old?['keys_json'] ?? '[]')
-            : jsonEncode(keys),
         'id': targetId,
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': (importance ?? (old?['importance'] as num?)?.toInt() ?? 3)
-            .clamp(1, 5),
+        'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
       });
     } else if (duplicate != null) {
+      // Exact duplicates are a no-op. In particular, do not refresh updated_at:
+      // a repeated model memory tag is not a meaningful memory modification.
       final previous = duplicate['content']?.toString().trim() ?? '';
       if (previous.replaceAll(RegExp(r'\s+'), '').contains(normalized)) {
-        // Preserve the longer fact and its recency. Explicit metadata edits
-        // still take effect without treating a repetition as a new event.
-        final metadata = <String, dynamic>{};
-        if (importance != null &&
-            importance.clamp(1, 5) != duplicate['importance']) {
-          metadata['importance'] = importance.clamp(1, 5);
-        }
-        if (keys != null && jsonEncode(keys) != duplicate['keys_json']) {
-          metadata['keys_json'] = jsonEncode(keys);
-        }
-        if (metadata.isNotEmpty) {
-          metadata['updated_at'] = now;
-          await updateMemory(duplicate['id'].toString(), metadata);
-        }
-        return;
+        return; // Repeating a shorter excerpt must not erase older details.
       }
       if (previous != content.trim()) {
         await updateMemory(duplicate['id'].toString(), {
           'title': title.isEmpty ? duplicate['title'] : title,
-          if (keys != null) 'keys_json': jsonEncode(keys),
           'content': content.trim(),
           'category': category,
-          'importance':
-              (importance ?? (duplicate['importance'] as num?)?.toInt() ?? 3)
-                  .clamp(1, 5),
+          'importance': importance.clamp(1, 5),
           'expires_at': expiresAt,
           'timestamp': now,
           'updated_at': now,
@@ -2992,13 +2839,12 @@ class DBManager {
     } else {
       await insertMemory({
         'id': 'mem_${botId}_${now}_${normalized.hashCode.abs()}',
-        'keys_json': jsonEncode(keys ?? <String>[]),
         'bot_id': botId,
         'title': title,
         'type': type,
         'content': content.trim(),
         'category': category,
-        'importance': (importance ?? 3).clamp(1, 5),
+        'importance': importance.clamp(1, 5),
         'expires_at': expiresAt,
         'timestamp': now,
         'updated_at': now,
@@ -3007,25 +2853,9 @@ class DBManager {
     const caps = {'long': 60, 'short': 100};
     final cap = caps[type] ?? 80;
     final rows = (await queryMemories(botId, type: type))
-        .where(
-          (row) => !const [
-            '角色眼中的你',
-            '角色的自我认知',
-            '关系',
-            '角色档案',
-          ].contains(row['category']),
-        )
+        .where((row) => !const ['角色眼中的你', '角色的自我认知', '关系', '角色档案']
+            .contains(row['category']))
         .toList();
-    rows.sort((a, b) {
-      final importance = ((b['importance'] as num?) ?? 3).compareTo(
-        (a['importance'] as num?) ?? 3,
-      );
-      return importance != 0
-          ? importance
-          : ((b['timestamp'] as num?) ?? 0).compareTo(
-              (a['timestamp'] as num?) ?? 0,
-            );
-    });
     if (rows.length > cap) {
       for (final item in rows.skip(cap)) {
         await deleteMemory(item['id'].toString());
@@ -3034,9 +2864,7 @@ class DBManager {
   }
 
   Future<void> applyCognitionUpdates(
-    String botId,
-    Map<String, String> updates,
-  ) async {
+      String botId, Map<String, String> updates) async {
     const categories = ['角色眼中的你', '角色的自我认知', '关系'];
     if (updates.keys.any((key) => !categories.contains(key)) ||
         updates.values.any((value) => value.trim().isEmpty)) {
@@ -3046,12 +2874,10 @@ class DBManager {
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.transaction((txn) async {
       for (final entry in updates.entries) {
-        final rows = await txn.query(
-          'memories',
-          where: 'bot_id = ? AND category = ?',
-          whereArgs: [botId, entry.key],
-          orderBy: 'timestamp DESC',
-        );
+        final rows = await txn.query('memories',
+            where: 'bot_id = ? AND category = ?',
+            whereArgs: [botId, entry.key],
+            orderBy: 'timestamp DESC');
         final values = <String, dynamic>{
           'bot_id': botId,
           'title': entry.key,
@@ -3069,18 +2895,11 @@ class DBManager {
             'id': 'cognition_${botId}_${entry.key}_$now',
           });
         } else {
-          await txn.update(
-            'memories',
-            values,
-            where: 'id = ?',
-            whereArgs: [rows.first['id']],
-          );
+          await txn.update('memories', values,
+              where: 'id = ?', whereArgs: [rows.first['id']]);
           for (final duplicate in rows.skip(1)) {
-            await txn.delete(
-              'memories',
-              where: 'id = ?',
-              whereArgs: [duplicate['id']],
-            );
+            await txn.delete('memories',
+                where: 'id = ?', whereArgs: [duplicate['id']]);
           }
         }
       }
@@ -3252,11 +3071,8 @@ class DBManager {
   }
 
   // ================= Posts 查询（广场分页） =================
-  Future<List<Map<String, dynamic>>> queryPosts({
-    int offset = 0,
-    int limit = 10,
-    String? authorId,
-  }) async {
+  Future<List<Map<String, dynamic>>> queryPosts(
+      {int offset = 0, int limit = 10, String? authorId}) async {
     final db = await database;
     try {
       return await db.query(
@@ -3325,38 +3141,24 @@ class DBManager {
 
   Future<void> insertPost(Map<String, dynamic> post) async {
     final db = await database;
-    await db.insert(
-      'posts',
-      post,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('posts', post,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> updatePostLikes(String postId, int likes) async {
     final db = await database;
-    await db.update(
-      'posts',
-      {'likes': likes},
-      where: 'id = ?',
-      whereArgs: [postId],
-    );
+    await db.update('posts', {'likes': likes},
+        where: 'id = ?', whereArgs: [postId]);
   }
 
   Future<void> updatePostComments(String postId, int comments) async {
     final db = await database;
-    await db.update(
-      'posts',
-      {'comments': comments},
-      where: 'id = ?',
-      whereArgs: [postId],
-    );
+    await db.update('posts', {'comments': comments},
+        where: 'id = ?', whereArgs: [postId]);
   }
 
-  Future<void> updatePostUserState(
-    String postId, {
-    required bool liked,
-    required bool collected,
-  }) async {
+  Future<void> updatePostUserState(String postId,
+      {required bool liked, required bool collected}) async {
     final db = await database;
     await db.update(
       'posts',
@@ -3399,13 +3201,16 @@ class DBManager {
   }) async {
     final db = await database;
     try {
-      await db.insert('feed_events', {
-        'id': 'fe_${postId}_${actorId}_$eventType',
-        'post_id': postId,
-        'actor_id': actorId,
-        'event_type': eventType,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${actorId}_$eventType',
+            'post_id': postId,
+            'actor_id': actorId,
+            'event_type': eventType,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
       return true;
     } on DatabaseException {
       return false;
@@ -3418,12 +3223,10 @@ class DBManager {
     required String eventType,
   }) async {
     final db = await database;
-    final rows = await db.query(
-      'feed_events',
-      where: 'post_id = ? AND actor_id = ? AND event_type = ?',
-      whereArgs: [postId, actorId, eventType],
-      limit: 1,
-    );
+    final rows = await db.query('feed_events',
+        where: 'post_id = ? AND actor_id = ? AND event_type = ?',
+        whereArgs: [postId, actorId, eventType],
+        limit: 1);
     return rows.isNotEmpty;
   }
 
@@ -3434,11 +3237,9 @@ class DBManager {
     required String eventType,
   }) async {
     final db = await database;
-    await db.delete(
-      'feed_events',
-      where: 'post_id = ? AND actor_id = ? AND event_type = ?',
-      whereArgs: [postId, actorId, eventType],
-    );
+    await db.delete('feed_events',
+        where: 'post_id = ? AND actor_id = ? AND event_type = ?',
+        whereArgs: [postId, actorId, eventType]);
   }
 
   /// 用户的点赞 / 收藏是切换行为：已存在则取消（删除事件），不存在则新增。
@@ -3449,45 +3250,30 @@ class DBManager {
     required String eventType,
   }) async {
     final existed = await hasFeedEvent(
-      postId: postId,
-      actorId: actorId,
-      eventType: eventType,
-    );
+        postId: postId, actorId: actorId, eventType: eventType);
     if (existed) {
       await deleteFeedEvent(
-        postId: postId,
-        actorId: actorId,
-        eventType: eventType,
-      );
+          postId: postId, actorId: actorId, eventType: eventType);
       return false;
     }
     await recordFeedEvent(
-      postId: postId,
-      actorId: actorId,
-      eventType: eventType,
-    );
+        postId: postId, actorId: actorId, eventType: eventType);
     return true;
   }
 
   /// 统计某条动态的真实点赞数（来自 feed_events 中的 like / collect 互动的去重计数）。
   Future<int> countPostLikes(String postId) async {
     final db = await database;
-    final likeRows = await db.query(
-      'feed_events',
-      where: 'post_id = ? AND event_type = ?',
-      whereArgs: [postId, 'like'],
-    );
+    final likeRows = await db.query('feed_events',
+        where: 'post_id = ? AND event_type = ?', whereArgs: [postId, 'like']);
     return likeRows.length;
   }
 
   /// 统计某条动态的真实评论数（来自 post_comments）。
   Future<int> countPostComments(String postId) async {
     final db = await database;
-    final rows = await db.query(
-      'post_comments',
-      where: 'post_id = ?',
-      whereArgs: [postId],
-    );
+    final rows = await db
+        .query('post_comments', where: 'post_id = ?', whereArgs: [postId]);
     return rows.length;
   }
 
@@ -3511,13 +3297,16 @@ class DBManager {
       'timestamp': now,
     });
     try {
-      await db.insert('feed_events', {
-        'id': 'fe_${postId}_${authorId}_comment',
-        'post_id': postId,
-        'actor_id': authorId,
-        'event_type': 'comment',
-        'timestamp': now,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${authorId}_comment',
+            'post_id': postId,
+            'actor_id': authorId,
+            'event_type': 'comment',
+            'timestamp': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
     } on DatabaseException {
       // 同一机器人对同一条动态只计一次互动事件。
     }
@@ -3548,23 +3337,15 @@ class DBManager {
   // 更新 bots.last_msg_time
   Future<void> updateBotLastMsgTime(String botId, int time) async {
     final db = await database;
-    await db.update(
-      'bots',
-      {'last_msg_time': time},
-      where: 'id = ?',
-      whereArgs: [botId],
-    );
+    await db.update('bots', {'last_msg_time': time},
+        where: 'id = ?', whereArgs: [botId]);
   }
 
   // 置顶/取消置顶
   Future<void> toggleBotPin(String botId, int isPinned) async {
     final db = await database;
-    await db.update(
-      'bots',
-      {'is_pinned': isPinned},
-      where: 'id = ?',
-      whereArgs: [botId],
-    );
+    await db.update('bots', {'is_pinned': isPinned},
+        where: 'id = ?', whereArgs: [botId]);
   }
 
   // ========== 语音通话记录 ==========
@@ -3584,40 +3365,35 @@ class DBManager {
     final db = await database;
     await _ensureVoiceCallStorage(db);
     await db.transaction((txn) async {
-      await txn.insert('voice_call_records', {
-        'id': callId,
-        'bot_id': botId,
-        'initiator': initiator,
-        'status': status,
-        'transcript': transcript,
-        'summary': summary,
-        'start_time': startTime.millisecondsSinceEpoch,
-        'end_time': endTime.millisecondsSinceEpoch,
-        'timestamp': endTime.millisecondsSinceEpoch,
-        'duration': endTime.difference(startTime).inSeconds,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+        'voice_call_records',
+        {
+          'id': callId,
+          'bot_id': botId,
+          'initiator': initiator,
+          'status': status,
+          'transcript': transcript,
+          'summary': summary,
+          'start_time': startTime.millisecondsSinceEpoch,
+          'end_time': endTime.millisecondsSinceEpoch,
+          'timestamp': endTime.millisecondsSinceEpoch,
+          'duration': endTime.difference(startTime).inSeconds,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
       if (chatMessage != null) {
-        await txn.insert(
-          'chat_history',
-          chatMessage,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-        await txn.update(
-          'bots',
-          {'last_msg_time': chatMessage['timestamp']},
-          where: 'id = ?',
-          whereArgs: [botId],
-        );
+        await txn.insert('chat_history', chatMessage,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.update('bots', {'last_msg_time': chatMessage['timestamp']},
+            where: 'id = ?', whereArgs: [botId]);
       }
     });
     // A visible card always has a committed detail record, even if the app exits
     // before summary generation finishes.
     if (chatMessage != null) {
       await _publishMessageEvent(
-        chatMessage['id'].toString(),
-        ChatEventType.inserted,
-      );
+          chatMessage['id'].toString(), ChatEventType.inserted);
     }
   }
 

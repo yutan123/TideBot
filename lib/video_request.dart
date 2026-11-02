@@ -89,13 +89,7 @@ Future<http.Response> requestVideoAnalysis({
             'Authorization': 'Bearer $apiKey'
           },
           body: body);
-      onStage?.call('response', {
-        'status': response.statusCode,
-        'content_type': response.headers['content-type'],
-        'bytes': response.bodyBytes.length,
-        'request_id':
-            response.headers['x-request-id'] ?? response.headers['request-id'],
-      });
+      onStage?.call('response', {'status': response.statusCode});
       return response;
     }()
         .timeout(timeout, onTimeout: () {

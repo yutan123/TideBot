@@ -238,433 +238,232 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     }
   }
 
-  Future<void> _addMcp() => _editMcp();
-
-  Future<void> _editMcp([Map<String, dynamic>? item]) async {
-    final editing = item != null;
-    final id = item?['id']?.toString() ??
-        'mcp_${DateTime.now().millisecondsSinceEpoch}';
-    const storage = FlutterSecureStorage();
-    try {
-      final stored =
-          editing ? await storage.read(key: 'mcp_headers_$id') : null;
-      final headers = stored == null
-          ? <String, String>{}
-          : Map<String, String>.from(jsonDecode(stored) as Map);
-      final authorization = headers.entries
-          .where((entry) => entry.key.toLowerCase() == 'authorization')
-          .map((entry) => entry.value)
-          .firstOrNull;
-      final originalToken = authorization != null &&
-              authorization.toLowerCase().startsWith('bearer ')
-          ? authorization.substring(7)
-          : '';
-      var name = item?['name']?.toString() ?? '';
-      var url = item?['url']?.toString() ?? '';
-      var token = originalToken;
-      var showToken = false;
-      var timeoutSeconds =
-          (((item?['timeout_ms'] as num?)?.toInt() ?? 20000) ~/ 1000)
-              .toString();
-      var autoConnect = item?['auto_connect'] == 1;
-      final formKey = GlobalKey<FormState>();
-      if (!mounted) return;
-      final accepted = await TideDialogs.show<bool>(
-        context: context,
-        builder: (dialogContext) {
-          final theme = TideTheme.of(dialogContext);
-          InputDecoration decoration(String label) => InputDecoration(
-                labelText: label,
-                labelStyle: TextStyle(color: theme.textWeak),
-                filled: true,
-                fillColor: theme.surfaceVariant,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: theme.primary)),
-              );
-          return TideDialogSurface(
-            child: Padding(
-              padding: EdgeInsets.only(
-                  bottom: MediaQuery.viewInsetsOf(dialogContext).bottom),
-              child: Form(
-                key: formKey,
-                child: TideDialogs.glassContent(
-                  context: dialogContext,
-                  children: [
-                    Text(editing ? '编辑 MCP 服务' : '添加 MCP 服务',
-                        style: TextStyle(
-                            color: theme.textStrong,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 20),
-                    TextFormField(
-                        contextMenuBuilder: androidTextContextMenu,
-                        initialValue: name,
-                        onChanged: (value) => name = value,
-                        style: TextStyle(color: theme.textStrong),
-                        cursorColor: theme.primary,
-                        decoration: decoration('名称'),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                                ? '请输入名称'
-                                : null),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                        contextMenuBuilder: androidTextContextMenu,
-                        initialValue: url,
-                        onChanged: (value) => url = value,
-                        keyboardType: TextInputType.url,
-                        autocorrect: false,
-                        style: TextStyle(color: theme.textStrong),
-                        cursorColor: theme.primary,
-                        decoration: decoration('Streamable HTTP URL'),
-                        validator: (value) {
-                          final uri = Uri.tryParse(value?.trim() ?? '');
-                          return uri != null &&
-                                  (uri.scheme == 'https' ||
-                                      uri.scheme == 'http') &&
-                                  uri.host.isNotEmpty
-                              ? null
-                              : '请输入有效的 HTTP 或 HTTPS 地址';
-                        }),
-                    const SizedBox(height: 12),
-                    StatefulBuilder(
-                      builder: (context, setTokenState) => TextFormField(
-                        contextMenuBuilder: androidTextContextMenu,
-                        initialValue: token,
-                        onChanged: (value) => token = value,
-                        obscureText: !showToken,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        style: TextStyle(color: theme.textStrong),
-                        cursorColor: theme.primary,
-                        decoration: decoration('Bearer Token（可选）').copyWith(
-                          suffixIcon: IconButton(
-                            tooltip: showToken ? '隐藏 Token' : '显示 Token',
-                            color: theme.textWeak,
-                            icon: Icon(showToken
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined),
-                            onPressed: () =>
-                                setTokenState(() => showToken = !showToken),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                        contextMenuBuilder: androidTextContextMenu,
-                        initialValue: timeoutSeconds,
-                        onChanged: (value) => timeoutSeconds = value,
-                        keyboardType: TextInputType.number,
-                        style: TextStyle(color: theme.textStrong),
-                        cursorColor: theme.primary,
-                        decoration: decoration('超时秒数（5–120）'),
-                        validator: (value) {
-                          final seconds = int.tryParse(value?.trim() ?? '');
-                          return seconds != null &&
-                                  seconds >= 5 &&
-                                  seconds <= 120
-                              ? null
-                              : '请输入 5 到 120 之间的整数';
-                        }),
-                    const SizedBox(height: 12),
-                    StatefulBuilder(
-                      builder: (context, setDialogState) => Row(children: [
-                        Expanded(
-                            child: Text('保存后自动连接',
-                                style: TextStyle(color: theme.textStrong))),
-                        Switch.adaptive(
-                            activeTrackColor: theme.primary,
-                            activeThumbColor: Colors.white,
-                            value: autoConnect,
-                            onChanged: (value) =>
-                                setDialogState(() => autoConnect = value)),
-                      ]),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(children: [
-                      Expanded(
-                          child: TideDialogs.glassButton('取消',
-                              onTap: () => Navigator.pop(dialogContext, false),
-                              color: theme.surfaceVariant,
-                              textColor: theme.textStrong)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                          child: TideDialogs.glassButton('保存', onTap: () {
-                        if (formKey.currentState?.validate() == true) {
-                          Navigator.pop(dialogContext, true);
-                        }
-                      })),
-                    ]),
-                  ],
-                ),
+  Future<void> _addMcp() async {
+    final name = TextEditingController();
+    final url = TextEditingController();
+    final token = TextEditingController();
+    final timeoutSeconds = TextEditingController(text: '20');
+    var autoConnect = false;
+    final accepted = await TideDialogs.show<bool>(
+      context: context,
+      builder: (dialogContext) => TideDialogSurface(
+        contentPadding: EdgeInsets.zero,
+        child: TideDialogs.glassContent(
+          context: dialogContext,
+          children: [
+            const Text('添加 MCP 服务',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 14),
+            TextField(
+                contextMenuBuilder: androidTextContextMenu,
+                controller: name,
+                decoration: const InputDecoration(labelText: '名称')),
+            TextField(
+                contextMenuBuilder: androidTextContextMenu,
+                controller: url,
+                decoration:
+                    const InputDecoration(labelText: 'Streamable HTTP URL')),
+            TextField(
+                contextMenuBuilder: androidTextContextMenu,
+                controller: token,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'Bearer Token（可选）')),
+            TextField(
+                contextMenuBuilder: androidTextContextMenu,
+                controller: timeoutSeconds,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '超时秒数')),
+            StatefulBuilder(
+              builder: (context, setDialogState) => Row(
+                children: [
+                  Expanded(
+                      child: Text('保存后自动连接',
+                          style: TextStyle(
+                              color: TideTheme.of(context).textStrong))),
+                  Switch(
+                      value: autoConnect,
+                      onChanged: (value) =>
+                          setDialogState(() => autoConnect = value)),
+                ],
               ),
             ),
-          );
-        },
-      );
-      if (accepted != true) return;
-      final timeoutMs = int.parse(timeoutSeconds.trim()) * 1000;
-      final connectionChanged = editing &&
-          (url.trim() != item['url'] || token.trim() != originalToken);
-      if (token.trim() != originalToken) {
-        headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
-      }
-      if (token.trim().isNotEmpty) {
-        headers.removeWhere((key, _) => key.toLowerCase() == 'authorization');
-        headers['Authorization'] = 'Bearer ${token.trim()}';
-      }
-      final server = <String, dynamic>{
-        if (item != null) ...item,
-        'id': id,
-        'name': name.trim(),
-        'url': url.trim(),
-        'headers_key': item?['headers_key'],
-        'timeout_ms': timeoutMs,
-        'auto_connect': autoConnect ? 1 : 0,
-        'resources_json':
-            connectionChanged ? '[]' : item?['resources_json'] ?? '[]',
-        'prompts_json':
-            connectionChanged ? '[]' : item?['prompts_json'] ?? '[]',
-        'enabled': item?['enabled'] ?? 1,
-        'status': connectionChanged
-            ? 'disconnected'
-            : item?['status'] ?? 'disconnected',
-        'error': connectionChanged ? null : item?['error'],
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      };
-      if (headers.isEmpty) {
-        await storage.delete(key: 'mcp_headers_$id');
-      } else {
-        await storage.write(key: 'mcp_headers_$id', value: jsonEncode(headers));
-      }
-      try {
-        if (editing) {
-          await _db.updateMcpServer(id, server, clearTools: connectionChanged);
-        } else {
-          await _db.saveMcpServer(server);
-        }
-      } catch (_) {
-        // Keep credentials aligned with the previous configuration on failure.
-        if (stored == null) {
-          await storage.delete(key: 'mcp_headers_$id');
-        } else {
-          await storage.write(key: 'mcp_headers_$id', value: stored);
-        }
-        rethrow;
-      }
-      await _reload();
-      if (autoConnect && server['enabled'] == 1) {
-        await _discoverMcp(id, url.trim(),
-            headers: headers, timeout: Duration(milliseconds: timeoutMs));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('保存 MCP 服务失败，请稍后重试')));
-      }
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                    child: TideDialogs.glassButton('取消',
+                        onTap: () => Navigator.pop(dialogContext, false),
+                        color: TideTheme.of(dialogContext).surface,
+                        textColor: TideTheme.of(dialogContext).textStrong)),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: TideDialogs.glassButton('保存',
+                        onTap: () => Navigator.pop(dialogContext, true))),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted != true ||
+        name.text.trim().isEmpty ||
+        Uri.tryParse(url.text.trim())?.hasScheme != true) return;
+    final timeoutMs =
+        (int.tryParse(timeoutSeconds.text.trim()) ?? 20).clamp(5, 120) * 1000;
+    final id = 'mcp_${DateTime.now().millisecondsSinceEpoch}';
+    await _db.saveMcpServer({
+      'id': id,
+      'name': name.text.trim(),
+      'url': url.text.trim(),
+      'headers_key': null,
+      'timeout_ms': timeoutMs,
+      'auto_connect': autoConnect ? 1 : 0,
+      'resources_json': '[]',
+      'prompts_json': '[]',
+      'enabled': 1,
+      'status': 'disconnected',
+      'error': null,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final headers = <String, String>{
+      if (token.text.trim().isNotEmpty)
+        'Authorization': 'Bearer ${token.text.trim()}',
+    };
+    if (headers.isNotEmpty) {
+      await const FlutterSecureStorage()
+          .write(key: 'mcp_headers_$id', value: jsonEncode(headers));
     }
-  }
-
-  Future<void> _showToolDescription(
-      BuildContext sheetContext, Map<String, dynamic> tool) async {
-    await TideDialogs.show<void>(
-      context: sheetContext,
-      builder: (dialogContext) {
-        final theme = TideTheme.of(dialogContext);
-        final description = tool['description']?.toString().trim() ?? '';
-        return TideDialogSurface(
-          child: TideDialogs.glassContent(context: dialogContext, children: [
-            Row(children: [
-              Icon(Icons.extension_rounded, color: theme.primary, size: 22),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text('工具详情',
-                      style: TextStyle(
-                          color: theme.textStrong,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700))),
-              IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(dialogContext),
-                  icon: Icon(Icons.close_rounded, color: theme.textWeak)),
-            ]),
-            const SizedBox(height: 12),
-            NativeSelectableText(tool['name']?.toString() ?? '',
-                nativeInteraction: true,
-                style: TextStyle(
-                    color: theme.textStrong,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    height: 1.5)),
-            const SizedBox(height: 20),
-            Text('完整说明',
-                style: TextStyle(
-                    color: theme.primary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            NativeSelectableText(
-                description.isEmpty ? '此工具暂未提供描述。' : description,
-                nativeInteraction: true,
-                style: TextStyle(
-                    color: theme.textStrong, fontSize: 14, height: 1.7)),
-          ]),
-        );
-      },
+    await _reload();
+    await _discoverMcp(
+      id,
+      url.text.trim(),
+      headers: headers,
+      timeout: Duration(milliseconds: timeoutMs),
     );
   }
 
   Future<void> _showDetails(Map<String, dynamic> item) async {
     final id = item['id'].toString();
     final tools =
-        (_isSkill ? await _db.querySkillTools(id) : await _db.queryMcpTools(id))
-            .map((tool) => Map<String, dynamic>.from(tool))
-            .toList();
+        _isSkill ? await _db.querySkillTools(id) : await _db.queryMcpTools(id);
     if (!mounted) return;
-    final updatingTools = <String>{};
     await showTideSheet<void>(
       context: context,
       height: MediaQuery.sizeOf(context).height * .72,
       child: Builder(
-        builder: (sheetContext) => StatefulBuilder(
-          builder: (sheetContext, setSheetState) => SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-              children: [
-                Text(item['name']?.toString() ?? '',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                Text(_isSkill
-                    ? (item['description']?.toString() ?? '')
-                    : '${item['url']}\n状态：${item['status']}'),
+        builder: (sheetContext) => SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            children: [
+              Text(item['name']?.toString() ?? '',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(_isSkill
+                  ? (item['description']?.toString() ?? '')
+                  : '${item['url']}\n状态：${item['status']}'),
+              const SizedBox(height: 16),
+              if (_isSkill) ...[
+                const Text('指引与附带文件'),
+                NativeSelectableText(
+                  (jsonDecode(item['manifest_json'].toString())
+                              as Map)['instructions']
+                          ?.toString() ??
+                      '此技能通过工具提供能力',
+                  nativeInteraction: true,
+                ),
+                Text(
+                    '文件：${(jsonDecode(item['manifest_json'].toString()) as Map)['files'] ?? []}'),
+                if (((jsonDecode(item['manifest_json'].toString())
+                            as Map)['script_files'] as List? ??
+                        [])
+                    .isNotEmpty)
+                  const Text('附带脚本可读取，当前没有脚本运行环境；HTTP、MCP 工具可执行。'),
                 const SizedBox(height: 16),
-                if (_isSkill) ...[
-                  const Text('指引与附带文件'),
-                  NativeSelectableText(
-                    (jsonDecode(item['manifest_json'].toString())
-                                as Map)['instructions']
-                            ?.toString() ??
-                        '此技能通过工具提供能力',
-                    nativeInteraction: true,
-                  ),
-                  Text(
-                      '文件：${(jsonDecode(item['manifest_json'].toString()) as Map)['files'] ?? []}'),
-                  if (((jsonDecode(item['manifest_json'].toString())
-                              as Map)['script_files'] as List? ??
-                          [])
-                      .isNotEmpty)
-                    const Text('附带脚本可读取，当前没有脚本运行环境；HTTP、MCP 工具可执行。'),
-                  const SizedBox(height: 16),
-                ],
-                Text(_isSkill ? '可执行工具' : '已发现工具',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                for (final tool in tools)
-                  _ToolToggleRow(
-                    title: tool['name']?.toString() ?? '',
-                    subtitle: [
-                      tool['description']?.toString() ?? '',
-                      if (_isSkill && tool['risk_level'] == 'sensitive') '需要授权',
-                    ].where((value) => value.isNotEmpty).join(' · '),
-                    onTap: () => _showToolDescription(sheetContext, tool),
-                    value: tool['enabled'] == 1,
-                    onChanged: (enabled) async {
-                      final toolId = tool['id'].toString();
-                      if (!updatingTools.add(toolId)) return;
-                      try {
-                        if (_isSkill &&
-                            enabled &&
-                            tool['risk_level'] == 'sensitive' &&
-                            tool['authorized'] != 1) {
-                          final approved = await TideDialogs.show<bool>(
-                            context: sheetContext,
-                            builder: (dialogContext) => TideDialogSurface(
-                              child: TideDialogs.glassContent(
-                                context: dialogContext,
+              ],
+              Text(_isSkill ? '可执行工具' : '已发现工具',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              for (final tool in tools)
+                _ToolToggleRow(
+                  title: tool['name']?.toString() ?? '',
+                  subtitle: [
+                    tool['description']?.toString() ?? '',
+                    if (_isSkill && tool['risk_level'] == 'sensitive') '需要授权',
+                  ].where((value) => value.isNotEmpty).join(' · '),
+                  value: tool['enabled'] == 1,
+                  onChanged: (enabled) async {
+                    if (_isSkill &&
+                        enabled &&
+                        tool['risk_level'] == 'sensitive' &&
+                        tool['authorized'] != 1) {
+                      final approved = await TideDialogs.show<bool>(
+                        context: sheetContext,
+                        builder: (dialogContext) => TideDialogSurface(
+                          child: TideDialogs.glassContent(
+                            context: dialogContext,
+                            children: [
+                              const Text('授权敏感工具',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 10),
+                              Text('允许 ${tool['name']} 访问其声明的外部能力。可随时在此处撤销授权。'),
+                              const SizedBox(height: 16),
+                              Row(
                                 children: [
-                                  const Text('授权敏感工具',
-                                      style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700)),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                      '允许 ${tool['name']} 访问其声明的外部能力。可随时在此处撤销授权。'),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TideDialogs.glassButton('取消',
-                                            onTap: () => Navigator.pop(
-                                                dialogContext, false),
-                                            color: TideTheme.of(dialogContext)
-                                                .surface,
-                                            textColor:
-                                                TideTheme.of(dialogContext)
-                                                    .textStrong),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: TideDialogs.glassButton('授权',
-                                            onTap: () => Navigator.pop(
-                                                dialogContext, true)),
-                                      ),
-                                    ],
+                                  Expanded(
+                                    child: TideDialogs.glassButton('取消',
+                                        onTap: () =>
+                                            Navigator.pop(dialogContext, false),
+                                        color:
+                                            TideTheme.of(dialogContext).surface,
+                                        textColor: TideTheme.of(dialogContext)
+                                            .textStrong),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: TideDialogs.glassButton('授权',
+                                        onTap: () =>
+                                            Navigator.pop(dialogContext, true)),
                                   ),
                                 ],
                               ),
-                            ),
-                          );
-                          if (approved != true) return;
-                          await _db.setSkillToolAuthorized(
-                              tool['id'].toString(), true);
-                          tool['authorized'] = 1;
-                        }
-                        if (_isSkill) {
-                          await _db.setSkillToolEnabled(
-                              tool['id'].toString(), enabled);
-                        } else {
-                          await _db.setMcpToolEnabled(
-                              tool['id'].toString(), enabled);
-                        }
-                        if (sheetContext.mounted) {
-                          setSheetState(
-                              () => tool['enabled'] = enabled ? 1 : 0);
-                        }
-                        await _reload();
-                      } catch (_) {
-                        if (sheetContext.mounted) {
-                          ScaffoldMessenger.of(sheetContext).showSnackBar(
-                              const SnackBar(content: Text('更新工具状态失败，请重试')));
-                        }
-                      } finally {
-                        updatingTools.remove(toolId);
-                      }
-                    },
-                  ),
-                if (!_isSkill) ...[
-                  const SizedBox(height: 12),
-                  _McpCachedMetadata(
-                    label: '资源',
-                    rawJson: item['resources_json']?.toString() ?? '[]',
-                    nameKey: 'name',
-                  ),
-                  const SizedBox(height: 12),
-                  _McpCachedMetadata(
-                    label: '提示词',
-                    rawJson: item['prompts_json']?.toString() ?? '[]',
-                    nameKey: 'name',
-                  ),
-                ],
+                            ],
+                          ),
+                        ),
+                      );
+                      if (approved != true) return;
+                      await _db.setSkillToolAuthorized(
+                          tool['id'].toString(), true);
+                    }
+                    if (_isSkill) {
+                      await _db.setSkillToolEnabled(
+                          tool['id'].toString(), enabled);
+                    } else {
+                      await _db.setMcpToolEnabled(
+                          tool['id'].toString(), enabled);
+                    }
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    await _reload();
+                    if (mounted) _showDetails(item);
+                  },
+                ),
+              if (!_isSkill) ...[
+                const SizedBox(height: 12),
+                _McpCachedMetadata(
+                  label: '资源',
+                  rawJson: item['resources_json']?.toString() ?? '[]',
+                  nameKey: 'name',
+                ),
+                const SizedBox(height: 12),
+                _McpCachedMetadata(
+                  label: '提示词',
+                  rawJson: item['prompts_json']?.toString() ?? '[]',
+                  nameKey: 'name',
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -702,17 +501,11 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                         decoration: BoxDecoration(
                           color: theme.surface.withValues(alpha: .62),
                           borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                                color: Colors.black.withValues(alpha: .04),
-                                blurRadius: 16,
-                                offset: const Offset(0, 5)),
-                          ],
+                          border: Border.all(color: theme.border),
                         ),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(16),
                           onTap: () => _showDetails(item),
-                          onLongPress: _isSkill ? null : () => _editMcp(item),
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
                             child: Row(
@@ -879,88 +672,48 @@ class _ToolToggleRow extends StatelessWidget {
     required this.subtitle,
     required this.value,
     required this.onChanged,
-    required this.onTap,
   });
 
   final String title;
   final String subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: theme.surfaceVariant,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: .035),
-              blurRadius: 14,
-              offset: const Offset(0, 4)),
-        ],
+        color: theme.surface.withValues(alpha: .58),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.border.withValues(alpha: .7)),
       ),
-      child: Material(
-        type: MaterialType.transparency,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 12, 14),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      color: theme.primary.withValues(alpha: .10),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Icon(Icons.extension_rounded,
-                      size: 19, color: theme.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: Text(title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: theme.textStrong,
-                            fontSize: 14,
-                            height: 1.4,
-                            fontWeight: FontWeight.w600))),
-                const SizedBox(width: 8),
-                Switch.adaptive(
-                    activeTrackColor: theme.primary,
-                    activeThumbColor: Colors.white,
-                    value: value,
-                    onChanged: onChanged),
-              ]),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text(subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: theme.textWeak, fontSize: 13, height: 1.55)),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: theme.textFaint, fontSize: 12)),
+                ],
               ],
-              const SizedBox(height: 12),
-              Row(children: [
-                Text('查看完整说明',
-                    style: TextStyle(
-                        color: theme.primary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500)),
-                const SizedBox(width: 3),
-                Icon(Icons.chevron_right_rounded,
-                    size: 16, color: theme.primary),
-              ]),
-            ]),
+            ),
           ),
-        ),
+          const SizedBox(width: 10),
+          Switch.adaptive(
+              activeTrackColor: theme.primary,
+              activeThumbColor: Colors.white,
+              value: value,
+              onChanged: onChanged),
+        ],
       ),
     );
   }
