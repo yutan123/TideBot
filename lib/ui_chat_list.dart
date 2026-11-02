@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'chat_event_bus.dart';
 import 'chat_protocol.dart';
 import 'message_delivery_service.dart';
 import 'db.dart';
+import 'global_notice.dart';
 import 'ui_components.dart';
 import 'chat_sidebar.dart';
 import 'ui_chat_room.dart';
@@ -19,7 +23,14 @@ class ChatListPage extends StatefulWidget {
 }
 
 class ChatListPageState extends State<ChatListPage> {
+  static const _cacheKey = 'chat_list_snapshot_v1';
+  static List<Map<String, dynamic>>? _lastBots;
+  static String? _lastCacheJson;
+  static Future<void> _cacheWrite = Future<void>.value();
   List<Map<String, dynamic>> _bots = [];
+  bool _hasLoaded = false;
+  bool _loadFailed = false;
+  int _loadGeneration = 0;
   bool _showParticles = false;
   int _particleRun = 0;
   final List<Offset> _origins = [];
@@ -34,6 +45,17 @@ class ChatListPageState extends State<ChatListPage> {
   @override
   void initState() {
     super.initState();
+    final cached = _lastBots;
+    if (cached != null) {
+      _bots = cached;
+      _hasLoaded = true;
+      // Sidebar listeners can rebuild the parent, so notify after this build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updateSidebar();
+      });
+    } else {
+      unawaited(_restoreCachedBots());
+    }
     _chatEvents = ChatEventBus.instance.events.listen((event) {
       if (!mounted || event.botId == null) return;
       load();
@@ -60,28 +82,124 @@ class ChatListPageState extends State<ChatListPage> {
     widget.sidebar?.endDrag(details.velocity.pixelsPerSecond.dx);
   }
 
-  void load() async {
+  Future<void> _restoreCachedBots() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cacheKey);
+      if (raw == null) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final cached = decoded.map((row) {
+        final bot = Map<String, dynamic>.from(row as Map);
+        if (bot['id'] is! String || (bot['id'] as String).isEmpty) {
+          throw const FormatException('Invalid cached bot');
+        }
+        return bot;
+      }).toList();
+      // A late disk read must never replace a fresh database result.
+      if (!mounted || _hasLoaded) return;
+      _lastCacheJson = raw;
+      _applyBots(cached, persist: false);
+    } catch (error) {
+      debugPrint('[chat_list] snapshot read failed: $error');
+    }
+  }
+
+  void _updateSidebar() {
+    final sidebar = widget.sidebar;
+    if (sidebar == null) return;
+    final first = _bots.isEmpty ? null : _bots.first;
+    if (!mapEquals(sidebar.bot, first)) sidebar.updateBot(first);
+  }
+
+  void _applyBots(List<Map<String, dynamic>> rows, {bool persist = true}) {
+    final changed = !_hasLoaded ||
+        _bots.length != rows.length ||
+        List.generate(rows.length, (i) => i)
+            .any((i) => !mapEquals(_bots[i], rows[i]));
+    void update() {
+      _bots = rows;
+      _hasLoaded = true;
+      _loadFailed = false;
+    }
+
+    // Refreshing an identical snapshot does not rebuild cards or the sidebar.
+    if (changed || (_loadFailed && _bots.isEmpty)) {
+      setState(update);
+    } else {
+      update();
+    }
+    _lastBots = rows;
+    _updateSidebar();
+    if (!persist) return;
+    try {
+      final encoded = jsonEncode(rows);
+      if (encoded == _lastCacheJson) return;
+      _lastCacheJson = encoded;
+      // Serialize writes so an older slow write cannot restore deleted cards.
+      _cacheWrite = _cacheWrite.then((_) async {
+        final prefs = await SharedPreferences.getInstance();
+        if (!await prefs.setString(_cacheKey, encoded)) {
+          throw StateError('Snapshot write failed');
+        }
+      }).catchError((Object error) {
+        if (_lastCacheJson == encoded) _lastCacheJson = null;
+        debugPrint('[chat_list] snapshot write failed: $error');
+      });
+    } catch (error) {
+      debugPrint('[chat_list] snapshot encoding failed: $error');
+    }
+  }
+
+  Future<void> load() async {
+    final generation = ++_loadGeneration;
+    if (mounted && _loadFailed) {
+      if (_bots.isEmpty) {
+        setState(() => _loadFailed = false);
+      } else {
+        _loadFailed = false;
+      }
+    }
     final db = DBManager();
     List<Map<String, dynamic>> bots;
     try {
-      bots = await db.queryBots();
+      bots = await db.queryBots(throwOnError: true);
     } catch (error) {
       print('[chat_list] queryBots failed: $error');
-      if (mounted) {
-        setState(() => _bots = []);
-        widget.sidebar?.updateBot(null);
+      if (mounted && generation == _loadGeneration) {
+        // A failed read is not an empty database. Keep the last visible cards.
+        if (_bots.isEmpty) {
+          setState(() => _loadFailed = true);
+        } else {
+          _loadFailed = true;
+        }
       }
       return;
     }
+    if (!mounted || generation != _loadGeneration) return;
 
     if (bots.isEmpty) {
-      if (mounted) {
-        setState(() => _bots = []);
-        widget.sidebar?.updateBot(null);
-      }
+      _applyBots([]);
       return;
     }
 
+    // Show known bots before waiting for their message previews on first load.
+    // Refreshes keep the existing cards until the complete replacement is ready.
+    if (!_hasLoaded || _bots.isEmpty) {
+      final initial = bots
+          .map((bot) => <String, dynamic>{
+                ...bot,
+                'preview': '',
+                'lastTime': (bot['last_msg_time'] as int?) ??
+                    (bot['created_at'] as int?) ??
+                    0,
+                'unread': false,
+              })
+          .toList();
+      _applyBots(initial, persist: false);
+    }
+
+    final previous = {for (final bot in _bots) bot['id']: bot};
     // 并发查询所有机器人的消息预览
     final previewFutures = bots.map((b) async {
       List<Map<String, dynamic>> msgs = const [];
@@ -90,6 +208,15 @@ class ChatListPageState extends State<ChatListPage> {
             .queryMessages(b['id'] as String, limit: 30, descending: true);
       } catch (error) {
         print('[chat_list] queryMessages failed: $error');
+        final cached = previous[b['id']];
+        if (cached != null) {
+          return <String, dynamic>{
+            ...b,
+            'preview': cached['preview'],
+            'lastTime': cached['lastTime'],
+            'unread': cached['unread'],
+          };
+        }
       }
       String preview = '';
       int lastTime =
@@ -128,9 +255,8 @@ class ChatListPageState extends State<ChatListPage> {
       if (aPin != bPin) return bPin.compareTo(aPin);
       return (b['lastTime'] as int).compareTo(a['lastTime'] as int);
     });
-    if (mounted) {
-      setState(() => _bots = enriched);
-      widget.sidebar?.updateBot(enriched.isEmpty ? null : enriched.first);
+    if (mounted && generation == _loadGeneration) {
+      _applyBots(enriched);
     }
   }
 
@@ -203,10 +329,16 @@ class ChatListPageState extends State<ChatListPage> {
     if (id.isEmpty || !_openingBots.add(id)) return;
     if (mounted) setState(() {});
     try {
+      final current = await DBManager().getBotById(id);
+      if (!mounted) return;
+      if (current == null) {
+        await load();
+        return;
+      }
       await Navigator.push(
         context,
         PageRouteBuilder(
-          pageBuilder: (c, a, s) => ChatRoomPage(botData: bot),
+          pageBuilder: (c, a, s) => ChatRoomPage(botData: current),
           transitionDuration: const Duration(milliseconds: 380),
           reverseTransitionDuration: const Duration(milliseconds: 240),
           transitionsBuilder: (c, a, s, child) {
@@ -230,6 +362,9 @@ class ChatListPageState extends State<ChatListPage> {
       );
       await MessageDeliveryService.instance.markRead(id);
       if (mounted) load();
+    } catch (error) {
+      debugPrint('[chat_list] open chat failed: $error');
+      if (mounted) GlobalNotice.show('暂时无法打开聊天，请重试');
     } finally {
       _openingBots.remove(id);
       if (mounted) setState(() {});
@@ -261,24 +396,40 @@ class ChatListPageState extends State<ChatListPage> {
                     ),
                   ))),
           Expanded(
-              child: _bots.isEmpty
+              child: _bots.isEmpty && _loadFailed
                   ? Center(
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.inbox_rounded,
-                          size: 50, color: Colors.grey.shade400),
-                      const SizedBox(height: 10),
-                      const Text('还没有机器人',
-                          style: TextStyle(
-                              color: Color(0xFF8E8E93),
-                              fontSize: 15,
-                              fontFamily: 'TideFont')),
-                      const Text('点击右下角 + 创建',
-                          style: TextStyle(
-                              color: Color(0xFFC7C7CC),
-                              fontSize: 13,
-                              fontFamily: 'TideFont'))
+                      Text('机器人列表加载失败',
+                          style:
+                              TextStyle(color: TideTheme.of(context).textWeak)),
+                      const SizedBox(height: 8),
+                      TideDialogs.glassButton('重试',
+                          onTap: load, color: TideTheme.of(context).primary),
                     ]))
-                  : _list()),
+                  : !_hasLoaded
+                      ? Center(
+                          child: CircularProgressIndicator(
+                              color: TideTheme.of(context).primary))
+                      : _bots.isEmpty
+                          ? Center(
+                              child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                  Icon(Icons.inbox_rounded,
+                                      size: 50, color: Colors.grey.shade400),
+                                  const SizedBox(height: 10),
+                                  const Text('还没有机器人',
+                                      style: TextStyle(
+                                          color: Color(0xFF8E8E93),
+                                          fontSize: 15,
+                                          fontFamily: 'TideFont')),
+                                  const Text('点击右下角 + 创建',
+                                      style: TextStyle(
+                                          color: Color(0xFFC7C7CC),
+                                          fontSize: 13,
+                                          fontFamily: 'TideFont'))
+                                ]))
+                          : _list()),
         ])),
       ),
     );

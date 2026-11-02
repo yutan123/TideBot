@@ -18,7 +18,7 @@ const memoryDeduplicationPolicy =
     '没有新增事实就不调用 save_memory；对话后记忆判断应返回 needUpdate:false 和空 actions。';
 
 String recentMemoryReference(Iterable<Map<String, dynamic>> memories,
-    {int limit = 15}) {
+    {int limit = 5}) {
   final recent = memories
       .where((row) =>
           !const ['角色眼中的你', '角色的自我认知', '关系', '角色档案'].contains(row['category']))
@@ -28,7 +28,9 @@ String recentMemoryReference(Iterable<Map<String, dynamic>> memories,
             'category': row['category'],
             'title': row['title'],
             'content': row['content'],
+            'importance': row['importance'],
+            'timestamp': row['timestamp'],
           })
       .toList();
-  return '【最近世界书条目：写入前去重参考，不是新的对话事实】\n${jsonEncode(recent)}';
+  return '【最近世界书条目：可用于回忆与写入前去重，不是本轮新事实】\n${jsonEncode(recent)}';
 }

@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 基础网络与录音权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Android 13+ notification runtime permission. -->
@@ -29,11 +30,18 @@
     
     <!-- 电池优化白名单 (防系统杀进程) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- 开机自启 (可选) -->
+    <!-- 开机恢复后台任务 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Discover the device's actual text actions (translation, read aloud, etc.). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
     <application
         android:label="TideBot"
-        android:name="${applicationName}"
+        android:name=".TideApplication"
         android:icon="@mipmap/ic_launcher">
         <service android:name="androidx.work.impl.foreground.SystemForegroundService" android:foregroundServiceType="dataSync" tools:node="merge" />
         
@@ -62,6 +70,12 @@
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="dataSync" />
         
+        <!-- Native inference must not run in the Flutter/chat process. -->
+        <service
+            android:name=".TideMemoryEmbeddingService"
+            android:process=":memory_embedding"
+            android:exported="false" />
+
         <!-- Kotlin 后台任务执行服务 -->
         <service
             android:name=".TideBackgroundService"

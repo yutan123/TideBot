@@ -1,10 +1,13 @@
 import 'deepseek_search.dart';
 import 'minimax_tts.dart';
 import 'call_speech.dart';
+import 'voice_message_speech.dart';
 import 'request_execution_lease.dart';
 import 'ai_request_task.dart';
 import 'proactive_contact.dart';
 import 'memory_prompt_policy.dart';
+import 'memory_retrieval_service.dart';
+import 'memory_retrieval_policy.dart';
 export 'ai_request_task.dart';
 import 'diary_output.dart';
 import 'daily_quote_output.dart';
@@ -33,6 +36,7 @@ import 'life_schedule_service.dart';
 import 'media_preprocessor.dart';
 import 'video_processing_service.dart';
 import 'video_request.dart';
+import 'video_response.dart';
 import 'app_log_service.dart';
 import 'bot_state.dart';
 import 'emotion_state_service.dart';
@@ -483,6 +487,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required List<Map<String, dynamic>> history,
     required String profileContext,
     required String worldBookContext,
+    bool proactive = false,
     List<String> imagePaths = const <String>[],
     AICancellationToken? cancellationToken,
   }) async {
@@ -508,7 +513,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       if (baseUrl.isEmpty || modelName.isEmpty) return '';
 
       // Current user content is supplied separately, not duplicated as history.
-      final priorHistory = history.isNotEmpty &&
+      final priorHistory = !proactive && history.isNotEmpty &&
               history.last['role'] == 'user' &&
               history.last['content'] == text
           ? history.sublist(0, history.length - 1)
@@ -562,12 +567,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           {
             'role': 'system',
             'content':
-                '$_jarvisPrompt\n参考回复必须符合角色聊天输出要求：使用角色语气，给出恰好三条方向和三条可直接作为聊天正文的参考回复；不含系统解释、工具协议、心情标签或时间戳。inner_thought_seed 只写角色感受，不把独白混进 reference_examples。'
+                '$_jarvisPrompt\n${proactive ? proactiveContactInstructions : ''}\n参考回复必须符合角色聊天输出要求：使用角色语气，给出恰好三条方向和三条可直接作为聊天正文的参考回复；不含系统解释、工具协议、心情标签或时间戳。inner_thought_seed 只写角色感受，不把独白混进 reference_examples。'
           },
           {
             'role': 'user',
             'content':
-                '# 角色信息\n角色：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n\n# 时间与日程\n当前时间：$timeStr$lifeScheduleContext\n\n# 背景知识\n$profileContext\n$worldBookContext\n\n# 最近对话（最近10轮）\n$recent$innerThoughtContext\n\n# 用户最新消息${imagePaths.isNotEmpty ? '（含${imagePaths.length}张图片）' : ''}\n$text${imagePaths.isNotEmpty ? '\n\n图片内容识别结果见上方' : ''}'
+                '# 角色信息\n角色：${bot['name'] ?? ''}\n说话方式与人设：${bot['prompt'] ?? ''}\n${bot['desc'] ?? ''}\n\n# 时间与日程\n当前时间：$timeStr$lifeScheduleContext\n\n# 背景知识\n$profileContext\n$worldBookContext\n\n# 最近对话（最近10轮）\n$recent$innerThoughtContext\n\n# ${proactive ? '应用触发任务（用户没有新发言）' : '用户最新消息'}${imagePaths.isNotEmpty ? '（含${imagePaths.length}张图片）' : ''}\n$text${imagePaths.isNotEmpty ? '\n\n图片内容识别结果见上方' : ''}'
           },
         ],
       };
@@ -769,6 +774,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final requestId =
         '${DateTime.now().microsecondsSinceEpoch}_${_requestSequence++}';
     final windowDiagnostic = <String, dynamic>{};
+    final voiceEnabled = persistResponse && !task.internal && !isVoiceCall &&
+        await db.getKV('voice_reply_enabled') == 'true';
+    final voiceChance = voiceEnabled
+        ? (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50).clamp(1, 100)
+        : 0;
 
     cancellationToken?.throwIfCancelled();
     final bots = await db.getAllBots().timeout(const Duration(seconds: 8));
@@ -779,6 +789,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       return {'success': true, 'silent': true, 'reply': ''};
     }
 
+    final ttsModel = bot['tts_model']?.toString().trim() ?? '';
+    // Decide once before generation so the model can provide speech direction.
+    final randomVoice = voiceEnabled && ttsModel.isNotEmpty &&
+        Random.secure().nextInt(100) < voiceChance;
     // 提取该 bot 配置的 provider id（存在 bots.chat_model 字段，由聊天室设置弹窗写入）
     // A newly added provider is usable immediately. Only fill an empty model;
     // never overwrite a deliberate per-bot choice.
@@ -856,7 +870,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // 世界书统一管理所有记忆：特殊字段每轮固定注入，普通记忆由关键词匹配激活。
       // 读取三个核心设定字段（独立于普通世界书条目）
       final allMemories = activeGame == null
-          ? await db.queryMemories(botId, limit: 200)
+          ? await db.queryMemories(botId)
           : <Map<String, dynamic>>[];
 
       String? botViewOfUser; // 你眼中的对方（原"角色眼中的你"）
@@ -879,7 +893,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 构建核心设定提示
       final coreSettings = [
-        if (activeGame == null) recentMemoryReference(allMemories),
+        if (activeGame == null)
+          recentMemoryReference(recentOrdinaryMemories(allMemories)),
         if (botViewOfUser?.isNotEmpty == true)
           '【你眼中的对方】\n$botViewOfUser'
         else
@@ -902,31 +917,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ].join('\n')
           : '\n$coreSettings';
 
-      // 世界书激活：智能匹配（关键词 + N-gram 语义 + 评分排序）
-      final conversationForMatch =
-          '$text\n${history.take(5).map((h) => h['content'] ?? '').join('\n')}';
-      final worldBookEntries = activeGame == null
-          ? await WorldBookService.instance.activateEntriesIntelligent(
-              botId: botId,
-              conversationText: conversationForMatch,
-              maxResults: 10,
-            )
-          : <WorldBookEntry>[];
-
-      final worldBookContext =
-          WorldBookService.formatActivatedEntries(worldBookEntries);
-
-      // 第三层：如果世界书匹配少于3条，在系统提示中增加记忆库候选列表
-      String memoryContextHint = '';
-      if (worldBookEntries.length < 3 && activeGame == null) {
-        final recentMemories = await db.queryMemories(botId, limit: 15);
-        if (recentMemories.isNotEmpty) {
-          final candidateList = recentMemories
-              .map((m) =>
-                  '- [记录时间：${memoryRecordedTime(m)}] ${m['title'] ?? '未命名'}: ${m['content']}')
-              .join('\n');
-          memoryContextHint = '\n\n【记忆库候选】（如与当前对话相关请引用，无关忽略）\n$candidateList';
-        }
+      final recentMemories = recentOrdinaryMemories(allMemories);
+      final conversationForMatch = memoryConversationQuery(text, history);
+      final matchedMemories = activeGame == null
+          ? await MemoryRetrievalService.instance.search(
+              botId, conversationForMatch,
+              exclude: recentMemories, limit: 5, semanticQuery: text)
+          : <Map<String, dynamic>>[];
+      final worldBookContext = MemoryRetrievalService.format(matchedMemories);
+      if (activeGame == null) {
+        AppLogService.instance.add('MEMORY',
+            '记忆注入 recent=${recentMemories.map((r) => r['id']).toList()} matched=${matchedMemories.map(memoryIdentity).toList()}');
       }
       final stickerPlan = allowTools && allowStickers
           ? await _planStickerForTurn(db)
@@ -1090,6 +1091,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
       final dynamicContext = [
         profileContext,
+        if (randomVoice && allowTools) voiceMessageSpeechPrompt,
         presetCategoryContext,
         if (task == AIRequestTask.proactiveChat) proactiveContactInstructions,
         if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
@@ -1102,7 +1104,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (!diaryTask && !quoteTask) deviceContextPrompt,
         if (!diaryTask && !quoteTask) emotionContext,
         if (!diaryTask && !quoteTask) recentThoughtsContext,
-        memoryContextHint, // 第三层增强：记忆库候选列表
       ].where((item) => item.trim().isNotEmpty).join('\n\n');
 
       messages = <Map<String, dynamic>>[
@@ -1148,7 +1149,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       Map<String, dynamic>? currentHistoryMessage;
       // Separate the current user turn before trimming or marking history.
-      if (historyMessages.isNotEmpty &&
+      if (task != AIRequestTask.proactiveChat &&
+          historyMessages.isNotEmpty &&
           history.isNotEmpty &&
           history.last['role'] == 'user' &&
           history.last['type'] != 'image' &&
@@ -1265,13 +1267,23 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             messages.add({'role': 'user', 'content': text});
           }
         } else if (task == AIRequestTask.proactiveChat) {
-          messages.add({'role': 'system', 'content': text});
+          messages.add({
+            'role': 'user',
+            'content': buildProactiveContactTurn(
+              now: DateTime.now(),
+              unansweredCount: int.tryParse(
+                    await db.getKV('proactive_unanswered_$botId') ?? '',
+                  ) ?? 0,
+              trigger: text,
+            ),
+          });
         } else {
           messages
               .add(currentHistoryMessage ?? {'role': 'user', 'content': text});
         }
       }
       if (!task.internal &&
+          task != AIRequestTask.proactiveChat &&
           messages.isNotEmpty &&
           messages.last['role'] == 'user') {
         final current = messages.last;
@@ -1293,10 +1305,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         final advice = await _jarvisAdvice(
           bot: bot,
           botId: botId,
-          text: text,
+          text: task == AIRequestTask.proactiveChat
+              ? messages.last['content'].toString()
+              : text,
           history: history,
           profileContext: profileContext,
           worldBookContext: worldBookContext,
+          proactive: task == AIRequestTask.proactiveChat,
           imagePaths: effectiveImagePaths,
           cancellationToken: cancellationToken,
         );
@@ -1304,7 +1319,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           messages.add({'role': 'system', 'content': advice});
         }
       }
-      if (timeAware) {
+      if (timeAware || task == AIRequestTask.proactiveChat) {
         final now = DateTime.now();
         DateTime? firstAt;
         DateTime? lastAt;
@@ -1368,7 +1383,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'messages': prepareOpenAIChatCompletionMessages(messages),
         'max_tokens': maxContext,
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
-        if (toolCallingEnabled && tools.isNotEmpty) 'tool_choice': 'auto',
+        if (toolCallingEnabled && tools.isNotEmpty)
+          'tool_choice': randomVoice
+              ? {'type': 'function', 'function': {'name': 'request_voice_reply'}}
+              : 'auto',
         if (onDelta != null) 'stream': true,
       });
       final cacheScope = '$baseUrl|$botId|$providerId|$modelName|${task.name}';
@@ -1421,6 +1439,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       var toolSilenced = false;
       var hadToolCalls = false;
       var toolRequestedVoice = false;
+      CallSpeechStyle? voiceSpeechStyle;
       Map usage = const {};
       final responseMetadata = <String, dynamic>{};
       String errorBody = '';
@@ -1596,7 +1615,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             silenceSetter: () => toolSilenced = true,
             stickerSetter: (sticker) => toolSticker = sticker,
             moodSetter: (mood) => toolMood = mood,
-            voiceSetter: () => toolRequestedVoice = true,
+            voiceSetter: (style) {
+                toolRequestedVoice = true;
+                voiceSpeechStyle = style;
+              },
             requestTools: tools,
             requiredToolNames: const {},
             allowedStickerTypes:
@@ -1695,7 +1717,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               silenceSetter: () => toolSilenced = true,
               stickerSetter: (sticker) => toolSticker = sticker,
               moodSetter: (mood) => toolMood = mood,
-              voiceSetter: () => toolRequestedVoice = true,
+              voiceSetter: (style) {
+                toolRequestedVoice = true;
+                voiceSpeechStyle = style;
+              },
               requestTools: tools,
               requiredToolNames: {
                 if (allowSticker) 'send_sticker',
@@ -1846,17 +1871,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         Map<String, dynamic>? sticker = persistedSticker;
         String? audioPath;
         if (persistResponse) {
-          final ttsModel = bot['tts_model']?.toString().trim() ?? '';
-          final voiceEnabled = await db.getKV('voice_reply_enabled') == 'true';
-          final voiceChance =
-              (int.tryParse(await db.getKV('voice_reply_chance') ?? '') ?? 50)
-                  .clamp(1, 100);
-          final shouldVoice = voiceEnabled &&
-              ttsModel.isNotEmpty &&
-              (toolRequestedVoice ||
-                  Random.secure().nextInt(100) < voiceChance);
+          final shouldVoice = voiceEnabled && ttsModel.isNotEmpty &&
+              (toolRequestedVoice || randomVoice) &&
+              (!allowTools || voiceSpeechStyle != null);
           if (shouldVoice) {
-            audioPath = await _generateTTS(replyText, ttsModel, mood: mood);
+            audioPath = await _generateTTS(replyText, ttsModel,
+                mood: mood, speechStyle: voiceSpeechStyle);
           }
         }
         final hasInnerThought = innerThought?.isNotEmpty == true;
@@ -2255,13 +2275,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               data);
         },
       );
-      if (response.statusCode != 200) {
-        throw StateError(
-            '视频解析模型请求失败（HTTP ${response.statusCode}），请确认该模型支持视频输入');
-      }
-      final body = jsonDecode(utf8.decode(response.bodyBytes));
-      final text = body is Map ? _extractChatContent(body) : '';
-      if (text.isEmpty) throw StateError('视频解析模型未返回分析内容，请重试或检查模型设置');
+      final text = parseVideoAnalysisResponse(utf8.decode(response.bodyBytes),
+          statusCode: response.statusCode);
+      AppLogService.instance.addJson('VIDEO', '视频分析正文已接收', {
+        'characters': text.length,
+        'content_type': response.headers['content-type'],
+        'request_id':
+            response.headers['x-request-id'] ?? response.headers['request-id'],
+      });
       return text;
     } catch (error) {
       AppLogService.instance.add('VIDEO', '视频分析失败：$error');
@@ -3567,7 +3588,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required void Function() silenceSetter,
     required void Function(Map<String, dynamic>) stickerSetter,
     required void Function(String) moodSetter,
-    required void Function() voiceSetter,
+    required void Function(CallSpeechStyle) voiceSetter,
     List<Map<String, dynamic>> requestTools = const [],
     Set<String> requiredToolNames = const {},
     Set<String> allowedStickerTypes = const {},
@@ -3589,7 +3610,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           final sticker = toolResult['sticker'];
           if (sticker is Map) stickerSetter(Map<String, dynamic>.from(sticker));
         } else if (name == 'request_voice_reply') {
-          voiceSetter();
+          voiceSetter(CallSpeechStyle.fromJson(toolResult['speech']));
         }
         if (name == 'set_emotion' || name == 'send_sticker') {
           completedTools.add(name);
@@ -4060,6 +4081,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 'type': 'string',
                 'description': '新增条目写具体事实；更新条目写保留旧有效信息后的完整内容'
               },
+              'importance': {
+                'type': 'integer',
+                'minimum': 1,
+                'maximum': 5,
+                'description': '记忆优先级：1低，3普通，5重要；仅相关记忆参与排序'
+              },
+              'keys': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': '用于检索的关键词，不填写则自动从正文匹配'
+              },
               'memory_id': {
                 'type': 'string',
                 'description': '更新已有条目时填写最近世界书或搜索结果中的 id；新建时省略。不得跨类别覆盖。'
@@ -4165,10 +4197,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'function': {
           'name': 'request_voice_reply',
           'description':
-              '当用户明确要求语音回复，或当前内容适合用语音自然表达时调用。调用后本轮最终回复会额外生成语音；不要在正文声称已发送语音，系统会处理。',
+              '当本轮安排语音、用户明确要求语音，或内容适合用语音自然表达时调用。必须在 speech 中填写本条语音的情绪和演绎指导；正文不输出语音参数。不发送语音时无需调用。',
           'parameters': {
             'type': 'object',
-            'properties': {},
+            'properties': {'speech': voiceMessageSpeechSchema()},
+            'required': ['speech'],
             'additionalProperties': false,
           },
         },
@@ -4969,7 +5002,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             botId: botId,
             id: memoryId.isEmpty ? null : memoryId,
             title: previous?['title']?.toString() ?? '',
-            importance: (previous?['importance'] as num?)?.toInt() ?? 3,
+            importance: (args['importance'] as num?)?.toInt(),
+            keys: args['keys'] is List
+                ? (args['keys'] as List).whereType<String>().toList()
+                : null,
             expiresAt: (previous?['expires_at'] as num?)?.toInt(),
             type: previous?['type']?.toString() ?? type,
             content: content,
@@ -5066,8 +5102,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
     }
     if (name == 'request_voice_reply') {
+      if (parseVoiceMessageSpeech(args['speech']) == null) {
+        return {'result': {'ok': false, 'error': '请填写 speech 情绪和演绎参数后重试。'}};
+      }
       return {
-        'result': {'ok': true, 'message': '本轮最终文字回复将生成语音。'},
+        'result': {'ok': true, 'speech': args['speech'],
+          'message': '本轮最终文字回复将按指定情绪生成语音；参数不要写进正文。'},
       };
     }
     if (name == 'write_diary') {

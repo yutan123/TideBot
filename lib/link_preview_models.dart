@@ -6,12 +6,14 @@ class LinkPreviewData {
   final String? imageUrl;
   final LinkType type;
   final Map<String, String> imageHeaders;
+  final String? videoUrl;
 
   const LinkPreviewData({
     required this.url,
     required this.title,
     this.description = '',
     this.imageUrl,
+    this.videoUrl,
     this.imageHeaders = const {},
     required this.type,
   });

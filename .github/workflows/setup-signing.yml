@@ -1,0 +1,107 @@
+name: Initialize Android signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: initialize-android-signing
+  cancel-in-progress: false
+
+jobs:
+  initialize-signing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.SIGNING_SETUP_TOKEN }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      BACKUP_PASSWORD: ${{ secrets.SIGNING_BACKUP_PASSWORD }}
+
+    steps:
+      - name: Validate setup secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo '::error::SIGNING_SETUP_TOKEN is missing'; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo '::error::ANDROID_KEYSTORE_PASSWORD is missing'; exit 1; }
+          test -n "$BACKUP_PASSWORD" || { echo '::error::SIGNING_BACKUP_PASSWORD is missing'; exit 1; }
+          test "$KEYSTORE_PASSWORD" != "$BACKUP_PASSWORD" || { echo '::error::The two passwords must be different'; exit 1; }
+
+      - name: Select repository signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REPOSITORY" in
+            yutan123/TideBot-Dev)
+              echo 'KEY_ALIAS=tidebot-dev' >> "$GITHUB_ENV"
+              echo 'KEY_DN=CN=TideBot Dev, OU=Development, O=TideBot, C=CN' >> "$GITHUB_ENV"
+              echo 'KEYSTORE_NAME=tidebot-dev.keystore' >> "$GITHUB_ENV"
+              ;;
+            yutan123/TideBot)
+              echo 'KEY_ALIAS=tidebot-release' >> "$GITHUB_ENV"
+              echo 'KEY_DN=CN=TideBot, OU=Release, O=TideBot, C=CN' >> "$GITHUB_ENV"
+              echo 'KEYSTORE_NAME=tidebot-release.keystore' >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Unexpected repository: $GITHUB_REPOSITORY"
+              exit 1
+              ;;
+          esac
+
+      - name: Refuse to overwrite an existing signing secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh secret list --repo "$GITHUB_REPOSITORY" --json name --jq '.[].name' > existing-secrets.txt
+          if grep -qx ANDROID_KEYSTORE_BASE64 existing-secrets.txt; then
+            echo '::error::ANDROID_KEYSTORE_BASE64 already exists; refusing to overwrite it.'
+            exit 1
+          fi
+
+      - name: Generate signing keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keytool -genkeypair \
+            -v \
+            -keystore "$KEYSTORE_NAME" \
+            -storetype PKCS12 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 3072 \
+            -validity 10950 \
+            -dname "$KEY_DN"
+          base64 -w 0 "$KEYSTORE_NAME" > keystore.base64
+          sha256sum "$KEYSTORE_NAME" > keystore.sha256
+
+      - name: Create encrypted backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$BACKUP_PASSWORD" \
+            --symmetric --cipher-algo AES256 \
+            --output "$KEYSTORE_NAME.gpg" "$KEYSTORE_NAME"
+          tar -czf "${KEYSTORE_NAME%.keystore}-backup.tar.gz" \
+            "$KEYSTORE_NAME.gpg" keystore.sha256
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-signing-backup
+          path: '*-backup.tar.gz'
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save repository signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh secret set ANDROID_KEYSTORE_BASE64 --repo "$GITHUB_REPOSITORY" < keystore.base64
+          gh secret set ANDROID_KEY_ALIAS --repo "$GITHUB_REPOSITORY" --body "$KEY_ALIAS"
+          gh secret set ANDROID_KEY_PASSWORD --repo "$GITHUB_REPOSITORY" --body "$KEYSTORE_PASSWORD"

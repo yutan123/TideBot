@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'package:archive/archive_io.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'transfer_archive.dart';
@@ -78,20 +77,7 @@ class DataTransfer {
   }
 
   static Future<void> extract(String source, String destination) async {
-    final size = await Isolate.run(() {
-      final input = InputFileStream(source);
-      try {
-        final archive = ZipDecoder().decodeStream(input);
-        var total = 0;
-        for (final entry in archive.files) {
-          if (entry.isFile) total += entry.size;
-        }
-        archive.clearSync();
-        return total;
-      } finally {
-        input.closeSync();
-      }
-    });
+    final size = await Isolate.run(() => transferZipSize(source));
     await ensureSpace(Directory(destination), size);
     await Isolate.run(() => extractTransferZip(source, destination));
   }

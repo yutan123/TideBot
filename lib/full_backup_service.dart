@@ -125,9 +125,19 @@ class FullBackupService {
       if (!await source.exists() || !await preferences.exists()) {
         throw const FormatException('不是有效的 TideBot 完整备份');
       }
-      final values = <String, dynamic>{};
-      await for (final record in JsonRecords.read(preferences, arrays: const {})) {
-        values[record.key] = record.value;
+      // Validate one preference at a time; retaining the complete decoded map
+      // doubled the live preferences during a full restore.
+      await for (final record in JsonRecords.read(
+        preferences,
+        arrays: const {},
+      )) {
+        final value = record.value;
+        if (value is! bool &&
+            value is! num &&
+            value is! String &&
+            !(value is List && value.every((item) => item is String))) {
+          throw const FormatException('备份设置格式无效');
+        }
       }
       final check = await openDatabase(
         source.path,
@@ -149,7 +159,21 @@ class FullBackupService {
         await DataTransfer.directoryBytes(work),
       );
       final prefs = await SharedPreferences.getInstance();
-      final oldPrefs = {for (final key in prefs.getKeys()) key: prefs.get(key)};
+      final oldPrefs = File('${work.path}/old_preferences.json');
+      final oldSink = oldPrefs.openWrite();
+      try {
+        oldSink.write('{');
+        var first = true;
+        for (final key in prefs.getKeys()) {
+          if (!first) oldSink.write(',');
+          first = false;
+          oldSink.write('${jsonEncode(key)}:${jsonEncode(prefs.get(key))}');
+          await oldSink.flush();
+        }
+        oldSink.write('}');
+      } finally {
+        await oldSink.close();
+      }
       final rollback = Directory('${work.path}/rollback');
       await rollback.create();
       await DBManager().close();
@@ -171,7 +195,7 @@ class FullBackupService {
         final restored = Directory('${work.path}/documents');
         if (await restored.exists())
           await DataTransfer.copyDirectory(restored, docs);
-        await _setPreferences(prefs, values);
+        await _setPreferences(prefs, preferences);
       } catch (_) {
         try {
           await DBManager().close();
@@ -203,23 +227,27 @@ class FullBackupService {
 
   static Future<void> _setPreferences(
     SharedPreferences prefs,
-    Map values,
+    File values,
   ) async {
-    await prefs.clear();
-    for (final entry in values.entries) {
-      final key = entry.key.toString();
+    if (!await prefs.clear()) throw StateError('无法清理旧设置');
+    await for (final entry in JsonRecords.read(values, arrays: const {})) {
+      final key = entry.key;
       final value = entry.value;
+      bool saved;
       if (value is bool) {
-        await prefs.setBool(key, value);
+        saved = await prefs.setBool(key, value);
       } else if (value is int) {
-        await prefs.setInt(key, value);
+        saved = await prefs.setInt(key, value);
       } else if (value is double) {
-        await prefs.setDouble(key, value);
+        saved = await prefs.setDouble(key, value);
       } else if (value is String) {
-        await prefs.setString(key, value);
-      } else if (value is List) {
-        await prefs.setStringList(key, value.map((e) => e.toString()).toList());
+        saved = await prefs.setString(key, value);
+      } else if (value is List && value.every((item) => item is String)) {
+        saved = await prefs.setStringList(key, value.cast<String>());
+      } else {
+        throw const FormatException('备份设置格式无效');
       }
+      if (!saved) throw StateError('无法恢复设置：$key');
     }
   }
 }

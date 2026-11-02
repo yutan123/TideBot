@@ -1,0 +1,76 @@
+import 'package:flutter/material.dart';
+import 'data_transfer.dart';
+import 'theme.dart';
+import 'ui_components.dart';
+
+/// Locks the complete selection flow and shows an app-styled busy dialog while
+/// preparing, picking, saving or restoring data.
+class TransferProgress {
+  static bool _starting = false;
+  static bool get isBusy => _starting || DataTransfer.isBusy;
+
+  static Future<void> guard(Future<void> Function() action) async {
+    if (_starting || DataTransfer.isBusy) return;
+    _starting = true;
+    try {
+      await action();
+    } finally {
+      _starting = false;
+    }
+  }
+
+  static Future<T> run<T>(
+    BuildContext context,
+    String label,
+    Future<T> Function() action,
+  ) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    Route<dynamic>? route;
+    final shown = TideDialogs.show<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        route = ModalRoute.of(dialogContext);
+        final theme = TideTheme.of(dialogContext);
+        return PopScope(
+          canPop: false,
+          child: TideDialogSurface(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: theme.primary,
+                  ),
+                ),
+                const SizedBox(width: 18),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    try {
+      // Render the spinner before filesystem/database preparation starts.
+      await WidgetsBinding.instance.endOfFrame;
+      return await action();
+    } finally {
+      final current = route;
+      if (navigator.mounted && current != null && current.isActive) {
+        navigator.removeRoute(current);
+      }
+      await shown;
+    }
+  }
+}

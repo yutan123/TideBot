@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'full_backup_service.dart';
 import 'db.dart';
-import 'data_transfer.dart';
+import 'transfer_progress.dart';
 import 'ops.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -69,7 +69,8 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
         ..addAll(values[4] as Map<String, int>);
       _total = (native['total'] as num?)?.toInt() ?? 0;
       _apk = (native['apk'] as num?)?.toInt() ?? 0;
-      _appData = (native['data'] as num?)?.toInt() ??
+      _appData =
+          (native['data'] as num?)?.toInt() ??
           (_documents + _temporary + _database);
       _loading = false;
     });
@@ -82,7 +83,7 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
   }
 
   Future<void> _clearCache() async {
-    if (DataTransfer.isBusy) return;
+    if (TransferProgress.isBusy) return;
     final temp = await getTemporaryDirectory();
     if (await temp.exists()) {
       await for (final item in temp.list(followLinks: false)) {
@@ -92,191 +93,279 @@ class _StorageManagementPageState extends State<StorageManagementPage> {
       }
     }
     if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('缓存已清理')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('缓存已清理')));
       _loadAsync();
     }
   }
 
   Future<void> _deleteSelected() async {
-    if (DataTransfer.isBusy) return;
+    if (TransferProgress.isBusy) return;
     if (_selected.isEmpty) return;
     for (final id in _selected) {
       await DBManager().clearChatHistory(id);
     }
     if (mounted) {
       setState(_selected.clear);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('已清理所选机器人的聊天记录')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已清理所选机器人的聊天记录')));
       _loadAsync();
     }
   }
 
-  Future<void> _backupAll() async {
+  Future<void> _backupAll() => TransferProgress.guard(() async {
     try {
-      final saved = await FullBackupService.export();
+      final saved = await TransferProgress.run(
+        context,
+        '正在准备完整备份并选择保存位置…',
+        FullBackupService.export,
+      );
       if (!saved) return;
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('完整备份已导出')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('完整备份已导出')));
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('备份失败：$error')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('备份失败：$error')));
       }
     }
-  }
+  });
 
-  Future<void> _restoreAll() async {
-    final confirmed = await showDialog<bool>(
+  Future<void> _restoreAll() => TransferProgress.guard(() async {
+    final confirmed =
+        await TideDialogs.show<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
+          builder: (dialogContext) => TideDialogSurface(
             title: const Text('恢复完整备份'),
             content: const Text('恢复会覆盖当前的设置、聊天记录、机器人、记忆和媒体文件。'),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('取消')),
-              FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('选择备份文件')),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: TideTheme.of(context).primary,
+                ),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('选择备份文件'),
+              ),
             ],
           ),
         ) ??
         false;
-    if (!confirmed) return;
+    if (!confirmed || !mounted) return;
     try {
-      final restored = await FullBackupService.restore();
+      final restored = await TransferProgress.run(
+        context,
+        '正在读取并恢复完整备份…',
+        FullBackupService.restore,
+      );
       if (!restored) return;
       await _loadAsync();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('完整备份已恢复，请重新打开页面以刷新运行中的服务')));
+          const SnackBar(content: Text('完整备份已恢复，请重新打开页面以刷新运行中的服务')),
+        );
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('恢复失败：$error')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('恢复失败：$error')));
       }
     }
-  }
-
+  });
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final used = _apk + _appData;
-    final pct =
-        _total == 0 ? '—' : '${(used / _total * 100).toStringAsFixed(3)}%';
+    final pct = _total == 0
+        ? '—'
+        : '${(used / _total * 100).toStringAsFixed(3)}%';
     return TideBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-            title: const Text('存储空间', style: TextStyle(fontFamily: 'TideFont')),
-            backgroundColor: Colors.transparent,
-            elevation: 0),
+          title: const Text('存储空间', style: TextStyle(fontFamily: 'TideFont')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
         body: _loading
             ? Center(child: CircularProgressIndicator(color: theme.primary))
-            : ListView(padding: const EdgeInsets.all(16), children: [
-                FrostCard(
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  FrostCard(
                     child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text('TideBot 已用 ${_format(used)}',
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'TideBot 已用 ${_format(used)}',
                           style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
-                              color: theme.textStrong,
-                              fontFamily: 'TideFont')),
-                      const SizedBox(height: 6),
-                      Text('占设备总存储 $pct${_total == 0 ? '（设备总容量不可用）' : ''}',
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            color: theme.textStrong,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '占设备总存储 $pct${_total == 0 ? '（设备总容量不可用）' : ''}',
                           style: TextStyle(
-                              color: theme.textWeak, fontFamily: 'TideFont'))
-                    ])),
-                const SizedBox(height: 16),
-                FrostCard(
-                    child: Column(children: [
-                  _row(Icons.install_mobile_rounded, '安装包', _format(_apk)),
-                  _row(Icons.data_object_rounded, '应用数据', _format(_appData)),
-                  _row(Icons.storage_rounded, '数据库及日志（已含于应用数据）',
-                      _format(_database)),
-                  _row(Icons.cached_rounded, '可清理缓存', _format(_temporary),
-                      action: '清理', onTap: _clearCache)
-                ])),
-                const SizedBox(height: 12),
-                FrostCard(
-                    child: Column(children: [
-                  ListTile(
-                    leading: const Icon(Icons.backup_outlined),
-                    title: const Text('备份所有数据',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    subtitle: const Text('导出设置、聊天记录、机器人、记忆和媒体文件',
-                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _backupAll,
+                            color: theme.textWeak,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.restore_rounded),
-                    title: const Text('恢复所有数据',
-                        style: TextStyle(fontFamily: 'TideFont')),
-                    subtitle: const Text('导入完整备份并覆盖当前所有数据',
-                        style: TextStyle(fontFamily: 'TideFont', fontSize: 12)),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _restoreAll,
+                  const SizedBox(height: 16),
+                  FrostCard(
+                    child: Column(
+                      children: [
+                        _row(
+                          Icons.install_mobile_rounded,
+                          '安装包',
+                          _format(_apk),
+                        ),
+                        _row(
+                          Icons.data_object_rounded,
+                          '应用数据',
+                          _format(_appData),
+                        ),
+                        _row(
+                          Icons.storage_rounded,
+                          '数据库及日志（已含于应用数据）',
+                          _format(_database),
+                        ),
+                        _row(
+                          Icons.cached_rounded,
+                          '可清理缓存',
+                          _format(_temporary),
+                          action: '清理',
+                          onTap: _clearCache,
+                        ),
+                      ],
+                    ),
                   ),
-                ])),
-                const SizedBox(height: 22),
-                Text('聊天记录管理',
+                  const SizedBox(height: 12),
+                  FrostCard(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.backup_outlined),
+                          title: const Text(
+                            '备份所有数据',
+                            style: TextStyle(fontFamily: 'TideFont'),
+                          ),
+                          subtitle: const Text(
+                            '导出设置、聊天记录、机器人、记忆和媒体文件',
+                            style: TextStyle(
+                              fontFamily: 'TideFont',
+                              fontSize: 12,
+                            ),
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: _backupAll,
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.restore_rounded),
+                          title: const Text(
+                            '恢复所有数据',
+                            style: TextStyle(fontFamily: 'TideFont'),
+                          ),
+                          subtitle: const Text(
+                            '导入完整备份并覆盖当前所有数据',
+                            style: TextStyle(
+                              fontFamily: 'TideFont',
+                              fontSize: 12,
+                            ),
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: _restoreAll,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    '聊天记录管理',
                     style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: theme.textStrong,
-                        fontFamily: 'TideFont')),
-                const SizedBox(height: 8),
-                FrostCard(
-                    child: Column(children: [
-                  for (final bot in _bots)
-                    CheckboxListTile(
-                        value: _selected.contains(bot['id']),
-                        onChanged: (v) => setState(() {
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
+                      fontFamily: 'TideFont',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FrostCard(
+                    child: Column(
+                      children: [
+                        for (final bot in _bots)
+                          CheckboxListTile(
+                            value: _selected.contains(bot['id']),
+                            onChanged: (v) => setState(() {
                               if (v == true)
                                 _selected.add(bot['id'].toString());
                               else
                                 _selected.remove(bot['id'].toString());
                             }),
-                        title: Text(bot['name']?.toString() ?? '未命名机器人',
-                            style: const TextStyle(fontFamily: 'TideFont')),
-                        subtitle: Text(
-                            '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}',
-                            style: const TextStyle(fontFamily: 'TideFont')),
-                        controlAffinity: ListTileControlAffinity.leading),
-                  if (_bots.isEmpty)
-                    const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text('暂无机器人', textAlign: TextAlign.start))
-                ])),
-                const SizedBox(height: 12),
-                FilledButton.icon(
+                            title: Text(
+                              bot['name']?.toString() ?? '未命名机器人',
+                              style: const TextStyle(fontFamily: 'TideFont'),
+                            ),
+                            subtitle: Text(
+                              '聊天记录约 ${_format(_chatBytes[bot['id']?.toString() ?? ''] ?? 0)}',
+                              style: const TextStyle(fontFamily: 'TideFont'),
+                            ),
+                            controlAffinity: ListTileControlAffinity.leading,
+                          ),
+                        if (_bots.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text('暂无机器人', textAlign: TextAlign.start),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
                     onPressed: _selected.isEmpty ? null : _deleteSelected,
                     icon: const Icon(Icons.delete_outline),
-                    label: Text('清理已选 ${_selected.length} 个机器人的聊天记录',
-                        style: const TextStyle(fontFamily: 'TideFont'))),
-              ]),
+                    label: Text(
+                      '清理已选 ${_selected.length} 个机器人的聊天记录',
+                      style: const TextStyle(fontFamily: 'TideFont'),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
 
-  Widget _row(IconData icon, String title, String value,
-          {String? action, VoidCallback? onTap}) =>
-      ListTile(
-          leading: Icon(icon),
-          title: Text(title, style: const TextStyle(fontFamily: 'TideFont')),
-          subtitle: Text(value, style: const TextStyle(fontFamily: 'TideFont')),
-          trailing: action == null
-              ? null
-              : TextButton(
-                  onPressed: onTap,
-                  child: Text(action,
-                      style: const TextStyle(fontFamily: 'TideFont'))));
+  Widget _row(
+    IconData icon,
+    String title,
+    String value, {
+    String? action,
+    VoidCallback? onTap,
+  }) => ListTile(
+    leading: Icon(icon),
+    title: Text(title, style: const TextStyle(fontFamily: 'TideFont')),
+    subtitle: Text(value, style: const TextStyle(fontFamily: 'TideFont')),
+    trailing: action == null
+        ? null
+        : TextButton(
+            onPressed: onTap,
+            child: Text(action, style: const TextStyle(fontFamily: 'TideFont')),
+          ),
+  );
 }

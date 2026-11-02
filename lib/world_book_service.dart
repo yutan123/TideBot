@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'db.dart';
 import 'ai.dart';
 import 'memory_prompt_policy.dart';
+import 'memory_retrieval_service.dart';
+import 'memory_retrieval_policy.dart';
 
 /// 世界书条目模型
 class WorldBookEntry {
@@ -658,52 +660,30 @@ class WorldBookService {
     return 1.0 / (1.0 + exp(-rawScore));
   }
 
-  /// 智能激活（关键词 + N-gram + 评分排序）
+  /// Compatibility entry point: all callers share the live memory hybrid search.
   Future<List<WorldBookEntry>> activateEntriesIntelligent({
     required String botId,
     required String conversationText,
-    int maxResults = 10,
-    double ngramThreshold = 0.2,
+    int maxResults = 5,
+    double ngramThreshold = 0.2, // Retained for source compatibility only.
   }) async {
-    // 第一层：关键词精确匹配
-    final keywordMatches = await activateEntries(
-      botId: botId,
-      conversationText: conversationText,
-    );
-
-    // 如果关键词匹配足够，直接返回
-    if (keywordMatches.length >= 5) {
-      return keywordMatches.take(maxResults).toList();
-    }
-
-    // 第二层：N-gram 语义匹配（补充）
-    final ngramMatches = await activateEntriesNGram(
-      botId: botId,
-      query: conversationText,
-      threshold: ngramThreshold,
-      limit: maxResults - keywordMatches.length,
-    );
-
-    // 合并去重
-    final allMatches = <String, WorldBookEntry>{};
-    for (final entry in keywordMatches) {
-      allMatches[entry.id] = entry;
-    }
-    for (final entry in ngramMatches) {
-      allMatches[entry.id] = entry;
-    }
-
-    // 按评分排序
-    final entries = allMatches.values.toList();
-    entries.sort((a, b) {
-      final scoreA =
-          calculateActivationScore(entry: a, query: conversationText);
-      final scoreB =
-          calculateActivationScore(entry: b, query: conversationText);
-      return scoreB.compareTo(scoreA);
-    });
-
-    return entries.take(maxResults).toList();
+    final rows = await MemoryRetrievalService.instance
+        .search(botId, conversationText, limit: maxResults);
+    return rows
+        .map((r) => WorldBookEntry(
+              id: r['id'].toString(),
+              bookId: r['book_id']?.toString() ?? 'memories',
+              botId: r['bot_id']?.toString(),
+              title: r['title']?.toString() ?? '',
+              content: r['content']?.toString() ?? '',
+              keys: memoryKeys(r['_source'] == 'world_book_entries'
+                  ? r['keys']
+                  : r['keys_json']),
+              priority: memoryImportance(r) * 20,
+              createdAt: (r['timestamp'] as num?)?.toInt() ?? 0,
+              updatedAt: (r['updated_at'] as num?)?.toInt() ?? 0,
+            ))
+        .toList();
   }
 
   // ========== 工具调用：记忆库搜索 ==========
@@ -717,63 +697,24 @@ class WorldBookService {
     try {
       debugPrint('[WorldBook] 机器人主动搜索记忆：$query');
 
-      // Include the same memories table save_memory writes to, with writable IDs.
-      final saved = await db.queryMemoriesRelevant(botId, query, limit: limit);
-      if (saved.isNotEmpty) {
-        return {
-          'success': true,
-          'found': true,
-          'count': saved.length,
-          'results': saved
-              .map((row) => {
-                    'id': row['id'],
-                    'category': row['category'],
-                    'title': row['title'],
-                    'content': row['content'],
-                    'type': row['type'],
-                  })
-              .toList(),
-        };
-      }
-      // 使用智能激活（关键词 + N-gram）
-      final results = await activateEntriesIntelligent(
-        botId: botId,
-        conversationText: query,
-        maxResults: limit,
-      );
-
-      if (results.isEmpty) {
-        return {
-          'success': true,
-          'found': false,
-          'message': '没有找到相关记忆',
-          'results': [],
-        };
-      }
-
-      // 格式化返回结果
-      final formattedResults = results.map((entry) {
-        return {
-          'recorded_at': DateTime.fromMillisecondsSinceEpoch(entry.createdAt)
-              .toIso8601String(),
-          'title': entry.title,
-          'content': entry.content,
-          'comment': entry.comment,
-          'activation_count': entry.activationCount,
-          'last_activated': entry.lastActivatedAt != null
-              ? DateTime.fromMillisecondsSinceEpoch(entry.lastActivatedAt!)
-                  .toString()
-                  .substring(0, 19)
-              : null,
-        };
-      }).toList();
-
+      final results = await MemoryRetrievalService.instance
+          .search(botId, query, limit: limit);
       return {
         'success': true,
-        'found': true,
+        'found': results.isNotEmpty,
         'count': results.length,
-        'results': formattedResults,
-        'message': '找到 ${results.length} 条相关记忆',
+        'results': results
+            .map((r) => {
+                  'id': r['id'],
+                  'source': r['_source'],
+                  'category': r['category'],
+                  'title': r['title'],
+                  'content': r['content'],
+                  'importance': r['importance'],
+                  'type': r['type'],
+                  'timestamp': r['timestamp'],
+                })
+            .toList(),
       };
     } catch (e) {
       debugPrint('[WorldBook] 搜索记忆异常: $e');

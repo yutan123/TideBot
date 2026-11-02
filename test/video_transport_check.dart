@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:tide_bot/video_request.dart';
+import 'package:tide_bot/video_response.dart';
 
 void check(bool condition, String message) {
   if (!condition) throw StateError(message);
@@ -78,6 +79,11 @@ Future<void> main() async {
       final response =
           await send(base, onStage: (stage, _) => stages.add(stage));
       check(response.statusCode == 200, '原视频请求未成功');
+      check(
+          parseVideoAnalysisResponse(utf8.decode(response.bodyBytes),
+                  statusCode: response.statusCode) ==
+              '视频分析结果',
+          '收到响应后必须交出可用分析正文');
       check(
           jsonDecode(response.body)['choices'][0]['message']['content'] ==
               '视频分析结果',

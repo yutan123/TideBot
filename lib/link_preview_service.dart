@@ -1,3 +1,4 @@
+import 'douyin_detail.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -47,16 +48,53 @@ class LinkPreviewService {
             }));
   }
 
+  Future<LinkPreviewData?> _douyinPreview(String url) async {
+    final id = videoId(url);
+    if (id == null) return null;
+    final item = await fetchDouyinDetail(_client, id);
+    if (item == null) return null;
+    final cover = douyinCoverUrl(item);
+    final video = item['images'] is List && (item['images'] as List).isNotEmpty
+        ? null
+        : douyinVideoUrl(item);
+    if (cover == null && video == null) return null;
+    final author = item['author'];
+    return LinkPreviewData(
+      url:
+          'https://www.douyin.com/${item['images'] is List && (item['images'] as List).isNotEmpty ? 'note' : 'video'}/$id',
+      title: (item['desc'] ?? '抖音视频').toString(),
+      description: author is Map ? (author['nickname'] ?? '').toString() : '',
+      imageUrl: cover,
+      videoUrl: video,
+      imageHeaders: _headers(LinkType.douyin),
+      type: LinkType.douyin,
+    );
+  }
+
   Future<LinkPreviewData> _fetch(String url) async {
     final type = identifyLinkType(url);
     var target = url;
     try {
+      if (type == LinkType.douyin && videoId(url) != null) {
+        final preview = await _douyinPreview(url);
+        if (preview != null) {
+          rememberPreview(url, preview);
+          return preview;
+        }
+      }
       var page = await fetchLinkPage(_client, Uri.parse(url), _headers(type));
       target = page.uri.toString();
       // 抖音普通页通常只有 JS 壳；分享详情页提供视频结构化数据。
       if (type == LinkType.douyin) {
         final id = videoId(target);
         if (id != null) {
+          if (videoId(url) == null) {
+            final preview = await _douyinPreview(target);
+            if (preview != null) {
+              rememberPreview(url, preview);
+              return preview;
+            }
+          }
           target = 'https://www.douyin.com/video/$id';
           try {
             final detail = await fetchLinkPage(
@@ -88,7 +126,9 @@ class LinkPreviewService {
               ?.trim();
       // 很多中文网站没有 og:image，继续尝试 image_src、JSON-LD 和站点图标。
       image ??= document
-          .querySelector('link[rel="image_src"], link[rel*="icon"]')
+          .querySelector(type == LinkType.web
+              ? 'link[rel="image_src"], link[rel*="icon"]'
+              : 'link[rel="image_src"]')
           ?.attributes['href']
           ?.trim();
       if (image == null || image.isEmpty) {
@@ -116,6 +156,7 @@ class LinkPreviewService {
       if (type == LinkType.web) {
         image ??= '${page.uri.scheme}://${page.uri.host}/favicon.ico';
       }
+      String? video;
       final html = document.outerHtml;
       if (type == LinkType.douyin) {
         for (final state in platformPageStates(html)) {
@@ -126,6 +167,9 @@ class LinkPreviewService {
           if (author is Map)
             description = author['nickname']?.toString() ?? description;
           image = douyinCoverUrl(item) ?? image;
+          if (item['images'] is! List || (item['images'] as List).isEmpty) {
+            video = douyinVideoUrl(item);
+          }
           image ??= mediaUrl(item['images']);
           break;
         }
@@ -180,6 +224,8 @@ class LinkPreviewService {
                 ? imageUri.toString()
                 : null,
         imageHeaders: _headers(type),
+        videoUrl:
+            video ?? (type == LinkType.douyin ? pageVideoUrl(html) : null),
         type: type,
       );
       // 不永久缓存缺封面或受限结果，下次打开消息允许重试。
@@ -214,7 +260,7 @@ class LinkPreviewService {
       );
   static Map<String, String> _headers(LinkType type) => {
         'User-Agent': type == LinkType.douyin
-            ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+            ? douyinShareUserAgent
             : 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         if (type == LinkType.douyin) 'Referer': 'https://www.douyin.com/',
         if (type == LinkType.xiaohongshu)

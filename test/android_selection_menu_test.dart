@@ -49,8 +49,10 @@ void main() {
         calls.lastWhere((c) => c.method == 'show').arguments as Map);
     final id = args['id'] as int;
     final items = args['items'] as List;
-    final cut = items.indexWhere((item) => (item as Map)['label'] == 'Cut');
+    final cut = items.indexWhere((item) => (item as Map)['type'] == 'cut');
     expect(cut, greaterThanOrEqualTo(0));
+    // Standard labels come from Android resources, never Flutter's default English.
+    expect((items[cut] as Map)['label'], isNull);
     await send('action', {'id': id + 100, 'index': cut});
     expect(controller.text, 'hello world');
     await send('action', {'id': id, 'index': cut});

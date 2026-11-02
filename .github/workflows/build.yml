@@ -1,4 +1,4 @@
-name: Build TideBot Release APK
+name: Build TideBot Dev APK
 
 on:
   workflow_dispatch:
@@ -19,11 +19,19 @@ permissions:
 
 jobs:
   build-release:
-    name: 常规 Android 正式版编译
+    name: Android Dev 构建
+    if: github.repository == 'yutan123/TideBot-Dev'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
+      - name: 准备临时签名路径
+        run: echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/tidebot-dev.keystore" >> "$GITHUB_ENV"
+
       - name: 获取源码
         uses: actions/checkout@v4
 
@@ -39,6 +47,20 @@ jobs:
           flutter-version: '3.44.8'
           channel: stable
           cache: true
+
+      - name: 恢复并检查 Dev 签名
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            test -n "${!name}" || { echo "::error::缺少签名 Secret: $name"; exit 1; }
+          done
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          test -s "$ANDROID_KEYSTORE_PATH"
+          keytool -list -keystore "$ANDROID_KEYSTORE_PATH" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS"
 
       # Runner 已带命令行工具。setup-android@v3 会安装已下架的 tools 包并失败。
       - name: 安装 Android SDK 组件和 NDK
@@ -80,9 +102,13 @@ jobs:
           APKSIGNER="$(find "${ANDROID_HOME}" -path '*/build-tools/*/apksigner' -type f | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose "$APK"
 
-      - name: 上传已验证的正式版 APK
+      - name: 清理临时签名文件
+        if: always()
+        run: rm -f "$ANDROID_KEYSTORE_PATH"
+
+      - name: 上传已验证的 Dev APK
         uses: actions/upload-artifact@v4
         with:
-          name: TideBot-Release-APK
+          name: TideBot-Dev-APK
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
