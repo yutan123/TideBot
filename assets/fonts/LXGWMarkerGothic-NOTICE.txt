@@ -1,0 +1,18 @@
+LXGW Marker Gothic / 霞鹜漫黑
+
+Bundled file: LXGWMarkerGothic-Regular.ttf
+Flutter family alias: TideFont
+
+Copyright notice embedded in the bundled font:
+Copyright 2024 The LXGW Marker Gothic Project Authors
+(https://github.com/lxgw/LxgwMarkerGothic)
+
+License: SIL Open Font License, Version 1.1.
+See LXGWMarkerGothic-OFL.txt for the full upstream license, including the
+LXGW and Tanugo copyright notices supplied by the upstream project.
+License source:
+https://github.com/lxgw/LxgwMarkerGothic/blob/6a4086ddb01cd79eb5066f11eafef0acb0ff044b/OFL.txt
+
+The existing font was renamed from TideFont-Regular.ttf to identify its
+actual upstream family. Font bytes, internal font names and outlines are
+unchanged. TideFont is only the application's existing font-family alias.

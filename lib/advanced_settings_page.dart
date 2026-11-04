@@ -29,6 +29,8 @@ class AdvancedSettingsPage extends StatefulWidget {
 
 class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _imageCompression = true;
+  bool _audioCompression = true;
+  bool _videoCompression = true;
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
   bool _extraContext = false;
@@ -70,6 +72,10 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         botNames[feature] = bot['name']?.toString() ?? id;
       }
     }
+    final audioCompression =
+        await db.getKV('audio_compression_enabled') != 'false';
+    final videoCompression =
+        await db.getKV('video_compression_enabled') != 'false';
     final imageCompression =
         await db.getKV('image_compression_enabled') != 'false';
     final externalEnabled = await db.getKV('external_api_enabled') == 'true';
@@ -85,6 +91,8 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     if (mounted) {
       setState(() {
         _imageCompression = imageCompression;
+        _audioCompression = audioCompression;
+        _videoCompression = videoCompression;
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
         _extraContext = prefs.getBool('extra_context_enabled') ?? false;
@@ -598,6 +606,33 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
     if (mounted) setState(() => _logging = false);
   }
 
+  Widget _mediaCompressionToggle({
+    required String title,
+    required String description,
+    required bool value,
+    required String setting,
+    required void Function(bool) update,
+  }) {
+    final theme = TideTheme.of(context);
+    return FrostCard(
+      padding: const EdgeInsets.all(16),
+      child: SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        title: Text(title,
+            style: TextStyle(fontFamily: 'TideFont', color: theme.textStrong)),
+        subtitle: Text(description,
+            style: TextStyle(
+                fontFamily: 'TideFont', color: theme.textWeak, fontSize: 12)),
+        value: value,
+        activeThumbColor: theme.primary,
+        onChanged: (enabled) async {
+          await DBManager().setKV(setting, '$enabled');
+          if (mounted) update(enabled);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
@@ -625,7 +660,7 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                     style: TextStyle(
                         fontFamily: 'TideFont', color: theme.textStrong)),
                 subtitle: Text(
-                    '默认开启，发送照片时等比压缩至 1080p（横图不超过 1920×1080，竖图不超过 1080×1920），并转换为 JPEG；小图不放大。关闭后发送原图。',
+                    '默认开启，收发图片保存后自动压缩为最高 1080p 的 JPEG，节省本地空间；小图不放大，动图保留。关闭后保留原图。',
                     style: TextStyle(
                         fontFamily: 'TideFont',
                         color: theme.textWeak,
@@ -633,10 +668,29 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                 value: _imageCompression,
                 activeThumbColor: theme.primary,
                 onChanged: (value) async {
-                  await DBManager().setKV('image_compression_enabled', '$value');
+                  await DBManager()
+                      .setKV('image_compression_enabled', '$value');
                   if (mounted) setState(() => _imageCompression = value);
                 },
               ),
+            ),
+            const SizedBox(height: 12),
+            _mediaCompressionToggle(
+              title: '音频自动压缩',
+              description:
+                  '默认开启，语音和音频先发送，再后台转为 M4A / AAC 保存；单声道最高 64 kbps，双声道最高 96 kbps。机器人音频同样处理。',
+              value: _audioCompression,
+              setting: 'audio_compression_enabled',
+              update: (value) => setState(() => _audioCompression = value),
+            ),
+            const SizedBox(height: 12),
+            _mediaCompressionToggle(
+              title: '视频自动压缩',
+              description:
+                  '默认开启，视频先发送，再后台转为 MP4 保存；最高 1080p、30 帧，保持比例，小视频不放大。机器人视频同样处理。',
+              value: _videoCompression,
+              setting: 'video_compression_enabled',
+              update: (value) => setState(() => _videoCompression = value),
             ),
             const SizedBox(height: 12),
             FrostCard(

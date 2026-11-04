@@ -52,7 +52,7 @@ class McpConnectionService {
         timeout: Duration(milliseconds: timeoutMs),
       );
       try {
-        await client.initialize();
+        final initialized = await client.initialize();
         final tools = await client.listTools();
         final resources = await client.listResourcesSafe();
         final prompts = await client.listPromptsSafe();
@@ -61,6 +61,7 @@ class McpConnectionService {
           id,
           resources: resources,
           prompts: prompts,
+          serviceDescription: initialized['instructions']?.toString() ?? '',
         );
       } finally {
         try {

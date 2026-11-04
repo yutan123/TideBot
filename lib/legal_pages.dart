@@ -43,6 +43,8 @@ AI 生成的文字、图片、语音、视频理解结果、转写和摘要可�
 八、版权与开源许可证
 Copyright (C) 2025-2026 TideBot contributors.
 TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 GNU Affero General Public License v3.0（AGPL-3.0-only）授权。项目版权声明和完整许可证随源码中的 COPYRIGHT、LICENSE 文件提供。第三方组件保留各自的版权和许可证。
+应用主字体为霞鹜漫黑（LXGW Marker Gothic），Copyright 2024 The LXGW Marker Gothic Project Authors，采用 SIL Open Font License 1.1：https://openfontlicense.org；项目：https://github.com/lxgw/LxgwMarkerGothic。
+内置 EmojiTwo 表情图像源于 Ranks.com 的 EmojiOne 2.2 及 EmojiTwo 社区贡献，采用 CC BY 4.0：https://creativecommons.org/licenses/by/4.0/legalcode；来源：https://github.com/EmojiTwo/emojitwo/、https://www.emojione.com。图像内容未修改；随附 JSON 索引采用 MIT 许可。
 使用、修改和分发时，请按许可证要求保留 TideBot 的版权与许可声明。本应用按许可证以“现状”提供，不作任何担保，具体以许可证全文及适用法律为准。
 您可按许可证使用、研究、修改和分发代码，包括商业使用；分发及修改后通过网络与用户交互等情形下，应履行许可证规定的对应源代码提供等义务。本使用协议不增加对开源许可证所授予权利的限制；涉及代码许可的事项以相应开源许可证为准。
 
@@ -171,7 +173,7 @@ class _LegalAgreementPageState extends State<LegalAgreementPage> {
                           value: _agreed,
                           onChanged: _readToEnd && !_saving
                               ? (value) =>
-                                    setState(() => _agreed = value ?? false)
+                                  setState(() => _agreed = value ?? false)
                               : null,
                           title: const Text(
                             '我已满十八周岁且同意以上全部条款',

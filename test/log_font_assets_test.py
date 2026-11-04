@@ -57,6 +57,23 @@ class LogFontAssetsTest(unittest.TestCase):
                 self.assertIn(family, family_names(tables))
                 self.assertIn(b'cmap', tables)
 
+    def test_main_font_asset_matches_flutter_and_android(self):
+        # The file name identifies the upstream font; TideFont remains the
+        # shared Flutter/native API name used throughout the application.
+        asset = 'assets/fonts/LXGWMarkerGothic-Regular.ttf'
+        pubspec = (ROOT / 'pubspec.yaml').read_text()
+        native = (ROOT / 'android/app/src/main/kotlin/com/yutan123/tidebot/NativeSelectableText.kt').read_text()
+        self.assertEqual(pubspec.count('asset: ' + asset), 2)
+        self.assertIn('family: TideFont', pubspec)
+        self.assertIn('"TideFont" -> runCatching', native)
+        self.assertIn('.getLookupKeyForAsset("' + asset + '")', native)
+        self.assertNotIn('assets/fonts/TideFont-Regular.ttf', pubspec + native)
+        self.assertFalse((ROOT / 'assets/fonts/TideFont-Regular.ttf').exists())
+        tables = read_font(asset)
+        self.assertIn('LXGW Marker Gothic', family_names(tables))
+        self.assertEqual(struct.unpack_from('>H', tables[b'OS/2'], 4)[0], 400)
+        self.assertIn(b'cmap', tables)
+
     def test_flutter_and_android_use_the_same_cjk_asset(self):
         pubspec = (ROOT / 'pubspec.yaml').read_text()
         native = (ROOT / 'android/app/src/main/kotlin/com/yutan123/tidebot/NativeSelectableText.kt').read_text()

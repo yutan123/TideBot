@@ -1,6 +1,6 @@
+import 'media_storage_service.dart';
 import 'chat_message_debounce.dart';
 import 'photo_image_provider.dart';
-import 'onboarding_reply.dart';
 import 'chat_image.dart';
 import 'tide_popover.dart';
 import 'video_input.dart';
@@ -200,13 +200,11 @@ class ChatRoomPage extends StatefulWidget {
   final Map<String, dynamic> botData;
   final String? initialMessageId;
   final bool openModelSettings;
-  final VoidCallback? onReplyCompleted;
   const ChatRoomPage({
     super.key,
     required this.botData,
     this.initialMessageId,
     this.openModelSettings = false,
-    this.onReplyCompleted,
   });
   @override
   State<ChatRoomPage> createState() => _ChatRoomPageState();
@@ -1201,106 +1199,187 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     Map<String, dynamic>? retryTarget,
     List<Map<String, dynamic>>? batchedMessages,
   }) async {
-    var text = queuedText ?? (noUserBubble ? '' : _msgC.text.trim());
-    final preparedVideos = <PreparedVideoInput>[];
-    final unregisteredSharedVideos = <String>{};
-    AppLogService.instance.add('AI_TRACE',
-        '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
+    final inputImages = images;
+    final inputDocuments = documents;
+    final inputAudioPath = audioPath;
+    final inputExpression = expression;
+    final inputBatchedMessages = batchedMessages;
+    final inputMediaContext = mediaContext;
+    return await MediaStorageService.instance.withMediaUse(() async {
+      var images = inputImages;
+      var documents = inputDocuments;
+      var audioPath = inputAudioPath;
+      var expression = inputExpression;
+      var batchedMessages = inputBatchedMessages;
+      var mediaContext = inputMediaContext;
 
-    images =
-        List<String>.from(images ?? (noUserBubble ? const [] : _pendingImages));
-    documents = List<String>.from(
-        documents ?? (noUserBubble ? const [] : _pendingDocuments));
-    if (!noUserBubble) {
-      mediaContext ??= _pendingMediaContext;
-      expression ??= _pendingExpression;
-    }
-    if (text.isEmpty &&
-        images.isEmpty &&
-        documents.isEmpty &&
-        mediaContext == null &&
-        expression == null) {
-      if (mounted) setState(() => _hasText = false);
-      return;
-    }
-    if (!noUserBubble && images.isNotEmpty) {
-      try {
-        images = await _persistChatImages(images);
-      } catch (error) {
-        if (mounted) GlobalNotice.show('图片保存失败：$error');
+      images = await Future.wait(
+          (images ?? (noUserBubble ? <String>[] : _pendingImages))
+              .map(MediaStorageService.instance.resolve));
+      documents = await Future.wait(
+          (documents ?? (noUserBubble ? <String>[] : _pendingDocuments))
+              .map(MediaStorageService.instance.resolve));
+      if (audioPath != null)
+        audioPath = await MediaStorageService.instance.resolve(audioPath);
+      if (batchedMessages != null) {
+        batchedMessages =
+            await Future.wait(batchedMessages.map((message) async {
+          final copy = Map<String, dynamic>.from(message);
+          if (copy['file_path'] is String)
+            copy['file_path'] = await MediaStorageService.instance
+                .resolve(copy['file_path'] as String);
+          return copy;
+        }));
+      }
+
+      var text = queuedText ?? (noUserBubble ? '' : _msgC.text.trim());
+      final preparedVideos = <PreparedVideoInput>[];
+      final unregisteredSharedVideos = <String>{};
+      AppLogService.instance.add('AI_TRACE',
+          '发送入口 bot=${_bot['id']} loading=$_loading queued=$_queued generation=$_requestGen');
+
+      images = List<String>.from(images);
+      documents = List<String>.from(documents);
+      if (!noUserBubble) {
+        mediaContext ??= _pendingMediaContext;
+        expression ??= _pendingExpression;
+      }
+      if (text.isEmpty &&
+          images.isEmpty &&
+          documents.isEmpty &&
+          mediaContext == null &&
+          expression == null) {
+        if (mounted) setState(() => _hasText = false);
         return;
       }
-    }
-    if (!noUserBubble && documents.any(isVideoAttachment)) {
-      try {
-        documents = await _persistChatVideos(documents);
-      } catch (error) {
-        if (mounted) GlobalNotice.show('视频保存失败：$error');
+      if (!noUserBubble && images.isNotEmpty) {
+        try {
+          images = await _persistChatImages(images);
+        } catch (error) {
+          if (mounted) GlobalNotice.show('图片保存失败：$error');
+          return;
+        }
+      }
+      if (!noUserBubble && documents.any(isVideoAttachment)) {
+        try {
+          documents = await _persistChatVideos(documents);
+        } catch (error) {
+          if (mounted) GlobalNotice.show('视频保存失败：$error');
+          return;
+        }
+        if (!mounted) return;
+      }
+      final botId = _bot['id']?.toString() ?? '';
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final userMessages = batchedMessages ??
+          _buildAttachmentMessages(
+            botId: botId,
+            timestamp: now,
+            text: text,
+            images: images,
+            documents: documents,
+          );
+      if (expression != null) {
+        userMessages
+            .add(expression.toMessage(botId: botId, timestamp: now + 1));
+        final expressionContext = expression.modelContext;
+        mediaContext = mediaContext == null
+            ? expressionContext
+            : '$mediaContext\n$expressionContext';
+      }
+
+      // 用户主动发言：清零主动回复未应答计数并重置计时。
+      _onUserInteracted();
+      unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
+
+      // 检测告别词，立即触发世界书判断；否则重置5分钟计时器
+      final farewellWords = ['再见', '拜拜', '晚安', '早点休息', 'bye', 'goodbye', '886'];
+      // Keep the idle fallback; farewell review runs after this reply is persisted.
+      WorldBookService.instance.resetConversationTimer(botId);
+
+      // Save each bubble immediately; collect the turn before requesting.
+      if (batchedMessages == null || !_messageDebounce.hasMessages) {
+        _messageDebounce.addMessage(text, _debounceClock.elapsed);
+      }
+      if (_loading) {
+        final queuedMessages = userMessages;
+        if (_queued) {
+          // 已有待重发队列，合并进同一批文本，避免产生多余第三次请求。
+          final prev = _queuedText;
+          _queuedText =
+              text.isEmpty ? prev : (prev.isEmpty ? text : '$prev\n$text');
+        } else {
+          _queuedText = text;
+        }
+        _queuedImages.addAll(images);
+        _queuedDocuments.addAll(documents);
+        if (mediaContext != null) {
+          _queuedMediaContext = [
+            if (_queuedMediaContext != null) _queuedMediaContext,
+            mediaContext
+          ].join('\n');
+        }
+        _queuedMessages.addAll(userMessages);
+        _queuedAudioPath = audioPath ?? _queuedAudioPath;
+        _queuedForceSingleReply |= forceSingleReply;
+        _queued = true;
+        if (_activeTurn?.supersede() ?? true) {
+          _requestGen++;
+          _activeRequestToken?.cancel();
+        }
+        _pendingQueueWrites++;
+        if (mounted && !noUserBubble) {
+          setState(() {
+            _msgs.addAll(queuedMessages);
+            _msgC.clear();
+            _pendingImages.clear();
+            _pendingDocuments.clear();
+            _pendingExpression = null;
+            _pendingMediaContext = null;
+            _hasText = false;
+          });
+          _scrollDown();
+        }
+        try {
+          for (final queuedMessage
+              in noUserBubble ? <Map<String, dynamic>>[] : queuedMessages) {
+            await MessageDeliveryService.instance.insert({
+              'id': queuedMessage['id'],
+              'bot_id': botId,
+              'role': 'user',
+              'type': queuedMessage['type'],
+              'content': queuedMessage['content'],
+              'file_path': queuedMessage['file_path'],
+              'mood': null,
+              'timestamp': queuedMessage['timestamp'],
+            }).timeout(const Duration(seconds: 12));
+          }
+        } catch (e) {
+          debugPrint('[send] persist queued user message failed: $e');
+        } finally {
+          _pendingQueueWrites--;
+        }
         return;
       }
-      if (!mounted) return;
-    }
-    final botId = _bot['id']?.toString() ?? '';
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final userMessages = batchedMessages ??
-        _buildAttachmentMessages(
-          botId: botId,
-          timestamp: now,
-          text: text,
-          images: images,
-          documents: documents,
-        );
-    if (expression != null) {
-      userMessages.add(expression.toMessage(botId: botId, timestamp: now + 1));
-      final expressionContext = expression.modelContext;
-      mediaContext = mediaContext == null
-          ? expressionContext
-          : '$mediaContext\n$expressionContext';
-    }
 
-    // 用户主动发言：清零主动回复未应答计数并重置计时。
-    _onUserInteracted();
-    unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
+      // 本次请求的代次快照；若请求期间用户又发了新消息（_requestGen 变化），
+      // 渲染前检测到过期则拦截本次结果，交由 finally 用合并文本统一重发。
+      var myGen = _requestGen;
+      var turn = ChatTurnCommit();
+      _activeTurn = turn;
+      var batchText = text;
+      var batchImages = [...images];
+      var batchDocuments = [...documents];
+      var batchContext = mediaContext;
 
-    // 检测告别词，立即触发世界书判断；否则重置5分钟计时器
-    final farewellWords = ['再见', '拜拜', '晚安', '早点休息', 'bye', 'goodbye', '886'];
-    // Keep the idle fallback; farewell review runs after this reply is persisted.
-    WorldBookService.instance.resetConversationTimer(botId);
-
-    // Save each bubble immediately; collect the turn before requesting.
-    if (batchedMessages == null || !_messageDebounce.hasMessages) {
-      _messageDebounce.addMessage(text, _debounceClock.elapsed);
-    }
-    if (_loading) {
-      final queuedMessages = userMessages;
-      if (_queued) {
-        // 已有待重发队列，合并进同一批文本，避免产生多余第三次请求。
-        final prev = _queuedText;
-        _queuedText =
-            text.isEmpty ? prev : (prev.isEmpty ? text : '$prev\n$text');
-      } else {
-        _queuedText = text;
-      }
-      _queuedImages.addAll(images);
-      _queuedDocuments.addAll(documents);
-      if (mediaContext != null) {
-        _queuedMediaContext = [
-          if (_queuedMediaContext != null) _queuedMediaContext,
-          mediaContext
-        ].join('\n');
-      }
-      _queuedMessages.addAll(userMessages);
-      _queuedAudioPath = audioPath ?? _queuedAudioPath;
-      _queuedForceSingleReply |= forceSingleReply;
-      _queued = true;
-      if (_activeTurn?.supersede() ?? true) {
-        _requestGen++;
-        _activeRequestToken?.cancel();
-      }
-      _pendingQueueWrites++;
-      if (mounted && !noUserBubble) {
+      if (!noUserBubble) {
         setState(() {
-          _msgs.addAll(queuedMessages);
+          _loading = true;
+          _msgsLoading = false;
+          for (final item in userMessages) {
+            item['send_status'] = 'sending';
+          }
+          _msgs.addAll(userMessages);
           _msgC.clear();
           _pendingImages.clear();
           _pendingDocuments.clear();
@@ -1308,479 +1387,429 @@ class _ChatRoomPageState extends State<ChatRoomPage>
           _pendingMediaContext = null;
           _hasText = false;
         });
-        _scrollDown();
+      } else if (mounted) {
+        setState(() {
+          _loading = true;
+          _msgsLoading = false;
+        });
       }
+      _scrollDown();
+
       try {
-        for (final queuedMessage
-            in noUserBubble ? <Map<String, dynamic>>[] : queuedMessages) {
-          await MessageDeliveryService.instance.insert({
-            'id': queuedMessage['id'],
-            'bot_id': botId,
-            'role': 'user',
-            'type': queuedMessage['type'],
-            'content': queuedMessage['content'],
-            'file_path': queuedMessage['file_path'],
-            'mood': null,
-            'timestamp': queuedMessage['timestamp'],
-          }).timeout(const Duration(seconds: 12));
-        }
-      } catch (e) {
-        debugPrint('[send] persist queued user message failed: $e');
-      } finally {
-        _pendingQueueWrites--;
-      }
-      return;
-    }
-
-    // 本次请求的代次快照；若请求期间用户又发了新消息（_requestGen 变化），
-    // 渲染前检测到过期则拦截本次结果，交由 finally 用合并文本统一重发。
-    var myGen = _requestGen;
-    var turn = ChatTurnCommit();
-    _activeTurn = turn;
-    var batchText = text;
-    var batchImages = [...images];
-    var batchDocuments = [...documents];
-    var batchContext = mediaContext;
-
-    if (!noUserBubble) {
-      setState(() {
-        _loading = true;
-        _msgsLoading = false;
-        for (final item in userMessages) {
-          item['send_status'] = 'sending';
-        }
-        _msgs.addAll(userMessages);
-        _msgC.clear();
-        _pendingImages.clear();
-        _pendingDocuments.clear();
-        _pendingExpression = null;
-        _pendingMediaContext = null;
-        _hasText = false;
-      });
-    } else if (mounted) {
-      setState(() {
-        _loading = true;
-        _msgsLoading = false;
-      });
-    }
-    _scrollDown();
-
-    try {
-      if (!noUserBubble) {
-        try {
-          // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
-          // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
-          for (final userMessage in userMessages) {
-            await MessageDeliveryService.instance.insert({
-              'id': userMessage['id'],
-              'bot_id': botId,
-              'role': 'user',
-              'type': userMessage['type'],
-              'content': userMessage['content'],
-              'file_path': userMessage['file_path'],
-              'mood': null,
-              'timestamp': userMessage['timestamp'],
-            }).timeout(const Duration(seconds: 12));
+        if (!noUserBubble) {
+          try {
+            // chat_history 的真实字段是 type / file_path，不能把 UI 专用 image
+            // 字段直接写库；否则 SQLite 会因“no column named image”静默失败。
+            for (final userMessage in userMessages) {
+              await MessageDeliveryService.instance.insert({
+                'id': userMessage['id'],
+                'bot_id': botId,
+                'role': 'user',
+                'type': userMessage['type'],
+                'content': userMessage['content'],
+                'file_path': userMessage['file_path'],
+                'mood': null,
+                'timestamp': userMessage['timestamp'],
+              }).timeout(const Duration(seconds: 12));
+            }
+          } catch (e) {
+            debugPrint('[send] persist user message failed: $e');
           }
-        } catch (e) {
-          debugPrint('[send] persist user message failed: $e');
         }
-      }
-      await _waitForMessagePause();
-      if (_queued) {
-        text = [text, _queuedText].where((part) => part.isNotEmpty).join('\n');
-        images.addAll(_queuedImages);
-        documents.addAll(_queuedDocuments);
-        mediaContext = [
-          if (mediaContext != null) mediaContext,
-          if (_queuedMediaContext != null) _queuedMediaContext
-        ].join('\n');
-        userMessages.addAll(_queuedMessages);
-        audioPath = _queuedAudioPath ?? audioPath;
-        forceSingleReply |= _queuedForceSingleReply;
-        _clearMessageQueue();
-      }
-      myGen = _requestGen;
-      turn = ChatTurnCommit();
-      _activeTurn = turn;
-      batchText = text;
-      batchImages = [...images];
-      batchDocuments = [...documents];
-      batchContext = mediaContext;
-      _messageDebounce.reset();
-      _activeRequestToken = AICancellationToken();
-      _setTypingState(true);
-      AppLogService.instance.add('AI_TRACE',
-          '连续消息结算 bot=$botId messages=${userMessages.length} generation=$myGen');
-      final cm = _bot['chat_model']?.toString().trim() ?? '';
-      if (cm.isEmpty) {
-        final providers = await DBManager().queryChatProviders();
-        if (providers.isEmpty) {
-          throw StateError('未配置聊天模型，请先在 API 设置中添加远程模型');
+        await _waitForMessagePause();
+        if (_queued) {
+          text =
+              [text, _queuedText].where((part) => part.isNotEmpty).join('\n');
+          images.addAll(_queuedImages);
+          documents.addAll(_queuedDocuments);
+          mediaContext = [
+            if (mediaContext != null) mediaContext,
+            if (_queuedMediaContext != null) _queuedMediaContext
+          ].join('\n');
+          userMessages.addAll(_queuedMessages);
+          audioPath = _queuedAudioPath ?? audioPath;
+          forceSingleReply |= _queuedForceSingleReply;
+          _clearMessageQueue();
         }
-      }
+        myGen = _requestGen;
+        turn = ChatTurnCommit();
+        _activeTurn = turn;
+        batchText = text;
+        batchImages = [...images];
+        batchDocuments = [...documents];
+        batchContext = mediaContext;
+        _messageDebounce.reset();
+        _activeRequestToken = AICancellationToken();
+        _setTypingState(true);
+        AppLogService.instance.add('AI_TRACE',
+            '连续消息结算 bot=$botId messages=${userMessages.length} generation=$myGen');
+        final cm = _bot['chat_model']?.toString().trim() ?? '';
+        if (cm.isEmpty) {
+          final providers = await DBManager().queryChatProviders();
+          if (providers.isEmpty) {
+            throw StateError('未配置聊天模型，请先在 API 设置中添加远程模型');
+          }
+        }
 
-      final documentNotices = <String>[];
-      final framePaths = <String>[];
-      final sharedVideos = <String, String>{};
-      // The original message is already visible and saved. Media is only prepared
-      // for the model, without extra user bubbles or download notifications.
-      final resolver = PlatformVideoResolver();
-      for (final link in resolver.extractLinks(text)) {
-        if (myGen != _requestGen) return;
-        try {
-          final result =
-              await resolver.parse(link).timeout(const Duration(seconds: 45));
-          if (result == null) continue;
-          if (result.videoUrl != null) {
-            final temporaryPath = await resolver.downloadVideo(
-                result.videoUrl!, result.headers,
-                audioUrl: result.audioUrl);
-            if (temporaryPath == null) {
-              throw StateError('视频下载失败');
-            }
-            try {
-              final directory = await getApplicationDocumentsDirectory();
-              final folder = Directory('${directory.path}/chat_media/videos');
-              await folder.create(recursive: true);
-              final saved = await File(temporaryPath).copy(p.join(folder.path,
-                  '${DateTime.now().microsecondsSinceEpoch}_share.mp4'));
-              unregisteredSharedVideos.add(saved.path);
-              documents.add(saved.path);
-              sharedVideos[saved.path] = link;
-            } finally {
+        final documentNotices = <String>[];
+        final framePaths = <String>[];
+        final sharedVideos = <String, String>{};
+        // The original message is already visible and saved. Media is only prepared
+        // for the model, without extra user bubbles or download notifications.
+        final resolver = PlatformVideoResolver();
+        for (final link in resolver.extractLinks(text)) {
+          if (myGen != _requestGen) return;
+          try {
+            final result =
+                await resolver.parse(link).timeout(const Duration(seconds: 45));
+            if (result == null) continue;
+            if (result.videoUrl != null) {
+              final temporaryPath = await resolver.downloadVideo(
+                  result.videoUrl!, result.headers,
+                  audioUrl: result.audioUrl);
+              if (temporaryPath == null) {
+                throw StateError('视频下载失败');
+              }
               try {
-                await File(temporaryPath).delete();
-              } catch (_) {}
-            }
-          } else if (result.isGallery && result.imageUrls.isNotEmpty) {
-            final downloaded = await resolver.downloadImages(result);
-            try {
-              images.addAll(await _persistChatImages(downloaded));
-            } finally {
-              for (final path in downloaded) {
+                final directory = await getApplicationDocumentsDirectory();
+                final folder = Directory('${directory.path}/chat_media/videos');
+                await folder.create(recursive: true);
+                final saved = await File(temporaryPath).copy(p.join(folder.path,
+                    '${DateTime.now().microsecondsSinceEpoch}_share.mp4'));
+                unregisteredSharedVideos.add(saved.path);
+                documents.add(saved.path);
+                sharedVideos[saved.path] = link;
+              } finally {
                 try {
-                  await File(path).delete();
+                  await File(temporaryPath).delete();
                 } catch (_) {}
               }
+            } else if (result.isGallery && result.imageUrls.isNotEmpty) {
+              final downloaded = await resolver.downloadImages(result);
+              try {
+                images.addAll(await _persistChatImages(downloaded));
+              } finally {
+                for (final path in downloaded) {
+                  try {
+                    await File(path).delete();
+                  } catch (_) {}
+                }
+              }
+            } else {
+              documentNotices.add('分享链接 $link 的媒体暂不可读取；仅可依据原文回应，不得声称已观看视频。');
+            }
+            if (result.title.isNotEmpty ||
+                result.description?.isNotEmpty == true) {
+              documentNotices.add(
+                  '分享内容（$link）：${result.title}\n${result.description ?? ''}');
+            }
+          } catch (error) {
+            AppLogService.instance.add('PLATFORM_MEDIA', '$link 处理失败：$error');
+            documentNotices.add('分享链接 $link 的媒体获取失败；原文和链接仍有效，不得声称已观看视频。');
+          }
+        }
+        if (myGen != _requestGen) return;
+        for (final path in documents) {
+          if (isVideoAttachment(path)) {
+            final prefs = await SharedPreferences.getInstance();
+            final modelId = (prefs.getString('video_model_$botId') ??
+                    _bot['video_model']?.toString() ??
+                    '')
+                .trim();
+            try {
+              AppLogService.instance.add('VIDEO',
+                  '开始处理视频 mode=${modelId.isEmpty ? 'frames_audio' : 'original'}');
+              final prepared = await prepareVideoInput(
+                  path: path, botId: botId, modelId: modelId, userText: text);
+              preparedVideos.add(prepared);
+              final history = prefs.getStringList('video_history_$botId') ?? [];
+              final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
+              history.add(json.encode({
+                'id': videoId,
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+                'duration':
+                    prepared.temporaryMedia?.duration ?? prepared.duration,
+                'analysis_context': prepared.context,
+                'frame_paths': prepared.frames,
+                'original_video_path': path,
+                'chat_attachment': !sharedVideos.containsKey(path),
+                if (sharedVideos.containsKey(path))
+                  'platform_link': sharedVideos[path],
+                'is_preview': prepared.temporaryMedia?.isPreview ?? false,
+              }));
+              if (history.length > 50)
+                history.removeRange(0, history.length - 50);
+              await prefs.setStringList('video_history_$botId', history);
+              AppLogService.instance.add('VIDEO',
+                  '视频上下文已准备 video=$videoId characters=${prepared.context.length} frames=${prepared.frames.length}');
+              unregisteredSharedVideos.remove(path);
+              documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
+              framePaths.addAll(prepared.frames);
+            } catch (error) {
+              AppLogService.instance.add('VIDEO', '视频处理失败：$error');
+              if (!sharedVideos.containsKey(path)) rethrow;
+              AppLogService.instance.add('PLATFORM_MEDIA', '分享视频分析失败：$error');
+              documentNotices
+                  .add('分享链接 ${sharedVideos[path]} 的视频无法分析，不得声称已观看视频。');
             }
           } else {
-            documentNotices.add('分享链接 $link 的媒体暂不可读取；仅可依据原文回应，不得声称已观看视频。');
+            documentNotices.add(await MediaPreprocessor().documentText(path));
           }
-          if (result.title.isNotEmpty ||
-              result.description?.isNotEmpty == true) {
-            documentNotices.add(
-                '分享内容（$link）：${result.title}\n${result.description ?? ''}');
-          }
-        } catch (error) {
-          AppLogService.instance.add('PLATFORM_MEDIA', '$link 处理失败：$error');
-          documentNotices.add('分享链接 $link 的媒体获取失败；原文和链接仍有效，不得声称已观看视频。');
         }
-      }
-      if (myGen != _requestGen) return;
-      for (final path in documents) {
-        if (isVideoAttachment(path)) {
-          final prefs = await SharedPreferences.getInstance();
-          final modelId = (prefs.getString('video_model_$botId') ??
-                  _bot['video_model']?.toString() ??
-                  '')
-              .trim();
-          try {
-            AppLogService.instance.add('VIDEO',
-                '开始处理视频 mode=${modelId.isEmpty ? 'frames_audio' : 'original'}');
-            final prepared = await prepareVideoInput(
-                path: path, botId: botId, modelId: modelId, userText: text);
-            preparedVideos.add(prepared);
-            final history = prefs.getStringList('video_history_$botId') ?? [];
-            final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
-            history.add(json.encode({
-              'id': videoId,
-              'timestamp': DateTime.now().millisecondsSinceEpoch,
-              'duration':
-                  prepared.temporaryMedia?.duration ?? prepared.duration,
-              'analysis_context': prepared.context,
-              'frame_paths': prepared.frames,
-              'original_video_path': path,
-              'chat_attachment': !sharedVideos.containsKey(path),
-              if (sharedVideos.containsKey(path))
-                'platform_link': sharedVideos[path],
-              'is_preview': prepared.temporaryMedia?.isPreview ?? false,
-            }));
-            if (history.length > 50)
-              history.removeRange(0, history.length - 50);
-            await prefs.setStringList('video_history_$botId', history);
-            AppLogService.instance.add('VIDEO',
-                '视频上下文已准备 video=$videoId characters=${prepared.context.length} frames=${prepared.frames.length}');
-            unregisteredSharedVideos.remove(path);
-            documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
-            framePaths.addAll(prepared.frames);
-          } catch (error) {
-            AppLogService.instance.add('VIDEO', '视频处理失败：$error');
-            if (!sharedVideos.containsKey(path)) rethrow;
-            AppLogService.instance.add('PLATFORM_MEDIA', '分享视频分析失败：$error');
-            documentNotices
-                .add('分享链接 ${sharedVideos[path]} 的视频无法分析，不得声称已观看视频。');
-          }
-        } else {
-          documentNotices.add(await MediaPreprocessor().documentText(path));
-        }
-      }
-      final contextParts = [
-        if (mediaContext != null) mediaContext,
-        ...documentNotices
-      ];
-      final preparedContext =
-          contextParts.isEmpty ? null : contextParts.join('\n\n');
-      final modelText = preparedContext == null
-          ? _emojiToModelText(text)
-          : (text.isEmpty
-              ? preparedContext
-              : '${_emojiToModelText(text)}\n$preparedContext');
+        final contextParts = [
+          if (mediaContext != null) mediaContext,
+          ...documentNotices
+        ];
+        final preparedContext =
+            contextParts.isEmpty ? null : contextParts.join('\n\n');
+        final modelText = preparedContext == null
+            ? _emojiToModelText(text)
+            : (text.isEmpty
+                ? preparedContext
+                : '${_emojiToModelText(text)}\n$preparedContext');
 
-      if (myGen != _requestGen) {
+        if (myGen != _requestGen) {
+          AppLogService.instance.add('AI_TRACE',
+              '媒体处理后停止发送 mounted=$mounted generation=$myGen current=$_requestGen queued=$_queued');
+          return;
+        }
         AppLogService.instance.add('AI_TRACE',
-            '媒体处理后停止发送 mounted=$mounted generation=$myGen current=$_requestGen queued=$_queued');
-        return;
-      }
-      AppLogService.instance.add('AI_TRACE',
-          '媒体上下文交给聊天模型 bot=$botId videos=${preparedVideos.length} characters=${modelText.length}');
-      // AIManager reads persisted, role-typed history. Partially revealed UI
-      // rows must never be reused as a model transcript.
-      debugPrint('[send] request start bot=$botId model=$cm');
-      final db = DBManager();
-      final streamEnabled = (await db.getKV('streaming_output')) != 'false';
-      final streamSpeed =
-          (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
-              .clamp(1, 100);
-      // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
-      const requestTimeout = Duration(minutes: 5);
-      final requestToken = _activeRequestToken!;
-      final result = await AIManager()
-          .sendMessage(
-        botId: botId,
-        text: modelText,
-        imagePaths: [...images, ...framePaths],
-        audioPath: audioPath,
-        currentMessageIds:
-            userMessages.map((row) => row['id'].toString()).toSet(),
-        beginResponseCommit: () {
-          if (myGen != _requestGen || requestToken.isCancelled) return false;
-          return turn.beginCommit();
-        },
-        forceSingleReply: forceSingleReply,
-        notifyResponse: true,
-        useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
-        cancellationToken: requestToken,
-        // Display timing is client-owned, including non-SSE providers and tools.
-      )
-          .timeout(requestTimeout, onTimeout: () {
-        requestToken.cancel();
-        throw TimeoutException('请求超过5分钟，已停止');
-      }).whenComplete(() => _setTypingState(false));
+            '媒体上下文交给聊天模型 bot=$botId videos=${preparedVideos.length} characters=${modelText.length}');
+        // AIManager reads persisted, role-typed history. Partially revealed UI
+        // rows must never be reused as a model transcript.
+        debugPrint('[send] request start bot=$botId model=$cm');
+        final db = DBManager();
+        final streamEnabled = (await db.getKV('streaming_output')) != 'false';
+        final streamSpeed =
+            (int.tryParse(await db.getKV('streaming_speed') ?? '') ?? 50)
+                .clamp(1, 100);
+        // Remote provider cold starts and tool calls can legitimately exceed 30 seconds.
+        const requestTimeout = Duration(minutes: 5);
+        final requestToken = _activeRequestToken!;
+        final result = await AIManager()
+            .sendMessage(
+          botId: botId,
+          text: modelText,
+          imagePaths: [...images, ...framePaths],
+          audioPath: audioPath,
+          currentMessageIds:
+              userMessages.map((row) => row['id'].toString()).toSet(),
+          beginResponseCommit: () {
+            if (myGen != _requestGen || requestToken.isCancelled) return false;
+            return turn.beginCommit();
+          },
+          forceSingleReply: forceSingleReply,
+          notifyResponse: true,
+          useJarvis: (await DBManager().getKV('jarvis_enabled')) == 'true',
+          cancellationToken: requestToken,
+          // Display timing is client-owned, including non-SSE providers and tools.
+        )
+            .timeout(requestTimeout, onTimeout: () {
+          requestToken.cancel();
+          throw TimeoutException('请求超过5分钟，已停止');
+        }).whenComplete(() => _setTypingState(false));
 
-      if (myGen != _requestGen && !turn.isCommitted) return;
-      if (result['success'] == true) {
-        if (farewellWords.any((word) => text.toLowerCase().contains(word)) &&
-            myGen == _requestGen &&
-            turn.isCommitted) {
-          unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
+        if (myGen != _requestGen && !turn.isCommitted) return;
+        if (result['success'] == true) {
+          if (farewellWords.any((word) => text.toLowerCase().contains(word)) &&
+              myGen == _requestGen &&
+              turn.isCommitted) {
+            unawaited(WorldBookService.instance.triggerMemoryJudgment(botId));
+          }
+          for (final item in userMessages) {
+            item['send_status'] = 'sent';
+          }
         }
-        for (final item in userMessages) {
-          item['send_status'] = 'sent';
+        if (result['success'] != true) {
+          final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
+          final errorLog = result['error_log']?.toString() ?? errorText;
+          AppLogService.instance.add('ERROR', '聊天请求失败：$errorLog');
+          if (mounted) GlobalNotice.show(errorText);
+          await _markTurnFailed(
+            retryTarget == null ? userMessages : [retryTarget],
+            errorLog: errorLog,
+            errorText: errorText,
+            errorCode: result['error_code']?.toString(),
+          );
+          return;
         }
-      }
-      if (result['success'] != true) {
-        final errorText = result['error']?.toString() ?? '模型请求失败，请检查配置和网络';
-        final errorLog = result['error_log']?.toString() ?? errorText;
-        AppLogService.instance.add('ERROR', '聊天请求失败：$errorLog');
+
+        if (result['silent'] == true) {
+          return;
+        }
+        if (retryTarget != null) {
+          await DBManager().clearMessageError(retryTarget['id'].toString());
+          retryTarget.remove('is_retrying');
+          retryTarget.remove('error_log');
+          retryTarget.remove('error_code');
+          retryTarget.remove('error_text');
+          retryTarget['send_status'] = 'sent';
+          retryTarget['retry_status'] = 'none';
+          if (mounted) setState(() {});
+        }
+        final persisted = (result['messages'] as List? ?? const [])
+            .whereType<Map>()
+            .map((message) => Map<String, dynamic>.from(message))
+            .toList();
+        final persistedIds = persisted
+            .map((message) => message['id']?.toString() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        _deferredPersistedMessageIds.addAll(persistedIds);
+        if (myGen != _requestGen || requestToken.isCancelled) {
+          _deferredPersistedMessageIds.removeAll(persistedIds);
+          return;
+        }
+
+        if (!mounted || myGen != _requestGen) return;
+        for (var index = 0; index < persisted.length; index++) {
+          if (!mounted || myGen != _requestGen) break;
+          if (index > 0 && persisted[index]['reply_group_id'] != null) {
+            await _applyRandomReplyDelay(db);
+          }
+          if (!mounted || myGen != _requestGen) break;
+          final row = persisted[index];
+          final fullContent = row['content']?.toString() ?? '';
+          final reveal = streamEnabled &&
+              (row['type'] == 'text' || row['type'] == 'inner_thought') &&
+              fullContent.isNotEmpty;
+          if (reveal) {
+            row['content'] = '';
+            row['is_streaming'] = true;
+          }
+
+          // 内心独白流式输出开始时自动展开
+          final thoughtId = row['id']?.toString() ?? '';
+          final isInnerThought = row['type'] == 'inner_thought';
+          if (isInnerThought && reveal && thoughtId.isNotEmpty) {
+            _expandedThoughtIds.add(thoughtId);
+          }
+
+          setState(() {
+            final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
+            if (existing >= 0) {
+              row['_thought_expanded'] = _msgs[existing]['_thought_expanded'];
+              _msgs[existing] = row;
+            } else {
+              _msgs.add(row);
+            }
+            _msgs = normalizeChatMessages(_msgs);
+          });
+          _scrollDown();
+          if (reveal) {
+            await for (final content
+                in chatStreamText(fullContent, streamSpeed)) {
+              if (!mounted || myGen != _requestGen) break;
+              setState(() => row['content'] = content);
+              _scrollDown(animated: false);
+            }
+            if (!mounted || myGen != _requestGen) return;
+            setState(() => row.remove('is_streaming'));
+
+            // 内心独白流式输出完成后自动折叠
+            if (isInnerThought && thoughtId.isNotEmpty) {
+              setState(() => _expandedThoughtIds.remove(thoughtId));
+            }
+          }
+        }
+        _deferredPersistedMessageIds.removeAll(persistedIds);
+        await _syncLatestMessages();
+        // Images and stickers are included in `messages` after being persisted by
+        // AIManager. Rendering result metadata again would duplicate the same
+        // media in the visible conversation.
+        if (mounted) {
+          unawaited(_markReadIfVisible());
+        }
+      } on AICancelledException {
+        // Superseded turns are replayed without an error notice.
+      } catch (e, st) {
+        if (myGen != _requestGen && !turn.isCommitted) return;
+        debugPrint('[send] failed: $e');
+        debugPrint(st.toString());
+        AppLogService.instance.add('ERROR', '发送流程失败：$e\n$st');
+        final errorText = e is TimeoutException
+            ? '请求超过5分钟，已停止'
+            : e is StateError
+                ? e.message.toString()
+                : '处理或请求失败：$e';
         if (mounted) GlobalNotice.show(errorText);
+        final errorLog = '${e.toString()}\n${st.toString()}';
         await _markTurnFailed(
           retryTarget == null ? userMessages : [retryTarget],
           errorLog: errorLog,
           errorText: errorText,
-          errorCode: result['error_code']?.toString(),
+          errorCode: 'local',
         );
-        return;
-      }
-
-      if (result['silent'] == true) {
-        return;
-      }
-      if (retryTarget != null) {
-        await DBManager().clearMessageError(retryTarget['id'].toString());
-        retryTarget.remove('is_retrying');
-        retryTarget.remove('error_log');
-        retryTarget.remove('error_code');
-        retryTarget.remove('error_text');
-        retryTarget['send_status'] = 'sent';
-        retryTarget['retry_status'] = 'none';
-        if (mounted) setState(() {});
-      }
-      final persisted = (result['messages'] as List? ?? const [])
-          .whereType<Map>()
-          .map((message) => Map<String, dynamic>.from(message))
-          .toList();
-      final persistedIds = persisted
-          .map((message) => message['id']?.toString() ?? '')
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      _deferredPersistedMessageIds.addAll(persistedIds);
-      if (myGen != _requestGen || requestToken.isCancelled) {
-        _deferredPersistedMessageIds.removeAll(persistedIds);
-        return;
-      }
-
-      if (!mounted || myGen != _requestGen) return;
-      for (var index = 0; index < persisted.length; index++) {
-        if (!mounted || myGen != _requestGen) break;
-        if (index > 0 && persisted[index]['reply_group_id'] != null) {
-          await _applyRandomReplyDelay(db);
+      } finally {
+        for (final path in unregisteredSharedVideos) {
+          try {
+            await File(path).delete();
+          } catch (_) {}
         }
-        if (!mounted || myGen != _requestGen) break;
-        final row = persisted[index];
-        final fullContent = row['content']?.toString() ?? '';
-        final reveal = streamEnabled &&
-            (row['type'] == 'text' || row['type'] == 'inner_thought') &&
-            fullContent.isNotEmpty;
-        if (reveal) {
-          row['content'] = '';
-          row['is_streaming'] = true;
-        }
-
-        // 内心独白流式输出开始时自动展开
-        final thoughtId = row['id']?.toString() ?? '';
-        final isInnerThought = row['type'] == 'inner_thought';
-        if (isInnerThought && reveal && thoughtId.isNotEmpty) {
-          _expandedThoughtIds.add(thoughtId);
-        }
-
-        setState(() {
-          final existing = _msgs.indexWhere((m) => m['id'] == row['id']);
-          if (existing >= 0) {
-            row['_thought_expanded'] = _msgs[existing]['_thought_expanded'];
-            _msgs[existing] = row;
-          } else {
-            _msgs.add(row);
-          }
-          _msgs = normalizeChatMessages(_msgs);
-        });
-        _scrollDown();
-        if (reveal) {
-          await for (final content
-              in chatStreamText(fullContent, streamSpeed)) {
-            if (!mounted || myGen != _requestGen) break;
-            setState(() => row['content'] = content);
-            _scrollDown(animated: false);
-          }
-          if (!mounted || myGen != _requestGen) return;
-          setState(() => row.remove('is_streaming'));
-
-          // 内心独白流式输出完成后自动折叠
-          if (isInnerThought && thoughtId.isNotEmpty) {
-            setState(() => _expandedThoughtIds.remove(thoughtId));
+        for (final video in preparedVideos) {
+          try {
+            await video.cleanup();
+          } catch (e) {
+            debugPrint('[video] temporary media cleanup failed: $e');
           }
         }
-      }
-      _deferredPersistedMessageIds.removeAll(persistedIds);
-      await _syncLatestMessages();
-      if (mounted && myGen == _requestGen && isOnboardingReply(result)) {
-        widget.onReplyCompleted?.call();
-      }
-      // Images and stickers are included in `messages` after being persisted by
-      // AIManager. Rendering result metadata again would duplicate the same
-      // media in the visible conversation.
-      if (mounted) {
-        unawaited(_markReadIfVisible());
-      }
-    } on AICancelledException {
-      // Superseded turns are replayed without an error notice.
-    } catch (e, st) {
-      if (myGen != _requestGen && !turn.isCommitted) return;
-      debugPrint('[send] failed: $e');
-      debugPrint(st.toString());
-      AppLogService.instance.add('ERROR', '发送流程失败：$e\n$st');
-      final errorText = e is TimeoutException
-          ? '请求超过5分钟，已停止'
-          : e is StateError
-              ? e.message.toString()
-              : '处理或请求失败：$e';
-      if (mounted) GlobalNotice.show(errorText);
-      final errorLog = '${e.toString()}\n${st.toString()}';
-      await _markTurnFailed(
-        retryTarget == null ? userMessages : [retryTarget],
-        errorLog: errorLog,
-        errorText: errorText,
-        errorCode: 'local',
-      );
-    } finally {
-      for (final path in unregisteredSharedVideos) {
-        try {
-          await File(path).delete();
-        } catch (_) {}
-      }
-      for (final video in preparedVideos) {
-        try {
-          await video.cleanup();
-        } catch (e) {
-          debugPrint('[video] temporary media cleanup failed: $e');
-        }
-      }
-      // Release synchronously, even if UI cleanup throws. No old request may
-      // clear a lock owned by the queued request after the handoff.
-      _loading = false;
-      AppLogService.instance.add(
-          'AI_TRACE', '发送流程释放 bot=$botId generation=$myGen queued=$_queued');
-      for (final message in _msgs) {
-        message.remove('is_streaming');
-      }
-      _setTypingState(false);
-      _deferredPersistedMessageIds.clear();
-      if (mounted) setState(() {});
-      _activeRequestToken = null;
-      if (_queued && myGen != _requestGen && !turn.isCommitted) {
-        // Replay the complete uncommitted turn, including its original photos.
-        _queuedText = [batchText, _queuedText]
-            .where((part) => part.isNotEmpty)
-            .join('\n');
-        _queuedImages.insertAll(0, batchImages);
-        _queuedDocuments.insertAll(0, batchDocuments);
-        _queuedMediaContext = [
-          if (batchContext != null) batchContext,
-          if (_queuedMediaContext != null) _queuedMediaContext
-        ].join('\n');
-        _queuedMessages.insertAll(0, userMessages);
-        _queuedAudioPath ??= audioPath;
-        _queuedForceSingleReply |= forceSingleReply;
-      }
-      if (_queued) {
-        _loading = true;
-        while (_pendingQueueWrites > 0) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        final mergedText = _queuedText;
-        final mergedImages = [..._queuedImages];
-        final mergedDocuments = [..._queuedDocuments];
-        final mergedContext = _queuedMediaContext;
-        final mergedMessages = [..._queuedMessages];
-        final mergedAudio = _queuedAudioPath;
-        final singleReply = _queuedForceSingleReply;
-        _clearMessageQueue();
+        // Release synchronously, even if UI cleanup throws. No old request may
+        // clear a lock owned by the queued request after the handoff.
         _loading = false;
-        await _send(
-          noUserBubble: true,
-          queuedText: mergedText,
-          images: mergedImages,
-          documents: mergedDocuments,
-          mediaContext: mergedContext,
-          audioPath: mergedAudio,
-          forceSingleReply: singleReply,
-          batchedMessages: mergedMessages,
-        );
-      } else {
-        await _syncLatestMessages();
-        if (mounted) _scrollDown();
+        AppLogService.instance.add(
+            'AI_TRACE', '发送流程释放 bot=$botId generation=$myGen queued=$_queued');
+        for (final message in _msgs) {
+          message.remove('is_streaming');
+        }
+        _setTypingState(false);
+        _deferredPersistedMessageIds.clear();
+        if (mounted) setState(() {});
+        _activeRequestToken = null;
+        if (_queued && myGen != _requestGen && !turn.isCommitted) {
+          // Replay the complete uncommitted turn, including its original photos.
+          _queuedText = [batchText, _queuedText]
+              .where((part) => part.isNotEmpty)
+              .join('\n');
+          _queuedImages.insertAll(0, batchImages);
+          _queuedDocuments.insertAll(0, batchDocuments);
+          _queuedMediaContext = [
+            if (batchContext != null) batchContext,
+            if (_queuedMediaContext != null) _queuedMediaContext
+          ].join('\n');
+          _queuedMessages.insertAll(0, userMessages);
+          _queuedAudioPath ??= audioPath;
+          _queuedForceSingleReply |= forceSingleReply;
+        }
+        if (_queued) {
+          _loading = true;
+          while (_pendingQueueWrites > 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+          final mergedText = _queuedText;
+          final mergedImages = [..._queuedImages];
+          final mergedDocuments = [..._queuedDocuments];
+          final mergedContext = _queuedMediaContext;
+          final mergedMessages = [..._queuedMessages];
+          final mergedAudio = _queuedAudioPath;
+          final singleReply = _queuedForceSingleReply;
+          _clearMessageQueue();
+          _loading = false;
+          await _send(
+            noUserBubble: true,
+            queuedText: mergedText,
+            images: mergedImages,
+            documents: mergedDocuments,
+            mediaContext: mergedContext,
+            audioPath: mergedAudio,
+            forceSingleReply: singleReply,
+            batchedMessages: mergedMessages,
+          );
+        } else {
+          await _syncLatestMessages();
+          if (mounted) _scrollDown();
+        }
       }
-    }
+    });
   }
 
   Future<void> _markTurnFailed(
@@ -1931,62 +1960,66 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     Map<String, dynamic> message,
     String audioPath,
   ) async {
-    final botId = _bot['id']?.toString() ?? '';
-    if (botId.isEmpty || _loading) return;
-    if (mounted) {
-      setState(() => _loading = true);
-      _scrollDown();
-    }
-    _activeTurn = null;
-    _setTypingState(true);
+    return await MediaStorageService.instance.withMediaUse(() async {
+      audioPath = await MediaStorageService.instance.resolve(audioPath);
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final sttId = prefs.getString('stt_model_$botId')?.trim() ?? '';
-      if (sttId == '__use_primary_stt__') {
+      final botId = _bot['id']?.toString() ?? '';
+      if (botId.isEmpty || _loading) return;
+      if (mounted) {
+        setState(() => _loading = true);
+        _scrollDown();
+      }
+      _activeTurn = null;
+      _setTypingState(true);
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final sttId = prefs.getString('stt_model_$botId')?.trim() ?? '';
+        if (sttId == '__use_primary_stt__') {
+          if (mounted) setState(() => _loading = false);
+          await _send(
+            mediaContext: '[用户发送了一段语音]',
+            audioPath: audioPath,
+            batchedMessages: [message],
+            noUserBubble: true,
+            forceSingleReply: true,
+          );
+          return;
+        }
+        final transcript = await AIManager()
+            .transcribeAudio(botId: botId, audioPath: audioPath)
+            .timeout(const Duration(seconds: 50), onTimeout: () => null);
+        final modelContext = transcript == null || transcript.trim().isEmpty
+            ? '[用户发送了一段语音，但当前未配置可用的语音识别服务或转写失败。你听不到具体内容，请自然说明并结合上下文回应，可以请用户重发或改用文字；不要假装听懂。]'
+            : '[用户刚发送的语音转写]\n${transcript.trim()}';
+
+        if (transcript != null && transcript.trim().isNotEmpty) {
+          try {
+            await DBManager().updateMessageContent(
+              message['id'].toString(),
+              transcript.trim(),
+            );
+            if (mounted) setState(() => message['content'] = transcript.trim());
+          } catch (e) {
+            debugPrint('[stt] persist transcript failed: $e');
+          }
+        }
         if (mounted) setState(() => _loading = false);
+        // The audio message has already been persisted and rendered. Send only
+        // the transcript as model context so no duplicate document bubble exists.
         await _send(
-          mediaContext: '[用户发送了一段语音]',
-          audioPath: audioPath,
+          mediaContext: modelContext,
           batchedMessages: [message],
           noUserBubble: true,
           forceSingleReply: true,
         );
-        return;
+      } finally {
+        // Always release, including an early return/failed handoff to _send.
+        // Closing an already released lease is safe and never clears another owner.
+        _setTypingState(false);
+        if (mounted) setState(() => _loading = false);
       }
-      final transcript = await AIManager()
-          .transcribeAudio(botId: botId, audioPath: audioPath)
-          .timeout(const Duration(seconds: 50), onTimeout: () => null);
-      final modelContext = transcript == null || transcript.trim().isEmpty
-          ? '[用户发送了一段语音，但当前未配置可用的语音识别服务或转写失败。你听不到具体内容，请自然说明并结合上下文回应，可以请用户重发或改用文字；不要假装听懂。]'
-          : '[用户刚发送的语音转写]\n${transcript.trim()}';
-
-      if (transcript != null && transcript.trim().isNotEmpty) {
-        try {
-          await DBManager().updateMessageContent(
-            message['id'].toString(),
-            transcript.trim(),
-          );
-          if (mounted) setState(() => message['content'] = transcript.trim());
-        } catch (e) {
-          debugPrint('[stt] persist transcript failed: $e');
-        }
-      }
-      if (mounted) setState(() => _loading = false);
-      // The audio message has already been persisted and rendered. Send only
-      // the transcript as model context so no duplicate document bubble exists.
-      await _send(
-        mediaContext: modelContext,
-        batchedMessages: [message],
-        noUserBubble: true,
-        forceSingleReply: true,
-      );
-    } finally {
-      // Always release, including an early return/failed handoff to _send.
-      // Closing an already released lease is safe and never clears another owner.
-      _setTypingState(false);
-      if (mounted) setState(() => _loading = false);
-    }
+    });
   }
 
   // ========== 录音 ==========
@@ -2079,6 +2112,18 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   Future<void> _sendPickedAudio(String path) async {
     final botId = _bot['id']?.toString() ?? '';
     if (botId.isEmpty || _loading) return;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final folder = Directory(p.join(directory.path, 'chat_media', 'audio'));
+      await folder.create(recursive: true);
+      final destination = p.join(folder.path,
+          '${DateTime.now().microsecondsSinceEpoch}_${p.basename(path)}');
+      await File(path).copy(destination);
+      path = destination;
+    } catch (error) {
+      if (mounted) GlobalNotice.show('音频保存失败：$error');
+      return;
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     final message = <String, dynamic>{
       'id': 'm_$now',
@@ -3081,34 +3126,37 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   }
 
   Future<void> _toggleAudio(String path) async {
-    try {
-      if (_playingAudioPath != path) {
+    return await MediaStorageService.instance.withMediaUse(() async {
+      path = await MediaStorageService.instance.resolve(path);
+      try {
+        if (_playingAudioPath != path) {
+          setState(() {
+            _playingAudioPath = path;
+            _audioPosition = Duration.zero;
+            _audioDuration = Duration.zero;
+          });
+          await _player.play(DeviceFileSource(path));
+          return;
+        }
+        if (_audioPlaying) {
+          await _player.pause();
+        } else {
+          await _player.resume();
+        }
+      } catch (e) {
+        if (!mounted) return;
         setState(() {
-          _playingAudioPath = path;
+          _playingAudioPath = null;
+          _audioPlaying = false;
           _audioPosition = Duration.zero;
           _audioDuration = Duration.zero;
         });
-        await _player.play(DeviceFileSource(path));
-        return;
+        GlobalNotice.show(
+          '无法播放这条语音：$e',
+          color: Theme.of(context).colorScheme.error,
+        );
       }
-      if (_audioPlaying) {
-        await _player.pause();
-      } else {
-        await _player.resume();
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _playingAudioPath = null;
-        _audioPlaying = false;
-        _audioPosition = Duration.zero;
-        _audioDuration = Duration.zero;
-      });
-      GlobalNotice.show(
-        '无法播放这条语音：$e',
-        color: Theme.of(context).colorScheme.error,
-      );
-    }
+    });
   }
 
   String _formatAudioTime(Duration value) {

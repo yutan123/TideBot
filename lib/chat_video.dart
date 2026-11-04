@@ -1,3 +1,4 @@
+import 'media_storage_service.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -134,27 +135,31 @@ class _ChatVideoPlayerPageState extends State<ChatVideoPlayerPage>
   }
 
   Future<void> _initialize() async {
-    final previous = _controller;
-    _controller = null;
-    if (previous != null) await previous.dispose();
-    if (!mounted) return;
-    setState(() => _error = null);
-    final controller = VideoPlayerController.file(File(widget.path));
-    _controller = controller;
-    try {
-      if (!await File(widget.path).exists()) throw StateError('视频文件不存在或已被清理');
-      await controller.initialize().timeout(const Duration(seconds: 25));
-      if (!mounted || _controller != controller) return;
-      await controller.setVolume(_muted ? 0 : 1);
-      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
-        await controller.play();
+    return await MediaStorageService.instance.withMediaUse(() async {
+      final path = await MediaStorageService.instance.resolve(widget.path);
+      final previous = _controller;
+      _controller = null;
+      if (previous != null) await previous.dispose();
+      if (!mounted) return;
+      setState(() => _error = null);
+      final controller = VideoPlayerController.file(File(path));
+      _controller = controller;
+      try {
+        if (!await File(path).exists()) throw StateError('视频文件不存在或已被清理');
+        await controller.initialize().timeout(const Duration(seconds: 25));
+        if (!mounted || _controller != controller) return;
+        await controller.setVolume(_muted ? 0 : 1);
+        if (WidgetsBinding.instance.lifecycleState ==
+            AppLifecycleState.resumed) {
+          await controller.play();
+        }
+        if (mounted) setState(() {});
+        _scheduleHide();
+      } catch (_) {
+        if (mounted && _controller == controller)
+          setState(() => _error = '无法播放此视频，请检查文件是否完整或格式是否受支持');
       }
-      if (mounted) setState(() {});
-      _scheduleHide();
-    } catch (_) {
-      if (mounted && _controller == controller)
-        setState(() => _error = '无法播放此视频，请检查文件是否完整或格式是否受支持');
-    }
+    });
   }
 
   @override

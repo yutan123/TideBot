@@ -1,3 +1,33 @@
+TideBot — An Android AI companion application.
+Copyright (C) 2025-2026 TideBot contributors.
+SPDX-License-Identifier: AGPL-3.0-only
+
+TideBot is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License, version 3,
+as published by the Free Software Foundation.
+
+TideBot is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License below for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with TideBot. If not, see <https://www.gnu.org/licenses/>.
+
+Source code and project contact: https://github.com/yutan123/TideBot-Dev
+
+Unless otherwise noted, this notice applies to TideBot's original source
+code, application interface, documentation and project-owned resources.
+Third-party components retain their own copyrights and licenses; see
+THIRD_PARTY_NOTICES.md and their accompanying license files.
+See COPYRIGHT for the Chinese project copyright notice.
+
+The project notice above is separate from the unmodified GNU AGPL v3
+license text below. The application examples in that text do not change
+TideBot's AGPL-3.0-only licensing.
+
+------------------------------------------------------------------------
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

@@ -19,9 +19,9 @@ void main() {
     check(marked['role'] == role, 'API role must be preserved');
     check(marked['id'] == original['id'], 'Window identity must be preserved');
     check(body.endsWith(original['content'] as String), 'Keep original words');
-    check(body.contains(role == 'user' ? '说话人：对方' : '说话人：你'),
-        'Attribute the speaker using the API role');
-    check(body.contains('引用按原作者区分'), 'Allow quoted speakers');
+    final marker = role == 'user' ? '[说话人:对方]' : '[说话人:你]';
+    check(body == '$marker\n${original['content']}',
+        'Use only a compact speaker marker before the original content');
     check(original['content'] == '我今天加班。他说：“我明天休息”。',
         'Do not modify stored messages');
   }
@@ -38,6 +38,7 @@ void main() {
     final result = marked['content'] as List;
     check(result.length == 3, 'Add one text marker to multimodal content');
     check(result.first['type'] == 'text', 'Marker must be a text part');
+    check(result.first['text'] == '[说话人:对方]', 'Use compact media marker');
     check(identical(result.last, parts.last), 'Preserve media payload');
     check(parts.length == 2, 'Do not mutate original multimodal list');
   }
@@ -46,6 +47,14 @@ void main() {
       stripChatMetadata('[说话人：对方；普通原话的第一人称指对方]\n[说话人：你；普通原话的第一人称指你]\n正文');
   check(cleaned == '\n\n正文',
       'Remove internal speaker markers from visible replies');
+  check(stripChatMetadata('[说话人:对方]\n[说话人:你]\n正文') == '\n\n正文',
+      'Remove compact speaker markers');
+  for (final marker in ['[说话人:对方]', '[说话人:你]']) {
+    for (var end = 1; end < marker.length; end++) {
+      check(stripChatMetadata('正文${marker.substring(0, end)}') == '正文',
+          'Hide incomplete speaker markers while streaming');
+    }
+  }
   for (final role in ['system', 'tool']) {
     final source = <String, dynamic>{
       'role': role,

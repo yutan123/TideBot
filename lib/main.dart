@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter/services.dart';
 import 'app_log_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'theme.dart';
@@ -38,6 +37,7 @@ import 'ops.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'ota_update.dart';
 import 'ai.dart';
+import 'media_storage_service.dart';
 import 'life_schedule_service.dart';
 import 'device_capability_service.dart';
 import 'external_api_service.dart';
@@ -99,6 +99,7 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
   if (externalApiEnabled == 'true') {
     debugPrint('[startup] 外部 API 服务将在后台 isolate 中启动');
   }
+  MediaStorageService.instance.startForeground();
   NativeBackgroundCoordinator.start();
   unawaited(CognitionReviewService.instance.runDue());
   Timer.periodic(const Duration(minutes: 1), (_) {
@@ -130,7 +131,7 @@ Future<void> _startBackgroundServices({bool loadTheme = true}) async {
 
   final restorePersistentService =
       (await _readStartupKV('persistent_notification')) == 'true' ||
-      externalApiEnabled == 'true';
+          externalApiEnabled == 'true';
   unawaited(
     _initPersistentService(
       restoreAfterUserOptIn: restorePersistentService,
@@ -173,8 +174,7 @@ Future<void> _initPersistentService({
     final plugin = FlutterLocalNotificationsPlugin();
     await plugin
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
     await service.configure(
       androidConfiguration: AndroidConfiguration(
@@ -309,8 +309,7 @@ void onStart(ServiceInstance service) async {
       final now = DateTime.now().millisecondsSinceEpoch;
       await db.setKV('persistent_service_last_tick_started_at', '$now');
       await db.setKV('persistent_service_heartbeat', '$now');
-      final keepRunning =
-          await db.getKV('persistent_notification') == 'true' ||
+      final keepRunning = await db.getKV('persistent_notification') == 'true' ||
           await db.getKV('external_api_enabled') == 'true';
       if (!keepRunning) {
         await runTask('vital_signs', BotVitalSignsService.instance.runDue);
@@ -469,8 +468,7 @@ void onStart(ServiceInstance service) async {
 
   unawaited(() async {
     final db = DBManager();
-    final restarts =
-        int.tryParse(
+    final restarts = int.tryParse(
           await db.getKV('persistent_service_restart_count') ?? '0',
         ) ??
         0;
@@ -527,9 +525,8 @@ Future<void> _runDueFutureTasks() async {
       await db.completeFutureTask(task, DateTime.now().millisecondsSinceEpoch);
       if (task['frequency']?.toString() == 'daily') {
         final next = await db.querySchedules(botId);
-        final matches = next
-            .where((item) => item['id']?.toString() == id)
-            .toList();
+        final matches =
+            next.where((item) => item['id']?.toString() == id).toList();
         if (matches.isNotEmpty) {
           await FutureTaskScheduler.schedule(matches.first);
         }
@@ -582,13 +579,12 @@ Future<void> _runDeviceEventTriggeredReply() async {
   final allowed = type == 'new_notification'
       ? whitelist.contains('new_notification')
       : type == 'app_opened'
-      ? whitelist.contains('app_opened')
-      : whitelist.contains('screen_event');
+          ? whitelist.contains('app_opened')
+          : whitelist.contains('screen_event');
   if (!allowed) {
     return;
   }
-  final eventTime =
-      (event['time'] as num?)?.toInt() ??
+  final eventTime = (event['time'] as num?)?.toInt() ??
       (event['postedAt'] as num?)?.toInt() ??
       0;
   final seenKey = 'operation_event_seen_$botId';
@@ -596,7 +592,7 @@ Future<void> _runDeviceEventTriggeredReply() async {
   if (eventTime <= seen) return;
   final last =
       int.tryParse(await db.getKV('operation_proactive_last_$botId') ?? '') ??
-      0;
+          0;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - last < const Duration(minutes: 45).inMilliseconds) {
     return;
@@ -658,14 +654,14 @@ Future<void> _runDueProactiveReplies() async {
   await db.setKV('proactive_last_run_at', '$now');
   final minMinutes =
       (int.tryParse(await db.getKV('proactive_min_minutes') ?? '') ?? 60).clamp(
-        1,
-        1440,
-      );
+    1,
+    1440,
+  );
   final maxMinutes =
       (int.tryParse(await db.getKV('proactive_max_minutes') ?? '') ?? 90).clamp(
-        minMinutes,
-        1440,
-      );
+    minMinutes,
+    1440,
+  );
   for (final bot in await db.getAllBots()) {
     final botId = bot['id']?.toString() ?? '';
     if (botId.isEmpty) continue;
@@ -800,10 +796,10 @@ class FlowGlassBg extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => TideBackground(
-    backgroundPath: backgroundPath,
-    opacity: opacity,
-    child: child,
-  );
+        backgroundPath: backgroundPath,
+        opacity: opacity,
+        child: child,
+      );
 }
 
 class TideBotApp extends StatefulWidget {
@@ -1084,8 +1080,8 @@ class _JellyDockState extends State<JellyDock>
         color: useDockGlass
             ? Colors.transparent
             : (isDark
-                  ? const Color(0xB9172A31)
-                  : Colors.white.withValues(alpha: 0.35)),
+                ? const Color(0xB9172A31)
+                : Colors.white.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(28),
         border: useDockGlass
             ? null
@@ -1123,8 +1119,8 @@ class _JellyDockState extends State<JellyDock>
                     decoration: BoxDecoration(
                       color: theme.useLiquidGlass
                           ? (theme.isDark
-                                ? const Color(0x261D2C33)
-                                : const Color(0x24FFFFFF))
+                              ? const Color(0x261D2C33)
+                              : const Color(0x24FFFFFF))
                           : theme.primary.withValues(
                               alpha: isDark ? (_lifting ? 0.42 : 0.28) : 0.18,
                             ),
@@ -1143,17 +1139,17 @@ class _JellyDockState extends State<JellyDock>
                               ),
                             ]
                           : (isDark
-                                ? [
-                                    BoxShadow(
-                                      color: theme.primary.withValues(
-                                        alpha: _lifting ? 0.42 : 0.20,
-                                      ),
-                                      blurRadius: _lifting ? 18 : 10,
-                                      spreadRadius: _lifting ? 1 : 0,
-                                      offset: const Offset(0, -2),
+                              ? [
+                                  BoxShadow(
+                                    color: theme.primary.withValues(
+                                      alpha: _lifting ? 0.42 : 0.20,
                                     ),
-                                  ]
-                                : null),
+                                    blurRadius: _lifting ? 18 : 10,
+                                    spreadRadius: _lifting ? 1 : 0,
+                                    offset: const Offset(0, -2),
+                                  ),
+                                ]
+                              : null),
                     ),
                   );
                   final selectedPill = theme.useLiquidGlass
@@ -1187,9 +1183,8 @@ class _JellyDockState extends State<JellyDock>
                           children: [
                             Icon(
                               _icons[i],
-                              color: act
-                                  ? theme.primary
-                                  : const Color(0xFFAEAEB2),
+                              color:
+                                  act ? theme.primary : const Color(0xFFAEAEB2),
                               size: 22,
                             ),
                             if (i == 0 && widget.unreadCount > 0)
@@ -1277,15 +1272,12 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
   }
 
   Future<void> _maybePromptNotificationPermission() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('seen_onboarding') != true) return;
     final db = DBManager();
     if (await db.getKV('notification_permission_prompt_disabled') == 'true') {
       return;
     }
     if (await Permission.notification.status == PermissionStatus.granted ||
-        !mounted)
-      return;
+        !mounted) return;
     var neverAsk = false;
     final authorize = await TideDialogs.show<bool>(
       context: context,
@@ -1422,16 +1414,15 @@ class _TideMainScaffoldState extends State<TideMainScaffold>
                     PageRouteBuilder(
                       pageBuilder: (c, a, s) => const CreateBotPage(),
                       transitionsBuilder: (c, a, s, child) => SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(0, 0.3),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: a,
-                                curve: Curves.easeOutCubic,
-                              ),
-                            ),
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.3),
+                          end: Offset.zero,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: a,
+                            curve: Curves.easeOutCubic,
+                          ),
+                        ),
                         child: FadeTransition(opacity: a, child: child),
                       ),
                     ),

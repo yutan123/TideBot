@@ -66,7 +66,9 @@ String stripChatMetadata(String raw) {
         .replaceAll(',', '，');
     const prefixes = [
       '[说话人：对方',
+      '[说话人:对方',
       '[说话人：你',
+      '[说话人:你',
       '[你发送了一个表情包，表情包类型',
       '[对方发送了一个表情包，表情包类型',
       '[发送时间',

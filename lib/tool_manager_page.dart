@@ -219,12 +219,15 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     await _db.updateMcpStatus(id, 'connecting');
     final client = McpClient(url: url, headers: headers, timeout: timeout);
     try {
-      await client.initialize();
+      final initialized = await client.initialize();
       final tools = await client.listTools();
       final resources = await client.listResourcesSafe();
       final prompts = await client.listPromptsSafe();
       await _db.saveMcpTools(id, tools);
-      await _db.saveMcpMetadata(id, resources: resources, prompts: prompts);
+      await _db.saveMcpMetadata(id,
+          resources: resources,
+          prompts: prompts,
+          serviceDescription: initialized['instructions']?.toString() ?? '');
       await _reload();
     } catch (error) {
       await _db.updateMcpStatus(id, 'error', McpClient.describeError(error));
@@ -260,6 +263,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
           ? authorization.substring(7)
           : '';
       var name = item?['name']?.toString() ?? '';
+      var packageDescription = item?['description']?.toString() ?? '';
       var url = item?['url']?.toString() ?? '';
       var token = originalToken;
       var showToken = false;
@@ -314,6 +318,16 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                             value == null || value.trim().isEmpty
                                 ? '请输入名称'
                                 : null),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                        contextMenuBuilder: androidTextContextMenu,
+                        initialValue: packageDescription,
+                        onChanged: (value) => packageDescription = value,
+                        minLines: 2,
+                        maxLines: 4,
+                        style: TextStyle(color: theme.textStrong),
+                        cursorColor: theme.primary,
+                        decoration: decoration('工具包描述（留空使用服务说明或工具摘要）')),
                     const SizedBox(height: 12),
                     TextFormField(
                         contextMenuBuilder: androidTextContextMenu,
@@ -425,6 +439,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         if (item != null) ...item,
         'id': id,
         'name': name.trim(),
+        'description': packageDescription.trim(),
+        'service_description':
+            connectionChanged ? '' : item?['service_description'] ?? '',
         'url': url.trim(),
         'headers_key': item?['headers_key'],
         'timeout_ms': timeoutMs,
@@ -545,6 +562,20 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                 Text(_isSkill
                     ? (item['description']?.toString() ?? '')
                     : '${item['url']}\n状态：${item['status']}'),
+                const SizedBox(height: 8),
+                Text(
+                    '工具包 · ${tools.where((t) => t['enabled'] == 1 && (!_isSkill || t['risk_level'] != 'sensitive' || t['authorized'] == 1)).length} 个可用工具'),
+                if (!_isSkill)
+                  Text((item['description']?.toString().trim().isNotEmpty ??
+                          false)
+                      ? item['description'].toString()
+                      : (item['service_description']
+                                  ?.toString()
+                                  .trim()
+                                  .isNotEmpty ??
+                              false)
+                          ? item['service_description'].toString()
+                          : '机器人根据包内工具摘要选择此包，查看后按需调用。'),
                 const SizedBox(height: 16),
                 if (_isSkill) ...[
                   const Text('指引与附带文件'),

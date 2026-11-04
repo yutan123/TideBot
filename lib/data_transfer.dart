@@ -1,3 +1,4 @@
+import 'media_storage_service.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
@@ -18,7 +19,7 @@ class DataTransfer {
     if (_busy) throw StateError('正在导入或导出数据，请等待完成');
     _busy = true;
     try {
-      return await action();
+      return await MediaStorageService.instance.withMediaUse(action, maintenance: true);
     } finally {
       _busy = false;
     }

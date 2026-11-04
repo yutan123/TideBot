@@ -1,4 +1,5 @@
 import 'native_background_coordinator.dart';
+import 'media_storage_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -292,10 +293,13 @@ class DBManager {
           key TEXT PRIMARY KEY, value TEXT
         )
       ''');
-      await db.insert('kv_store', {
-        'key': 'schema_repair_version',
-        'value': '36',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.insert(
+          'kv_store',
+          {
+            'key': 'schema_repair_version',
+            'value': '36',
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
     } catch (error) {
       print('[db] mark schema repaired failed: $error');
     }
@@ -463,6 +467,11 @@ class DBManager {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onOpen: (db) async {
+        await MediaStorageService.ensureSchema(db);
+        await _ensureColumns(db, 'mcp_servers', const {
+          'description': "TEXT NOT NULL DEFAULT ''",
+          'service_description': "TEXT NOT NULL DEFAULT ''",
+        });
         // 只在首次打开或版本变更时执行完整修复，避免每次启动重复检查
         final needsRepair = await _shouldRepairSchema(db);
         if (needsRepair) {
@@ -1070,14 +1079,17 @@ class DBManager {
         final id = summary['id']?.toString() ?? '';
         final botId = summary['bot_id']?.toString() ?? '';
         if (id.isEmpty || botId.isEmpty) continue;
-        await db.insert('call_sessions', {
-          'id': 'legacy_$id',
-          'bot_id': botId,
-          'summary': summary['content']?.toString() ?? '',
-          'duration': (summary['duration'] as num?)?.toInt() ?? 0,
-          'status': 'completed',
-          'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
-        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        await db.insert(
+            'call_sessions',
+            {
+              'id': 'legacy_$id',
+              'bot_id': botId,
+              'summary': summary['content']?.toString() ?? '',
+              'duration': (summary['duration'] as num?)?.toInt() ?? 0,
+              'status': 'completed',
+              'created_at': (summary['timestamp'] as num?)?.toInt() ?? 0,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     } catch (error) {
       // Preserve legacy rows if migration cannot complete. Database open must
@@ -1125,6 +1137,8 @@ class DBManager {
       UNIQUE(skill_id, name))''');
     await _execSql(db, '''CREATE TABLE IF NOT EXISTS mcp_servers (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      service_description TEXT NOT NULL DEFAULT '',
       headers_key TEXT, timeout_ms INTEGER NOT NULL DEFAULT 20000,
       auto_connect INTEGER NOT NULL DEFAULT 0,
       resources_json TEXT NOT NULL DEFAULT '[]',
@@ -1219,15 +1233,19 @@ class DBManager {
       for (final tool in tools) {
         final name = tool['name']?.toString() ?? '';
         if (name.isEmpty) continue;
-        await txn.insert('mcp_tools', {
-          'id': 'mcp_tool_${serverId}_$name',
-          'server_id': serverId,
-          'name': name,
-          'description': tool['description']?.toString() ?? '',
-          'schema_json': jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
-          'enabled': previous[name] ?? 1,
-          'discovered_at': now,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+            'mcp_tools',
+            {
+              'id': 'mcp_tool_${serverId}_$name',
+              'server_id': serverId,
+              'name': name,
+              'description': tool['description']?.toString() ?? '',
+              'schema_json':
+                  jsonEncode(tool['inputSchema'] ?? {'type': 'object'}),
+              'enabled': previous[name] ?? 1,
+              'discovered_at': now,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await txn.update(
         'mcp_servers',
@@ -1242,16 +1260,17 @@ class DBManager {
     String id,
     String status, [
     String? error,
-  ]) async => (await database).update(
-    'mcp_servers',
-    {
-      'status': status,
-      'error': error,
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  ]) async =>
+      (await database).update(
+        'mcp_servers',
+        {
+          'status': status,
+          'error': error,
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
 
   Future<void> insertToolAudit({
     required String source,
@@ -1260,16 +1279,17 @@ class DBManager {
     required String status,
     required int durationMs,
     String? error,
-  }) async => (await database).insert('tool_audit', {
-    'id': 'audit_${DateTime.now().microsecondsSinceEpoch}',
-    'source': source,
-    'tool_name': toolName,
-    'input_summary': inputSummary,
-    'status': status,
-    'duration_ms': durationMs,
-    'error': error,
-    'created_at': DateTime.now().millisecondsSinceEpoch,
-  });
+  }) async =>
+      (await database).insert('tool_audit', {
+        'id': 'audit_${DateTime.now().microsecondsSinceEpoch}',
+        'source': source,
+        'tool_name': toolName,
+        'input_summary': inputSummary,
+        'status': status,
+        'duration_ms': durationMs,
+        'error': error,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
 
   Future<void> removeLegacyVideoSkill() async {
     final db = await database;
@@ -1384,16 +1404,20 @@ class DBManager {
     String id, {
     required List<Map<String, dynamic>> resources,
     required List<Map<String, dynamic>> prompts,
-  }) async => (await database).update(
-    'mcp_servers',
-    {
-      'resources_json': jsonEncode(resources),
-      'prompts_json': jsonEncode(prompts),
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+    String? serviceDescription,
+  }) async =>
+      (await database).update(
+        'mcp_servers',
+        {
+          'resources_json': jsonEncode(resources),
+          'prompts_json': jsonEncode(prompts),
+          if (serviceDescription != null)
+            'service_description': serviceDescription,
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
 
   Future<Map<String, dynamic>?> getLifeSchedule(
     String botId,
@@ -1465,10 +1489,13 @@ class DBManager {
           'proactive_due_at_$id': '0',
           'proactive_unanswered_$id': '0',
         }.entries) {
-          await txn.insert('kv_store', {
-            'key': entry.key,
-            'value': entry.value,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert(
+              'kv_store',
+              {
+                'key': entry.key,
+                'value': entry.value,
+              },
+              conflictAlgorithm: ConflictAlgorithm.replace);
         }
       });
       await NativeBackgroundCoordinator.synchronize();
@@ -1581,13 +1608,24 @@ class DBManager {
   }) async {
     final db = await database;
     await db.transaction((txn) async {
+      final path = msg['file_path'];
+      if (path is String) {
+        final aliases = await txn.query('media_storage_jobs',
+            columns: ['target'],
+            where: "source = ? AND state IN ('cleanup', 'done')",
+            whereArgs: [path]);
+        if (aliases.isNotEmpty && aliases.first['target'] is String) {
+          msg = {...msg, 'file_path': aliases.first['target']};
+        }
+      }
+
       await txn.insert(
         'chat_history',
         msg,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      final timestamp =
-          (msg['timestamp'] as num?)?.toInt() ??
+      await MediaStorageService.enqueue(txn, msg);
+      final timestamp = (msg['timestamp'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch;
       await txn.update(
         'bots',
@@ -1596,6 +1634,7 @@ class DBManager {
         whereArgs: [msg['bot_id']],
       );
     });
+    MediaStorageService.instance.kick();
     if (publishEvent) {
       ChatEventBus.instance.publish(
         ChatEvent(
@@ -1850,10 +1889,13 @@ class DBManager {
   // ================= KV 与 API 配置 =================
   Future<void> setKV(String key, String value) async {
     final db = await database;
-    await db.insert('kv_store', {
-      'key': key,
-      'value': value,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'kv_store',
+        {
+          'key': key,
+          'value': value,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
     if (key == 'proactive_min_minutes' || key == 'proactive_max_minutes') {
       await db.rawUpdate(
         "UPDATE kv_store SET value = '0' WHERE key GLOB 'proactive_due_at_*'",
@@ -1905,7 +1947,10 @@ class DBManager {
         sink.write('{"format":"tidebot.chat","version":2,"exported_at":');
         sink.write(jsonEncode(DateTime.now().toIso8601String()));
         sink.write(
-          ',"bot":${jsonEncode({'id': botId, 'name': bot['name']})},"video_history":[',
+          ',"bot":${jsonEncode({
+                'id': botId,
+                'name': bot['name']
+              })},"video_history":[',
         );
         final prefs = await SharedPreferences.getInstance();
         var firstVideo = true;
@@ -1990,126 +2035,128 @@ class DBManager {
   Future<int> importBotChat(
     String botId,
     String sourcePath,
-  ) => DataTransfer.exclusive(() async {
-    final work = await DataTransfer.workspace();
-    Directory? installedMedia;
-    var committed = false;
-    try {
-      final source = File(sourcePath);
-      final handle = await source.open();
-      late List<int> signature;
-      try {
-        signature = await handle.read(4);
-      } finally {
-        await handle.close();
-      }
-      File json = source;
-      if (signature.length == 4 &&
-          signature[0] == 0x50 &&
-          signature[1] == 0x4b) {
-        await DataTransfer.extract(sourcePath, work.path);
-        json = File('${work.path}/chat_history.json');
-      }
-      if (!await json.exists()) throw const FormatException('未找到聊天记录');
-      String? format;
-      int? version;
-      var hasMessages = false;
-      // Validate the entire stream before replacing any existing rows.
-      await for (final record in JsonRecords.read(json)) {
-        if (record.key == 'format') format = record.value as String?;
-        if (record.key == 'version') version = record.value as int?;
-        if (record.key == 'messages') {
-          hasMessages = true;
-          if (record.element && record.value is! Map)
-            throw const FormatException('聊天消息格式无效');
-        }
-      }
-      if (format != 'tidebot.chat' ||
-          !const [1, 2].contains(version) ||
-          !hasMessages) {
-        throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
-      }
-      final media = Directory('${work.path}/media');
-      if (await media.exists()) {
-        final docs = await getApplicationDocumentsDirectory();
-        installedMedia = Directory(
-          '${docs.path}/imported_media/${DateTime.now().microsecondsSinceEpoch}',
-        );
-        await installedMedia.parent.create(recursive: true);
-        installedMedia = await media.rename(installedMedia.path);
-      }
-      final mediaMapper = installedMedia == null
-          ? null
-          : ImportedMedia(installedMedia, allowLegacyBasename: true);
-      Future<dynamic> mapRecord(dynamic value) => mapTransferValue(
-        value,
-        (path) async => mediaMapper == null
-            ? path
-            : await mediaMapper.mapPath(path),
-      );
-
-      final base = DateTime.now().microsecondsSinceEpoch;
-      var count = 0;
-      var latest = 0;
-      final videos = <String>[];
-      final db = await database;
-      await db.transaction((txn) async {
-        await txn.delete(
-          'chat_history',
-          where: 'bot_id = ?',
-          whereArgs: [botId],
-        );
-        await for (final record in JsonRecords.read(json)) {
-          if (!record.element) continue;
-          if (record.key == 'video_history' && record.value is Map) {
-            final item = await mapRecord(record.value) as Map;
-            videos.add(jsonEncode(item));
+  ) =>
+      DataTransfer.exclusive(() async {
+        final work = await DataTransfer.workspace();
+        Directory? installedMedia;
+        var committed = false;
+        try {
+          final source = File(sourcePath);
+          final handle = await source.open();
+          late List<int> signature;
+          try {
+            signature = await handle.read(4);
+          } finally {
+            await handle.close();
           }
-          if (record.key != 'messages') continue;
-          final item = await mapRecord(record.value) as Map;
-          final oldId = item['id']?.toString() ?? '';
-          final reply = item['reply_to_id']?.toString() ?? '';
-          final timestamp =
-              (item['timestamp'] as num?)?.toInt() ?? base ~/ 1000 + count;
-          if (timestamp > latest) latest = timestamp;
-          await txn.insert('chat_history', {
-            'id': oldId.isEmpty
-                ? 'import_${base}_row_$count'
-                : 'import_${base}_id_$oldId',
-            'bot_id': botId,
-            'role': item['role']?.toString() ?? 'user',
-            'type': item['type']?.toString() ?? 'text',
-            'content': item['content']?.toString() ?? '',
-            'file_path': item['file_path']?.toString() ?? '',
-            'mood': item['mood'],
-            'duration': item['duration'],
-            'reply_to_id': reply.isEmpty ? null : 'import_${base}_id_$reply',
-            'reply_group_id': item['reply_group_id'],
-            'sources_json': item['sources_json'],
-            'timestamp': timestamp,
+          File json = source;
+          if (signature.length == 4 &&
+              signature[0] == 0x50 &&
+              signature[1] == 0x4b) {
+            await DataTransfer.extract(sourcePath, work.path);
+            json = File('${work.path}/chat_history.json');
+          }
+          if (!await json.exists()) throw const FormatException('未找到聊天记录');
+          String? format;
+          int? version;
+          var hasMessages = false;
+          // Validate the entire stream before replacing any existing rows.
+          await for (final record in JsonRecords.read(json)) {
+            if (record.key == 'format') format = record.value as String?;
+            if (record.key == 'version') version = record.value as int?;
+            if (record.key == 'messages') {
+              hasMessages = true;
+              if (record.element && record.value is! Map)
+                throw const FormatException('聊天消息格式无效');
+            }
+          }
+          if (format != 'tidebot.chat' ||
+              !const [1, 2].contains(version) ||
+              !hasMessages) {
+            throw const FormatException('仅支持 TideBot 导出的聊天记录文件');
+          }
+          final media = Directory('${work.path}/media');
+          if (await media.exists()) {
+            final docs = await getApplicationDocumentsDirectory();
+            installedMedia = Directory(
+              '${docs.path}/imported_media/${DateTime.now().microsecondsSinceEpoch}',
+            );
+            await installedMedia.parent.create(recursive: true);
+            installedMedia = await media.rename(installedMedia.path);
+          }
+          final mediaMapper = installedMedia == null
+              ? null
+              : ImportedMedia(installedMedia, allowLegacyBasename: true);
+          Future<dynamic> mapRecord(dynamic value) => mapTransferValue(
+                value,
+                (path) async => mediaMapper == null
+                    ? path
+                    : await mediaMapper.mapPath(path),
+              );
+
+          final base = DateTime.now().microsecondsSinceEpoch;
+          var count = 0;
+          var latest = 0;
+          final videos = <String>[];
+          final db = await database;
+          await db.transaction((txn) async {
+            await txn.delete(
+              'chat_history',
+              where: 'bot_id = ?',
+              whereArgs: [botId],
+            );
+            await for (final record in JsonRecords.read(json)) {
+              if (!record.element) continue;
+              if (record.key == 'video_history' && record.value is Map) {
+                final item = await mapRecord(record.value) as Map;
+                videos.add(jsonEncode(item));
+              }
+              if (record.key != 'messages') continue;
+              final item = await mapRecord(record.value) as Map;
+              final oldId = item['id']?.toString() ?? '';
+              final reply = item['reply_to_id']?.toString() ?? '';
+              final timestamp =
+                  (item['timestamp'] as num?)?.toInt() ?? base ~/ 1000 + count;
+              if (timestamp > latest) latest = timestamp;
+              await txn.insert('chat_history', {
+                'id': oldId.isEmpty
+                    ? 'import_${base}_row_$count'
+                    : 'import_${base}_id_$oldId',
+                'bot_id': botId,
+                'role': item['role']?.toString() ?? 'user',
+                'type': item['type']?.toString() ?? 'text',
+                'content': item['content']?.toString() ?? '',
+                'file_path': item['file_path']?.toString() ?? '',
+                'mood': item['mood'],
+                'duration': item['duration'],
+                'reply_to_id':
+                    reply.isEmpty ? null : 'import_${base}_id_$reply',
+                'reply_group_id': item['reply_group_id'],
+                'sources_json': item['sources_json'],
+                'timestamp': timestamp,
+              });
+              count++;
+            }
+            await txn.update(
+              'bots',
+              {'last_msg_time': latest},
+              where: 'id = ?',
+              whereArgs: [botId],
+            );
           });
-          count++;
+          committed = true;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setStringList('video_history_$botId', videos);
+          return count;
+        } finally {
+          if (!committed &&
+              installedMedia != null &&
+              await installedMedia.exists()) {
+            await installedMedia.delete(recursive: true);
+          }
+          await work.delete(recursive: true);
         }
-        await txn.update(
-          'bots',
-          {'last_msg_time': latest},
-          where: 'id = ?',
-          whereArgs: [botId],
-        );
       });
-      committed = true;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList('video_history_$botId', videos);
-      return count;
-    } finally {
-      if (!committed &&
-          installedMedia != null &&
-          await installedMedia.exists()) {
-        await installedMedia.delete(recursive: true);
-      }
-      await work.delete(recursive: true);
-    }
-  });
 
   Future<({String fileName, File file})> buildMemoryExport(String botId) async {
     final bot = await getBotById(botId);
@@ -2122,7 +2169,12 @@ class DBManager {
       final sink = file.openWrite();
       try {
         sink.write(
-          '{"format":"tidebot.memory","version":1,"bot":${jsonEncode({'id': botId, 'name': bot['name'], 'created_at': bot['created_at'], 'daily_quote': bot['daily_quote']})},',
+          '{"format":"tidebot.memory","version":1,"bot":${jsonEncode({
+                'id': botId,
+                'name': bot['name'],
+                'created_at': bot['created_at'],
+                'daily_quote': bot['daily_quote']
+              })},',
         );
         final db = await database;
         await db.transaction((txn) async {
@@ -2139,9 +2191,8 @@ class DBManager {
                 whereArgs: table == 'memories'
                     ? [botId]
                     : ['%_$botId', '%_${botId}_%'],
-                orderBy: table == 'memories'
-                    ? 'timestamp ASC, id ASC'
-                    : 'key ASC',
+                orderBy:
+                    table == 'memories' ? 'timestamp ASC, id ASC' : 'key ASC',
                 limit: 100,
                 offset: offset,
               );
@@ -2172,71 +2223,83 @@ class DBManager {
     String botId,
     String sourcePath, {
     bool merge = false,
-  }) => DataTransfer.exclusive(() async {
-    final source = File(sourcePath);
-    String? format;
-    int? version;
-    Map bot = {};
-    final sections = <String>{};
-    const arrays = {'memories', 'kv'};
-    await for (final record in JsonRecords.read(source, arrays: arrays)) {
-      if (record.key == 'format') format = record.value as String?;
-      if (record.key == 'version') version = record.value as int?;
-      if (record.key == 'bot' && record.value is Map) bot = record.value as Map;
-      if (arrays.contains(record.key)) {
-        sections.add(record.key);
-        if (record.element && record.value is! Map)
-          throw const FormatException('世界书内容无效');
-      }
-    }
-    if (format != 'tidebot.memory' || version != 1 || sections.length != 2) {
-      throw const FormatException('仅支持 TideBot 导出的世界书文件');
-    }
-    final sourceBotId = bot['id']?.toString() ?? '';
-    var count = 0;
-    final base = DateTime.now().microsecondsSinceEpoch;
-    final db = await database;
-    await db.transaction((txn) async {
-      if (!merge) {
-        await txn.delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
-        await txn.delete(
-          'kv_store',
-          where: 'key LIKE ? OR key LIKE ?',
-          whereArgs: ['%_$botId', '%_${botId}_%'],
-        );
-      }
-      await for (final record in JsonRecords.read(source, arrays: arrays)) {
-        if (!record.element) continue;
-        final item = record.value as Map;
-        if (record.key == 'memories') {
-          final row = Map<String, dynamic>.from(item);
-          row['bot_id'] = botId;
-          row['id'] = 'import_mem_${base}_${count++}';
-          await txn.insert(
-            'memories',
-            row,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        } else if (record.key == 'kv' && item['key'] != null) {
-          var key = item['key'].toString();
-          if (sourceBotId.isNotEmpty) key = key.replaceAll(sourceBotId, botId);
-          await txn.insert('kv_store', {
-            'key': key,
-            'value': item['value']?.toString(),
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }) =>
+      DataTransfer.exclusive(() async {
+        final source = File(sourcePath);
+        String? format;
+        int? version;
+        Map bot = {};
+        final sections = <String>{};
+        const arrays = {'memories', 'kv'};
+        await for (final record in JsonRecords.read(source, arrays: arrays)) {
+          if (record.key == 'format') format = record.value as String?;
+          if (record.key == 'version') version = record.value as int?;
+          if (record.key == 'bot' && record.value is Map)
+            bot = record.value as Map;
+          if (arrays.contains(record.key)) {
+            sections.add(record.key);
+            if (record.element && record.value is! Map)
+              throw const FormatException('世界书内容无效');
+          }
         }
-      }
-      if (!merge) {
-        await txn.update(
-          'bots',
-          {'created_at': bot['created_at'], 'daily_quote': bot['daily_quote']},
-          where: 'id = ?',
-          whereArgs: [botId],
-        );
-      }
-    });
-    return count;
-  });
+        if (format != 'tidebot.memory' ||
+            version != 1 ||
+            sections.length != 2) {
+          throw const FormatException('仅支持 TideBot 导出的世界书文件');
+        }
+        final sourceBotId = bot['id']?.toString() ?? '';
+        var count = 0;
+        final base = DateTime.now().microsecondsSinceEpoch;
+        final db = await database;
+        await db.transaction((txn) async {
+          if (!merge) {
+            await txn
+                .delete('memories', where: 'bot_id = ?', whereArgs: [botId]);
+            await txn.delete(
+              'kv_store',
+              where: 'key LIKE ? OR key LIKE ?',
+              whereArgs: ['%_$botId', '%_${botId}_%'],
+            );
+          }
+          await for (final record in JsonRecords.read(source, arrays: arrays)) {
+            if (!record.element) continue;
+            final item = record.value as Map;
+            if (record.key == 'memories') {
+              final row = Map<String, dynamic>.from(item);
+              row['bot_id'] = botId;
+              row['id'] = 'import_mem_${base}_${count++}';
+              await txn.insert(
+                'memories',
+                row,
+                conflictAlgorithm: ConflictAlgorithm.replace,
+              );
+            } else if (record.key == 'kv' && item['key'] != null) {
+              var key = item['key'].toString();
+              if (sourceBotId.isNotEmpty)
+                key = key.replaceAll(sourceBotId, botId);
+              await txn.insert(
+                  'kv_store',
+                  {
+                    'key': key,
+                    'value': item['value']?.toString(),
+                  },
+                  conflictAlgorithm: ConflictAlgorithm.replace);
+            }
+          }
+          if (!merge) {
+            await txn.update(
+              'bots',
+              {
+                'created_at': bot['created_at'],
+                'daily_quote': bot['daily_quote']
+              },
+              where: 'id = ?',
+              whereArgs: [botId],
+            );
+          }
+        });
+        return count;
+      });
 
   Future<void> markBotRead(String botId) async {
     if (botId.isEmpty) return;
@@ -2266,48 +2329,49 @@ class DBManager {
 
   // 旧版全量 Markdown 导出保留兼容，不再作为数据管理入口。
   Future<void> exportToMarkdown() => DataTransfer.exclusive(() async {
-    final db = await database;
-    final dir = await getDatabasesPath();
-    final file = File('$dir/tidebot_export.md');
-    final sink = file.openWrite();
-    try {
-      sink.writeln('# TideBot 数据导出');
-      sink.writeln('导出时间: ${DateTime.now()}');
-      await db.transaction((txn) async {
-        for (final bot in await txn.query('bots')) {
-          sink.writeln('## ${bot['name']}');
-          sink.writeln('> ${bot['desc']}');
-          var offset = 0;
-          while (true) {
-            final page = await txn.query(
-              'chat_history',
-              where: 'bot_id = ?',
-              whereArgs: [bot['id']],
-              orderBy: 'timestamp ASC, id ASC',
-              limit: 100,
-              offset: offset,
-            );
-            if (page.isEmpty) break;
-            for (final message in page) {
-              final role = message['role'] == 'user' ? '用户' : bot['name'];
-              sink.writeln('**$role**: ${message['content']}\n');
+        final db = await database;
+        final dir = await getDatabasesPath();
+        final file = File('$dir/tidebot_export.md');
+        final sink = file.openWrite();
+        try {
+          sink.writeln('# TideBot 数据导出');
+          sink.writeln('导出时间: ${DateTime.now()}');
+          await db.transaction((txn) async {
+            for (final bot in await txn.query('bots')) {
+              sink.writeln('## ${bot['name']}');
+              sink.writeln('> ${bot['desc']}');
+              var offset = 0;
+              while (true) {
+                final page = await txn.query(
+                  'chat_history',
+                  where: 'bot_id = ?',
+                  whereArgs: [bot['id']],
+                  orderBy: 'timestamp ASC, id ASC',
+                  limit: 100,
+                  offset: offset,
+                );
+                if (page.isEmpty) break;
+                for (final message in page) {
+                  final role = message['role'] == 'user' ? '用户' : bot['name'];
+                  sink.writeln('**$role**: ${message['content']}\n');
+                }
+                await sink.flush();
+                offset += page.length;
+              }
             }
-            await sink.flush();
-            offset += page.length;
-          }
+          });
+        } finally {
+          await sink.close();
         }
       });
-    } finally {
-      await sink.close();
-    }
-  });
   // 添加 path 依赖的导入需要确认已存在; File 来自 dart:io
   // 需要在文件顶部已 import 'dart:io';
 
   // 别名：新代码统一用 queryBots
   Future<List<Map<String, dynamic>>> queryBots({
     bool throwOnError = false,
-  }) async => getAllBots(throwOnError: throwOnError);
+  }) async =>
+      getAllBots(throwOnError: throwOnError);
 
   // 别名：新代码用 insertMessage
   Future<void> insertMessage(Map<String, dynamic> msg) async =>
@@ -2320,9 +2384,8 @@ class DBManager {
     bool descending = false,
   }) async {
     final db = await database;
-    final orderBy = descending
-        ? 'timestamp DESC, id DESC'
-        : 'timestamp ASC, id ASC';
+    final orderBy =
+        descending ? 'timestamp DESC, id DESC' : 'timestamp ASC, id ASC';
     try {
       return await db.query(
         'chat_history',
@@ -2533,8 +2596,7 @@ class DBManager {
   }) async {
     final id = task['id']?.toString() ?? '';
     if (id.isEmpty) return;
-    final attempts =
-        (task['attempts'] as num?)?.toInt() ??
+    final attempts = (task['attempts'] as num?)?.toInt() ??
         int.tryParse(task['attempts']?.toString() ?? '') ??
         0;
     final nextAttempts = attempts + 1;
@@ -2605,16 +2667,15 @@ class DBManager {
     );
     final scored = <Map<String, dynamic>>[];
     for (final row in candidates) {
-      final haystack = '${row['title'] ?? ''} ${row['content'] ?? ''}'
-          .toLowerCase();
+      final haystack =
+          '${row['title'] ?? ''} ${row['content'] ?? ''}'.toLowerCase();
       var hits = 0;
       for (final token in tokens) {
         if (haystack.contains(token)) hits++;
       }
       if (hits == 0) continue;
       final importance = (row['importance'] as num?)?.toInt() ?? 3;
-      final score =
-          hits * 100 +
+      final score = hits * 100 +
           importance * 8 +
           ((row['type']?.toString() == 'long') ? 12 : 0);
       final copy = Map<String, dynamic>.from(row)..['_relevance'] = score;
@@ -2631,9 +2692,9 @@ class DBManager {
 
   List<String> _memorySearchTokens(String query) {
     final normalized = query.toLowerCase().replaceAll(
-      RegExp(r'[^\u3400-\u9fff\w]+'),
-      ' ',
-    );
+          RegExp(r'[^\u3400-\u9fff\w]+'),
+          ' ',
+        );
     final tokens = <String>{};
     for (final word in normalized.split(RegExp(r'\s+'))) {
       if (word.length >= 2) tokens.add(word);
@@ -2701,14 +2762,17 @@ class DBManager {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await getDiary(botId, dateKey);
     final db = await database;
-    await db.insert('bot_diaries', {
-      'id': existing?['id']?.toString() ?? 'diary_${botId}_$dateKey',
-      'bot_id': botId,
-      'date_key': dateKey,
-      'content': content.trim(),
-      'created_at': existing?['created_at'] ?? now,
-      'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'bot_diaries',
+        {
+          'id': existing?['id']?.toString() ?? 'diary_${botId}_$dateKey',
+          'bot_id': botId,
+          'date_key': dateKey,
+          'content': content.trim(),
+          'created_at': existing?['created_at'] ?? now,
+          'updated_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Map<String, dynamic>>> queryDiaryRange(
@@ -2834,10 +2898,13 @@ class DBManager {
           ? 0
           : int.tryParse(rows.first['value']?.toString() ?? '') ?? 0;
       if (until > now) return false;
-      await txn.insert('kv_store', {
-        'key': 'job_lease_$key',
-        'value': '${now + lease.inMilliseconds}',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+          'kv_store',
+          {
+            'key': 'job_lease_$key',
+            'value': '${now + lease.inMilliseconds}',
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
       return true;
     });
   }
@@ -2919,9 +2986,8 @@ class DBManager {
       final oldRows = await queryMemories(botId, includeExpired: true);
       final old = oldRows.where((r) => r['id'] == targetId).firstOrNull;
       await insertMemory({
-        'keys_json': keys == null
-            ? (old?['keys_json'] ?? '[]')
-            : jsonEncode(keys),
+        'keys_json':
+            keys == null ? (old?['keys_json'] ?? '[]') : jsonEncode(keys),
         'id': targetId,
         'bot_id': botId,
         'title': title,
@@ -3377,13 +3443,16 @@ class DBManager {
   }) async {
     final db = await database;
     try {
-      await db.insert('feed_events', {
-        'id': 'fe_${postId}_${actorId}_$eventType',
-        'post_id': postId,
-        'actor_id': actorId,
-        'event_type': eventType,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${actorId}_$eventType',
+            'post_id': postId,
+            'actor_id': actorId,
+            'event_type': eventType,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
       return true;
     } on DatabaseException {
       return false;
@@ -3489,13 +3558,16 @@ class DBManager {
       'timestamp': now,
     });
     try {
-      await db.insert('feed_events', {
-        'id': 'fe_${postId}_${authorId}_comment',
-        'post_id': postId,
-        'actor_id': authorId,
-        'event_type': 'comment',
-        'timestamp': now,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+      await db.insert(
+          'feed_events',
+          {
+            'id': 'fe_${postId}_${authorId}_comment',
+            'post_id': postId,
+            'actor_id': authorId,
+            'event_type': 'comment',
+            'timestamp': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.abort);
     } on DatabaseException {
       // 同一机器人对同一条动态只计一次互动事件。
     }
@@ -3562,19 +3634,22 @@ class DBManager {
     final db = await database;
     await _ensureVoiceCallStorage(db);
     await db.transaction((txn) async {
-      await txn.insert('voice_call_records', {
-        'id': callId,
-        'bot_id': botId,
-        'initiator': initiator,
-        'status': status,
-        'transcript': transcript,
-        'summary': summary,
-        'start_time': startTime.millisecondsSinceEpoch,
-        'end_time': endTime.millisecondsSinceEpoch,
-        'timestamp': endTime.millisecondsSinceEpoch,
-        'duration': endTime.difference(startTime).inSeconds,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+          'voice_call_records',
+          {
+            'id': callId,
+            'bot_id': botId,
+            'initiator': initiator,
+            'status': status,
+            'transcript': transcript,
+            'summary': summary,
+            'start_time': startTime.millisecondsSinceEpoch,
+            'end_time': endTime.millisecondsSinceEpoch,
+            'timestamp': endTime.millisecondsSinceEpoch,
+            'duration': endTime.difference(startTime).inSeconds,
+            'created_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
       if (chatMessage != null) {
         await txn.insert(
           'chat_history',

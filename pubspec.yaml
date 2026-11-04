@@ -84,7 +84,7 @@ flutter:
           weight: 400
     - family: TideFont
       fonts:
-        - asset: assets/fonts/TideFont-Regular.ttf
+        - asset: assets/fonts/LXGWMarkerGothic-Regular.ttf
         # 统一指向 Regular，防止因缺少 Bold 字体文件崩溃，Flutter 会自动加粗渲染
-        - asset: assets/fonts/TideFont-Regular.ttf
+        - asset: assets/fonts/LXGWMarkerGothic-Regular.ttf
           weight: 700

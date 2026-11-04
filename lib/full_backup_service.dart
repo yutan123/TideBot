@@ -270,7 +270,14 @@ class FullBackupService {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
         );
         for (final table in tables) {
-          final name = quote(table['name'] as String);
+          final tableName = table['name'] as String;
+          final name = quote(tableName);
+          // Process-local leases must never survive restoration.
+          if (tableName == 'media_storage_uses' ||
+              tableName == 'media_storage_worker') {
+            await txn.delete(tableName);
+            continue;
+          }
           var offset = 0;
           while (true) {
             final rows = await txn.rawQuery(

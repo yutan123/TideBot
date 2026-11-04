@@ -38,9 +38,7 @@
 Map<String, dynamic> messageWithSpeaker(Map<String, dynamic> message) {
   final role = message['role'];
   if (role != 'user' && role != 'assistant') return Map.of(message);
-  final marker = role == 'user'
-      ? '[说话人：对方；普通原话的第一人称指对方，引用按原作者区分]'
-      : '[说话人：你；普通原话的第一人称指你，引用按原作者区分]';
+  final marker = role == 'user' ? '[说话人:对方]' : '[说话人:你]';
   final content = message['content'];
   return {
     ...message,

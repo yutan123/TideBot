@@ -1957,7 +1957,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                   _settingSwitch(
                     theme: theme,
                     title: '机器人发送表情包',
-                    help: '仅从你自己维护的素材池中选择。关闭后机器人不知道表情包功能存在。',
+                    help: '仅从你自己维护的素材池中选择。概率用于建议发送，机器人可自主决定发送或不发送。关闭后不提供表情包工具。',
                     value: _stickers,
                     onChanged: (v) {
                       setState(() => _stickers = v);
@@ -1976,7 +1976,7 @@ class _GeneralSettingsPageState extends State<GeneralSettingsPage> {
                                 ),
                                 decoration: _roundInput(
                                   theme,
-                                  label: '发送概率（1–100）',
+                                  label: '建议发送概率（1–100）',
                                   icon: Icon(
                                     Icons.sentiment_satisfied_alt_rounded,
                                     color: theme.primary,

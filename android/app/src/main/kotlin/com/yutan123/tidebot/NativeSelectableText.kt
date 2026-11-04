@@ -213,7 +213,7 @@ private class NativeSelectableTextView(
             "monospace", "Courier" -> Typeface.MONOSPACE
             "TideFont" -> runCatching {
                 val key = FlutterInjector.instance().flutterLoader()
-                    .getLookupKeyForAsset("assets/fonts/TideFont-Regular.ttf")
+                    .getLookupKeyForAsset("assets/fonts/LXGWMarkerGothic-Regular.ttf")
                 Typeface.createFromAsset(textView.context.assets, key)
             }.getOrElse { Typeface.SANS_SERIF }
             else -> Typeface.create(family, Typeface.NORMAL)

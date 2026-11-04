@@ -65,3 +65,38 @@ app.*.map.json
 *.rej
 *.apk
 *.aab
+
+# Retired one-off workspace patch and native-check scripts
+/.background_patch.py
+/.handoff_patch.py
+/.log_patch.py
+/.request_patch.py
+/.test_patch.py
+/.native_check.py
+/.native_dependencies_check.py
+
+# Local credentials and signing material (never source-controlled)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+key.properties
+keystore.base64
+keystore.sha256
+*-signing-backup*
+*-backup.tar.gz
+
+# Local user-data exports; keep deliberate fixtures under test/ trackable
+/*.db
+/*.db-*
+/*.sqlite
+/*.sqlite-*
+/*.sqlite3
+/*.sqlite3-*
+/backups/
+/chat_exports/

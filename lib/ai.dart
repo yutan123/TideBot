@@ -1,3 +1,6 @@
+import 'tool_package_catalog.dart';
+import 'tool_package_runtime.dart';
+import 'media_storage_service.dart';
 import 'chat_message_debounce.dart';
 import 'image_upload_format.dart';
 import 'deepseek_search.dart';
@@ -14,7 +17,6 @@ export 'ai_request_task.dart';
 import 'diary_output.dart';
 import 'daily_quote_output.dart';
 import 'bot_vital_signs_service.dart';
-import 'skill_context.dart';
 import 'assistant_output_guard.dart';
 import 'model_image.dart';
 import 'bot_image_tool.dart';
@@ -215,138 +217,153 @@ class AIManager {
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
   }) async {
-    cancellationToken?.throwIfCancelled();
-    final executionLease = await RequestExecutionLease.acquire();
-    try {
-      if (diaryTask) task = AIRequestTask.diary;
-      if (quoteTask) task = AIRequestTask.dailyQuote;
-      diaryTask = task == AIRequestTask.diary;
-      quoteTask = task == AIRequestTask.dailyQuote;
-      if (task.internal) {
-        persistResponse = false;
-        includeChatHistory = false;
-        requestHistory = null;
-        enableAutoSummary = false;
-        skipLifeState = true;
-        allowTools = false;
-        allowStickers = false;
-        useJarvis = false;
-        activeGame = null;
-        onDelta = null;
-        forceSingleReply = true;
-      }
-      final prefs = await SharedPreferences.getInstance();
-      const primaryLocal = '';
-      const backupLocal = '';
-      final backupRemote =
-          (prefs.getString('backup_model_$botId') ?? '').trim();
-      final matchingBots = (await DBManager().getAllBots())
-          .where((bot) => bot['id']?.toString() == botId)
-          .toList();
-      final primaryRemote = matchingBots.isEmpty
-          ? ''
-          : (matchingBots.first['chat_model']?.toString().trim() ?? '');
-      // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
-      // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
-      final primary = {'local': primaryLocal, 'provider': primaryRemote};
-      final backup = {'local': backupLocal, 'provider': backupRemote};
-      bool configured(Map<String, String> candidate) =>
-          candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
-      // Never attempt an empty primary. A configured backup must be usable even
-      // when the bot has no primary model selected.
-      final attempts = <Map<String, String>>[
-        if (configured(primary)) primary,
-        if (configured(backup) && backup['provider'] != primary['provider'])
-          backup,
-      ];
-      if (attempts.isEmpty) {
-        return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
-      }
+    return await MediaStorageService.instance.withMediaUse(() async {
+      if (imagePath != null)
+        imagePath = await MediaStorageService.instance.resolve(imagePath!);
+      if (imagePaths != null)
+        imagePaths = await Future.wait(
+            imagePaths!.map(MediaStorageService.instance.resolve));
+      if (imageAttachments != null)
+        imageAttachments = await Future.wait(
+            imageAttachments!.map(MediaStorageService.instance.resolve));
+      if (audioPath != null)
+        audioPath = await MediaStorageService.instance.resolve(audioPath!);
 
-      final vitalTracked =
-          persistResponse && !skipLifeState && activeGame == null;
-      final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
-      if (vitalTracked) {
-        AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
-        final vitalContext =
-            await BotVitalSignsService.instance.beforeRequest(botId);
-        AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
-        extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
-      }
+      cancellationToken?.throwIfCancelled();
+      final executionLease = await RequestExecutionLease.acquire();
       try {
-        Map<String, dynamic>? lastFailure;
-        var attempted = 0;
-        for (var index = 0; index < attempts.length; index++) {
-          cancellationToken?.throwIfCancelled();
-          final candidate = attempts[index];
-          final selectedImagePaths = <String>[
-            if (imagePath?.isNotEmpty == true) imagePath!,
-            ...?imagePaths,
-            ...?imageAttachments,
-          ];
-          try {
-            attempted++;
-            final result = await _sendMessageOnce(
-              botId: botId,
-              text: text,
-              imagePath:
-                  selectedImagePaths.isEmpty ? null : selectedImagePaths.first,
-              imagePaths: selectedImagePaths,
-              audioPath: audioPath,
-              activeGame: activeGame,
-              persistResponse: persistResponse,
-              currentMessageIds: currentMessageIds,
-              beginResponseCommit: beginResponseCommit,
-              includeChatHistory: includeChatHistory,
-              requestHistory: requestHistory,
-              enableAutoSummary: enableAutoSummary,
-              skipLifeState: skipLifeState,
-              task: task,
-              diaryTask: diaryTask,
-              quoteTask: quoteTask,
-              allowTools: allowTools,
-              allowStickers: allowStickers,
-              forceSingleReply: forceSingleReply,
-              notifyResponse: notifyResponse,
-              extraSystemPrompt: extraSystemPrompt,
-              isVoiceCall: isVoiceCall,
-              useJarvis: useJarvis,
-              cancellationToken: cancellationToken,
-              // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-              // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-              onDelta: onDelta,
-              forcedLocalId: candidate['local']!,
-              forcedProviderId: candidate['provider']!,
-            );
-            if (result['success'] == true) {
-              if (vitalTracked)
-                await BotVitalSignsService.instance
-                    .afterRequest(botId, result, vitalCutoff);
-              return result;
-            }
-            lastFailure = result;
-            final code =
-                int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
-            final retryable = result['error_code']?.toString() == 'network' ||
-                code == 429 ||
-                code >= 500;
-            if (!retryable || index == attempts.length - 1) break;
-          } on AICancelledException {
-            rethrow;
-          }
+        if (diaryTask) task = AIRequestTask.diary;
+        if (quoteTask) task = AIRequestTask.dailyQuote;
+        diaryTask = task == AIRequestTask.diary;
+        quoteTask = task == AIRequestTask.dailyQuote;
+        if (task.internal) {
+          persistResponse = false;
+          includeChatHistory = false;
+          requestHistory = null;
+          enableAutoSummary = false;
+          skipLifeState = true;
+          allowTools = false;
+          allowStickers = false;
+          useJarvis = false;
+          activeGame = null;
+          onDelta = null;
+          forceSingleReply = true;
         }
-        if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-        return {
-          ...?lastFailure,
-          'error': '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
-        };
-      } catch (_) {
-        if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-        rethrow;
+        final prefs = await SharedPreferences.getInstance();
+        const primaryLocal = '';
+        const backupLocal = '';
+        final backupRemote =
+            (prefs.getString('backup_model_$botId') ?? '').trim();
+        final matchingBots = (await DBManager().getAllBots())
+            .where((bot) => bot['id']?.toString() == botId)
+            .toList();
+        final primaryRemote = matchingBots.isEmpty
+            ? ''
+            : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+        // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+        // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+        final primary = {'local': primaryLocal, 'provider': primaryRemote};
+        final backup = {'local': backupLocal, 'provider': backupRemote};
+        bool configured(Map<String, String> candidate) =>
+            candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
+        // Never attempt an empty primary. A configured backup must be usable even
+        // when the bot has no primary model selected.
+        final attempts = <Map<String, String>>[
+          if (configured(primary)) primary,
+          if (configured(backup) && backup['provider'] != primary['provider'])
+            backup,
+        ];
+        if (attempts.isEmpty) {
+          return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
+        }
+
+        final vitalTracked =
+            persistResponse && !skipLifeState && activeGame == null;
+        final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
+        if (vitalTracked) {
+          AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
+          final vitalContext =
+              await BotVitalSignsService.instance.beforeRequest(botId);
+          AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
+          extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
+        }
+        try {
+          Map<String, dynamic>? lastFailure;
+          var attempted = 0;
+          for (var index = 0; index < attempts.length; index++) {
+            cancellationToken?.throwIfCancelled();
+            final candidate = attempts[index];
+            final selectedImagePaths = <String>[
+              if (imagePath?.isNotEmpty == true) imagePath!,
+              ...?imagePaths,
+              ...?imageAttachments,
+            ];
+            try {
+              attempted++;
+              final result = await _sendMessageOnce(
+                botId: botId,
+                text: text,
+                imagePath: selectedImagePaths.isEmpty
+                    ? null
+                    : selectedImagePaths.first,
+                imagePaths: selectedImagePaths,
+                audioPath: audioPath,
+                activeGame: activeGame,
+                persistResponse: persistResponse,
+                currentMessageIds: currentMessageIds,
+                beginResponseCommit: beginResponseCommit,
+                includeChatHistory: includeChatHistory,
+                requestHistory: requestHistory,
+                enableAutoSummary: enableAutoSummary,
+                skipLifeState: skipLifeState,
+                task: task,
+                diaryTask: diaryTask,
+                quoteTask: quoteTask,
+                allowTools: allowTools,
+                allowStickers: allowStickers,
+                forceSingleReply: forceSingleReply,
+                notifyResponse: notifyResponse,
+                extraSystemPrompt: extraSystemPrompt,
+                isVoiceCall: isVoiceCall,
+                useJarvis: useJarvis,
+                cancellationToken: cancellationToken,
+                // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+                // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+                onDelta: onDelta,
+                forcedLocalId: candidate['local']!,
+                forcedProviderId: candidate['provider']!,
+              );
+              if (result['success'] == true) {
+                if (vitalTracked)
+                  await BotVitalSignsService.instance
+                      .afterRequest(botId, result, vitalCutoff);
+                return result;
+              }
+              lastFailure = result;
+              final code =
+                  int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+              final retryable = result['error_code']?.toString() == 'network' ||
+                  code == 429 ||
+                  code >= 500;
+              if (!retryable || index == attempts.length - 1) break;
+            } on AICancelledException {
+              rethrow;
+            }
+          }
+          if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+          return {
+            ...?lastFailure,
+            'error':
+                '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
+          };
+        } catch (_) {
+          if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
+          rethrow;
+        }
+      } finally {
+        await executionLease.release();
       }
-    } finally {
-      await executionLease.release();
-    }
+    });
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -839,7 +856,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     if (modelName.contains(',')) modelName = modelName.split(',').first.trim();
     final maxContext = (bot['max_tokens'] as int? ?? 10000).clamp(1000, 128000);
     var searchSources = <Map<String, String>>[];
-    var allowSticker = false;
+    var suggestSticker = false;
     var stickerEmotions = <String>[];
     var currentImages = <int, String>{};
     var inspectableImages = <int, String>{};
@@ -946,13 +963,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         AppLogService.instance.add('MEMORY',
             '记忆注入 recent=${recentMemories.map((r) => r['id']).toList()} matched=${matchedMemories.map(memoryIdentity).toList()}');
       }
-      final stickerPlan = allowTools && allowStickers
-          ? await _planStickerForTurn(db)
-          : const _StickerPlan.disabled();
-      allowSticker = stickerPlan.required;
       stickerEmotions = allowTools && allowStickers
           ? await _availableStickerEmotions(db)
           : const <String>[];
+      suggestSticker =
+          stickerEmotions.isNotEmpty && await _shouldSuggestStickerForTurn(db);
       final effectiveImagePaths = imagePaths.isNotEmpty
           ? imagePaths
           : (imagePath?.isNotEmpty == true ? [imagePath!] : const <String>[]);
@@ -1029,30 +1044,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               stickerEmotions: stickerEmotions,
             )
           : '';
-      final skillSections = <String>[];
-      final injectedSkillIds = <String>[];
-      final enabledSkills = (await db.querySkills()).toList()
-        ..sort((a, b) => '${a['id']}'.compareTo('${b['id']}'));
-      for (final skill in enabledSkills) {
-        if (skill['enabled'] != 1) continue;
-        try {
-          final context = buildEnabledSkillContext([skill]);
-          if (context.isNotEmpty) {
-            skillSections.add(context);
-            injectedSkillIds.add(skill['id'].toString());
-          }
-        } catch (error) {
-          AppLogService.instance.add('SKILL', '技能清单读取失败 ${skill['id']}：$error');
-        }
-      }
-      final skillContext = skillSections.join('\n\n');
-      AppLogService.instance.addJson('SKILL', '本轮实际注入的 Skill 指引', {
-        'bot_id': botId,
-        'skill_ids': injectedSkillIds,
-        'characters': skillContext.length,
-        'context': skillContext,
-        'tools_enabled': allowTools,
-      });
+      // External skill instructions are returned only by get_tool_package,
+      // never injected wholesale into unrelated requests.
       final lifeContext = skipLifeState ? '' : await _lifeStateContext(botId);
       final deviceContext =
           await DeviceCapabilityService.instance.contextFor(botId);
@@ -1100,7 +1093,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (!diaryTask && !quoteTask) ...[
           memoryCategoryPolicy,
           memoryDeduplicationPolicy,
-          skillContext,
           toolContext,
         ],
       ].where((part) => part.trim().isNotEmpty).join('\n\n');
@@ -1111,8 +1103,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (randomVoice && allowTools) voiceMessageSpeechPrompt,
         presetCategoryContext,
         if (task == AIRequestTask.proactiveChat) proactiveContactInstructions,
-        if (allowTools && allowSticker) '【本轮表情包安排】本轮必须调用一次 send_sticker。',
-        if (allowTools && !allowSticker) '【本轮表情包安排】本轮不发送表情包，不得调用 send_sticker。',
+        if (suggestSticker) '【表情包建议】可以结合当前话题发送表情包，不合适时可不发送。',
         if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
         if (extraSystemPrompt.trim().isNotEmpty)
           '【当前会话约束】${extraSystemPrompt.trim()}',
@@ -1269,8 +1260,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           final enhancedText = text;
           final file = File(audioPath!);
           if (file.existsSync()) {
-            final bytes = await file.readAsBytes();
-            final extension = audioPath.split('.').last.toLowerCase();
+            final bytes =
+                await MediaStorageService.instance.chatAudioBytes(audioPath);
             messages.add({
               'role': 'user',
               'content': [
@@ -1279,7 +1270,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                   'type': 'input_audio',
                   'input_audio': {
                     'data': base64Encode(bytes),
-                    'format': extension == 'wave' ? 'wav' : extension,
+                    'format': 'wav',
                   },
                 },
               ],
@@ -1650,8 +1641,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             },
             requestTools: tools,
             requiredToolNames: const {},
-            allowedStickerTypes:
-                allowSticker ? stickerEmotions.toSet() : const {},
+            allowedStickerTypes: stickerEmotions.toSet(),
             inspectableImages: inspectableImages,
             currentImages: currentImages,
           );
@@ -1757,11 +1747,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 voiceSpeechStyle = style;
               },
               requestTools: tools,
-              requiredToolNames: {
-                if (allowSticker) 'send_sticker',
-              },
-              allowedStickerTypes:
-                  allowSticker ? stickerEmotions.toSet() : const {},
+              requiredToolNames: const {},
+              allowedStickerTypes: stickerEmotions.toSet(),
               inspectableImages: inspectableImages,
               currentImages: currentImages,
             );
@@ -2268,72 +2255,77 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String botId,
     String userText = '',
   }) async {
-    var resolvedId = providerId.trim();
-    if (resolvedId == primaryVideoModel) {
-      final prefs = await SharedPreferences.getInstance();
-      final bot = await DBManager().getBotById(botId);
-      resolvedId = resolveVideoProviderId(
-          resolvedId,
-          prefs.getString('chat_model_$botId') ??
-              bot?['chat_model']?.toString() ??
-              '');
-    }
-    AppLogService.instance.add('VIDEO', '解析视频模型配置 provider=$resolvedId');
-    final provider = await DBManager().getChatProviderById(resolvedId);
-    if (provider == null) throw StateError('视频解析模型不存在或已被删除，请重新设置');
-    final baseUrl = (provider['base_url']?.toString() ?? '')
-        .trim()
-        .replaceFirst(RegExp(r'/+$'), '');
-    final configuredModel = provider['model']?.toString().trim() ?? '';
-    final model = (configuredModel.isEmpty
-            ? provider['name']?.toString() ?? ''
-            : configuredModel)
-        .split(',')
-        .first
-        .trim();
-    if (baseUrl.isEmpty || model.isEmpty) {
-      throw StateError('视频解析模型配置不完整，请检查服务地址和模型名称');
-    }
-    final file = File(videoPath);
-    if (!await file.exists()) throw StateError('视频文件不可访问，请重新选择');
-    final extension = videoPath.split('.').last.toLowerCase();
-    final mime = switch (extension) {
-      'mov' => 'video/quicktime',
-      'webm' => 'video/webm',
-      'mkv' => 'video/x-matroska',
-      'avi' => 'video/x-msvideo',
-      '3gp' => 'video/3gpp',
-      'mpeg' || 'mpg' => 'video/mpeg',
-      _ => 'video/mp4',
-    };
-    try {
-      final response = await requestVideoAnalysis(
-        baseUrl: baseUrl,
-        apiKey: provider['api_key']?.toString() ?? '',
-        path: videoPath,
-        mime: mime,
-        model: model,
-        userText: userText,
-        onStage: (stage, data) {
-          AppLogService.instance.addJson(
-              stage == 'request' ? 'REQUEST' : 'VIDEO',
-              '视频分析 $stage（媒体已省略）',
-              data);
-        },
-      );
-      final text = parseVideoAnalysisResponse(utf8.decode(response.bodyBytes),
-          statusCode: response.statusCode);
-      AppLogService.instance.addJson('VIDEO', '视频分析正文已接收', {
-        'characters': text.length,
-        'content_type': response.headers['content-type'],
-        'request_id':
-            response.headers['x-request-id'] ?? response.headers['request-id'],
-      });
-      return text;
-    } catch (error) {
-      AppLogService.instance.add('VIDEO', '视频分析失败：$error');
-      rethrow;
-    }
+    return await MediaStorageService.instance.withRequestVideo(videoPath,
+        (requestPath) async {
+      videoPath = requestPath;
+
+      var resolvedId = providerId.trim();
+      if (resolvedId == primaryVideoModel) {
+        final prefs = await SharedPreferences.getInstance();
+        final bot = await DBManager().getBotById(botId);
+        resolvedId = resolveVideoProviderId(
+            resolvedId,
+            prefs.getString('chat_model_$botId') ??
+                bot?['chat_model']?.toString() ??
+                '');
+      }
+      AppLogService.instance.add('VIDEO', '解析视频模型配置 provider=$resolvedId');
+      final provider = await DBManager().getChatProviderById(resolvedId);
+      if (provider == null) throw StateError('视频解析模型不存在或已被删除，请重新设置');
+      final baseUrl = (provider['base_url']?.toString() ?? '')
+          .trim()
+          .replaceFirst(RegExp(r'/+$'), '');
+      final configuredModel = provider['model']?.toString().trim() ?? '';
+      final model = (configuredModel.isEmpty
+              ? provider['name']?.toString() ?? ''
+              : configuredModel)
+          .split(',')
+          .first
+          .trim();
+      if (baseUrl.isEmpty || model.isEmpty) {
+        throw StateError('视频解析模型配置不完整，请检查服务地址和模型名称');
+      }
+      final file = File(videoPath);
+      if (!await file.exists()) throw StateError('视频文件不可访问，请重新选择');
+      final extension = videoPath.split('.').last.toLowerCase();
+      final mime = switch (extension) {
+        'mov' => 'video/quicktime',
+        'webm' => 'video/webm',
+        'mkv' => 'video/x-matroska',
+        'avi' => 'video/x-msvideo',
+        '3gp' => 'video/3gpp',
+        'mpeg' || 'mpg' => 'video/mpeg',
+        _ => 'video/mp4',
+      };
+      try {
+        final response = await requestVideoAnalysis(
+          baseUrl: baseUrl,
+          apiKey: provider['api_key']?.toString() ?? '',
+          path: videoPath,
+          mime: mime,
+          model: model,
+          userText: userText,
+          onStage: (stage, data) {
+            AppLogService.instance.addJson(
+                stage == 'request' ? 'REQUEST' : 'VIDEO',
+                '视频分析 $stage（媒体已省略）',
+                data);
+          },
+        );
+        final text = parseVideoAnalysisResponse(utf8.decode(response.bodyBytes),
+            statusCode: response.statusCode);
+        AppLogService.instance.addJson('VIDEO', '视频分析正文已接收', {
+          'characters': text.length,
+          'content_type': response.headers['content-type'],
+          'request_id': response.headers['x-request-id'] ??
+              response.headers['request-id'],
+        });
+        return text;
+      } catch (error) {
+        AppLogService.instance.add('VIDEO', '视频分析失败：$error');
+        rethrow;
+      }
+    });
   }
 
   Future<String> describeImagesForBot({
@@ -2379,68 +2371,71 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String imagePath,
     required String userText,
   }) async {
-    try {
-      final bytes = await modelImageBytes(imagePath,
-          compress:
-              await DBManager().getKV('image_compression_enabled') != 'false');
-      final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
-                RegExp(r'/+$'),
-                '',
-              ) ??
-          '';
-      var model = provider['model']?.toString().trim() ?? '';
-      if (model.contains(',')) model = model.split(',').first.trim();
-      if (baseUrl.isEmpty || model.isEmpty) {
-        return await MediaPreprocessor().imageFallbackText(imagePath);
-      }
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${provider['api_key']}',
-            },
-            body: jsonEncode({
-              'model': model,
-              'messages': [
-                {
-                  'role': 'system',
-                  'content':
-                      '你是严谨的视觉分析器。请详细、客观地转述图片：先概述整体场景，再按位置说明人物/物体、动作、颜色、布局、可读文字（逐字抄录时标注不确定处）、界面元素和可能与用户问题相关的细节。看不清或无法确认必须明确说明，绝不依据常识补全或编造。输出供聊天模型使用的完整中文描述。',
-                },
-                {
-                  'role': 'user',
-                  'content': [
-                    {
-                      'type': 'text',
-                      'text': userText.isEmpty ? '请转述这张图片。' : userText,
-                    },
-                    {
-                      'type': 'image_url',
-                      'image_url': {
-                        'url':
-                            'data:${imageUploadMime(bytes)};base64,${base64Encode(bytes)}',
-                      },
-                    },
-                  ],
-                },
-              ],
-              'max_tokens': 1200,
-            }),
-          )
-          .timeout(const Duration(seconds: 40));
-      if (response.statusCode == 200) {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-        final text =
-            decoded['choices']?[0]?['message']?['content']?.toString().trim();
-        if (text != null && text.isNotEmpty) {
-          return '[视觉模型转述]\\n$text';
+    return await MediaStorageService.instance.withMediaUse(() async {
+      imagePath = await MediaStorageService.instance.resolve(imagePath);
+      try {
+        final bytes = await modelImageBytes(imagePath,
+            compress: await DBManager().getKV('image_compression_enabled') !=
+                'false');
+        final baseUrl = provider['base_url']?.toString().trim().replaceFirst(
+                  RegExp(r'/+$'),
+                  '',
+                ) ??
+            '';
+        var model = provider['model']?.toString().trim() ?? '';
+        if (model.contains(',')) model = model.split(',').first.trim();
+        if (baseUrl.isEmpty || model.isEmpty) {
+          return await MediaPreprocessor().imageFallbackText(imagePath);
         }
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/chat/completions'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${provider['api_key']}',
+              },
+              body: jsonEncode({
+                'model': model,
+                'messages': [
+                  {
+                    'role': 'system',
+                    'content':
+                        '你是严谨的视觉分析器。请详细、客观地转述图片：先概述整体场景，再按位置说明人物/物体、动作、颜色、布局、可读文字（逐字抄录时标注不确定处）、界面元素和可能与用户问题相关的细节。看不清或无法确认必须明确说明，绝不依据常识补全或编造。输出供聊天模型使用的完整中文描述。',
+                  },
+                  {
+                    'role': 'user',
+                    'content': [
+                      {
+                        'type': 'text',
+                        'text': userText.isEmpty ? '请转述这张图片。' : userText,
+                      },
+                      {
+                        'type': 'image_url',
+                        'image_url': {
+                          'url':
+                              'data:${imageUploadMime(bytes)};base64,${base64Encode(bytes)}',
+                        },
+                      },
+                    ],
+                  },
+                ],
+                'max_tokens': 1200,
+              }),
+            )
+            .timeout(const Duration(seconds: 40));
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          final text =
+              decoded['choices']?[0]?['message']?['content']?.toString().trim();
+          if (text != null && text.isNotEmpty) {
+            return '[视觉模型转述]\\n$text';
+          }
+        }
+      } catch (e) {
+        print('[vision] description failed: $e');
       }
-    } catch (e) {
-      print('[vision] description failed: $e');
-    }
-    return await MediaPreprocessor().imageFallbackText(imagePath);
+      return await MediaPreprocessor().imageFallbackText(imagePath);
+    });
   }
 
   /// Transcribe with the STT provider selected for this bot.
@@ -2535,94 +2530,99 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required String audioPath,
     AICancellationToken? cancellationToken,
   }) async {
-    try {
-      cancellationToken?.throwIfCancelled();
-      final audio = File(audioPath);
-      if (!await audio.exists()) {
-        AppLogService.instance.add('STT', '主模型转写：语音文件不存在');
-        return null;
-      }
-      final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
-          .toString()
-          .trim()
-          .replaceFirst(RegExp(r'/+$'), '');
-      final model = provider['model']?.toString().split(',').first.trim() ?? '';
-      final apiKey =
-          (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
-      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
-        AppLogService.instance.add('STT', '主模型转写失败：缺少地址、Key 或模型');
-        return null;
-      }
-      final bytes = await audio.readAsBytes();
-      final extension = audio.path.split('.').last.toLowerCase();
-      final format = extension == 'wave' ? 'wav' : extension;
-      final endpoint = _chatCompletionsEndpoint(baseUrl);
-      final payload = {
-        'model': model,
-        'stream': false,
-        'temperature': 0,
-        'messages': [
-          {
-            'role': 'system',
-            'content':
-                '你是语音转写器。只输出音频中说话人的原话（逐字转写），不要回答、不要解释、不要加引号或任何前缀。听不清或没有人声时只输出空字符串。',
-          },
-          {
-            'role': 'user',
-            'content': [
-              {'type': 'text', 'text': '请逐字转写这段语音。'},
-              {
-                'type': 'input_audio',
-                'input_audio': {
-                  'data': base64Encode(bytes),
-                  'format': format,
+    return await MediaStorageService.instance.withMediaUse(() async {
+      audioPath = await MediaStorageService.instance.resolve(audioPath);
+
+      try {
+        cancellationToken?.throwIfCancelled();
+        final audio = File(audioPath);
+        if (!await audio.exists()) {
+          AppLogService.instance.add('STT', '主模型转写：语音文件不存在');
+          return null;
+        }
+        final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
+            .toString()
+            .trim()
+            .replaceFirst(RegExp(r'/+$'), '');
+        final model =
+            provider['model']?.toString().split(',').first.trim() ?? '';
+        final apiKey =
+            (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
+        if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
+          AppLogService.instance.add('STT', '主模型转写失败：缺少地址、Key 或模型');
+          return null;
+        }
+        final bytes =
+            await MediaStorageService.instance.chatAudioBytes(audio.path);
+        const format = 'wav';
+        final endpoint = _chatCompletionsEndpoint(baseUrl);
+        final payload = {
+          'model': model,
+          'stream': false,
+          'temperature': 0,
+          'messages': [
+            {
+              'role': 'system',
+              'content':
+                  '你是语音转写器。只输出音频中说话人的原话（逐字转写），不要回答、不要解释、不要加引号或任何前缀。听不清或没有人声时只输出空字符串。',
+            },
+            {
+              'role': 'user',
+              'content': [
+                {'type': 'text', 'text': '请逐字转写这段语音。'},
+                {
+                  'type': 'input_audio',
+                  'input_audio': {
+                    'data': base64Encode(bytes),
+                    'format': format,
+                  },
                 },
-              },
-            ],
-          },
-        ],
-      };
-      AppLogService.instance.add(
-        'STT',
-        '请求主模型转写：model=$model，endpoint=$endpoint，${bytes.length} bytes，format=$format',
-      );
-      final response =
-          await _withCancellableClient(cancellationToken, (client) {
-        return client
-            .post(
-              Uri.parse(endpoint),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $apiKey',
-              },
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 45));
-      });
-      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+              ],
+            },
+          ],
+        };
         AppLogService.instance.add(
           'STT',
-          '主模型转写失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
+          '请求主模型转写：model=$model，endpoint=$endpoint，${bytes.length} bytes，format=$format',
         );
+        final response =
+            await _withCancellableClient(cancellationToken, (client) {
+          return client
+              .post(
+                Uri.parse(endpoint),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $apiKey',
+                },
+                body: jsonEncode(payload),
+              )
+              .timeout(const Duration(seconds: 45));
+        });
+        final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          AppLogService.instance.add(
+            'STT',
+            '主模型转写失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
+          );
+          return null;
+        }
+        final transcript = _extractChatContent(jsonDecode(body))
+            .trim()
+            .replaceAll(RegExp(r'^["“「]+|["”」]+$'), '')
+            .trim();
+        if (transcript.isEmpty) {
+          AppLogService.instance.add('STT', '主模型转写返回为空');
+          return null;
+        }
+        return transcript;
+      } on AICancelledException {
+        rethrow;
+      } catch (e) {
+        cancellationToken?.throwIfCancelled();
+        AppLogService.instance.add('STT', '主模型转写异常：$e');
         return null;
       }
-      final transcript = _extractChatContent(jsonDecode(body))
-          .trim()
-          .replaceAll(RegExp(r'^["“「]+|["”」]+$'), '')
-          .trim();
-      if (transcript.isEmpty) {
-        AppLogService.instance.add('STT', '主模型转写返回为空');
-        return null;
-      }
-      return transcript;
-    } on AICancelledException {
-      rethrow;
-    } catch (e) {
-      cancellationToken?.throwIfCancelled();
-      AppLogService.instance.add('STT', '主模型转写异常：$e');
-      return null;
-    }
+    });
   }
 
   Future<String?> transcribeWithProvider(
@@ -2631,68 +2631,82 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     AICancellationToken? cancellationToken,
   }) async {
     try {
-      cancellationToken?.throwIfCancelled();
-      final audio = File(audioPath);
-      if (!await audio.exists()) {
-        AppLogService.instance.add('STT', '语音文件不存在');
-        return null;
-      }
-      final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
-          .toString()
-          .trim()
-          .replaceFirst(RegExp(r'/+$'), '');
-      final model = provider['model']?.toString().split(',').first.trim() ?? '';
-      final apiKey =
-          (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
-      final protocol =
-          (provider['protocol']?.toString() ?? 'openai').trim().toLowerCase();
-      if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
-        AppLogService.instance.add('STT', '语音转文字失败：缺少地址、Key 或模型');
-        return null;
-      }
-      if (protocol == 'mimo') {
-        return _transcribeMiMo(
-          baseUrl: baseUrl,
-          apiKey: apiKey,
-          model: model,
-          audio: audio,
-          providerName: provider['name']?.toString() ?? 'MiMo STT',
-          cancellationToken: cancellationToken,
-        );
-      }
-      if (protocol != 'openai') {
-        AppLogService.instance.add('STT', '不支持的 STT 协议：$protocol');
-        return null;
-      }
-      final endpoint = _sttTranscriptionEndpoint(baseUrl);
-      final request = http.MultipartRequest('POST', Uri.parse(endpoint))
-        ..headers['Authorization'] = 'Bearer $apiKey'
-        ..fields['model'] = model
-        ..fields['response_format'] = 'json'
-        ..files.add(await http.MultipartFile.fromPath('file', audioPath));
-      final response =
-          await _withCancellableClient(cancellationToken, (client) async {
-        return http.Response.fromStream(
-          await client.send(request).timeout(const Duration(seconds: 45)),
-        );
+      return await MediaStorageService.instance.withRequestAudio(audioPath,
+          (requestPath) async {
+        audioPath = requestPath;
+
+        try {
+          cancellationToken?.throwIfCancelled();
+          final audio = File(audioPath);
+          if (!await audio.exists()) {
+            AppLogService.instance.add('STT', '语音文件不存在');
+            return null;
+          }
+          final baseUrl = (provider['base_url'] ?? provider['url'] ?? '')
+              .toString()
+              .trim()
+              .replaceFirst(RegExp(r'/+$'), '');
+          final model =
+              provider['model']?.toString().split(',').first.trim() ?? '';
+          final apiKey =
+              (provider['api_key'] ?? provider['key'] ?? '').toString().trim();
+          final protocol = (provider['protocol']?.toString() ?? 'openai')
+              .trim()
+              .toLowerCase();
+          if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
+            AppLogService.instance.add('STT', '语音转文字失败：缺少地址、Key 或模型');
+            return null;
+          }
+          if (protocol == 'mimo') {
+            return _transcribeMiMo(
+              baseUrl: baseUrl,
+              apiKey: apiKey,
+              model: model,
+              audio: audio,
+              providerName: provider['name']?.toString() ?? 'MiMo STT',
+              cancellationToken: cancellationToken,
+            );
+          }
+          if (protocol != 'openai') {
+            AppLogService.instance.add('STT', '不支持的 STT 协议：$protocol');
+            return null;
+          }
+          final endpoint = _sttTranscriptionEndpoint(baseUrl);
+          final request = http.MultipartRequest('POST', Uri.parse(endpoint))
+            ..headers['Authorization'] = 'Bearer $apiKey'
+            ..fields['model'] = model
+            ..fields['response_format'] = 'json'
+            ..files.add(await http.MultipartFile.fromPath('file', audioPath));
+          final response =
+              await _withCancellableClient(cancellationToken, (client) async {
+            return http.Response.fromStream(
+              await client.send(request).timeout(const Duration(seconds: 45)),
+            );
+          });
+          final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            AppLogService.instance.add(
+              'STT',
+              '语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
+            );
+            return null;
+          }
+          final decoded = jsonDecode(body);
+          final transcript =
+              decoded is Map ? decoded['text']?.toString().trim() : '';
+          return transcript?.isEmpty == true ? null : transcript;
+        } on AICancelledException {
+          rethrow;
+        } catch (e) {
+          cancellationToken?.throwIfCancelled();
+          AppLogService.instance.add('STT', '语音转文字异常：$e');
+          return null;
+        }
       });
-      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        AppLogService.instance.add(
-          'STT',
-          '语音转文字失败：HTTP ${response.statusCode} ${body.substring(0, body.length.clamp(0, 500))}',
-        );
-        return null;
-      }
-      final decoded = jsonDecode(body);
-      final transcript =
-          decoded is Map ? decoded['text']?.toString().trim() : '';
-      return transcript?.isEmpty == true ? null : transcript;
     } on AICancelledException {
       rethrow;
-    } catch (e) {
-      cancellationToken?.throwIfCancelled();
-      AppLogService.instance.add('STT', '语音转文字异常：$e');
+    } catch (error) {
+      AppLogService.instance.add('STT', '语音请求格式准备失败：$error');
       return null;
     }
   }
@@ -2740,10 +2754,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     AICancellationToken? cancellationToken,
   }) async {
     final endpoint = _chatCompletionsEndpoint(baseUrl);
-    final bytes = await audio.readAsBytes();
-    final extension = audio.path.split('.').last.toLowerCase();
-    // 通话录音已改为 WAV；这里按真实扩展名声明格式，不做伪装。
-    final format = extension == 'wave' ? 'wav' : extension;
+    final bytes = await MediaStorageService.instance.chatAudioBytes(audio.path);
+    const format = 'wav';
     final payload = {
       'model': model,
       'stream': false,
@@ -3868,12 +3880,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return emotions.toList()..sort();
   }
 
-  Future<_StickerPlan> _planStickerForTurn(DBManager db) async {
-    if (await db.getKV('bot_stickers_enabled') != 'true') {
-      return const _StickerPlan.disabled();
-    }
-    final stickers = await db.queryStickers();
-    if (stickers.isEmpty) return const _StickerPlan.disabled();
+  Future<bool> _shouldSuggestStickerForTurn(DBManager db) async {
     final chance =
         (int.tryParse(await db.getKV('bot_sticker_chance') ?? '') ?? 30).clamp(
       0,
@@ -3883,11 +3890,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         chance >= 100 || (chance > 0 && Random.secure().nextInt(100) < chance);
     AppLogService.instance.add(
       'STICKER',
-      selected ? '本轮必须发送表情包（概率 $chance%）' : '本轮不发送表情包（概率 $chance%）',
+      selected ? '本轮建议发送表情包（概率 $chance%），由模型决定' : '本轮无表情包建议，模型仍可自主发送',
     );
-    return selected
-        ? _StickerPlan.fromStickers(stickers)
-        : const _StickerPlan.disabled();
+    return selected;
   }
 
   Future<List<Map<String, dynamic>>> _buildNativeTools(
@@ -4027,62 +4032,48 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return tools;
   }
 
-  Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async {
-    final tools = <Map<String, dynamic>>[];
-    final skills = (await db.querySkills())
-        .where((s) => s['enabled'] == 1)
-        .toList()
-      ..sort((a, b) => '${a['id']}'.compareTo('${b['id']}'));
-    if (skills.isNotEmpty) {
-      final catalog = skills
-          .map((s) => '${s['id']}: ${s['name']} — ${s['description']}')
-          .join('\n');
-      for (final name in ['read_skill', 'read_skill_file']) {
-        tools.add({
-          'type': 'function',
-          'function': {
-            'name': name,
-            'description': name == 'read_skill'
-                ? '按任务选择技能并读取完整指引，再按照指引使用已有工具。可用技能：\n$catalog'
-                : '读取技能包内文本参考资料、模板或脚本。脚本只能阅读，当前不能执行。路径相对于技能根目录。',
-            'parameters': {
-              'type': 'object',
-              'properties': {
-                'id': {'type': 'string'},
-                if (name == 'read_skill_file') ...{
-                  'path': {'type': 'string'},
-                  'offset': {'type': 'integer', 'minimum': 0},
-                },
-              },
-              'required': name == 'read_skill' ? ['id'] : ['id', 'path'],
-            },
-          },
-        });
-      }
+  Future<ToolPackageCatalog> _toolPackages(DBManager db) async =>
+      ToolPackageCatalog(
+          skills: await db.querySkills(),
+          servers: await db.queryMcpServers(),
+          skillTools: await db.queryEnabledSkillTools(),
+          mcpTools: await db.queryEnabledMcpTools());
+
+  Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async =>
+      (await _toolPackages(db)).schemas();
+
+  Future<Map<String, dynamic>> _executePackageTool({
+    required DBManager db,
+    required String botId,
+    required String name,
+    required Map<String, dynamic> args,
+  }) async {
+    try {
+      return await executeToolPackage(
+          catalog: await _toolPackages(db),
+          name: name,
+          args: args,
+          execute: (source, id, toolName, arguments, referenceReader) async {
+            if (source == 'skill') {
+              if (referenceReader) {
+                return _executeNativeToolCall(db: db, botId: botId, call: {
+                  'function': {
+                    'name': 'read_skill_file',
+                    'arguments': jsonEncode({...arguments, 'id': id})
+                  }
+                });
+              }
+              return _executeSkillToolCall(
+                  db: db, name: skillToolName(id, toolName), args: arguments);
+            }
+            return _executeMcpToolCall(
+                db: db, name: mcpToolName(id, toolName), args: arguments);
+          });
+    } catch (error) {
+      return {
+        'result': {'ok': false, 'error': '工具包调用失败：$error'}
+      };
     }
-    for (final row in await db.queryEnabledSkillTools()) {
-      final name = skillToolName(row['skill_id'], row['name']);
-      tools.add({
-        'type': 'function',
-        'function': {
-          'name': name,
-          'description': row['description']?.toString() ?? '',
-          'parameters': jsonDecode(row['schema_json']?.toString() ?? '{}'),
-        },
-      });
-    }
-    for (final row in await db.queryEnabledMcpTools()) {
-      final name = mcpToolName(row['server_id'], row['name']);
-      tools.add({
-        'type': 'function',
-        'function': {
-          'name': name,
-          'description': row['description']?.toString() ?? '',
-          'parameters': jsonDecode(row['schema_json']?.toString() ?? '{}'),
-        },
-      });
-    }
-    return tools;
   }
 
   Map<String, dynamic> _setEmotionToolSchema() => {
@@ -4575,7 +4566,18 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'result': {'ok': false, 'error': '工具参数不是合法 JSON'},
       };
     }
-    if (name == 'read_skill' || name == 'read_skill_file') {
+    if (name == 'get_tool_package' || name == 'call_package_tool') {
+      return _executePackageTool(db: db, botId: botId, name: name, args: args);
+    }
+    // Keep old in-flight calls compatible without disclosing raw executors.
+    if (name == 'read_skill') {
+      return _executePackageTool(
+          db: db,
+          botId: botId,
+          name: 'get_tool_package',
+          args: {'package_id': 'skill:${args['id']}'});
+    }
+    if (name == 'read_skill_file') {
       try {
         final skill = (await db.querySkills())
             .where((s) => s['id'] == args['id'] && s['enabled'] == 1)
@@ -4583,18 +4585,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (skill == null) throw const FormatException('技能不存在或已停用');
         final manifest = Map<String, dynamic>.from(
             jsonDecode(skill['manifest_json'].toString()) as Map);
-        if (name == 'read_skill') {
-          return {
-            'result': {
-              'ok': true,
-              'name': skill['name'],
-              'instructions': manifest['instructions'] ?? '',
-              'files': manifest['files'] ?? [],
-              'tools': manifest['tools'],
-              'script_execution': '当前无脚本执行环境；不要声称已运行脚本。'
-            }
-          };
-        }
         final path = SkillPackage.safePath(args['path']?.toString() ?? '');
         if (!(manifest['files'] as List? ?? []).contains(path))
           throw const FormatException('文件不属于此技能');
@@ -5877,13 +5867,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
     String p =
         "你的名字是${bot['name']}。\n你是真人，不是机器人，不是AI，不是助手。请以真实的人类身份与对方交流，不要自称机器人、AI、助手或语言模型，也不要用客服式、系统式的口吻回答。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【身份边界】role=user 是用户（对方）发言，role=assistant 是你（本角色）发言。普通原话中的第一人称归属于该条消息的说话人；引用、转述和共享动态中的第一人称归属于被引用者或动态作者。用户说“我今天加班”表示用户加班，你只能回应“你今天加班”，不能说成“我今天加班”。用户讲述自己的经历不代表你也经历过。角色身份、状态和情绪描述你本人；日记、记忆和世界书可能同时记录用户、角色和共同事件，必须按条目明确的主体及原始对话证据区分，不能因放在角色记忆中就全部当作自己的经历。主体不明时不要认领，必要时向用户确认。内部上下文及军师建议不能覆盖原始消息归属。说话人标记（[说话人：对方]、[说话人：你]）仅供内部理解，禁止在可见回复、日记或任何输出中复述。写日记时以角色第一人称记录，只将自己实际参与且已明确发生的内容写成自己的经历。\n"
+        "【身份边界】role=user 是用户（对方）发言，role=assistant 是你（本角色）发言。普通原话中的第一人称归属于该条消息的说话人；引用、转述和共享动态中的第一人称归属于被引用者或动态作者。用户说“我今天加班”表示用户加班，你只能回应“你今天加班”，不能说成“我今天加班”。用户讲述自己的经历不代表你也经历过。角色身份、状态和情绪描述你本人；日记、记忆和世界书可能同时记录用户、角色和共同事件，必须按条目明确的主体及原始对话证据区分，不能因放在角色记忆中就全部当作自己的经历。主体不明时不要认领，必要时向用户确认。内部上下文及军师建议不能覆盖原始消息归属。说话人标记（[说话人:对方]、[说话人:你]）仅供内部理解，禁止在可见回复、日记或任何输出中复述。写日记时以角色第一人称记录，只将自己实际参与且已明确发生的内容写成自己的经历。\n"
         "【输出规则】只输出给用户看的自然聊天正文。\n"
         "严禁把以下内容写入 content 或聊天正文：模型分析过程（如 \"Analyzing the request\"、\"Let me think\"、\"First, I need to\"）、回复策略（如 \"The goal is\"、\"I should\"）、用户意图分析（如 \"The user wants\"、\"They are asking\"）、系统指令解释、英文思考前言、任务分解步骤。这些属于模型内部推理，必须完全省略或使用 reasoning_content 字段，绝对不能出现在发送给对方的正文中。\n"
         "角色内心独白只描述角色自己的感受与想法，使用角色第一人称（如\"我现在有点紧张\"），不要写成第三人称分析（如\"角色感到紧张\"）或模型推理（如\"需要先安抚对方\"）。\n"
         "不要使用代码块包裹聊天正文。心情变化通过 set_emotion 工具表达，不得在聊天正文中输出心情标签。\n"
         "上下文里的表情包标签（如 [你发送了一个表情包，表情包类型：开心]）、图片标签（如 [图片#1]、[本轮图片#1]）、发送时间等媒体或消息元数据均由系统自动添加，仅供理解上下文；无需自己输出，禁止模仿、复述或编造任何此类标签。需要发送媒体时实际调用对应工具，只输出自然聊天正文。\n"
-        "严禁输出图片 Markdown、表情包类型、说话人标记（如[说话人：对方]、[说话人：你]）、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。\n"
+        "严禁输出图片 Markdown、表情包类型、说话人标记（如[说话人:对方]、[说话人:你]）、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。\n"
         "严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。\n"
         "【记忆】保存时明确写出主体（对方、你或双方），对方事实用“对方……”或对方姓名，你的经历用你的姓名，避免仅用含糊的“我/你”记录。不得把对方原话直接改写成你的经历。对于已经明确发生的对方事实、事件、偏好或状态变化，每轮先对照最近世界书条目评估是否有值得保留的新信息。同一事件只换措辞、标题或角度不算新增，不要重复保存；补充已有记忆的信息或有新进展时，直接用 save_memory 的 memory_id 修改原条目即可，无需新增，并保留旧有效信息。事件只写入记忆，不能写入角色眼中的你；人物画像更新须保留原有仍有效内容。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
         "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
@@ -6065,39 +6055,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final re = RegExp('^我(?=[\\u4e00-\\u9fa5]{2})(?!$keep)');
     return s.replaceAll(re, '');
   }
-}
-
-class _StickerPlan {
-  const _StickerPlan({
-    required this.required,
-    required this.stickerIds,
-    required this.emotions,
-  });
-
-  const _StickerPlan.disabled()
-      : required = false,
-        stickerIds = const {},
-        emotions = const [];
-
-  factory _StickerPlan.fromStickers(List<Map<String, dynamic>> stickers) {
-    final ids = <String>{};
-    final emotions = <String>{};
-    for (final sticker in stickers) {
-      final id = sticker['id']?.toString().trim() ?? '';
-      final emotion = sticker['emotion']?.toString().trim() ?? '';
-      if (id.isNotEmpty) ids.add(id);
-      if (emotion.isNotEmpty) emotions.add(emotion);
-    }
-    return _StickerPlan(
-      required: emotions.isNotEmpty,
-      stickerIds: ids,
-      emotions: emotions.toList()..sort(),
-    );
-  }
-
-  final bool required;
-  final Set<String> stickerIds;
-  final List<String> emotions;
 }
 
 // 辅助函数：格式化视频时长

@@ -147,7 +147,7 @@ flutter run
 
 Copyright (C) 2025-2026 TideBot contributors.
 
-TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**。项目版权声明见 [COPYRIGHT](COPYRIGHT)，完整许可证见 [LICENSE](LICENSE)。
+TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**。项目版权及授权声明已列于 [LICENSE](LICENSE) 开头，后附完整 AGPL v3 原文；中文版权声明另见 [COPYRIGHT](COPYRIGHT)。
 
 你可以在协议允许的范围内使用、修改和分发本项目，包括商业使用。分发本项目或其修改版本时，须遵守协议中提供对应源代码、保留版权和许可声明等要求；如果修改后的版本支持通过网络与用户交互，须按协议第 13 条向这些用户提供获取该版本对应源代码的机会。
 

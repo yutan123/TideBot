@@ -5,7 +5,7 @@ import 'bot_reference_image.dart';
 
 /// Compress uploads to JPEG by default; disabling preserves original bytes.
 Future<Uint8List> modelImageBytes(String path, {bool compress = true}) async {
-  if (!compress) {
+  if (!compress || path.endsWith('.tide-v1.jpg')) {
     final bytes = await File(path).readAsBytes();
     if (bytes.isEmpty) throw const FormatException('图片为空');
     return bytes;
