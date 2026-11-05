@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.UUID
+import java.io.File
 
 /**
  * 任务执行器，负责执行后台任务（主动回复、体征监测等）。
@@ -393,6 +394,11 @@ object TideTaskExecutor {
                     val timestamp = now + segments.size + index + 1
                     db.execSQL("INSERT OR IGNORE INTO chat_history (id,bot_id,role,type,content,file_path,timestamp,reply_group_id,mood) VALUES (?,?,'assistant',?,?,?,?,?,?)",
                         arrayOf(id,botId,asset.first,asset.second,asset.third,timestamp,groupId,mood))
+                    if (asset.first == "image" && TideStore.kv(db, "image_compression_enabled") != "false" &&
+                        File(asset.third).isAbsolute && !asset.third.contains(".tide-v1.")) {
+                        db.execSQL("CREATE TABLE IF NOT EXISTS media_storage_jobs (source TEXT PRIMARY KEY, target TEXT, type TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0)")
+                        db.execSQL("INSERT OR IGNORE INTO media_storage_jobs(source,type) VALUES (?,?)", arrayOf(asset.third, "image"))
+                    }
                     db.execSQL("INSERT OR IGNORE INTO background_messages (message_id,bot_id,task_id,role,content,timestamp,displayed,synced_to_chat) VALUES (?,?,?,'assistant',?,?,0,1)",
                         arrayOf(id,botId,taskId,if (asset.first == "image") "[图片]" else "[表情包]",timestamp))
                 }

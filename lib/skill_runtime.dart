@@ -248,14 +248,26 @@ class McpClient {
   Future<List<Map<String, dynamic>>> listTools() async {
     final tools = <Map<String, dynamic>>[];
     String? cursor;
+    final seen = <String>{};
+    final deadline = DateTime.now().add(timeout * 3);
+    var pages = 0;
     do {
+      if (++pages > 100 || DateTime.now().isAfter(deadline)) {
+        throw StateError('MCP 工具分页超出限制');
+      }
       final result = await _request(
         'tools/list',
         cursor == null ? const {} : {'cursor': cursor},
-      );
+      ).timeout(deadline.difference(DateTime.now()), onTimeout: () {
+        dispose();
+        throw TimeoutException('MCP 工具发现超时');
+      });
       tools.addAll(_listResult(result, 'tools'));
       cursor = result['nextCursor']?.toString().trim();
       if (cursor?.isEmpty == true) cursor = null;
+      if (cursor != null && !seen.add(cursor)) {
+        throw StateError('MCP 服务返回重复分页游标');
+      }
     } while (cursor != null && tools.length < 1000);
     return tools;
   }

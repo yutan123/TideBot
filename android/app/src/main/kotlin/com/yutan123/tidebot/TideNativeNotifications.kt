@@ -40,7 +40,11 @@ object TideNativeNotifications {
                 if (activityVisible && visibleChatBotId == row.getString("bot_id")) continue
                 val id = row.getString("message_id")
                 if (TideStore.kv(db, "native_notified_$id") == "true") continue
-                val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                val intent = Intent(context, MainActivity::class.java)
+                    .setData(android.net.Uri.parse("tidebot://chat/$id"))
+                    .putExtra("tide_bot_id", row.getString("bot_id"))
+                    .putExtra("tide_message_id", id)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 val pending = PendingIntent.getActivity(context, id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                 val manager = context.getSystemService(NotificationManager::class.java)
                 val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
@@ -55,7 +59,9 @@ object TideNativeNotifications {
                     setSound(sound, attributes)
                 })
                 manager.notify(id, 1, NotificationCompat.Builder(context, MESSAGE_CHANNEL)
-                    .setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle(row.optString("name","TideBot"))
+                    .setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle(
+                        row.optString("name", "").trim().ifEmpty { "机器人" }
+                    )
                     .setContentText(row.getString("content")).setStyle(NotificationCompat.BigTextStyle().bigText(row.getString("content")))
                     .setContentIntent(pending).setAutoCancel(true)
                     .setPriority(NotificationCompat.PRIORITY_HIGH)

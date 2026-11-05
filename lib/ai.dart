@@ -1,3 +1,4 @@
+import 'audit_redaction.dart';
 import 'tool_package_catalog.dart';
 import 'tool_package_runtime.dart';
 import 'media_storage_service.dart';
@@ -25,6 +26,7 @@ import 'user_image_edit_tool.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'request_prompt_features.dart';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -282,8 +284,8 @@ class AIManager {
         final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
         if (vitalTracked) {
           AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
-          final vitalContext =
-              await BotVitalSignsService.instance.beforeRequest(botId);
+          final vitalContext = await BotVitalSignsService.instance
+              .beforeRequest(botId, allowSilence: allowTools);
           AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
           extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
         }
@@ -497,8 +499,7 @@ class AIManager {
     "boundaries": ["边界一","边界二"],
     "reference_directions": ["方向一15-30字","方向二15-30字","方向三15-30字"],
     "reference_examples": ["例句一10-40字","例句二10-40字","例句三10-40字"]
-  },
-  "inner_thought_seed": "角色此刻想法一句话"
+  }{{thought_seed_field}}
 }
 
 intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪；request_action要求行动承诺；seek_explanation追问原因；casual_chat无压力日常；close_topic真诚翻篇；share_experience主动分享；seek_opinion征求看法。subtext如"随便"="希望你主动提建议"。risk_level：0-2轻松，3-4试探，5-6不满，7-8紧张，9破裂边缘。should_share_own：低风险轻松对话时true。必须区分用户与角色的经历，不能把用户讲述的事情作为角色自己的分享素材；记忆主体不明确时不得认领。reference_directions描述要传达什么不是怎么说。reference_examples供参考不能照抄。''';
@@ -510,6 +511,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     required List<Map<String, dynamic>> history,
     required String profileContext,
     required String worldBookContext,
+    required RequestPromptFeatures features,
     bool proactive = false,
     List<String> imagePaths = const <String>[],
     AICancellationToken? cancellationToken,
@@ -542,11 +544,17 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               history.last['content'] == text
           ? history.sublist(0, history.length - 1)
           : history;
-      final recent =
-          priorHistory.reversed.take(10).toList().reversed.map((item) {
+      final recent = priorHistory
+          .where((item) => features.includeHistory(item))
+          .toList()
+          .reversed
+          .take(10)
+          .toList()
+          .reversed
+          .map((item) {
         final role = item['role']?.toString() == 'user' ? '用户' : '角色';
         final type = item['type']?.toString() ?? 'text';
-        final content = item['content'] ?? '';
+        final content = features.historyText(item);
         if (type == 'inner_thought') {
           return '$role（内心独白）：$content';
         }
@@ -555,7 +563,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       // 提取角色上一轮的内心独白
       String? lastInnerThought;
-      for (final item in history.reversed) {
+      for (final item in features.innerThought
+          ? history.reversed
+          : <Map<String, dynamic>>[]) {
         if (item['role']?.toString() == 'assistant' &&
             item['type']?.toString() == 'inner_thought') {
           lastInnerThought = item['content']?.toString();
@@ -591,7 +601,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           {
             'role': 'system',
             'content':
-                '$_jarvisPrompt\n${proactive ? proactiveContactInstructions : ''}\n参考回复必须符合角色聊天输出要求：使用角色语气，给出恰好三条方向和三条可直接作为聊天正文的参考回复；不含系统解释、工具协议、心情标签或时间戳。inner_thought_seed 只写角色感受，不把独白混进 reference_examples。'
+                '${features.advisorPrompt(_jarvisPrompt)}\n${proactive ? features.proactiveInstructions(proactiveContactInstructions) : ''}\n参考回复必须符合角色聊天输出要求：使用角色语气，给出恰好三条方向和三条可直接作为聊天正文的参考回复；不含系统解释、工具协议、心情标签或时间戳。${features.advisorThoughtInstructions}'
           },
           {
             'role': 'user',
@@ -751,7 +761,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         guidance.writeln('- $referenceExamples');
       }
 
-      if (innerThoughtSeed.isNotEmpty) {
+      if (features.innerThought && innerThoughtSeed.isNotEmpty) {
         guidance.writeln('\n## 内心独白种子');
         guidance.writeln(innerThoughtSeed);
       }
@@ -861,6 +871,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     var currentImages = <int, String>{};
     var inspectableImages = <int, String>{};
     var messages = <Map<String, dynamic>>[];
+    var tools = <Map<String, dynamic>>[];
     if (task.internal) {
       final context = <String>[];
       if (task.needsHistory) {
@@ -932,15 +943,15 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (botViewOfUser?.isNotEmpty == true)
           '【你眼中的对方】\n$botViewOfUser'
         else
-          '【你眼中的对方】\n当前暂未记录。你可在获取到对方的特点、习惯、偏好等信息后，调用工具填入世界书的"角色眼中的你"类别。没有新增内容或需要修改的内容请不要修改。',
+          '【你眼中的对方】\n暂未记录。只在有依据的稳定认识形成或改变时更新“角色眼中的你”；具体事件必须另存“记忆”，禁止填入此处。',
         if (selfCognition?.isNotEmpty == true)
           '【你认为的自己】\n$selfCognition'
         else
-          '【你认为的自己】\n当前暂未记录。你可在明确自己的性格、习惯、偏好等特点后，调用工具填入世界书的"角色的自我认知"类别。人格设定和说话方式只作参考，你可以用自己的理解描述你认为的自己的性格、身份、特点。没有新增内容或需要修改的内容请不要修改。',
+          '【你认为的自己】\n暂未记录。明确自身身份、性格和特点后可更新“角色的自我认知”；禁止写事件摘要或照搬人设，无新认识不更新。',
         if (relationship?.isNotEmpty == true)
           '【你们的关系】\n$relationship'
         else
-          '【你们的关系】\n当前暂未记录。你可在明确与对方的关系定位后，调用工具填入世界书的"关系"类别。',
+          '【你们的关系】\n暂未记录。只记录双方已明确的关系定位；禁止擅自推进关系或写相处流水账。',
       ].join('\n\n');
 
       final profileContext = (diaryTask || quoteTask)
@@ -1036,11 +1047,28 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         sharedPostContexts[key] =
             await _sharedPostModelContextForMessage(db, msg);
       }
+      tools = allowTools
+          ? await _buildNativeTools(
+              db,
+              botId: botId,
+              includeEmotion: true,
+              allowSticker: stickerEmotions.isNotEmpty,
+              stickerTypes: stickerEmotions.toSet(),
+            )
+          : const <Map<String, dynamic>>[];
+      final features = RequestPromptFeatures(
+        tools: tools,
+        innerThought: shouldIncludeInnerThought(
+          task: task,
+          isVoiceCall: isVoiceCall,
+          settingEnabled: await db.getKV('inner_thought_enabled') == 'true',
+        ),
+      );
       final toolContext = allowTools
           ? await _buildToolContext(
               db,
               botId: botId,
-              includeEmotion: true,
+              features: features,
               stickerEmotions: stickerEmotions,
             )
           : '';
@@ -1057,11 +1085,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       );
 
       // 通话模式独立控制，生活状态等附加提示不能关闭普通聊天的独白。
-      final innerThoughtEnabled = shouldIncludeInnerThought(
-        task: task,
-        isVoiceCall: isVoiceCall,
-        settingEnabled: await db.getKV('inner_thought_enabled') == 'true',
-      );
+      final innerThoughtEnabled = features.innerThought;
       // 只读取紧邻本轮的前三条消息，不向前搜集旧独白。
       String recentThoughtsContext = '';
       if (innerThoughtEnabled && history.isNotEmpty) {
@@ -1080,10 +1104,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final baseSystemPrompt = diaryTask
           ? buildDiarySystemPrompt(bot)
           : quoteTask
-              ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、独白、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
-              : _buildSystemPrompt(bot, activeGame) +
+              ? '你正在执行内部今日一言任务，不是在聊天。角色：${bot['name']}；语气参考：${bot['prompt']}。只生成一条全天通用的短句，只输出单行的一个句子。禁止第二句、备选、编号、标题、解释、分析、标签、Markdown和工具调用。人设中的聊天输出格式不适用于此任务。'
+              : buildChatSystemPrompt(bot, activeGame, features) +
                   (innerThoughtEnabled
-                      ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的角色内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用角色第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是角色表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
+                      ? '\n\n【内心独白机制】\n内心独白功能已开启。每轮面向对方的文字回复必须先输出一段非空的内心独白，格式为 <inner_thought>独白内容</inner_thought>，闭合标签后再输出聊天正文，不得省略独白或输出空标签。独白用你的第一人称简短描述此刻的情绪、感受或愿望，与本轮对话相关；这是你的感受表达，不是模型推理过程，不要写分析步骤、系统规则、工具调用计划或声称尚未完成的操作已完成。reasoning_content 不算内心独白，独白必须写在 content 中。需要调用工具时先实际执行工具，在工具完成后的最终文字回复中输出独白和正文；单独的工具调用消息无需附带独白。'
                       : '');
 
       // Static instructions must precede the growing transcript. Otherwise a
@@ -1091,8 +1115,10 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final stableSystemPrompt = [
         baseSystemPrompt,
         if (!diaryTask && !quoteTask) ...[
-          memoryCategoryPolicy,
-          memoryDeduplicationPolicy,
+          if (features.has('save_memory')) ...[
+            memoryCategoryPolicy,
+            memoryDeduplicationPolicy
+          ],
           toolContext,
         ],
       ].where((part) => part.trim().isNotEmpty).join('\n\n');
@@ -1100,10 +1126,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       // 第三层：动态上下文（每轮变化：世界书激活、会话约束、安全判断、生活状态、设备、情绪、最近独白）
       final dynamicContext = [
         profileContext,
-        if (randomVoice && allowTools) voiceMessageSpeechPrompt,
-        presetCategoryContext,
-        if (task == AIRequestTask.proactiveChat) proactiveContactInstructions,
-        if (suggestSticker) '【表情包建议】可以结合当前话题发送表情包，不合适时可不发送。',
+        if (randomVoice && features.has('request_voice_reply'))
+          features.voiceInstructions(voiceMessageSpeechPrompt),
+        if (features.has('save_memory')) presetCategoryContext,
+        if (task == AIRequestTask.proactiveChat)
+          features.proactiveInstructions(proactiveContactInstructions),
+        if (suggestSticker && features.stickers)
+          '【表情包建议】可以结合当前话题发送表情包，不合适时可不发送。',
         if (worldBookContext.isNotEmpty) '【本轮激活的世界书】\n$worldBookContext',
         if (extraSystemPrompt.trim().isNotEmpty)
           '【当前会话约束】${extraSystemPrompt.trim()}',
@@ -1124,6 +1153,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final historyMessages = <Map<String, dynamic>>[];
       // 先标准化历史，再仅对历史部分执行预算裁剪。
       for (final msg in history) {
+        if (!features.includeHistory(msg)) continue;
         final type = msg['type']?.toString() ?? 'text';
         if (type != 'text' &&
             type != 'image' &&
@@ -1143,7 +1173,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (rawRole != 'user' && rawRole != 'assistant') continue;
         final normalizedRole = rawRole;
         final normalizedContent = _modelContextForHistoryMessage(
-          msg,
+          {...msg, 'content': features.historyText(msg)},
           imageNumberByPath: imageNumberByPath,
           sharedPostContexts: sharedPostContexts,
         );
@@ -1281,14 +1311,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         } else if (task == AIRequestTask.proactiveChat) {
           messages.add({
             'role': 'user',
-            'content': buildProactiveContactTurn(
+            'content': features.proactiveInstructions(buildProactiveContactTurn(
               now: DateTime.now(),
               unansweredCount: int.tryParse(
                     await db.getKV('proactive_unanswered_$botId') ?? '',
                   ) ??
                   0,
               trigger: text,
-            ),
+            )),
           });
         } else {
           messages
@@ -1313,6 +1343,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
       if (!isVoiceCall &&
           useJarvis &&
+          await db.getKV('jarvis_enabled') == 'true' &&
           includeChatHistory &&
           activeGame == null) {
         final advice = await _jarvisAdvice(
@@ -1324,6 +1355,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           history: history,
           profileContext: profileContext,
           worldBookContext: worldBookContext,
+          features: features,
           proactive: task == AIRequestTask.proactiveChat,
           imagePaths: effectiveImagePaths,
           cancellationToken: cancellationToken,
@@ -1381,15 +1413,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'AI',
         '请求 $modelName（tools=${allowTools ? 'on' : 'off'}，stream=${onDelta != null ? 'on' : 'off'}）',
       );
-      final tools = allowTools
-          ? await _buildNativeTools(
-              db,
-              botId: botId,
-              includeEmotion: true,
-              allowSticker: stickerEmotions.isNotEmpty,
-              stickerTypes: stickerEmotions.toSet(),
-            )
-          : const <Map<String, dynamic>>[];
       final toolCallingEnabled = allowTools && tools.isNotEmpty;
 
       final payload = prepareChatCompletionPayload({
@@ -3996,9 +4019,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         },
       });
     }
-    if (allowSilence &&
-        ((await db.getKV('adaptive_silence_enabled')) != 'false' ||
-            await BotVitalSignsService.instance.isSleepPeriod(botId))) {
+    if (allowSilence && await db.getKV('adaptive_silence_enabled') != 'false') {
       tools.add(_adaptiveSilenceToolSchema());
     }
     tools.add(_memoryToolSchema());
@@ -4115,13 +4136,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'function': {
           'name': 'save_memory',
           'description':
-              '当用户明确要求记住某事，或出现值得保留的新事实时调用。先检查最近世界书条目，必要时 search_memory；同一件事仅改写措辞、标题或角度不算新记忆，不得重复保存。事件归入记忆，角色眼中的你仅描述对方的身份、性格、特点、优缺点、印象与想法，不记录事件。修改画像须保留原有仍有效内容。补充已有记忆的信息时，直接传 memory_id 修改原条目，无需新增；提交保留旧有效信息并合入补充内容的完整新版。不得猜测、编造或保存敏感隐私。只有工具返回 ok:true 后才能说已记住。',
+              '按记忆分类与写入步骤保存新事实。事件必须写入“记忆”，禁止写入人物画像或关系。更新已有条目须传 memory_id 并提交保留旧有效信息的完整新版。禁止重复保存；仅 ok:true 表示写入成功。',
           'parameters': {
             'type': 'object',
             'properties': {
               'content': {
                 'type': 'string',
-                'description': '新增条目写具体事实；更新条目写保留旧有效信息后的完整内容'
+                'description':
+                    '事件须写清主体，可用姓名或指代明确的人称，你自己的经历可用“我”，他／她须性别已知；人物画像只写总结出的稳定特点，禁止写具体事件；更新须保留旧有效信息并提交完整内容'
               },
               'importance': {
                 'type': 'integer',
@@ -4249,22 +4271,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         },
       };
 
-  String _redactToolInput(Map<String, dynamic> args) {
-    final safe = <String, dynamic>{};
-    for (final entry in args.entries) {
-      final key = entry.key.toLowerCase();
-      final value = entry.value.toString();
-      safe[entry.key] = key.contains('key') ||
-              key.contains('token') ||
-              key.contains('secret') ||
-              key.contains('password')
-          ? '[redacted]'
-          : value.length > 200
-              ? '${value.substring(0, 200)}...'
-              : entry.value;
-    }
-    return jsonEncode(safe);
-  }
+  String _redactToolInput(Map<String, dynamic> args) => redactToolInput(args);
 
   Future<Map<String, dynamic>> _executeSkillToolCall({
     required DBManager db,
@@ -4362,9 +4369,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           inputSummary: _redactToolInput(args),
           status: 'error',
           durationMs: DateTime.now().difference(started).inMilliseconds,
-          error: error
-              .toString()
-              .substring(0, error.toString().length.clamp(0, 500)));
+          error: '工具执行失败（${error.runtimeType}）');
       return {
         'result': {'ok': false, 'error': 'HTTP Skill 调用失败：$error'}
       };
@@ -4446,9 +4451,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         inputSummary: _redactToolInput(args),
         status: 'error',
         durationMs: DateTime.now().difference(started).inMilliseconds,
-        error: error
-            .toString()
-            .substring(0, error.toString().length.clamp(0, 500)),
+        error: '工具执行失败（${error.runtimeType}）',
       );
       return {
         'result': {'ok': false, 'error': 'Skill MCP 代理调用失败：$error'},
@@ -4531,9 +4534,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         inputSummary: _redactToolInput(args),
         status: 'error',
         durationMs: DateTime.now().difference(started).inMilliseconds,
-        error: error
-            .toString()
-            .substring(0, error.toString().length.clamp(0, 500)),
+        error: '工具执行失败（${error.runtimeType}）',
       );
       return {
         'result': {'ok': false, 'error': 'MCP 调用失败：$error'}
@@ -5322,15 +5323,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         // 延迟响铃：等待工具执行完毕、机器人回复完成后再弹出来电提示
         // 这样用户看到的顺序是：先看到机器人说"给你打电话"，再弹出接听/拒接按钮
         Future.delayed(const Duration(milliseconds: 1500), () async {
+          final record = await db.getVoiceCallRecord(callId);
+          if (record?['status'] != 'ringing') return;
           VoiceCallStateService.instance
-              .startRinging(callId, botId, isIncoming: true);
+              .startRinging(callId, botId, isIncoming: true, startedAt: now);
 
           // 发送通知
-          MessageDeliveryService.instance.sendNotification(
+          await MessageDeliveryService.instance.sendNotification(
             title: (await db.getBotData(botId))?['name']?.toString() ?? '机器人',
             body: '给你发起了语音通话',
             payload: {'type': 'voice_call', 'bot_id': botId, 'call_id': callId},
           );
+        }).catchError((Object error) {
+          print('Incoming call notification failed: $error');
         });
 
         AppLogService.instance.add('VOICE_CALL', '机器人发起语音通话：$callId（延迟响铃）');
@@ -5429,54 +5434,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   Future<String> _buildToolContext(
     DBManager db, {
     required String botId,
-    bool includeEmotion = false,
+    required RequestPromptFeatures features,
     List<String> stickerEmotions = const [],
-  }) async {
-    final parts = <String>[];
-    if (await db.getKV('bot_image_generation_enabled') != 'false') {
-      final style = (await db.getKV('bot_image_style') ?? '写实').trim();
-      final styleRule = style.isEmpty || style == '不选择'
-          ? '图片风格由你根据用户需求自行决定。'
-          : '使用 generate_image 生成的图片必须采用“$style”风格；此设置不适用于 edit_user_image。';
-      final hasPortraitReference =
-          (await db.getKV('bot_image_reference_$botId') ?? '')
-              .trim()
-              .isNotEmpty;
-      final referenceRule =
-          hasPortraitReference ? portraitReferenceRule : '当前未设置人像参考图，使用文生图。';
-      parts.add(
-        '【已授权工具：生图】创作新图片或机器人人像使用 generate_image；编辑用户已有图片必须使用 edit_user_image，禁止用 generate_image 代替原图修改。不得只用文字描述代替实际生图；当图片能明显帮助当前回答时也可以主动调用 generate_image。以下画风和人像参考规则仅适用于 generate_image：$styleRule $referenceRule 不要声称已生成不存在的图片。',
+  }) =>
+      buildRequestToolContext(
+        readSetting: db.getKV,
+        normalizeSearchProvider: _normalizeSearchProvider,
+        botId: botId,
+        features: features,
+        stickerEmotions: stickerEmotions,
       );
-    }
-    if (await db.getKV('bot_image_generation_enabled') != 'false') {
-      parts.add(userImageEditContext());
-    }
-    if (await db.getKV('web_search_enabled') == 'true') {
-      final provider = _normalizeSearchProvider(
-        await db.getKV('web_search_provider') ?? 'Tavily',
-      );
-      final hasKey = (await db.getKV('web_search_api_key') ?? '').isNotEmpty;
-      if (hasKey) {
-        parts.add(
-          '【已授权工具：联网搜索】可在用户明确要求实时信息、需要来源或无法可靠回答时提出搜索建议。当前服务商：$provider。搜索结果会由应用以可展开来源列表附在最终关联气泡底部；除非用户明确要求链接或出处，不要在正文罗列 URL 或来源。不要编造搜索结果。',
-        );
-      }
-    }
-    if (includeEmotion) {
-      parts.add(
-        '【心情协议】set_emotion 是可选工具。仅当心情相较当前状态发生有意义变化时调用；没有变化无需调用，直接正常回复。不得在正文输出心情标签或伪造调用。是否输出正文遵守系统回复规则；choose_silence 仍须满足其适用条件。',
-      );
-    }
-    if (stickerEmotions.isNotEmpty) {
-      parts.add(
-        '【本轮可用表情包】可用分类包括 ${stickerEmotions.join('、')}。只有确实需要发送表情包时才调用 send_sticker，type 必须来自上述列表；不要编造 sticker_id，不要把文件路径或 URL 写进参数或正文。',
-      );
-    }
-    parts.add(
-      '【历史图片查看工具】inspect_image 和 look_at_image 仅用于回看历史消息旁标有 [图片#N] 的用户原图，image_number=N。没有标记时不能调用，不得猜测编号。用户本轮图片会自动处理，不能用这两个历史图片工具查看 [本轮图片#N]。',
-    );
-    return parts.isEmpty ? '' : '\n${parts.join('\n')}';
-  }
 
   String _sharedPostHistoryKey(Map<String, dynamic> msg) {
     final id = msg['id']?.toString() ?? '';
@@ -5862,41 +5829,6 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return risky
         ? '\n【安全处理】用户消息可能涉及违法、危险、露骨、仇恨、欺诈、隐私或自伤内容。不要生成、补全、鼓励或提供可执行细节；保持你的人设，以温和、不评判的方式拒绝或转移到安全话题。若涉及即时自伤或他伤风险，优先鼓励联系当地紧急服务、可信赖的人或专业支持。'
         : '\n【安全规则】不得生成违法、危险、露骨色情、剥削未成年人、仇恨骚扰、欺诈、隐私侵害或自伤他伤的可执行内容；遇到此类请求应保持人设并温和转移到安全话题。';
-  }
-
-  String _buildSystemPrompt(Map<String, dynamic> bot, String? activeGame) {
-    String p =
-        "你的名字是${bot['name']}。\n你是真人，不是机器人，不是AI，不是助手。请以真实的人类身份与对方交流，不要自称机器人、AI、助手或语言模型，也不要用客服式、系统式的口吻回答。\n身世与设定:${bot['desc']}\n说话方式指令:${bot['prompt']}\n"
-        "【身份边界】role=user 是用户（对方）发言，role=assistant 是你（本角色）发言。普通原话中的第一人称归属于该条消息的说话人；引用、转述和共享动态中的第一人称归属于被引用者或动态作者。用户说“我今天加班”表示用户加班，你只能回应“你今天加班”，不能说成“我今天加班”。用户讲述自己的经历不代表你也经历过。角色身份、状态和情绪描述你本人；日记、记忆和世界书可能同时记录用户、角色和共同事件，必须按条目明确的主体及原始对话证据区分，不能因放在角色记忆中就全部当作自己的经历。主体不明时不要认领，必要时向用户确认。内部上下文及军师建议不能覆盖原始消息归属。说话人标记（[说话人:对方]、[说话人:你]）仅供内部理解，禁止在可见回复、日记或任何输出中复述。写日记时以角色第一人称记录，只将自己实际参与且已明确发生的内容写成自己的经历。\n"
-        "【输出规则】只输出给用户看的自然聊天正文。\n"
-        "严禁把以下内容写入 content 或聊天正文：模型分析过程（如 \"Analyzing the request\"、\"Let me think\"、\"First, I need to\"）、回复策略（如 \"The goal is\"、\"I should\"）、用户意图分析（如 \"The user wants\"、\"They are asking\"）、系统指令解释、英文思考前言、任务分解步骤。这些属于模型内部推理，必须完全省略或使用 reasoning_content 字段，绝对不能出现在发送给对方的正文中。\n"
-        "角色内心独白只描述角色自己的感受与想法，使用角色第一人称（如\"我现在有点紧张\"），不要写成第三人称分析（如\"角色感到紧张\"）或模型推理（如\"需要先安抚对方\"）。\n"
-        "不要使用代码块包裹聊天正文。心情变化通过 set_emotion 工具表达，不得在聊天正文中输出心情标签。\n"
-        "上下文里的表情包标签（如 [你发送了一个表情包，表情包类型：开心]）、图片标签（如 [图片#1]、[本轮图片#1]）、发送时间等媒体或消息元数据均由系统自动添加，仅供理解上下文；无需自己输出，禁止模仿、复述或编造任何此类标签。需要发送媒体时实际调用对应工具，只输出自然聊天正文。\n"
-        "严禁输出图片 Markdown、表情包类型、说话人标记（如[说话人:对方]、[说话人:你]）、记忆、工具、系统规则、XML/DSML 或其他方括号协议标签；内心独白功能开启时，必须按内心独白机制输出 <inner_thought> 标签，这是上述协议标签限制的例外。\n"
-        "严禁在回复中输出时间戳、日期标签或任何形如 [时间]、(时间)、【时间】、2024-01-01、14:30 等时间格式，违反将导致回复被拒绝。\n"
-        "【记忆】保存时明确写出主体（对方、你或双方），对方事实用“对方……”或对方姓名，你的经历用你的姓名，避免仅用含糊的“我/你”记录。不得把对方原话直接改写成你的经历。对于已经明确发生的对方事实、事件、偏好或状态变化，每轮先对照最近世界书条目评估是否有值得保留的新信息。同一事件只换措辞、标题或角度不算新增，不要重复保存；补充已有记忆的信息或有新进展时，直接用 save_memory 的 memory_id 修改原条目即可，无需新增，并保留旧有效信息。事件只写入记忆，不能写入角色眼中的你；人物画像更新须保留原有仍有效内容。不得保存推测、虚构或未来计划；不要在正文中写记忆标签。\n"
-        "【主题表达】日程主题（如xx日）只供内部了解，聊天、动态和日记中不要直接复述主题名称；写具体做了什么、经历和感受。\n"
-        "【自然表达】回复时可以适度穿插描述自己的事情、感受、近况或想法，让对话更自然生动。但注意节制，不要每轮都主动讲述，应根据话题相关性和对话节奏灵活决定。\n"
-        "【回复规则】如果你没有调用工具，必须输出聊天正文回复用户，禁止不回复或输出空白内容。调用工具时允许不输出聊天正文；适时沉默仍须遵守 choose_silence 的使用规则。\n"
-        "【工具真实性规则】所有工具都必须通过接口提供的原生工具调用实际执行。正文、内心独白、推理内容中提到工具、描述操作或模仿调用格式均不算执行。只有收到对应工具明确成功的真实结果后，才能声称操作完成；未调用、失败、超时或结果不明确时必须如实说明，禁止假装调用、编造工具结果或把准备执行说成已经完成。排队或已生成不等于已发送、已保存或已生效，必须准确描述工具确认的阶段。\n";
-
-    if (activeGame == 'poker') {
-      p +=
-          "\n【系统级游戏劫持】：你当前正在和用户玩双人扑克牌。规则极度严格：牌组仅限 3~10，共32张，没有大小王。每人随机发16张牌。正常的算力对战（单张、对子、三带一、顺子、炸弹）。绝对不可向用户透露你手中的底牌！你需要在每次闲聊中推进游戏局势并描述你出的牌。";
-    } else if (activeGame == '20q') {
-      p +=
-          '\n【系统级游戏劫持】：你当前正在玩 20 问猜物游戏。如果用户是出题人，你只能问 20 个问题，且必须根据用户的是或否推断出答案；如果你是出题人，你只能回答是或否。在 20 问内未能猜出则判定输。';
-    } else if (activeGame == 'gomoku') {
-      p +=
-          "\n【游戏规则】你正与用户真实进行 9×9 五子棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-9），再简短聊天。";
-    } else if (activeGame == 'tic_tac_toe') {
-      p +=
-          "\n【游戏规则】你正与用户真实进行 3×3 井字棋。用户会给出自己的坐标；请选择一个未占用坐标，并在回复中输出唯一机器可读指令 [落子:行,列]（行列范围 1-3），再简短聊天。";
-    }
-    p +=
-        '\n【适时沉默】当 choose_silence 工具可用时，你可在用户明确暂不希望回复、对话自然结束且不需回应、或主动问候不宜打扰时调用它；调用后不要输出文本。睡眠期间可暂不回复普通消息，但危机与紧急求助仍应回应；清醒时不得在求助、悲伤、愤怒、困惑、危机、提问或任何需要回应时调用，绝不可作为惩罚、冷暴力、控制或施压。\n【日记】你拥有 write_diary 工具。遇到值得保留的经历、感受或事件时可按需调用，把日记内容写入工具参数；日记应记录机器人自己的日常、感受和经历，不仅限于与用户的对话，也应包含自己的生活事件。日记内容不要包含日期和时间信息，系统会自动记录。绝不把日记正文当作聊天消息发送。';
-    return p;
   }
 
   Future<String> _lifeStateContext(String botId,

@@ -235,6 +235,8 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     } finally {
       try {
         await client.close();
+      } catch (_) {
+        // Session cleanup must not invalidate successful discovery.
       } finally {
         client.dispose();
       }

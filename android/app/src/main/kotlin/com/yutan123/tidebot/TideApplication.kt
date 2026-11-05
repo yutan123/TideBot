@@ -34,6 +34,13 @@ class TideApplication : Application() {
         }
     }
 
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        val name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Application.getProcessName()
+        else (base.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+            .runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
+        if (name == base.packageName) TideColdRestore.applyBeforeProviders(base)
+    }
     override fun onCreate() {
         super.onCreate()
         // The inference process owns no scheduling, network observer or Flutter engine.

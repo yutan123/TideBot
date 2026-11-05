@@ -204,17 +204,8 @@ class _IncomingCallBannerState extends State<IncomingCallBanner> {
   Future<void> _acceptCall(
       BuildContext context, ActiveCall call, Map<String, dynamic> bot) async {
     try {
-      await DBManager().updateVoiceCallRecord(
-        call.callId,
-        status: 'active',
-      );
-
-      await DBManager().updateChatMessage(
-        'card_${call.callId}',
-        content: '[语音通话，通话中]',
-        callStatus: 'active',
-      );
-      VoiceCallStateService.instance.accept(call.botId, call.callId);
+      if (!await VoiceCallStateService.instance
+          .respond(call.botId, call.callId, accepted: true)) return;
 
       if (context.mounted) {
         Navigator.of(context).push(
@@ -237,18 +228,8 @@ class _IncomingCallBannerState extends State<IncomingCallBanner> {
   Future<void> _rejectCall(
       BuildContext context, ActiveCall call, Map<String, dynamic> bot) async {
     try {
-      await DBManager().updateVoiceCallRecord(
-        call.callId,
-        status: 'rejected',
-      );
-
-      await DBManager().updateChatMessage(
-        'card_${call.callId}',
-        content: '[语音通话，已拒接]',
-        callStatus: 'rejected',
-      );
-
-      VoiceCallStateService.instance.reject(call.botId, call.callId);
+      await VoiceCallStateService.instance
+          .respond(call.botId, call.callId, accepted: false);
     } catch (error) {
       debugPrint('拒接通话失败：$error');
     }

@@ -66,6 +66,8 @@ class McpConnectionService {
       } finally {
         try {
           await client.close();
+        } catch (_) {
+          // A failed session DELETE must not invalidate discovered tools.
         } finally {
           client.dispose();
         }

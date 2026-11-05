@@ -608,7 +608,7 @@ class BotVitalSignsService {
     return sleeping(await _serial(id, () => _read(id)));
   }
 
-  Future<String> beforeRequest(String id) async {
+  Future<String> beforeRequest(String id, {bool allowSilence = true}) async {
     _active[id] = (_active[id] ?? 0) + 1;
     try {
       await tick(id, replyPending: false);
@@ -638,7 +638,9 @@ class BotVitalSignsService {
         s['pending'] = pending;
         await _save(id, s);
       }
-      return context(s);
+      return context(s,
+          allowSilence: allowSilence &&
+              await DBManager().getKV('adaptive_silence_enabled') != 'false');
     });
   }
 
@@ -708,7 +710,7 @@ class BotVitalSignsService {
     });
   }
 
-  String context(Map<String, dynamic> s) {
+  String context(Map<String, dynamic> s, {bool allowSilence = false}) {
     final samples = vitalList(s['samples']);
     final latestSample = samples.isEmpty ? null : samples.last;
     final mood = moodName(vitalDouble(s['mood']));
@@ -719,7 +721,8 @@ class BotVitalSignsService {
 
     final sleepStatus = sleeping(s)
         ? sleepReplyGuidance(Map<String, dynamic>.from(s['sleep'] as Map),
-            now: DateTime.now().millisecondsSinceEpoch)
+            now: DateTime.now().millisecondsSinceEpoch,
+            allowSilence: allowSilence)
         : '';
 
     final sleepHistory = vitalList(s['sleep_history']);
@@ -746,6 +749,8 @@ class BotVitalSignsService {
       final pending = vitalList(s['pending']);
       if (pending.isEmpty) return;
       final natural = reason == 'natural';
+      final allowSilence = natural &&
+          await DBManager().getKV('adaptive_silence_enabled') != 'false';
       final images = pending
           .where((p) => p['type'] == 'image')
           .map((p) => '${p['file_path'] ?? ''}')
@@ -763,8 +768,8 @@ class BotVitalSignsService {
           notifyResponse: true,
           allowTools: natural,
           extraSystemPrompt: natural
-              ? '你正在睡觉，刚刚短暂醒了，一会儿还要继续睡。前面对方发送的以下消息尚未回复。你自行决定是否现在回复：需要就直接回复，不需要就调用 choose_silence，不输出正文。'
-              : '你刚刚在睡觉，现在已经起床。前面对方发送的以下消息还没有回复。请自然回复这些消息，结合上下文，不重复已回复内容。本次起床补回必须输出回复，不调用沉默工具。');
+              ? '你正在睡觉，刚刚短暂醒了，一会儿还要继续睡。前面对方发送的以下消息尚未回复。你自行决定是否现在回复：${allowSilence ? '需要就直接回复，不需要就调用 choose_silence，不输出正文。' : '请结合上下文自然回复。'}'
+              : '你刚刚在睡觉，现在已经起床。前面对方发送的以下消息还没有回复。请自然回复这些消息，结合上下文，不重复已回复内容。本次起床补回必须输出回复。');
       if (result['success'] != true || result['silent'] == true)
         await _serial(id, () async {
           final state = await _read(id);

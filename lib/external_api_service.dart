@@ -1,3 +1,4 @@
+import 'package:path/path.dart' as p;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -21,6 +22,7 @@ class ExternalApiService {
   static const _maxTrackedClients = 256;
 
   HttpServer? _server;
+  int _inFlight = 0;
   Future<bool>? _starting;
   final Map<String, List<DateTime>> _recentRequests = {};
   int? get activePort => _server?.port;
@@ -129,7 +131,16 @@ class ExternalApiService {
   Future<void> _listen(HttpServer server) async {
     try {
       await for (final request in server) {
-        unawaited(_handle(request));
+        if (_inFlight >= 4) {
+          _error(request, 429, '同时处理的请求过多，请稍后重试');
+          continue;
+        }
+        _inFlight++;
+        unawaited(_handle(request).whenComplete(() {
+          _inFlight--;
+        }).catchError((Object error) {
+          AppLogService.instance.add('EXTERNAL_API', '响应连接已关闭：$error');
+        }));
       }
     } catch (error, stackTrace) {
       AppLogService.instance.add('EXTERNAL_API', '监听循环异常：$error');
@@ -155,7 +166,7 @@ class ExternalApiService {
           'Authorization, Content-Type');
       if (request.method == 'OPTIONS') {
         response.statusCode = HttpStatus.noContent;
-        await response.close();
+        await response.close().timeout(const Duration(seconds: 15));
         return;
       }
       if (!_allowRequest(request)) {
@@ -303,15 +314,39 @@ class ExternalApiService {
         // not echoed back to external platforms.
         if (sync) {
           final now = DateTime.now().millisecondsSinceEpoch;
-          await MessageDeliveryService.instance.insert({
-            'id': 'external_u_$now',
-            'bot_id': botId,
-            'role': 'user',
-            'type': 'text',
-            'content': text,
-            'file_path': null,
-            'timestamp': now,
-          });
+          final turnId = 'external_u_${DateTime.now().microsecondsSinceEpoch}';
+          if (text.isNotEmpty) {
+            await MessageDeliveryService.instance.insert({
+              'id': turnId,
+              'bot_id': botId,
+              'role': 'user',
+              'type': 'text',
+              'content': text,
+              'timestamp': now,
+            });
+          }
+          final docs = await getApplicationDocumentsDirectory();
+          final media = Directory(p.join(docs.path, 'chat_media', 'external'));
+          for (var index = 0; index < imagePaths.length; index++) {
+            await media.create(recursive: true);
+            final original = File(imagePaths[index]);
+            final saved = await original.copy(p.join(
+                media.path, '${turnId}_$index${p.extension(original.path)}'));
+            try {
+              await MessageDeliveryService.instance.insert({
+                'id': '${turnId}_image_$index',
+                'bot_id': botId,
+                'role': 'user',
+                'type': 'image',
+                'content': '',
+                'file_path': saved.path,
+                'timestamp': now + index,
+              });
+            } catch (_) {
+              await saved.delete();
+              rethrow;
+            }
+          }
         }
         AppLogService.instance.add('EXTERNAL_API',
             '已桥接入站消息至 ${bot['name'] ?? botId}，同步记录=${sync ? '开启' : '关闭'}，文本长度=${text.length}');
@@ -319,6 +354,42 @@ class ExternalApiService {
         unawaited(response.done.then<void>((_) {}, onError: (Object error) {
           cancellationToken.cancel();
         }));
+        final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final completionId =
+            'chatcmpl-tidebot-${DateTime.now().microsecondsSinceEpoch}';
+        var emitted = '';
+        var pendingCharacters = 0;
+        var heartbeatPending = false;
+        Future<void> writes = Future<void>.value();
+        Map<String, dynamic> chunk(Map<String, dynamic> delta) => {
+              'id': completionId,
+              'object': 'chat.completion.chunk',
+              'created': created,
+              'model': _modelId(bot),
+              'choices': [
+                {'index': 0, 'delta': delta, 'finish_reason': null}
+              ],
+            };
+        void emit(String delta) {
+          if (delta.isEmpty || cancellationToken.isCancelled) return;
+          if (pendingCharacters + delta.length > 256 * 1024) {
+            cancellationToken.cancel();
+            return;
+          }
+          pendingCharacters += delta.length;
+          emitted += delta;
+          writes = writes.then((_) async {
+            try {
+              cancellationToken.throwIfCancelled();
+              await _writeSse(request, chunk({'content': delta}));
+            } finally {
+              pendingCharacters -= delta.length;
+            }
+          }).catchError((Object error) {
+            cancellationToken.cancel();
+          });
+        }
+
         if (stream) {
           response.headers.contentType =
               ContentType('text', 'event-stream', charset: 'utf-8');
@@ -326,16 +397,22 @@ class ExternalApiService {
           response.bufferOutput = false;
           sseStarted = true;
           response.write(': connected\n\n');
-          await response.flush();
+          await response.flush().timeout(const Duration(seconds: 15));
+          await _writeSse(request, chunk({'role': 'assistant'}));
           heartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
-            try {
-              response.write(': heartbeat\n\n');
-              unawaited(response.flush().catchError((Object error) {
-                cancellationToken.cancel();
-              }));
-            } catch (_) {
+            if (heartbeatPending || cancellationToken.isCancelled) return;
+            heartbeatPending = true;
+            writes = writes.then((_) async {
+              try {
+                cancellationToken.throwIfCancelled();
+                response.write(': heartbeat\n\n');
+                await response.flush().timeout(const Duration(seconds: 15));
+              } finally {
+                heartbeatPending = false;
+              }
+            }).catchError((Object error) {
               cancellationToken.cancel();
-            }
+            });
           });
         }
         AppLogService.instance
@@ -349,13 +426,14 @@ class ExternalApiService {
           requestHistory: clientHistory,
           extraSystemPrompt: clientInstructions,
           enableAutoSummary: false,
-          onDelta: stream ? (_) {} : null,
+          onDelta: stream ? emit : null,
           cancellationToken: cancellationToken,
         );
         AppLogService.instance.add('EXTERNAL_API',
             'AIManager.sendMessage 返回：success=${result['success']}, reply长度=${(result['reply']?.toString() ?? '').length}');
-        cancellationToken.throwIfCancelled();
         heartbeat?.cancel();
+        await writes;
+        cancellationToken.throwIfCancelled();
         if (result['success'] != true) {
           final message = result['error']?.toString() ?? 'TideBot 上游模型请求失败';
           if (sseStarted) {
@@ -382,39 +460,15 @@ class ExternalApiService {
             '准备返回给调用方：stream=$stream, 回复内容=${reply.length}字，usage=$usage');
         if (stream) {
           AppLogService.instance.add('EXTERNAL_API', 'Stream 模式：开始发送 SSE 数据');
-          final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-          final id = 'chatcmpl-tidebot-$created';
-          await _writeSse(request, {
-            'id': id,
-            'object': 'chat.completion.chunk',
-            'created': created,
-            'model': _modelId(bot),
-            'choices': [
-              {
-                'index': 0,
-                'delta': {'role': 'assistant'},
-                'finish_reason': null,
-              }
-            ],
-          });
-          AppLogService.instance.add('EXTERNAL_API', 'SSE: 已发送 role chunk');
-          if (reply.isNotEmpty) {
-            await _writeSse(request, {
-              'id': id,
-              'object': 'chat.completion.chunk',
-              'created': created,
-              'model': _modelId(bot),
-              'choices': [
-                {
-                  'index': 0,
-                  'delta': {'content': reply},
-                  'finish_reason': null,
-                }
-              ],
-            });
-            AppLogService.instance.add(
-                'EXTERNAL_API', 'SSE: 已发送 content chunk (${reply.length}字)');
+          if (reply.startsWith(emitted)) {
+            emit(reply.substring(emitted.length));
+          } else if (!emitted.endsWith(reply) && reply.isNotEmpty) {
+            // A non-streaming tool continuation can supply the final response.
+            emit(emitted.isEmpty ? reply : '${String.fromCharCode(10)}$reply');
           }
+          await writes;
+          cancellationToken.throwIfCancelled();
+          final id = completionId;
           await _writeSse(request, {
             'id': id,
             'object': 'chat.completion.chunk',
@@ -492,7 +546,7 @@ class ExternalApiService {
         } catch (_) {}
       }
       try {
-        await response.close();
+        await response.close().timeout(const Duration(seconds: 15));
       } catch (_) {}
     }
   }
@@ -583,27 +637,41 @@ class ExternalApiService {
     if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
       return null;
     }
-    final response = await http.get(uri).timeout(const Duration(seconds: 10));
-    if (response.statusCode < 200 || response.statusCode >= 300) return null;
-    final declared = response.headers['content-length'];
-    if (declared != null &&
-        int.tryParse(declared) != null &&
-        int.parse(declared) > 8 * 1024 * 1024) {
-      return null;
+    final client = http.Client();
+    const limit = 8 * 1024 * 1024;
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    final abort = Timer(const Duration(seconds: 15), client.close);
+    try {
+      final response = await client
+          .send(http.Request('GET', uri))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          (response.contentLength ?? 0) > limit) return null;
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk
+          in response.stream.timeout(const Duration(seconds: 5))) {
+        if (DateTime.now().isAfter(deadline) ||
+            bytes.length + chunk.length > limit) return null;
+        bytes.add(chunk);
+      }
+      return bytes.takeBytes();
+    } finally {
+      abort.cancel();
+      client.close();
     }
-    return response.bodyBytes;
   }
 
   Future<void> _writeSse(
       HttpRequest request, Map<String, dynamic> payload) async {
     final response = request.response;
     response.write('data: ${jsonEncode(payload)}\n\n');
-    await response.flush();
+    await response.flush().timeout(const Duration(seconds: 15));
   }
 
   Future<void> _finishSse(HttpRequest request) async {
     request.response.write('data: [DONE]\n\n');
-    await request.response.close();
+    await request.response.close().timeout(const Duration(seconds: 15));
   }
 
   String _modelId(Map<String, dynamic> bot) {

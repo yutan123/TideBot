@@ -72,6 +72,10 @@ class MainActivity: FlutterActivity() {
         TideEnhancedBackgroundWork.ensureScheduled(this)
     }
     
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
     override fun onDestroy() {
         dataTransfer?.dispose()
         selectionMenu?.dispose()
@@ -133,6 +137,34 @@ class MainActivity: FlutterActivity() {
         nativeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "stageFullRestore" -> backgroundResult(result, "RESTORE_PREPARE_FAILED") {
+                    TideColdRestore.stage(this, call.argument<String>("path") ?: error("Missing restore path"))
+                    true
+                }
+                "consumeRestoreResult" -> result.success(TideColdRestore.consumeResult(this))
+                "restartForRestore" -> {
+                    val launch = Intent.makeRestartActivityTask(ComponentName(this, MainActivity::class.java))
+                    val pending = android.app.PendingIntent.getActivity(this, 712391, launch,
+                        android.app.PendingIntent.FLAG_CANCEL_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+                    val alarms = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                    alarms.set(android.app.AlarmManager.ELAPSED_REALTIME, android.os.SystemClock.elapsedRealtime() + 1000, pending)
+                    result.success(null)
+                    finishAndRemoveTask()
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        val manager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                        manager.runningAppProcesses?.filter { it.uid == android.os.Process.myUid() && it.pid != android.os.Process.myPid() }
+                            ?.forEach { android.os.Process.killProcess(it.pid) }
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    }, 100)
+                }
+                "consumeMessageNotification" -> {
+                    val botId = intent?.getStringExtra("tide_bot_id")
+                    val messageId = intent?.getStringExtra("tide_message_id")
+                    intent?.removeExtra("tide_bot_id")
+                    intent?.removeExtra("tide_message_id")
+                    result.success(if (botId.isNullOrBlank()) null else mapOf("bot_id" to botId, "message_id" to messageId))
+                }
+
                 "setVisibleChat" -> {
                     TideNativeNotifications.visibleChatBotId = call.argument<String>("botId")
                     result.success(null)

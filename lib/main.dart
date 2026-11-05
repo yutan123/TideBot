@@ -54,6 +54,7 @@ void proactiveReplyMain() => startProactiveReplyEngine();
 final TideTheme tideTheme = TideTheme();
 // 悬浮窗功能已移除。
 void main() async {
+  ChatEventBus.instance.foregroundOwner = true;
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

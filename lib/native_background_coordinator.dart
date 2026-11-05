@@ -6,6 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'chat_event_bus.dart';
 import 'db.dart';
+import 'global_notice.dart';
+import 'app_navigation.dart';
+import 'voice_call_state_service.dart';
+import 'media_storage_service.dart';
 
 class NativeBackgroundCoordinator {
   NativeBackgroundCoordinator._();
@@ -85,8 +89,39 @@ class NativeBackgroundCoordinator {
     }
     _refreshing = true;
     try {
+      try {
+        if (appNavigatorKey.currentState != null) {
+          final restored =
+              await _channel.invokeMethod<String>('consumeRestoreResult');
+          if (restored != null) GlobalNotice.show(restored);
+          final payload = await _channel
+              .invokeMapMethod<String, dynamic>('consumeMessageNotification');
+          if (payload != null)
+            unawaited(openChatFromNotificationPayload(jsonEncode(payload)));
+        }
+      } on MissingPluginException {
+        // The coordinator also runs in engines without an Activity.
+      } on PlatformException catch (error) {
+        debugPrint('Native notification/restore result: $error');
+      }
       await refreshLogs();
       final db = await DBManager().database;
+      final events = await db.query('foreground_message_events', limit: 100);
+      for (final event in events) {
+        final id = event['message_id']?.toString() ?? '';
+        final message = await DBManager().getMessageById(id);
+        if (message != null) {
+          ChatEventBus.instance.publish(ChatEvent(
+              type: ChatEventType.inserted,
+              botId: message['bot_id']?.toString(),
+              messageId: id,
+              message: message));
+        }
+        await db.delete('foreground_message_events',
+            where: 'message_id = ?', whereArgs: [id]);
+      }
+      await VoiceCallStateService.instance.synchronize();
+      MediaStorageService.instance.kick();
       final rows = await db.query('background_messages',
           where: 'synced_to_chat = 1 AND displayed = 0',
           orderBy: 'timestamp',
@@ -99,7 +134,11 @@ class NativeBackgroundCoordinator {
       for (final row in rows) {
         final id = row['message_id']?.toString() ?? '';
         final message = await DBManager().getMessageById(id);
-        if (message == null) continue;
+        if (message == null) {
+          await db.delete('background_messages',
+              where: 'message_id = ?', whereArgs: [id]);
+          continue;
+        }
         ChatEventBus.instance.publish(ChatEvent(
             type: ChatEventType.inserted,
             botId: row['bot_id']?.toString(),

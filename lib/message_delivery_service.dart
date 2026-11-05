@@ -13,9 +13,8 @@ class MessageDeliveryService {
   Future<void> insert(
     Map<String, dynamic> message, {
     bool notify = true,
-    String? notificationTitle,
   }) async {
-    await _db.insertChatMessage(message, publishEvent: false);
+    message = await _db.insertChatMessage(message, publishEvent: false);
     final botId = message['bot_id']?.toString();
     final messageId = message['id']?.toString();
     ChatEventBus.instance.publish(ChatEvent(
@@ -30,12 +29,14 @@ class MessageDeliveryService {
         botId != null &&
         await _db.getKV('unread_notifications') != 'false' &&
         !AppState.isViewingChat(botId)) {
+      final botName = (await _db.getBotData(botId))?['name']?.toString().trim();
+      final title = botName != null && botName.isNotEmpty ? botName : '机器人';
       await OpsManager().showSystemNotification(
         id: messageId.hashCode,
-        title: notificationTitle ?? 'TideBot',
+        title: title,
         body: message['content']?.toString().trim().isEmpty == false
             ? message['content'].toString()
-            : 'TideBot 有一条新消息',
+            : '$title 有一条新消息',
         botId: botId,
         messageId: messageId,
       );

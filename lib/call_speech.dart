@@ -68,7 +68,7 @@ class CallSpeechStyle {
   }
 }
 
-const callSpeechPrompt = '''本轮是通话回复。最终回复只输出一个 JSON 对象，不要代码围栏、独白或协议标签：
+const callSpeechPrompt = '''本轮是通话回复。最终回复只输出一个 JSON 对象，不要代码围栏或协议标签：
 {"text":"实际要说的简短自然口语","speech":{"emotion":"neutral","intensity":0.4,"pace":"normal","delivery":"natural","direction":"针对本轮实际正文的具体朗读指导"}}
 text 只含对用户说的话。speech 只指导朗读，不能写入 text，也不要向用户解释语音参数。
 每轮根据角色性格、对话上下文、用户语义和本轮实际正文独立生成 speech，由你决定情绪与强度；不要沿用固定模板或默认每次都是平静安抚，也不要为了不同而随机改变情绪。情绪转折应符合当前语义，不受上一轮强度限制。

@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
@@ -11,6 +12,9 @@ import 'db.dart';
 
 class FullBackupService {
   static const _dbName = 'tidebot.db';
+  static const _native = MethodChannel('tidebot.native.channel');
+  static Future<void> restartToApply() =>
+      _native.invokeMethod<void>('restartForRestore');
 
   static Future<({String name, File file})> create() async {
     final work = await DataTransfer.workspace();
@@ -28,8 +32,7 @@ class FullBackupService {
           if (item is! File) continue;
           final relative = p.relative(item.path, from: docs.path);
           if (relative == 'tidebot_dev_logs.json' ||
-              relative.startsWith('TideBot/exports/'))
-            continue;
+              relative.startsWith('TideBot/exports/')) continue;
           files['documents/$relative'] = item.path;
         }
       }
@@ -90,171 +93,103 @@ class FullBackupService {
   }
 
   static Future<bool> export() => DataTransfer.exclusive(() async {
-    final backup = await create();
-    try {
-      return await DataTransfer.save(
-            backup.file,
-            backup.name,
-            'application/zip',
-          ) !=
-          null;
-    } finally {
-      await backup.file.parent.delete(recursive: true);
-    }
-  });
-
-  static Future<void> _deleteIfExists(String path) async {
-    final file = File(path);
-    if (await file.exists()) await file.delete();
-  }
+        final backup = await create();
+        try {
+          return await DataTransfer.save(
+                backup.file,
+                backup.name,
+                'application/zip',
+              ) !=
+              null;
+        } finally {
+          await backup.file.parent.delete(recursive: true);
+        }
+      });
 
   static Future<bool> restore() => DataTransfer.exclusive(() async {
-    return await DataTransfer.pickImport<bool>(const ['zip'], (path) async {
-          final work = await DataTransfer.workspace();
-          var preserveRecovery = false;
-          try {
-            await DataTransfer.extract(path, work.path);
-            final source = File('${work.path}/$_dbName');
-            final preferences = File('${work.path}/preferences.json');
-            if (!await source.exists() || !await preferences.exists()) {
-              throw const FormatException('不是有效的 TideBot 完整备份');
-            }
-            // Validate one preference at a time; retaining the complete decoded map
-            // doubled the live preferences during a full restore.
-            await for (final record in JsonRecords.read(
-              preferences,
-              arrays: const {},
-            )) {
-              final value = record.value;
-              if (value is! bool &&
-                  value is! num &&
-                  value is! String &&
-                  !(value is List && value.every((item) => item is String))) {
-                throw const FormatException('备份设置格式无效');
-              }
-            }
-            final check = await openDatabase(
-              source.path,
-              readOnly: true,
-              singleInstance: false,
-            );
-            try {
-              final result = await check.rawQuery('PRAGMA quick_check');
-              if (result.length != 1 || result.first.values.first != 'ok') {
-                throw const FormatException('备份数据库损坏');
-              }
-            } finally {
-              await check.close();
-            }
-            final dbPath = '${await getDatabasesPath()}/$_dbName';
-            final docs = await getApplicationDocumentsDirectory();
-            final restoredPaths = RestoredDocuments(
-              Directory('${work.path}/documents'),
-              docs,
-            );
-            await _relocateDatabase(source, restoredPaths.mapPath);
-            final mappedPreferences = File(
-              '${work.path}/restored_preferences.json',
-            );
-            final mappedSink = mappedPreferences.openWrite();
-            try {
-              mappedSink.write('{');
-              var first = true;
-              await for (final record in JsonRecords.read(
-                preferences,
-                arrays: const {},
-              )) {
-                if (!first) mappedSink.write(',');
-                first = false;
-                final value = await mapTransferValue(
-                  record.value,
-                  restoredPaths.mapPath,
-                );
-                mappedSink.write(
-                  '${jsonEncode(record.key)}:${jsonEncode(value)}',
-                );
-                await mappedSink.flush();
-              }
-              mappedSink.write('}');
-            } finally {
-              await mappedSink.close();
-            }
-            await DataTransfer.ensureSpace(
-              docs,
-              await DataTransfer.directoryBytes(work),
-            );
-            final prefs = await SharedPreferences.getInstance();
-            final oldPrefs = File('${work.path}/old_preferences.json');
-            final oldSink = oldPrefs.openWrite();
-            try {
-              oldSink.write('{');
-              var first = true;
-              for (final key in prefs.getKeys()) {
-                if (!first) oldSink.write(',');
-                first = false;
-                oldSink.write(
-                  '${jsonEncode(key)}:${jsonEncode(prefs.get(key))}',
-                );
-                await oldSink.flush();
-              }
-              oldSink.write('}');
-            } finally {
-              await oldSink.close();
-            }
-            final rollback = Directory('${work.path}/rollback');
-            await rollback.create();
-            await DBManager().close();
-            var movedDatabase = false;
-            var movedDocuments = false;
-            try {
-              for (final suffix in ['', '-wal', '-shm']) {
-                final file = File('$dbPath$suffix');
-                if (await file.exists())
-                  await file.rename('${rollback.path}/db$suffix');
-              }
-              movedDatabase = true;
-              await source.copy(dbPath);
-              if (await docs.exists()) {
-                await docs.rename('${rollback.path}/documents');
-                movedDocuments = true;
-              }
-              await docs.create(recursive: true);
-              final restored = Directory('${work.path}/documents');
-              if (await restored.exists())
-                await DataTransfer.copyDirectory(restored, docs);
-              await _setPreferences(prefs, mappedPreferences);
-            } catch (_) {
+        return await DataTransfer.pickImport<bool>(const ['zip'], (path) async {
+              final work = await DataTransfer.workspace();
               try {
-                await DBManager().close();
-                if (movedDatabase) {
-                  for (final suffix in ['', '-wal', '-shm']) {
-                    await _deleteIfExists('$dbPath$suffix');
+                await DataTransfer.extract(path, work.path);
+                final source = File('${work.path}/$_dbName');
+                final preferences = File('${work.path}/preferences.json');
+                if (!await source.exists() || !await preferences.exists()) {
+                  throw const FormatException('不是有效的 TideBot 完整备份');
+                }
+                // Validate one preference at a time; retaining the complete decoded map
+                // doubled the live preferences during a full restore.
+                await for (final record in JsonRecords.read(
+                  preferences,
+                  arrays: const {},
+                )) {
+                  final value = record.value;
+                  if (value is! bool &&
+                      value is! num &&
+                      value is! String &&
+                      !(value is List &&
+                          value.every((item) => item is String))) {
+                    throw const FormatException('备份设置格式无效');
                   }
                 }
-                for (final suffix in ['', '-wal', '-shm']) {
-                  final old = File('${rollback.path}/db$suffix');
-                  if (await old.exists()) await old.rename('$dbPath$suffix');
+                final check = await openDatabase(
+                  source.path,
+                  readOnly: true,
+                  singleInstance: false,
+                );
+                try {
+                  final result = await check.rawQuery('PRAGMA quick_check');
+                  if (result.length != 1 || result.first.values.first != 'ok') {
+                    throw const FormatException('备份数据库损坏');
+                  }
+                } finally {
+                  await check.close();
                 }
-                if (movedDocuments) {
-                  if (await docs.exists()) await docs.delete(recursive: true);
-                  await Directory(
-                    '${rollback.path}/documents',
-                  ).rename(docs.path);
+                final docs = await getApplicationDocumentsDirectory();
+                final restoredPaths = RestoredDocuments(
+                  Directory('${work.path}/documents'),
+                  docs,
+                );
+                await _relocateDatabase(source, restoredPaths.mapPath);
+                final mappedPreferences = File(
+                  '${work.path}/restored_preferences.json',
+                );
+                final mappedSink = mappedPreferences.openWrite();
+                try {
+                  mappedSink.write('{');
+                  var first = true;
+                  await for (final record in JsonRecords.read(
+                    preferences,
+                    arrays: const {},
+                  )) {
+                    if (!first) mappedSink.write(',');
+                    first = false;
+                    final value = await mapTransferValue(
+                      record.value,
+                      restoredPaths.mapPath,
+                    );
+                    mappedSink.write(
+                      '${jsonEncode(record.key)}:${jsonEncode(value)}',
+                    );
+                    await mappedSink.flush();
+                  }
+                  mappedSink.write('}');
+                } finally {
+                  await mappedSink.close();
                 }
-                await _setPreferences(prefs, oldPrefs);
-              } catch (_) {
-                preserveRecovery = true;
-                throw StateError('恢复中断，原始数据保留在 ${rollback.path}，请勿清理缓存');
+                await DataTransfer.ensureSpace(
+                  docs,
+                  await DataTransfer.directoryBytes(work),
+                );
+                await _requireReauthorization(source);
+                await _native.invokeMethod<bool>(
+                    'stageFullRestore', {'path': work.path});
+                return true;
+              } finally {
+                await work.delete(recursive: true);
               }
-              rethrow;
-            }
-            return true;
-          } finally {
-            if (!preserveRecovery) await work.delete(recursive: true);
-          }
-        }) ??
-        false;
-  });
+            }) ??
+            false;
+      });
 
   // Rewrite only the extracted snapshot, before touching live data. Bounded
   // pages keep large chat databases from being retained in memory.
@@ -313,29 +248,40 @@ class FullBackupService {
     }
   }
 
-  static Future<void> _setPreferences(
-    SharedPreferences prefs,
-    File values,
-  ) async {
-    if (!await prefs.clear()) throw StateError('无法清理旧设置');
-    await for (final entry in JsonRecords.read(values, arrays: const {})) {
-      final key = entry.key;
-      final value = entry.value;
-      bool saved;
-      if (value is bool) {
-        saved = await prefs.setBool(key, value);
-      } else if (value is int) {
-        saved = await prefs.setInt(key, value);
-      } else if (value is double) {
-        saved = await prefs.setDouble(key, value);
-      } else if (value is String) {
-        saved = await prefs.setString(key, value);
-      } else if (value is List && value.every((item) => item is String)) {
-        saved = await prefs.setStringList(key, value.cast<String>());
-      } else {
-        throw const FormatException('备份设置格式无效');
+  static Future<void> _requireReauthorization(File source) async {
+    final db = await openDatabase(source.path, singleInstance: false);
+    try {
+      final tables = (await db
+              .rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'"))
+          .map((row) => row['name'])
+          .toSet();
+      await db.transaction((txn) async {
+        if (tables.contains('mcp_servers')) {
+          await txn.update('mcp_servers', {
+            'enabled': 0,
+            'status': 'disconnected',
+            'error': '备份不包含安全存储凭据，请重新填写鉴权信息后启用'
+          });
+        }
+        if (tables.contains('skill_tools')) {
+          await txn.update('skill_tools', {'enabled': 0, 'authorized': 0},
+              where: "executor IN ('http', 'mcp_proxy')");
+        }
+        if (tables.contains('voice_call_records')) {
+          await txn.update('voice_call_records', {'status': 'ended'},
+              where: "status IN ('ringing', 'active')");
+          await txn.update(
+              'chat_history', {'call_status': 'ended', 'content': '[语音通话，已结束]'},
+              where:
+                  "type = 'voice_call_card' AND call_status IN ('ringing', 'active')");
+        }
+      });
+      final checkpoint = await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+      if (checkpoint.isNotEmpty && checkpoint.first.values.first != 0) {
+        throw StateError('备份数据库忙，请重新导入');
       }
-      if (!saved) throw StateError('无法恢复设置：$key');
+    } finally {
+      await db.close();
     }
   }
 }

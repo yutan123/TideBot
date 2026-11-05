@@ -38,53 +38,22 @@ class _DataDashboardPageState extends State<DataDashboardPage> {
     // 仅首次进入显示加载态；切换范围时保留当前图表，避免整页闪成空白。
     if (_tokenSeries.isEmpty && _replySeries.isEmpty)
       setState(() => _loading = true);
-    final db = await DBManager().database;
     final now = DateTime.now();
-    final startMs = _dayStart(now.subtract(Duration(days: _rangeDays - 1)))
-        .millisecondsSinceEpoch;
 
     final days = <DateTime>[];
     for (var i = _rangeDays - 1; i >= 0; i--) {
       days.add(_dayStart(now.subtract(Duration(days: i))));
     }
-
-    final chartUsageRows = await db.query('ai_usage_events',
-        where: 'timestamp >= ? AND event_type = ?',
-        whereArgs: [startMs, 'chat'],
-        orderBy: 'timestamp ASC');
-    final allUsageRows = await db
-        .query('ai_usage_events', where: 'event_type = ?', whereArgs: ['chat']);
-
+    // Charts, overview and sidebar share the same recorded usage and replies.
+    final allUsageRows = await DBManager().dailyUsageStats();
     final tokenByDay = <String, int>{};
     final replyByDay = <String, int>{};
-    for (final r in chartUsageRows) {
-      final ts = (r['timestamp'] as num?)?.toInt();
-      if (ts == null) continue;
+    for (final row in allUsageRows) {
+      final ts = (row['timestamp'] as num).toInt();
       final d = _dayStart(DateTime.fromMillisecondsSinceEpoch(ts));
       final key = '${d.year}-${d.month}-${d.day}';
-      tokenByDay[key] =
-          (tokenByDay[key] ?? 0) + ((r['total_tokens'] as num?)?.toInt() ?? 0);
-      replyByDay[key] =
-          (replyByDay[key] ?? 0) + ((r['reply_count'] as num?)?.toInt() ?? 0);
-    }
-
-    // 历史账本之前的 assistant 文本作为估算兜底，避免丢失早期回复。
-    final chatRows = await db.query('chat_history',
-        columns: ['content', 'timestamp'],
-        where:
-            "role = 'assistant' AND type IN ('text', 'audio') AND timestamp >= ?",
-        whereArgs: [startMs],
-        orderBy: 'timestamp ASC');
-
-    for (final r in chatRows) {
-      final ts = (r['timestamp'] as num?)?.toInt();
-      if (ts == null) continue;
-      final d = _dayStart(DateTime.fromMillisecondsSinceEpoch(ts));
-      final key = '${d.year}-${d.month}-${d.day}';
-      if ((replyByDay[key] ?? 0) > 0) continue; // ledger 已覆盖，避免重复计数
-      replyByDay[key] = (replyByDay[key] ?? 0) + 1;
-      tokenByDay[key] = (tokenByDay[key] ?? 0) +
-          estimateTokens(r['content']?.toString() ?? '');
+      tokenByDay[key] = (row['total_tokens'] as num?)?.toInt() ?? 0;
+      replyByDay[key] = (row['reply_count'] as num?)?.toInt() ?? 0;
     }
 
     final tokenSeries = <int>[];

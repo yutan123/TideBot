@@ -119,12 +119,14 @@ List<Map<String, dynamic>> sleepSegments(Map<String, dynamic> sleep,
 }
 
 /// Guidance uses this sleep session, so midnight does not reset awakenings.
-String sleepReplyGuidance(Map<String, dynamic> sleep, {required int now}) {
+String sleepReplyGuidance(Map<String, dynamic> sleep,
+    {required int now, bool allowSilence = true}) {
   final end =
       min(now + 1, vitalInt(sleep['end'], vitalInt(sleep['planned_end'])));
   final count = sleepSegments(sleep, until: end)
       .where((segment) => segment['state'] == '清醒')
       .length;
+  if (!allowSilence) return '\n【睡眠期间】现在是你的睡觉时间。当晚已清醒$count次；回复后会继续休息。';
   final caution = count >= 2
       ? '当晚清醒次数过多，不建议回复；除非确有必要必须回复，否则建议选择不回复，调用 choose_silence，不输出正文。危机与紧急求助仍应及时回应。'
       : '';

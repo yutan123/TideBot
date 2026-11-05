@@ -26,6 +26,7 @@ import 'bot_data_page.dart';
 // ==================== 空间页 ====================
 class SpacePage extends StatefulWidget {
   final PageController? pageController;
+
   /// Uses the real space layout with example content, without loading services.
   final bool previewOnly;
   const SpacePage({super.key, this.pageController, this.previewOnly = false});
@@ -1057,7 +1058,7 @@ class SquarePageState extends State<SquarePage>
             begin: const Offset(0, 0.3),
             end: Offset.zero,
           ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-          child: FadeTransition(opacity: a, child: child),
+          child: child,
         ),
       ),
     );
@@ -1610,141 +1611,145 @@ class _PublishFeedPageState extends State<_PublishFeedPage> {
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          '发布动态',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontFamily: 'TideFont',
-            color: theme.onBackgroundStrong,
-          ),
-        ),
+    // Keep the backdrop inside the page so it moves with the entire route.
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              final text = ctrl.text.trim();
-              if (text.isNotEmpty) {
-                widget.onPublished(text, _imagePath);
-                Navigator.pop(context);
-              }
-            },
-            child: Text(
-              '发布',
-              style: TextStyle(
-                color: theme.primary,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'TideFont',
-              ),
+        appBar: AppBar(
+          title: Text(
+            '发布动态',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontFamily: 'TideFont',
+              color: theme.onBackgroundStrong,
             ),
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: TextField(
-                contextMenuBuilder: androidTextContextMenu,
-                controller: ctrl,
-                autofocus: true,
-                maxLines: null,
-                expands: true,
-                style: const TextStyle(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
+            onPressed: () => Navigator.pop(context),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                final text = ctrl.text.trim();
+                if (text.isNotEmpty) {
+                  widget.onPublished(text, _imagePath);
+                  Navigator.pop(context);
+                }
+              },
+              child: Text(
+                '发布',
+                style: TextStyle(
+                  color: theme.primary,
                   fontSize: 16,
+                  fontWeight: FontWeight.w600,
                   fontFamily: 'TideFont',
-                  height: 1.8,
-                ),
-                textAlignVertical: TextAlignVertical.top,
-                decoration: const InputDecoration(
-                  hintText: '分享你的想法...',
-                  hintStyle: TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFFC7C7CC),
-                    fontFamily: 'TideFont',
-                  ),
-                  border: InputBorder.none,
                 ),
               ),
             ),
-          ),
-          if (_imagePath != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  children: [
-                    Image.file(
-                      File(_imagePath!),
-                      height: 120,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
+          ],
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: TextField(
+                  contextMenuBuilder: androidTextContextMenu,
+                  controller: ctrl,
+                  autofocus: true,
+                  maxLines: null,
+                  expands: true,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontFamily: 'TideFont',
+                    height: 1.8,
+                  ),
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    hintText: '分享你的想法...',
+                    hintStyle: TextStyle(
+                      fontSize: 16,
+                      color: Color(0xFFC7C7CC),
+                      fontFamily: 'TideFont',
                     ),
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: GestureDetector(
-                        onTap: () => setState(() => _imagePath = null),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.black54,
-                          ),
-                          child: const Icon(
-                            Icons.close,
-                            size: 16,
-                            color: Colors.white,
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+            ),
+            if (_imagePath != null)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    children: [
+                      Image.file(
+                        File(_imagePath!),
+                        height: 120,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: GestureDetector(
+                          onTap: () => setState(() => _imagePath = null),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black54,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              size: 16,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: BouncyTap(
-              onTap: _pickImage,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: theme.primary.withValues(alpha: 0.1),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.image_rounded, size: 20, color: theme.primary),
-                    const SizedBox(width: 8),
-                    Text(
-                      '添加图片',
-                      style: TextStyle(
-                        color: theme.primary,
-                        fontFamily: 'TideFont',
-                        fontSize: 14,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: BouncyTap(
+                onTap: _pickImage,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: theme.primary.withValues(alpha: 0.1),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.image_rounded, size: 20, color: theme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        '添加图片',
+                        style: TextStyle(
+                          color: theme.primary,
+                          fontFamily: 'TideFont',
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1810,7 +1815,7 @@ void openFeedDetail(
           begin: const Offset(0, 0.15),
           end: Offset.zero,
         ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-        child: FadeTransition(opacity: a, child: child),
+        child: child,
       ),
     ),
   );
@@ -2193,270 +2198,274 @@ class _FeedDetailPageState extends State<_FeedDetailPage> {
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     final feed = widget.feed;
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          '动态详情',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontFamily: 'TideFont',
-            color: theme.onBackgroundStrong,
-          ),
-        ),
+    // Keep the backdrop inside the page so it moves with the entire route.
+    return TideBackground(
+      child: Scaffold(
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: IconThemeData(color: theme.onBackgroundWeak),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                Row(
-                  children: [
-                    feed['is_bot'] == true
-                        ? TideBotAvatar(
-                            name: feed['user']?.toString() ?? 'TA',
-                            path: feed['bot_avatar']?.toString(),
-                            size: 44,
-                          )
-                        : CircleAvatar(
-                            radius: 22,
-                            backgroundColor: theme.primary.withValues(
-                              alpha: 0.15,
+        appBar: AppBar(
+          title: Text(
+            '动态详情',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontFamily: 'TideFont',
+              color: theme.onBackgroundStrong,
+            ),
+          ),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: IconThemeData(color: theme.onBackgroundWeak),
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Row(
+                    children: [
+                      feed['is_bot'] == true
+                          ? TideBotAvatar(
+                              name: feed['user']?.toString() ?? 'TA',
+                              path: feed['bot_avatar']?.toString(),
+                              size: 44,
+                            )
+                          : CircleAvatar(
+                              radius: 22,
+                              backgroundColor: theme.primary.withValues(
+                                alpha: 0.15,
+                              ),
+                              child: Icon(
+                                Icons.person_rounded,
+                                size: 24,
+                                color: theme.primary,
+                              ),
                             ),
-                            child: Icon(
-                              Icons.person_rounded,
-                              size: 24,
-                              color: theme.primary,
-                            ),
-                          ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          feed['user'] ?? '',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'TideFont',
-                            color: theme.textStrong,
-                          ),
-                        ),
-                        Text(
-                          feed['time'] ?? '',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: theme.textFaint,
-                            fontFamily: 'TideFont',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                if ((feed['image'] ?? '').toString().isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.file(
-                        File(feed['image'] as String),
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                Text(
-                  feed['content'] ?? '',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontFamily: 'TideFont',
-                    color: theme.textStrong,
-                    height: 1.8,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    BouncyTap(
-                      onTap: _toggleLike,
-                      child: Row(
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            feed['favorited'] == true
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
-                            size: 22,
-                            color: feed['favorited'] == true
-                                ? const Color(0xFFE74C3C)
-                                : theme.iconMuted,
-                          ),
-                          const SizedBox(width: 6),
                           Text(
-                            '${feed['likes']} 点赞',
+                            feed['user'] ?? '',
                             style: TextStyle(
-                              fontSize: 14,
-                              color: theme.textWeak,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'TideFont',
+                              color: theme.textStrong,
+                            ),
+                          ),
+                          Text(
+                            feed['time'] ?? '',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.textFaint,
                               fontFamily: 'TideFont',
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(width: 24),
-                    Icon(
-                      Icons.chat_bubble_outline_rounded,
-                      size: 22,
-                      color: theme.primary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${feed['comments']} 评论',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: theme.primary,
-                        fontFamily: 'TideFont',
-                      ),
-                    ),
-                    const Spacer(),
-                    BouncyTap(
-                      onTap: _toggleCollect,
-                      child: Icon(
-                        feed['collected'] == true
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_border_rounded,
-                        size: 22,
-                        color: feed['collected'] == true
-                            ? theme.primary
-                            : theme.iconMuted,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 28),
-                Text(
-                  '全部评论',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'TideFont',
-                    color: theme.textStrong,
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                if (_loading)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: CircularProgressIndicator(color: theme.primary),
+                  const SizedBox(height: 20),
+                  if ((feed['image'] ?? '').toString().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.file(
+                          File(feed['image'] as String),
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
                     ),
-                  )
-                else if (_comments.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        '还没有评论，来说点什么吧',
+                  Text(
+                    feed['content'] ?? '',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontFamily: 'TideFont',
+                      color: theme.textStrong,
+                      height: 1.8,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      BouncyTap(
+                        onTap: _toggleLike,
+                        child: Row(
+                          children: [
+                            Icon(
+                              feed['favorited'] == true
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              size: 22,
+                              color: feed['favorited'] == true
+                                  ? const Color(0xFFE74C3C)
+                                  : theme.iconMuted,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              '${feed['likes']} 点赞',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: theme.textWeak,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 24),
+                      Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        size: 22,
+                        color: theme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${feed['comments']} 评论',
                         style: TextStyle(
-                          fontSize: 13,
-                          color: theme.textFaint,
+                          fontSize: 14,
+                          color: theme.primary,
                           fontFamily: 'TideFont',
                         ),
                       ),
-                    ),
-                  )
-                else
-                  ..._commentTree(),
-              ],
-            ),
-          ),
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-              decoration: BoxDecoration(
-                color: theme.surface,
-                border: Border(top: BorderSide(color: theme.border)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_replyTarget != null)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '回复 ${_replyTarget!['author_id'] ?? '评论'}',
-                            textAlign: TextAlign.start,
-                            style: TextStyle(
-                              color: theme.textWeak,
-                              fontFamily: 'TideFont',
-                            ),
-                          ),
+                      const Spacer(),
+                      BouncyTap(
+                        onTap: _toggleCollect,
+                        child: Icon(
+                          feed['collected'] == true
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                          size: 22,
+                          color: feed['collected'] == true
+                              ? theme.primary
+                              : theme.iconMuted,
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 18),
-                          onPressed: () => setState(() => _replyTarget = null),
-                        ),
-                      ],
-                    ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          contextMenuBuilder: androidTextContextMenu,
-                          controller: _commentCtrl,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted:
-                              _sendingComment ? null : (_) => _sendComment(),
-                          style: TextStyle(
-                            color: theme.textStrong,
-                            fontFamily: 'TideFont',
-                          ),
-                          decoration: InputDecoration(
-                            hintText: '写评论...',
-                            hintStyle: TextStyle(
-                              color: theme.textFaint,
-                              fontFamily: 'TideFont',
-                            ),
-                            filled: true,
-                            fillColor: theme.surfaceVariant,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 9,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _sendingComment ? null : _sendComment,
-                        icon: _sendingComment
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(Icons.send_rounded, color: theme.primary),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 28),
+                  Text(
+                    '全部评论',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'TideFont',
+                      color: theme.textStrong,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_loading)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: CircularProgressIndicator(color: theme.primary),
+                      ),
+                    )
+                  else if (_comments.isEmpty)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          '还没有评论，来说点什么吧',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: theme.textFaint,
+                            fontFamily: 'TideFont',
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._commentTree(),
                 ],
               ),
             ),
-          ),
-        ],
+            SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                decoration: BoxDecoration(
+                  color: theme.surface,
+                  border: Border(top: BorderSide(color: theme.border)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_replyTarget != null)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '回复 ${_replyTarget!['author_id'] ?? '评论'}',
+                              textAlign: TextAlign.start,
+                              style: TextStyle(
+                                color: theme.textWeak,
+                                fontFamily: 'TideFont',
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () =>
+                                setState(() => _replyTarget = null),
+                          ),
+                        ],
+                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            contextMenuBuilder: androidTextContextMenu,
+                            controller: _commentCtrl,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted:
+                                _sendingComment ? null : (_) => _sendComment(),
+                            style: TextStyle(
+                              color: theme.textStrong,
+                              fontFamily: 'TideFont',
+                            ),
+                            decoration: InputDecoration(
+                              hintText: '写评论...',
+                              hintStyle: TextStyle(
+                                color: theme.textFaint,
+                                fontFamily: 'TideFont',
+                              ),
+                              filled: true,
+                              fillColor: theme.surfaceVariant,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 9,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: _sendingComment ? null : _sendComment,
+                          icon: _sendingComment
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(Icons.send_rounded, color: theme.primary),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

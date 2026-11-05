@@ -30,6 +30,7 @@ class ChatEventBus {
   final StreamController<ChatEvent> _controller =
       StreamController<ChatEvent>.broadcast(sync: true);
 
+  bool foregroundOwner = false;
   Stream<ChatEvent> get events => _controller.stream;
 
   void publish(ChatEvent event) {

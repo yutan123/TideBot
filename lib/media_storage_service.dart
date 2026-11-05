@@ -59,6 +59,8 @@ class MediaStorageService {
   }
 
   static Future<void> ensureSchema(Database db) async {
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS media_storage_garbage (path TEXT PRIMARY KEY)');
     await db.execute('''CREATE TABLE IF NOT EXISTS media_storage_jobs (
       source TEXT PRIMARY KEY, target TEXT, type TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0
@@ -87,9 +89,13 @@ class MediaStorageService {
     if (setting.isNotEmpty && setting.first['value'] == 'false') return;
     await db.insert('media_storage_jobs', {'source': source, 'type': type},
         conflictAlgorithm: ConflictAlgorithm.ignore);
+    await db.update('media_storage_jobs', {'state': 'pending', 'attempts': 0},
+        where: "source = ? AND (state = 'skipped' OR attempts >= 3)",
+        whereArgs: [source]);
   }
 
   void kick() {
+    if (_running || _retry?.isActive == true) return;
     _retry?.cancel();
     _retry = Timer(const Duration(seconds: 2), () {
       unawaited(_drain().catchError((Object error, StackTrace stack) {
@@ -203,6 +209,7 @@ class MediaStorageService {
           return 0;
         }));
       });
+      await _collectGarbage(db);
       while (true) {
         if (await _maintenance(db)) {
           _later();
@@ -222,6 +229,12 @@ class MediaStorageService {
                 'false') {
               if (target != null) await _remove(target);
               await db.update('media_storage_jobs', {'state': 'skipped'},
+                  where: 'source = ?', whereArgs: [source]);
+              continue;
+            }
+            if (!await File(source).exists()) {
+              if (target != null) await _remove(target);
+              await db.delete('media_storage_jobs',
                   where: 'source = ?', whereArgs: [source]);
               continue;
             }
@@ -303,8 +316,9 @@ class MediaStorageService {
           // A half-written output is never reused after a failed attempt.
           final current = await db.query('media_storage_jobs',
               columns: ['state'], where: 'source = ?', whereArgs: [source]);
-          if (current.first['state'] == 'pending' && target != null)
-            await _remove(target);
+          if (current.isNotEmpty &&
+              current.first['state'] == 'pending' &&
+              target != null) await _remove(target);
           await db.rawUpdate(
               'UPDATE media_storage_jobs SET attempts = attempts + 1 WHERE source = ?',
               [source]);
@@ -323,6 +337,65 @@ class MediaStorageService {
       } finally {
         _running = false;
       }
+    }
+  }
+
+  /// Queue only files belonging to deleted rows, never scan historical media.
+  static Future<void> queueGarbage(
+      DatabaseExecutor db, Iterable<String> paths) async {
+    for (final path in paths.toSet()) {
+      if (!p.isAbsolute(path)) continue;
+      await db.insert('media_storage_garbage', {'path': path},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+      final aliases = await db.query('media_storage_jobs',
+          where: 'source = ? OR target = ?', whereArgs: [path, path]);
+      for (final alias in aliases) {
+        for (final value in [alias['source'], alias['target']]) {
+          if (value is String)
+            await db.insert('media_storage_garbage', {'path': value},
+                conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    }
+  }
+
+  Future<void> _collectGarbage(Database db) async {
+    final candidates = await db.query('media_storage_garbage');
+    for (final candidate in candidates) {
+      final path = candidate['path'] as String;
+      await db.transaction((txn) async {
+        if (await _maintenance(txn)) return;
+        final uses = await txn.query('media_storage_uses',
+            where: 'expires > ?',
+            whereArgs: [DateTime.now().millisecondsSinceEpoch],
+            limit: 1);
+        if (uses.isNotEmpty) {
+          _later();
+          return;
+        }
+        if (await _otherReference(txn, path) ||
+            await _preferenceReference(path)) {
+          await txn.delete('media_storage_garbage',
+              where: 'path = ?', whereArgs: [path]);
+          return;
+        }
+        final aliases = await txn.query('media_storage_jobs',
+            where: 'source = ? OR target = ?', whereArgs: [path, path]);
+        for (final alias in aliases) {
+          for (final value in [alias['source'], alias['target']]) {
+            if (value is String &&
+                value != path &&
+                (await _otherReference(txn, value) ||
+                    await _preferenceReference(value))) return;
+          }
+        }
+        if (await File(path).exists() && await _owned(path))
+          await _remove(path);
+        await txn.delete('media_storage_jobs',
+            where: 'source = ? OR target = ?', whereArgs: [path, path]);
+        await txn.delete('media_storage_garbage',
+            where: 'path = ?', whereArgs: [path]);
+      });
     }
   }
 

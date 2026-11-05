@@ -16,6 +16,8 @@ import 'ota_release.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
+class _DownloadCancelled implements Exception {}
+
 class OtaUpdate {
   static const _channel = MethodChannel('tidebot.native.channel');
   static const _releaseApi =
@@ -194,6 +196,8 @@ class OtaUpdate {
       final selectedUrls = await _rankUrls(urls);
       await _showDownloadProgress(context, selectedUrls, file);
       await _channel.invokeMethod('installApk', {'path': file.path});
+    } on _DownloadCancelled {
+      return;
     } catch (error) {
       if (context.mounted) {
         GlobalNotice.show('更新失败，正在打开浏览器下载：${_errorMessage(error)}',
@@ -220,15 +224,16 @@ class OtaUpdate {
   ) async {
     var cancelled = false;
     http.Client? activeClient;
-    var dialogVisible = false;
+    Route<void>? downloadRoute;
     var received = 0;
     var total = 0;
     void Function(void Function())? refresh;
 
     void closeDialog() {
-      if (!dialogVisible || !context.mounted) return;
-      dialogVisible = false;
-      Navigator.of(context, rootNavigator: true).pop();
+      final route = downloadRoute;
+      downloadRoute = null;
+      refresh = null;
+      if (route != null && route.isActive) route.navigator?.removeRoute(route);
     }
 
     final dialog = TideDialogs.show<void>(
@@ -236,48 +241,53 @@ class OtaUpdate {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) {
+          downloadRoute = ModalRoute.of<void>(ctx);
           refresh = setState;
           final progress = total > 0 ? received / total : null;
-          return Center(
-            child: Material(
-              type: MaterialType.transparency,
-              child: TideDialogs.glassContent(
-                context: ctx,
-                children: [
-                  const Text('正在下载更新',
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'TideFont')),
-                  const SizedBox(height: 14),
-                  LinearProgressIndicator(value: progress),
-                  const SizedBox(height: 8),
-                  Text(
-                    total > 0
-                        ? '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB'
-                        : '${(received / 1024 / 1024).toStringAsFixed(1)} MB',
-                    style: const TextStyle(fontFamily: 'TideFont'),
-                  ),
-                  const SizedBox(height: 14),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () {
-                        cancelled = true;
-                        activeClient?.close();
-                        Navigator.pop(ctx);
-                      },
-                      child: const Text('取消'),
+          return PopScope(
+            canPop: false,
+            child: Center(
+              child: Material(
+                type: MaterialType.transparency,
+                child: TideDialogs.glassContent(
+                  context: ctx,
+                  children: [
+                    const Text('正在下载更新',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'TideFont')),
+                    const SizedBox(height: 14),
+                    LinearProgressIndicator(value: progress),
+                    const SizedBox(height: 8),
+                    Text(
+                      total > 0
+                          ? '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB'
+                          : '${(received / 1024 / 1024).toStringAsFixed(1)} MB',
+                      style: const TextStyle(fontFamily: 'TideFont'),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          cancelled = true;
+                          activeClient?.close();
+                          closeDialog();
+                        },
+                        child: const Text('取消'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         },
       ),
     );
-    dialogVisible = true;
+    // Let the builder capture the exact route before starting network work.
+    await WidgetsBinding.instance.endOfFrame;
     try {
       await _download(
         urls,
@@ -287,9 +297,10 @@ class OtaUpdate {
         onProgress: (next, size) {
           received = next;
           total = size;
-          refresh?.call(() {});
+          if (!cancelled) refresh?.call(() {});
         },
       );
+      if (cancelled) throw _DownloadCancelled();
       closeDialog();
     } catch (_) {
       closeDialog();
@@ -337,7 +348,13 @@ class OtaUpdate {
                 }))
               .timeout(const Duration(seconds: 8));
           final valid = _isValidApkProbe(response);
-          await response.stream.drain<void>();
+          // A proxy may ignore Range: consume at most one chunk, then cancel.
+          final iterator = StreamIterator<List<int>>(response.stream);
+          try {
+            await iterator.moveNext().timeout(const Duration(seconds: 8));
+          } finally {
+            await iterator.cancel();
+          }
           return (
             url: url,
             valid: valid,
@@ -365,7 +382,7 @@ class OtaUpdate {
     final errors = <String>[];
     for (final url in urls) {
       if (isCancelled?.call() == true) {
-        throw const HttpException('用户取消下载');
+        throw _DownloadCancelled();
       }
       final client = http.Client();
       onClientCreated?.call(client);
@@ -384,10 +401,15 @@ class OtaUpdate {
         var received = 0;
         final total =
             int.tryParse(response.headers['content-length'] ?? '') ?? 0;
-        await for (final chunk in response.stream) {
+        final deadline = DateTime.now().add(const Duration(minutes: 15));
+        await for (final chunk
+            in response.stream.timeout(const Duration(seconds: 30))) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw TimeoutException('下载超过时限');
+          }
           if (isCancelled?.call() == true) {
             client.close();
-            throw const HttpException('用户取消下载');
+            throw _DownloadCancelled();
           }
           sink.add(chunk);
           received += chunk.length;
@@ -396,7 +418,16 @@ class OtaUpdate {
         await sink.flush();
         await sink.close();
         sink = null;
-        final bytes = await destination.readAsBytes();
+        final handle = await destination.open();
+        late final List<int> bytes;
+        try {
+          bytes = await handle.read(4);
+        } finally {
+          await handle.close();
+        }
+        if (total > 0 && received != total) {
+          throw const HttpException('下载文件不完整');
+        }
         if (bytes.length >= 4 &&
             bytes[0] == 0x50 &&
             bytes[1] == 0x4b &&

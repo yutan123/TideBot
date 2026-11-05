@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'native_background_coordinator.dart';
 import 'media_storage_service.dart';
 import 'dart:async';
@@ -48,8 +49,11 @@ class DBManager {
 
   Database? _db;
   Future<Database>? _openingDatabase;
+  Future<void>? _closingDatabase;
 
   Future<Database> get database async {
+    final closing = _closingDatabase;
+    if (closing != null) await closing;
     final current = _db;
     if (current != null) return current;
 
@@ -103,10 +107,21 @@ class DBManager {
     };
   }
 
-  Future<void> close() async {
+  Future<void> close() {
+    return _closingDatabase ??= _closeDatabase().whenComplete(() {
+      _closingDatabase = null;
+    });
+  }
+
+  Future<void> _closeDatabase() async {
+    final opening = _openingDatabase;
+    if (opening != null) {
+      try {
+        await opening;
+      } catch (_) {}
+    }
     final current = _db;
     _db = null;
-    _openingDatabase = null;
     if (current != null) await current.close();
   }
 
@@ -459,6 +474,19 @@ class DBManager {
   }
 
   Future<Database> _initDB() async {
+    final support = await getApplicationSupportDirectory();
+    final marker = File(p.join(support.path, 'restore_credentials_pending'));
+    if (await marker.exists()) {
+      const secure = FlutterSecureStorage();
+      final entries = await secure.readAll();
+      for (final key in entries.keys) {
+        if (key.startsWith('mcp_headers_') ||
+            key.startsWith('skill_headers_')) {
+          await secure.delete(key: key);
+        }
+      }
+      if (await marker.exists()) await marker.delete();
+    }
     final path = p.join(await getDatabasesPath(), 'tidebot.db');
     final database = await openDatabase(
       path,
@@ -468,6 +496,8 @@ class DBManager {
       },
       onOpen: (db) async {
         await MediaStorageService.ensureSchema(db);
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS foreground_message_events (message_id TEXT PRIMARY KEY)');
         await _ensureColumns(db, 'mcp_servers', const {
           'description': "TEXT NOT NULL DEFAULT ''",
           'service_description': "TEXT NOT NULL DEFAULT ''",
@@ -1506,7 +1536,8 @@ class DBManager {
 
   Future<void> deleteBot(String id) async {
     final db = await database;
-    // 级联删除会同步清空该 bot 的聊天和记忆
+    await clearChatHistory(id);
+    // Foreign keys remove the remaining bot-owned rows.
     await db.delete('bots', where: 'id = ?', whereArgs: [id]);
     await NativeBackgroundCoordinator.synchronize();
   }
@@ -1602,7 +1633,7 @@ class DBManager {
     return queryMessages(botId);
   }
 
-  Future<void> insertChatMessage(
+  Future<Map<String, dynamic>> insertChatMessage(
     Map<String, dynamic> msg, {
     bool publishEvent = true,
   }) async {
@@ -1625,6 +1656,10 @@ class DBManager {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       await MediaStorageService.enqueue(txn, msg);
+      if (!ChatEventBus.instance.foregroundOwner) {
+        await txn.insert('foreground_message_events', {'message_id': msg['id']},
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
       final timestamp = (msg['timestamp'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch;
       await txn.update(
@@ -1645,6 +1680,7 @@ class DBManager {
         ),
       );
     }
+    return Map<String, dynamic>.from(msg);
   }
 
   Future<int> unreadBotCount() async {
@@ -1779,11 +1815,29 @@ class DBManager {
     }
   }
 
-  Future<void> deleteMessage(String msgId) async {
+  Future<void> _deleteChatRows(String where, List<Object?> args) async {
     final db = await database;
-    await db.delete('chat_history', where: 'id = ?', whereArgs: [msgId]);
+    await db.transaction((txn) async {
+      final rows = await txn.query('chat_history',
+          columns: ['id', 'file_path'], where: where, whereArgs: args);
+      await MediaStorageService.queueGarbage(
+          txn, rows.map((row) => row['file_path']).whereType<String>());
+      for (final row in rows) {
+        await txn.delete('background_messages',
+            where: 'message_id = ?', whereArgs: [row['id']]);
+        await txn.delete('foreground_message_events',
+            where: 'message_id = ?', whereArgs: [row['id']]);
+        await txn.delete('voice_call_records',
+            where: 'id = (SELECT call_id FROM chat_history WHERE id = ?)',
+            whereArgs: [row['id']]);
+      }
+      await txn.delete('chat_history', where: where, whereArgs: args);
+    });
+    MediaStorageService.instance.kick();
   }
 
+  Future<void> deleteMessage(String msgId) =>
+      _deleteChatRows('id = ?', [msgId]);
   Future<Map<String, dynamic>?> getMessageById(String msgId) async {
     final db = await database;
     final rows = await db.query(
@@ -1837,8 +1891,30 @@ class DBManager {
   }
 
   Future<void> clearChatHistory(String botId) async {
+    await _deleteChatRows('bot_id = ?', [botId]);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final history = prefs.getStringList('video_history_$botId') ?? [];
+    final paths = <String>[];
+    void collect(Object? value) {
+      if (value is String && p.isAbsolute(value)) paths.add(value);
+      if (value is Map) value.values.forEach(collect);
+      if (value is List) value.forEach(collect);
+    }
+
+    for (final item in history) {
+      try {
+        collect(jsonDecode(item));
+      } catch (_) {}
+    }
+    await prefs.remove('video_history_$botId');
     final db = await database;
-    await db.delete('chat_history', where: 'bot_id = ?', whereArgs: [botId]);
+    await db.transaction((txn) async {
+      await MediaStorageService.queueGarbage(txn, paths);
+      await txn.delete('background_messages',
+          where: 'bot_id = ?', whereArgs: [botId]);
+    });
+    MediaStorageService.instance.kick();
   }
 
   // ================= 表情包素材池 =================
@@ -1863,7 +1939,14 @@ class DBManager {
 
   Future<void> deleteSticker(String id) async {
     final db = await database;
-    await db.delete('stickers', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      final rows =
+          await txn.query('stickers', where: 'id = ?', whereArgs: [id]);
+      await MediaStorageService.queueGarbage(
+          txn, rows.map((row) => row['file_path']).whereType<String>());
+      await txn.delete('stickers', where: 'id = ?', whereArgs: [id]);
+    });
+    MediaStorageService.instance.kick();
   }
 
   Future<List<String>> stickerEmotions() async {
@@ -2411,31 +2494,47 @@ class DBManager {
     }
   }
 
-  /// Daily assistant replies and recorded model usage for the chat sidebar.
-  /// Error rows and non-text replies are intentionally excluded from the count.
-  Future<Map<String, int>> todayBotStats(String botId) async {
+  /// Shared daily totals for the dashboard and each bot's sidebar.
+  /// Token usage includes every recorded request, including proactive chat.
+  /// Replies count delivered text messages rather than model requests (which
+  /// may choose silence or produce several message bubbles).
+  Future<List<Map<String, Object?>>> dailyUsageStats({
+    String? botId,
+    int since = 0,
+  }) async {
     final db = await database;
+    final botFilter = botId == null ? '' : 'AND bot_id = ?';
+    final args = <Object?>[since, if (botId != null) botId];
+    return db.rawQuery('''
+      SELECT MIN(timestamp) AS timestamp,
+             SUM(total_tokens) AS total_tokens,
+             SUM(reply_count) AS reply_count
+      FROM (
+        SELECT timestamp, total_tokens, 0 AS reply_count
+        FROM ai_usage_events WHERE timestamp >= ? $botFilter
+        UNION ALL
+        SELECT timestamp, 0 AS total_tokens, 1 AS reply_count
+        FROM chat_history
+        WHERE timestamp >= ? $botFilter
+          AND role = 'assistant' AND type = 'text'
+          AND COALESCE(error_log, '') = ''
+          AND COALESCE(error_code, '') = ''
+      )
+      GROUP BY strftime('%Y-%m-%d', timestamp / 1000, 'unixepoch', 'localtime')
+      ORDER BY timestamp
+    ''', [...args, ...args]);
+  }
+
+  /// Daily assistant replies and recorded model usage for the chat sidebar.
+  Future<Map<String, int>> todayBotStats(String botId) async {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final messageRows = await db.rawQuery(
-      '''
-      SELECT COUNT(*) AS count FROM chat_history
-      WHERE bot_id = ? AND role = 'assistant' AND type = 'text'
-        AND timestamp >= ? AND COALESCE(error_log, '') = ''
-        AND COALESCE(error_code, '') = ''
-    ''',
-      [botId, start],
-    );
-    final usageRows = await db.rawQuery(
-      '''
-      SELECT COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage_events
-      WHERE bot_id = ? AND timestamp >= ?
-    ''',
-      [botId, start],
-    );
+    final rows = await dailyUsageStats(botId: botId, since: start);
     return {
-      'messages': (messageRows.first['count'] as num?)?.toInt() ?? 0,
-      'tokens': (usageRows.first['tokens'] as num?)?.toInt() ?? 0,
+      'messages': rows.fold<int>(
+          0, (sum, row) => sum + ((row['reply_count'] as num?)?.toInt() ?? 0)),
+      'tokens': rows.fold<int>(
+          0, (sum, row) => sum + ((row['total_tokens'] as num?)?.toInt() ?? 0)),
     };
   }
 
@@ -3634,6 +3733,22 @@ class DBManager {
     final db = await database;
     await _ensureVoiceCallStorage(db);
     await db.transaction((txn) async {
+      if (status == 'ringing') {
+        final cutoff = DateTime.now()
+            .subtract(const Duration(minutes: 2))
+            .millisecondsSinceEpoch;
+        await txn.rawUpdate(
+            "UPDATE chat_history SET call_status = 'timeout', content = '[语音通话，超时未接通]' WHERE call_id IN (SELECT id FROM voice_call_records WHERE status = 'ringing' AND start_time <= ?)",
+            [cutoff]);
+        await txn.rawUpdate(
+            "UPDATE voice_call_records SET status = 'timeout', end_time = ? WHERE status = 'ringing' AND start_time <= ?",
+            [DateTime.now().millisecondsSinceEpoch, cutoff]);
+        final existing = await txn.query('voice_call_records',
+            columns: ['id'],
+            where: "status IN ('ringing', 'active')",
+            limit: 1);
+        if (existing.isNotEmpty) throw StateError('已有等待接听或进行中的通话');
+      }
       await txn.insert(
           'voice_call_records',
           {
@@ -3656,6 +3771,11 @@ class DBManager {
           chatMessage,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        if (!ChatEventBus.instance.foregroundOwner) {
+          await txn.insert(
+              'foreground_message_events', {'message_id': chatMessage['id']},
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
         await txn.update(
           'bots',
           {'last_msg_time': chatMessage['timestamp']},
