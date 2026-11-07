@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/images/logo.png" width="104" alt="TideBot 图标" />
+<img src="assets/images/logo2.png" width="250" alt="TideBot 图标" />
 
 # TideBot
 
