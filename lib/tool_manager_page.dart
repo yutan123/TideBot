@@ -500,42 +500,44 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         final theme = TideTheme.of(dialogContext);
         final description = tool['description']?.toString().trim() ?? '';
         return TideDialogSurface(
-          child: TideDialogs.glassContent(context: dialogContext, children: [
-            Row(children: [
-              Icon(Icons.extension_rounded, color: theme.primary, size: 22),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text('工具详情',
-                      style: TextStyle(
-                          color: theme.textStrong,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700))),
-              IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(dialogContext),
-                  icon: Icon(Icons.close_rounded, color: theme.textWeak)),
+          // Keep selectable text in the same Flutter layer as the animated
+          // dialog. Android TextViews use a separate composition/measurement
+          // path and can shift or clip while this surface scales.
+          child: SelectionArea(
+            child: TideDialogs.glassContent(context: dialogContext, children: [
+              Row(children: [
+                Icon(Icons.extension_rounded, color: theme.primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: Text('工具详情',
+                        style: TextStyle(
+                            color: theme.textStrong,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700))),
+                IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: Icon(Icons.close_rounded, color: theme.textWeak)),
+              ]),
+              const SizedBox(height: 12),
+              Text(tool['name']?.toString() ?? '',
+                  style: TextStyle(
+                      color: theme.textStrong,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      height: 1.5)),
+              const SizedBox(height: 20),
+              Text('完整说明',
+                  style: TextStyle(
+                      color: theme.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(description.isEmpty ? '此工具暂未提供描述。' : description,
+                  style: TextStyle(
+                      color: theme.textStrong, fontSize: 14, height: 1.7)),
             ]),
-            const SizedBox(height: 12),
-            NativeSelectableText(tool['name']?.toString() ?? '',
-                nativeInteraction: true,
-                style: TextStyle(
-                    color: theme.textStrong,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    height: 1.5)),
-            const SizedBox(height: 20),
-            Text('完整说明',
-                style: TextStyle(
-                    color: theme.primary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            NativeSelectableText(
-                description.isEmpty ? '此工具暂未提供描述。' : description,
-                nativeInteraction: true,
-                style: TextStyle(
-                    color: theme.textStrong, fontSize: 14, height: 1.7)),
-          ]),
+          ),
         );
       },
     );

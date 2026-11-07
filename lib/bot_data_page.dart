@@ -2,6 +2,7 @@ import 'android_selection_menu.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'bot_vital_model.dart';
 import 'bot_vital_signs_service.dart';
 import 'theme.dart';
@@ -503,10 +504,8 @@ class _BotDataPageState extends State<BotDataPage> {
                         ? const CircularProgressIndicator()
                         : TextButton(
                             onPressed: load, child: const Text('读取失败，点击重试')))
-                : RefreshIndicator(
+                : _VitalRefresh(
                     onRefresh: load,
-                    backgroundColor: Colors.transparent,
-                    color: theme.primary,
                     child: ListView(
                         addRepaintBoundaries: true,
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -666,10 +665,8 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
             appBar: AppBar(
                 title: Text(vitalTitles[i]),
                 backgroundColor: Colors.transparent),
-            body: RefreshIndicator(
+            body: _VitalRefresh(
                 onRefresh: load,
-                backgroundColor: Colors.transparent,
-                color: theme.primary,
                 child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
                     children: [
@@ -1161,10 +1158,11 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                     t < 30 ||
                     t > 45 ||
                     hr == null ||
-                    hr < 50 ||
+                    hr < 40 ||
                     hr > 135) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('请输入有效的身体指标，平均心率范围为 50–135')));
+                      content:
+                          Text('请输入有效的身体指标，平均心率范围为 40–135，低于50时会在三小时内回升')));
                   return;
                 }
                 refresh(() => _savingBody = true);
@@ -1258,4 +1256,84 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
   Widget _buildSleepTimeline(
           TideTheme theme, List<Map<String, dynamic>> segments) =>
       SleepTimeline(segments: segments, onSelect: showSegment);
+}
+
+/// An inset refresh header that moves with the content, without a floating disc.
+class _VitalRefresh extends StatelessWidget {
+  const _VitalRefresh({required this.onRefresh, required this.child});
+  final Future<void> Function() onRefresh;
+  final ListView child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = TideTheme.of(context);
+    return CustomScrollView(
+      physics:
+          const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+      slivers: [
+        CupertinoSliverRefreshControl(
+          onRefresh: onRefresh,
+          refreshTriggerPullDistance: 90,
+          refreshIndicatorExtent: 58,
+          builder: (context, mode, pulled, trigger, extent) {
+            final active = mode == RefreshIndicatorMode.armed ||
+                mode == RefreshIndicatorMode.refresh;
+            final done = mode == RefreshIndicatorMode.done;
+            final progress = (pulled / trigger).clamp(0.0, 1.0);
+            return ClipRect(
+              child: OverflowBox(
+                minHeight: extent,
+                maxHeight: extent,
+                alignment: Alignment.bottomCenter,
+                child: Center(
+                  child: Opacity(
+                    opacity: (pulled / extent).clamp(0.0, 1.0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: theme.surfaceVariant,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (active)
+                          CupertinoActivityIndicator(
+                              radius: 8, color: theme.primary)
+                        else
+                          Transform.rotate(
+                              angle: done ? 0 : progress * pi,
+                              child: Icon(
+                                  done
+                                      ? Icons.check_rounded
+                                      : Icons.arrow_downward_rounded,
+                                  size: 17,
+                                  color: theme.primary)),
+                        const SizedBox(width: 9),
+                        Text(
+                            done
+                                ? '已更新'
+                                : active
+                                    ? '正在更新'
+                                    : progress >= 1
+                                        ? '松开刷新'
+                                        : '下拉更新',
+                            style: TextStyle(
+                                color: theme.textWeak,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500)),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        SliverPadding(
+          padding: child.padding ?? EdgeInsets.zero,
+          sliver: SliverList(delegate: child.childrenDelegate),
+        ),
+      ],
+    );
+  }
 }

@@ -30,7 +30,7 @@ void main() {
       for (var hour = 0; hour < 48; hour++) {
         final previous = current;
         current = advance(current.toDouble(), baseline: edited.toDouble());
-        expect(current, inInclusiveRange(50, 135));
+        expect(current, inInclusiveRange(40, 135));
         expect((current - edited).abs(), lessThanOrEqualTo(10));
         expect(current, isNot(previous));
         values.add(current);
@@ -61,7 +61,7 @@ void main() {
           stress: (hour % 11).toDouble(),
           noise: hour.isEven ? 2 : -2,
         );
-        expect(current, inInclusiveRange(50, 135));
+        expect(current, inInclusiveRange(40, 135));
         expect((current - initial.clamp(50, 135)).abs(), lessThanOrEqualTo(10));
       }
     }

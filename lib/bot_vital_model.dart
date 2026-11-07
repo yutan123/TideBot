@@ -195,10 +195,18 @@ int hourlyMeanHeartRate({
   required double noise,
   Random? random,
   Iterable<int> recent = const [],
+  int lowHeartDurationMs = 0,
 }) {
   final rng = random ?? Random();
   final base = baseline.clamp(50, 135).toDouble();
-  final lower = max(50, (base - 10).ceil());
+  // Once below 50, never decrease; recover above 50 within three hours.
+  var lower = max(40, (base - 10).ceil());
+  if (previous < 50 || (previous == 50 && lowHeartDurationMs > 0)) {
+    lower = max(lower, previous.ceil());
+    if (lowHeartDurationMs >= const Duration(hours: 3).inMilliseconds) {
+      lower = max(lower, 51);
+    }
+  }
   final upper = min(135, (base + 10).floor());
   final exertion = RegExp('跑步|健身|运动|骑行|游泳|球').hasMatch(activity)
       ? 24.0

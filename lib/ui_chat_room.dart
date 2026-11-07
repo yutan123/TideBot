@@ -4,6 +4,7 @@ import 'photo_image_provider.dart';
 import 'chat_image.dart';
 import 'tide_popover.dart';
 import 'video_input.dart';
+import 'video_source_context.dart';
 import 'chat_video.dart';
 import 'video_poster.dart';
 import 'android_selection_menu.dart';
@@ -825,6 +826,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     try {
       final raw = await rootBundle.loadString('assets/emojitwo/emoji.json');
       final data = jsonDecode(raw) as Map<String, dynamic>;
+      final chineseNames = jsonDecode(
+              await rootBundle.loadString('assets/emojitwo/zh_names.json'))
+          as Map<String, dynamic>;
       final catalog = <_EmojiAsset>[];
       data.forEach((code, value) {
         final entry = value as Map<String, dynamic>;
@@ -840,7 +844,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               .map((part) => int.tryParse(part, radix: 16) ?? 0)
               .where((point) => point > 0),
         );
-        final name = _emojiChineseName(entry['name']?.toString() ?? code);
+        final name = chineseNames[code]?.toString().trim() ?? '';
+        if (name.isEmpty) throw FormatException('表情缺少中文名称：$code');
         if (glyph.isNotEmpty) _emojiNamesByGlyph[glyph] = name;
         catalog.add(_EmojiAsset(
           asset: asset,
@@ -854,7 +859,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       if (mounted) setState(() => _emojiCatalog = catalog);
     } catch (error) {
       debugPrint('[emoji] catalog load failed: $error');
-      if (mounted) GlobalNotice.show('Emoji 资源加载失败');
+      if (mounted) GlobalNotice.show('表情资源加载失败');
     } finally {
       if (mounted) setState(() => _emojiCatalogLoading = false);
     }
@@ -899,98 +904,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       return SvgPicture.file(File(path), fit: fit);
     }
     return Image.file(File(path), fit: fit, cacheWidth: cacheWidth);
-  }
-
-  String _emojiChineseName(String name) {
-    const exact = <String, String>{
-      'grinning face': '笑脸',
-      'grinning face with smiling eyes': '露齿笑脸',
-      'face with tears of joy': '笑哭',
-      'rolling on the floor laughing': '笑得打滚',
-      'smiling face with open mouth': '张嘴笑脸',
-      'smiling face with smiling eyes': '微笑脸',
-      'winking face': '眨眼',
-      'smiling face with heart-shaped eyes': '花痴脸',
-      'face throwing a kiss': '飞吻',
-      'smiling face with sunglasses': '墨镜笑脸',
-      'red heart': '红心',
-      'broken heart': '心碎',
-      'thumbs up': '点赞',
-      'thumbs down': '踩',
-      'clapping hands': '鼓掌',
-      'folded hands': '双手合十',
-      'fire': '火焰',
-      'sparkles': '闪耀',
-      'star': '星星',
-      'check mark': '对勾',
-      'cross mark': '叉号',
-    };
-    final normalized = name.trim().toLowerCase();
-    final translated = exact[normalized];
-    if (translated != null) return translated;
-    const replacements = <String, String>{
-      'face': '脸',
-      'smiling': '微笑',
-      'grinning': '咧嘴笑',
-      'laughing': '大笑',
-      'rolling': '打滚',
-      'floor': '地板',
-      'tears': '眼泪',
-      'joy': '喜悦',
-      'winking': '眨眼',
-      'heart-shaped': '心形',
-      'heart': '爱心',
-      'throwing': '飞',
-      'kiss': '吻',
-      'sunglasses': '墨镜',
-      'with': '带',
-      'eyes': '眼睛',
-      'open': '张开',
-      'mouth': '嘴',
-      'hands': '双手',
-      'hand': '手',
-      'folded': '合十',
-      'clapping': '鼓掌',
-      'thumbs': '大拇指',
-      'up': '向上',
-      'down': '向下',
-      'person': '人',
-      'people': '人们',
-      'cat': '猫',
-      'dog': '狗',
-      'animal': '动物',
-      'nature': '自然',
-      'food': '食物',
-      'drink': '饮料',
-      'activity': '活动',
-      'travel': '旅行',
-      'place': '地点',
-      'object': '物品',
-      'symbol': '符号',
-      'flag': '旗帜',
-      'red': '红色',
-      'blue': '蓝色',
-      'green': '绿色',
-      'yellow': '黄色',
-      'white': '白色',
-      'black': '黑色',
-      'orange': '橙色',
-      'purple': '紫色',
-      'brown': '棕色',
-      'pink': '粉色',
-      'fire': '火焰',
-      'sparkles': '闪耀',
-      'star': '星星',
-      'check': '对',
-      'mark': '号',
-      'cross': '叉',
-      'broken': '破碎',
-    };
-    var result = normalized;
-    for (final entry in replacements.entries) {
-      result = result.replaceAll(entry.key, entry.value);
-    }
-    return result == normalized ? name : result.replaceAll(' ', '');
   }
 
   String _emojiToModelText(String text) {
@@ -1519,11 +1432,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             try {
               AppLogService.instance.add('VIDEO',
                   '开始处理视频 mode=${modelId.isEmpty ? 'frames_audio' : 'original'}');
+              final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
               final prepared = await prepareVideoInput(
-                  path: path, botId: botId, modelId: modelId, userText: text);
+                  path: path,
+                  botId: botId,
+                  modelId: modelId,
+                  userText: text,
+                  videoId: videoId);
               preparedVideos.add(prepared);
               final history = prefs.getStringList('video_history_$botId') ?? [];
-              final videoId = 'VID${DateTime.now().microsecondsSinceEpoch}';
               history.add(json.encode({
                 'id': videoId,
                 'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -1543,7 +1460,14 @@ class _ChatRoomPageState extends State<ChatRoomPage>
               AppLogService.instance.add('VIDEO',
                   '视频上下文已准备 video=$videoId characters=${prepared.context.length} frames=${prepared.frames.length}');
               unregisteredSharedVideos.remove(path);
-              documentNotices.add('[视频编号：$videoId]\n${prepared.context}');
+              documentNotices.add([
+                '[视频编号：$videoId]',
+                if (prepared.frames.isNotEmpty)
+                  videoFrameSourceContext(videoId,
+                      firstImageNumber: images.length + framePaths.length + 1,
+                      frameCount: prepared.frames.length),
+                prepared.context,
+              ].join('\n'));
               framePaths.addAll(prepared.frames);
             } catch (error) {
               AppLogService.instance.add('VIDEO', '视频处理失败：$error');
@@ -1858,6 +1782,17 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   Future<void> _retryMessage(Map<String, dynamic> message) async {
     if (_loading) return;
+    if (message['type'] == 'audio') {
+      final path = message['audio']?.toString() ??
+          message['file_path']?.toString() ??
+          '';
+      if (path.isEmpty) {
+        GlobalNotice.show('语音文件不存在，请重新发送');
+        return;
+      }
+      await _transcribeRecordedAudio(message, path);
+      return;
+    }
 
     final messageId = message['id'].toString();
     final text = message['content']?.toString().trim() ?? '';
@@ -1973,46 +1908,52 @@ class _ChatRoomPageState extends State<ChatRoomPage>
       _setTypingState(true);
 
       try {
-        final prefs = await SharedPreferences.getInstance();
-        final sttId = prefs.getString('stt_model_$botId')?.trim() ?? '';
-        if (sttId == '__use_primary_stt__') {
-          if (mounted) setState(() => _loading = false);
-          await _send(
-            mediaContext: '[用户发送了一段语音]',
-            audioPath: audioPath,
-            batchedMessages: [message],
-            noUserBubble: true,
-            forceSingleReply: true,
-          );
+        // Both primary-model STT and dedicated STT must persist the same text
+        // that the reply and subsequent turns will read from chat history.
+        final savedTranscript = message['content']?.toString().trim() ?? '';
+        final transcript = savedTranscript.isNotEmpty
+            ? savedTranscript
+            : await AIManager()
+                .transcribeAudio(botId: botId, audioPath: audioPath)
+                .timeout(const Duration(seconds: 50), onTimeout: () => null);
+        if (transcript == null || transcript.trim().isEmpty) {
+          await _markTurnFailed([message],
+              errorLog: '语音转写失败或未配置可用的语音识别模型',
+              errorText: '语音未识别成功，请检查模型配置后重新发送',
+              errorCode: 'stt_failed');
+          if (mounted) GlobalNotice.show('语音未识别成功，可长按语音重新发送');
           return;
         }
-        final transcript = await AIManager()
-            .transcribeAudio(botId: botId, audioPath: audioPath)
-            .timeout(const Duration(seconds: 50), onTimeout: () => null);
-        final modelContext = transcript == null || transcript.trim().isEmpty
-            ? '[用户发送了一段语音，但当前未配置可用的语音识别服务或转写失败。你听不到具体内容，请自然说明并结合上下文回应，可以请用户重发或改用文字；不要假装听懂。]'
-            : '[用户刚发送的语音转写]\n${transcript.trim()}';
-
-        if (transcript != null && transcript.trim().isNotEmpty) {
-          try {
-            await DBManager().updateMessageContent(
-              message['id'].toString(),
-              transcript.trim(),
-            );
-            if (mounted) setState(() => message['content'] = transcript.trim());
-          } catch (e) {
-            debugPrint('[stt] persist transcript failed: $e');
-          }
+        final recognizedText = transcript.trim();
+        await DBManager().updateMessageContent(
+          message['id'].toString(),
+          recognizedText,
+        );
+        message['content'] = recognizedText;
+        if (mounted) {
+          setState(() {
+            for (final row in _msgs) {
+              if (row['id'] == message['id']) row['content'] = recognizedText;
+            }
+          });
         }
         if (mounted) setState(() => _loading = false);
-        // The audio message has already been persisted and rendered. Send only
-        // the transcript as model context so no duplicate document bubble exists.
+        // The persisted user audio row is the current turn, including on retry.
+        // Do not add a second user message or send the audio for another reading.
         await _send(
-          mediaContext: modelContext,
+          queuedText: recognizedText,
           batchedMessages: [message],
+          retryTarget: message,
           noUserBubble: true,
           forceSingleReply: true,
         );
+      } catch (error, stack) {
+        AppLogService.instance.add('STT', '语音处理失败：$error\n$stack');
+        await _markTurnFailed([message],
+            errorLog: '$error\n$stack',
+            errorText: '语音处理失败，请重新发送',
+            errorCode: 'stt_failed');
+        if (mounted) GlobalNotice.show('语音处理失败，可长按语音重新发送');
       } finally {
         // Always release, including an early return/failed handoff to _send.
         // Closing an already released lease is safe and never clears another owner.

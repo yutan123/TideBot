@@ -145,7 +145,7 @@ flutter run
 
 ## 版权与许可证
 
-Copyright (C) 2025-2026 TideBot contributors.
+Copyright (C) 2025-2026 yutan123.
 
 TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**。项目版权及授权声明已列于 [LICENSE](LICENSE) 开头，后附完整 AGPL v3 原文；中文版权声明另见 [COPYRIGHT](COPYRIGHT)。
 
@@ -155,4 +155,8 @@ TideBot 的原创源代码、应用界面、文档及项目自有资源，除另
 
 ## 第三方许可
 
-实际使用的第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。其中 `liquid_glass_widgets` 使用 MIT License。第三方组件保留各自的版权与许可证，具体以其随附文件为准。
+第三方组件、内置字体与模型、Flutter/Dart 锁定依赖、原生依赖声明及其来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。各组件保留原版权和许可；Google ML Kit 等 SDK 另适用其服务条款。完整快照索引及 SHA-256 见 [notices_manifest.json](third_party/notices_manifest.json)，证据来源见 [上游材料说明](third_party/upstream/README.md)。
+
+应用内通过“关于 TideBot → 开源许可与第三方声明”离线查看已收录的许可原文，并可搜索组件和打开上游来源。原生清单区分请求版本与发布包解析版本；FFmpeg 原生库尚未披露的版本、附加声明及对应构建材料已在声明末尾明确列出，不能把声明清单视为已完成发布二进制许可证审计。
+
+依赖变更后，在已有匹配 SDK、锁定包和 Maven 缓存的环境运行 `python3 third_party/update_notices.py --root <项目绝对路径>`；添加 `--check` 校验生成结果。该工具不执行 Flutter/Gradle 构建。

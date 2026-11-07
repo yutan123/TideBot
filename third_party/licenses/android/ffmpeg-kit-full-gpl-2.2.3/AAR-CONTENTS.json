@@ -1,0 +1,290 @@
+{
+  "source": "https://repo.maven.apache.org/maven2/com/antonkarpenko/ffmpeg-kit-full-gpl/2.2.3/ffmpeg-kit-full-gpl-2.2.3.aar",
+  "entries": [
+    {
+      "name": "R.txt",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "AndroidManifest.xml",
+      "size": 199,
+      "crc32": 838478046
+    },
+    {
+      "name": "classes.jar",
+      "size": 56692,
+      "crc32": 4020085280
+    },
+    {
+      "name": "META-INF/com/android/build/gradle/aar-metadata.properties",
+      "size": 156,
+      "crc32": 2211645362
+    },
+    {
+      "name": "jni/",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "jni/arm64-v8a/",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "jni/arm64-v8a/libavcodec.so",
+      "size": 22174672,
+      "crc32": 401924900
+    },
+    {
+      "name": "jni/arm64-v8a/libavdevice.so",
+      "size": 56016,
+      "crc32": 2454237224
+    },
+    {
+      "name": "jni/arm64-v8a/libavfilter.so",
+      "size": 10566528,
+      "crc32": 1501484602
+    },
+    {
+      "name": "jni/arm64-v8a/libavformat.so",
+      "size": 8195104,
+      "crc32": 729382091
+    },
+    {
+      "name": "jni/arm64-v8a/libavutil.so",
+      "size": 555528,
+      "crc32": 3744722871
+    },
+    {
+      "name": "jni/arm64-v8a/libc++_shared.so",
+      "size": 1304848,
+      "crc32": 3796784279
+    },
+    {
+      "name": "jni/arm64-v8a/libffmpegkit.so",
+      "size": 464984,
+      "crc32": 1215873559
+    },
+    {
+      "name": "jni/arm64-v8a/libffmpegkit_abidetect.so",
+      "size": 30888,
+      "crc32": 933240663
+    },
+    {
+      "name": "jni/arm64-v8a/libswresample.so",
+      "size": 212320,
+      "crc32": 3556920989
+    },
+    {
+      "name": "jni/arm64-v8a/libswscale.so",
+      "size": 536640,
+      "crc32": 4256529069
+    },
+    {
+      "name": "jni/armeabi-v7a/",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "jni/armeabi-v7a/libavcodec.so",
+      "size": 20710660,
+      "crc32": 2568255114
+    },
+    {
+      "name": "jni/armeabi-v7a/libavcodec_neon.so",
+      "size": 23254044,
+      "crc32": 3367454627
+    },
+    {
+      "name": "jni/armeabi-v7a/libavdevice.so",
+      "size": 46100,
+      "crc32": 546510280
+    },
+    {
+      "name": "jni/armeabi-v7a/libavdevice_neon.so",
+      "size": 46516,
+      "crc32": 2768649748
+    },
+    {
+      "name": "jni/armeabi-v7a/libavfilter.so",
+      "size": 9599284,
+      "crc32": 2297970362
+    },
+    {
+      "name": "jni/armeabi-v7a/libavfilter_neon.so",
+      "size": 9682064,
+      "crc32": 2342041039
+    },
+    {
+      "name": "jni/armeabi-v7a/libavformat.so",
+      "size": 7221036,
+      "crc32": 576584001
+    },
+    {
+      "name": "jni/armeabi-v7a/libavformat_neon.so",
+      "size": 7223852,
+      "crc32": 198230801
+    },
+    {
+      "name": "jni/armeabi-v7a/libavutil.so",
+      "size": 458468,
+      "crc32": 2874375683
+    },
+    {
+      "name": "jni/armeabi-v7a/libavutil_neon.so",
+      "size": 455140,
+      "crc32": 1967691438
+    },
+    {
+      "name": "jni/armeabi-v7a/libc++_shared.so",
+      "size": 904124,
+      "crc32": 2275880601
+    },
+    {
+      "name": "jni/armeabi-v7a/libffmpegkit.so",
+      "size": 462836,
+      "crc32": 3607784391
+    },
+    {
+      "name": "jni/armeabi-v7a/libffmpegkit_abidetect.so",
+      "size": 17644,
+      "crc32": 3940167174
+    },
+    {
+      "name": "jni/armeabi-v7a/libffmpegkit_armv7a_neon.so",
+      "size": 462980,
+      "crc32": 186197732
+    },
+    {
+      "name": "jni/armeabi-v7a/libswresample.so",
+      "size": 209332,
+      "crc32": 1708043449
+    },
+    {
+      "name": "jni/armeabi-v7a/libswresample_neon.so",
+      "size": 211696,
+      "crc32": 3718988993
+    },
+    {
+      "name": "jni/armeabi-v7a/libswscale.so",
+      "size": 505820,
+      "crc32": 1313154630
+    },
+    {
+      "name": "jni/armeabi-v7a/libswscale_neon.so",
+      "size": 511428,
+      "crc32": 3013977542
+    },
+    {
+      "name": "jni/x86/",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "jni/x86/libavcodec.so",
+      "size": 26807756,
+      "crc32": 827556132
+    },
+    {
+      "name": "jni/x86/libavdevice.so",
+      "size": 55036,
+      "crc32": 2093450925
+    },
+    {
+      "name": "jni/x86/libavfilter.so",
+      "size": 11502276,
+      "crc32": 4275056082
+    },
+    {
+      "name": "jni/x86/libavformat.so",
+      "size": 8108080,
+      "crc32": 3712975275
+    },
+    {
+      "name": "jni/x86/libavutil.so",
+      "size": 560476,
+      "crc32": 1419645725
+    },
+    {
+      "name": "jni/x86/libc++_shared.so",
+      "size": 1181272,
+      "crc32": 2654209219
+    },
+    {
+      "name": "jni/x86/libffmpegkit.so",
+      "size": 476076,
+      "crc32": 1781631287
+    },
+    {
+      "name": "jni/x86/libffmpegkit_abidetect.so",
+      "size": 45448,
+      "crc32": 682975343
+    },
+    {
+      "name": "jni/x86/libswresample.so",
+      "size": 320536,
+      "crc32": 804577838
+    },
+    {
+      "name": "jni/x86/libswscale.so",
+      "size": 650236,
+      "crc32": 2778198584
+    },
+    {
+      "name": "jni/x86_64/",
+      "size": 0,
+      "crc32": 0
+    },
+    {
+      "name": "jni/x86_64/libavcodec.so",
+      "size": 27242184,
+      "crc32": 627784191
+    },
+    {
+      "name": "jni/x86_64/libavdevice.so",
+      "size": 57392,
+      "crc32": 2082016590
+    },
+    {
+      "name": "jni/x86_64/libavfilter.so",
+      "size": 11722272,
+      "crc32": 81319858
+    },
+    {
+      "name": "jni/x86_64/libavformat.so",
+      "size": 8427464,
+      "crc32": 1990643314
+    },
+    {
+      "name": "jni/x86_64/libavutil.so",
+      "size": 540640,
+      "crc32": 889791940
+    },
+    {
+      "name": "jni/x86_64/libc++_shared.so",
+      "size": 1275344,
+      "crc32": 545123786
+    },
+    {
+      "name": "jni/x86_64/libffmpegkit.so",
+      "size": 483360,
+      "crc32": 3512277507
+    },
+    {
+      "name": "jni/x86_64/libffmpegkit_abidetect.so",
+      "size": 43912,
+      "crc32": 95425578
+    },
+    {
+      "name": "jni/x86_64/libswresample.so",
+      "size": 319080,
+      "crc32": 2618419825
+    },
+    {
+      "name": "jni/x86_64/libswscale.so",
+      "size": 601984,
+      "crc32": 2465802482
+    }
+  ]
+}

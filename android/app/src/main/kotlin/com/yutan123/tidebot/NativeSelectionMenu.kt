@@ -7,6 +7,7 @@ import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.MotionEvent
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.roundToInt
@@ -19,6 +20,32 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
     private var anchor = Rect()
     private var items: List<Map<*, *>> = emptyList()
     private val actionIndices = mutableMapOf<Int, Int>()
+    private var handleGesture = false
+
+    /** Suspend before Flutter receives DOWN; a channel round trip is too late
+     * when Android dismisses its action mode as the handle is touched.
+     * Never consume the event: Flutter must own the complete handle gesture.
+     * Toolbar buttons live in their own window and do not pass through here.
+     */
+    fun beforeTouchEvent(event: MotionEvent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (mode == null) return
+                handleGesture = true
+                channel.invokeMethod("interaction", mapOf("id" to session, "active" to true))
+                mode?.hide(Long.MAX_VALUE)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (handleGesture) mode?.hide(Long.MAX_VALUE)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!handleGesture) return
+                handleGesture = false
+                channel.invokeMethod("interaction", mapOf("id" to session, "active" to false))
+            }
+        }
+    }
 
     init {
         channel.setMethodCallHandler { call, result ->
@@ -39,6 +66,13 @@ class NativeSelectionMenu(private val activity: Activity, messenger: BinaryMesse
                             .roundToInt()
                         anchor = Rect(x, y, x + 1, y + 1)
                         items = call.argument<List<Map<*, *>>>("items") ?: emptyList()
+                        if (handleGesture && session == id) {
+                            // A pending Flutter rebuild must not reopen the window
+                            // between DOWN and UP while a handle is moving.
+                            mode?.hide(Long.MAX_VALUE)
+                            result.success(true)
+                            return@setMethodCallHandler
+                        }
                         if (session == id && mode != null) {
                             mode?.hide(0)
                             mode?.invalidate()

@@ -42,6 +42,11 @@ import java.io.FileOutputStream
 
 class MainActivity: FlutterActivity() {
     private var dataTransfer: DataTransfer? = null
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        selectionMenu?.beforeTouchEvent(event)
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (dataTransfer?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)

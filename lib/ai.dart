@@ -1156,6 +1156,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         if (!features.includeHistory(msg)) continue;
         final type = msg['type']?.toString() ?? 'text';
         if (type != 'text' &&
+            type != 'audio' &&
             type != 'image' &&
             type != 'sticker' &&
             type != 'emoji' &&
@@ -2490,6 +2491,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   Future<String?> transcribeAudio({
     required String botId,
     required String audioPath,
+    String sourceContext = '',
     AICancellationToken? cancellationToken,
   }) async {
     final db = DBManager();
@@ -2500,7 +2502,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             '')
         .trim();
 
-    // 聊天室的主模型识别会直接附带音频。语音通话改为让主模型转写后继续对话。
+    // 普通聊天语音、通话及视频音轨均先独立转写，再由调用方保存或组装上下文。
     if (providerId == '__use_primary_stt__') {
       final chatProviderId = bot?['chat_model']?.toString().trim() ?? '';
       if (chatProviderId.isEmpty) {
@@ -2515,7 +2517,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
 
       AppLogService.instance.add(
         'STT',
-        '使用主模型转写（通话模式）：${chatProvider['name']}',
+        '使用主模型独立转写：${chatProvider['name']}',
       );
 
       // 直接调用主模型，让它返回转写文本
@@ -2523,6 +2525,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       final transcriptResult = await _transcribeWithChatModel(
         provider: chatProvider,
         audioPath: audioPath,
+        sourceContext: sourceContext,
         cancellationToken: cancellationToken,
       );
 
@@ -2545,12 +2548,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     );
   }
 
-  /// 主模型识别（通话模式）：把音频直接交给聊天模型，只要求返回逐字转写。
+  /// 聊天语音、通话及视频音轨的主模型识别：只要求返回逐字转写。
   /// 不经过 sendMessage，避免工具调用、历史拼接、消息落库等副作用；
-  /// 转写结果再由通话页按普通文本轮次交给主模型回复。
+  /// 调用方再把转写与对应的通话或视频上下文交给聊天模型回复。
   Future<String?> _transcribeWithChatModel({
     required Map<String, dynamic> provider,
     required String audioPath,
+    String sourceContext = '',
     AICancellationToken? cancellationToken,
   }) async {
     return await MediaStorageService.instance.withMediaUse(() async {
@@ -2592,7 +2596,13 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             {
               'role': 'user',
               'content': [
-                {'type': 'text', 'text': '请逐字转写这段语音。'},
+                {
+                  'type': 'text',
+                  'text': [
+                    if (sourceContext.trim().isNotEmpty) sourceContext.trim(),
+                    '请逐字转写这段语音。',
+                  ].join('\n'),
+                },
                 {
                   'type': 'input_audio',
                   'input_audio': {
@@ -4154,7 +4164,8 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
               'keys': {
                 'type': 'array',
                 'items': {'type': 'string'},
-                'description': '用于检索的关键词，不填写则自动从正文匹配'
+                'description':
+                    '用于检索的事件或主题关键词；绝对禁止你自己或对方的姓名、昵称、别名及包含这些名字的短语；无合适词时传空数组'
               },
               'memory_id': {
                 'type': 'string',

@@ -69,6 +69,8 @@ void main() {
     expect(extracted, isTrue);
     expect(result.frames, ['frame1', 'frame2']);
     expect(result.context, contains('音频内容：你好'));
+    expect(result.context, contains('均来自同一个视频'));
+    expect(result.context, contains('不是用户单独发送的聊天语音'));
   });
   test('所选视频模型失败时明确报错，不静默回落到抽帧', () async {
     expect(

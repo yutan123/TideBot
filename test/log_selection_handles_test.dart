@@ -74,6 +74,25 @@ void main() {
     expect(types, isNot(contains('cut')));
     expect(types, isNot(contains('paste')));
 
+    // Native DOWN arrives before Flutter's pointer router. A dismissal in
+    // that interval must not remove the toolbar entry or selection handles.
+    await binding.defaultBinaryMessenger.handlePlatformMessage(
+      menu.name,
+      const StandardMethodCodec().encodeMethodCall(
+          MethodCall('interaction', {'id': id, 'active': true})),
+      (_) {},
+    );
+    await binding.defaultBinaryMessenger.handlePlatformMessage(
+      menu.name,
+      const StandardMethodCodec()
+          .encodeMethodCall(MethodCall('dismissed', {'id': id})),
+      (_) {},
+    );
+    final showsBeforeDrag = calls.where((call) => call.method == 'show').length;
+    await tester.pump();
+    expect(paragraph.selections.single, original);
+    expect(
+        calls.where((call) => call.method == 'show').length, showsBeforeDrag);
     final endBox = paragraph.getBoxesForSelection(original).last;
     final end = await tester.startGesture(
         paragraph.localToGlobal(endBox.toRect().bottomRight) +
@@ -95,6 +114,12 @@ void main() {
     expect(extended.end, greaterThan(original.end));
     expect(extended.start, original.start);
     await end.up();
+    await binding.defaultBinaryMessenger.handlePlatformMessage(
+      menu.name,
+      const StandardMethodCodec().encodeMethodCall(
+          MethodCall('interaction', {'id': id, 'active': false})),
+      (_) {},
+    );
     await tester.pumpAndSettle();
     expect(calls.last.method, 'show');
     expect((calls.last.arguments as Map)['id'], isA<int>());

@@ -39,6 +39,7 @@ class _AndroidSelectionMenuState extends State<_AndroidSelectionMenu> {
   bool _fallback = false;
   final _pointers = <int>{};
   bool _suspended = false;
+  bool _nativeDragging = false;
   Duration? _lastSuspend;
 
   // Handles live in an Overlay, outside the selected text's render subtree.
@@ -77,7 +78,17 @@ class _AndroidSelectionMenuState extends State<_AndroidSelectionMenu> {
       if (!mounted) return;
       final args = Map<Object?, Object?>.from(call.arguments as Map);
       if (args['id'] != _id) return;
-      if (call.method == 'action') {
+      if (call.method == 'interaction') {
+        // Android reports DOWN before Flutter's pointer router sees it. Ignore
+        // action-mode dismissal during that gap so the handles stay attached.
+        _nativeDragging = args['active'] == true;
+        if (_nativeDragging) {
+          _suspended = true;
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _show());
+          WidgetsBinding.instance.scheduleFrame();
+        }
+      } else if (call.method == 'action') {
         final index = args['index'] as int;
         if (index >= 0 && index < widget.items.length) {
           widget.items[index].onPressed?.call();
@@ -96,7 +107,8 @@ class _AndroidSelectionMenuState extends State<_AndroidSelectionMenu> {
   }
 
   Future<void> _show() async {
-    if (!mounted || _pointers.isNotEmpty || _activeId != _id) return;
+    if (!mounted || _nativeDragging || _pointers.isNotEmpty || _activeId != _id)
+      return;
     try {
       final shown = await _channel.invokeMethod<bool>('show', {
         'id': _id,
@@ -111,7 +123,8 @@ class _AndroidSelectionMenuState extends State<_AndroidSelectionMenu> {
                 })
             .toList(),
       });
-      _suspended = _pointers.isNotEmpty;
+      if (!mounted || _activeId != _id) return;
+      _suspended = _nativeDragging || _pointers.isNotEmpty;
       if (_suspended) _suspend(_lastSuspend ?? Duration.zero);
       if (mounted && shown != true) setState(() => _fallback = true);
     } on PlatformException {

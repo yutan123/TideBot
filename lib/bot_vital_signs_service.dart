@@ -129,13 +129,13 @@ class BotVitalSignsService {
             .map((sample) => sample
               ..remove('systolic')
               ..remove('diastolic')
-              ..update('heart', (value) => vitalInt(value, 70).clamp(50, 135),
+              ..update('heart', (value) => vitalInt(value, 70).clamp(40, 135),
                   ifAbsent: () => 70))
             .toList();
         state['base_heart'] =
             vitalDouble(state['base_heart'], 64 + _rng.nextInt(17).toDouble())
                 .clamp(50, 135);
-        state['heart'] = vitalInt(state['heart'], 70).clamp(50, 135);
+        state['heart'] = vitalInt(state['heart'], 70).clamp(40, 135);
         return state;
       }
     } catch (_) {}
@@ -541,7 +541,16 @@ class BotVitalSignsService {
           s['body_day'] = date;
         }
         // One settled hourly mean; reopening the page never rerolls the value.
+        final previousHeart = vitalDouble(s['heart'], 60);
+        final recovering = previousHeart < 50 ||
+            (previousHeart == 50 && s['heart_low_since'] != null);
+        final lowSince = recovering
+            ? vitalInt(s['heart_low_since'], vitalInt(s['last_hour']) * 3600000)
+            : t;
         s['heart'] = hourlyMeanHeartRate(
+          // Settle before the deadline when a manual edit falls between hours.
+          lowHeartDurationMs:
+              recovering ? max(0, t - (lowSince ~/ 3600000) * 3600000) : 0,
           previous: vitalDouble(s['heart'], 60),
           baseline: vitalDouble(s['base_heart'], 60),
           asleep: inSleep,
@@ -556,6 +565,12 @@ class BotVitalSignsService {
               .take(24)
               .map((e) => vitalInt(e['heart'])),
         );
+        if (vitalInt(s['heart']) < 50 ||
+            (vitalInt(s['heart']) == 50 && recovering)) {
+          s['heart_low_since'] = recovering ? lowSince : t;
+        } else {
+          s.remove('heart_low_since');
+        }
         s['steps'] = max(0, steps);
         s['activity'] = activity;
         s['energy'] = (vitalDouble(s['energy']) +
@@ -683,14 +698,19 @@ class BotVitalSignsService {
       required double weight,
       required double temperature,
       required int heart}) async {
-    heart = heart.clamp(50, 135);
+    heart = heart.clamp(40, 135);
     await _serial(id, () async {
       final s = await _read(id);
       s['height'] = height;
       s['weight'] = weight;
       s['temperature'] = temperature;
       if (heart != vitalInt(s['heart'], 60)) {
-        s['base_heart'] = heart;
+        s['base_heart'] = heart.clamp(50, 135);
+      }
+      if (heart < 50) {
+        s['heart_low_since'] ??= DateTime.now().millisecondsSinceEpoch;
+      } else if (heart > 50) {
+        s.remove('heart_low_since');
       }
       s['heart'] = heart;
       s['base_weight'] = weight;

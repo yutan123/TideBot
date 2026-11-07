@@ -723,9 +723,24 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         );
         break;
+      case 'feedback':
+        _openFeedback();
+        break;
       default:
         GlobalNotice.show('${s['title']}功能开发中...');
     }
+  }
+
+  Future<void> _openFeedback() async {
+    try {
+      if (await launchUrl(
+        Uri.parse('https://wj.qq.com/s2/28578088/ilkl/'),
+        mode: LaunchMode.externalApplication,
+      )) return;
+    } catch (_) {
+      // Keep the settings page usable if no browser can handle the link.
+    }
+    if (mounted) GlobalNotice.show('无法打开反馈页面，请检查是否安装浏览器后重试');
   }
 
   // 主题设置的配色圆点（取 theme.dart 的日间主色作为预览）

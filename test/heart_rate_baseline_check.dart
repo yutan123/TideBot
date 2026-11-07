@@ -20,7 +20,7 @@ void main() {
           random: random,
         );
         if ((next - baseline.clamp(50, 135)).abs() > 10 ||
-            next < 50 ||
+            next < 40 ||
             next > 135) {
           throw StateError('Out of bounds: $baseline/$previous/$next');
         }
@@ -39,7 +39,7 @@ void main() {
         temperature: 36.5,
         noise: 0,
         random: random);
-    if (next < 50 || next > 70) throw StateError('Default is not 60');
+    if (next < 40 || next > 70) throw StateError('Default is not 60');
     recovered.add(next);
   }
   if (recovered.length < 10) throw StateError('Recovery is not random');

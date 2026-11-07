@@ -74,6 +74,7 @@ flutter:
     - assets/icons/
     - assets/emojitwo/
     - assets/skills/
+    - assets/legal/
   fonts:
     - family: LogMono
       fonts:

@@ -22,11 +22,11 @@ void main() {
           random: random,
           recent: history.skip(max(0, history.length - 24)),
         );
-        if (next < 50 || next > 135 || (next - base).abs() > 10) {
+        if (next < 40 || next > 135 || (next - base).abs() > 10) {
           throw StateError('Out of bounds: $baseline/$previous/$next');
         }
         if (next == previous.round()) throw StateError('Repeated hourly value');
-        if (previous >= max(50, base - 10) &&
+        if (previous >= max(40, base - 10) &&
             previous <= min(135, base + 10) &&
             (next - previous).abs() > 6) throw StateError('Abrupt hourly jump');
         history.add(next);
@@ -84,6 +84,7 @@ void main() {
     throw StateError(
         'Activity, sleep, stress and fever must affect the distribution');
   }
-  print('Heart-rate regression passed: $updates hourly updates, minimum 50, '
+  print(
+      'Heart-rate regression passed: $updates hourly updates, temporary dips below 50, '
       'baseline recovery, continuity, daily spread and repetition suppression.');
 }

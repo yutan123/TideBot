@@ -1,0 +1,121 @@
+plugins {
+    id("com.android.library") version "8.12.3"
+    id("org.jetbrains.kotlin.android") version "1.8.22"
+    id("maven-publish")
+    id("signing")
+    id("com.vanniktech.maven.publish") version "0.34.0"
+}
+
+// Publishing [com.vanniktech.maven.publish] config
+mavenPublishing {
+    // Target the Central Portal (central.sonatype.com) and sign every publication.
+    // Without these the plugin registers no publishToMavenCentral task at all.
+    // Signing reads the standard gradle properties (signing.keyId / signing.password /
+    // signing.secretKeyRingFile) from ~/.gradle/gradle.properties.
+    publishToMavenCentral()
+    signAllPublications()
+
+    coordinates("com.antonkarpenko", "ffmpeg-kit-full-gpl", "2.2.3")
+
+    pom {
+        name.set("FFmpegKit Full-GPL")
+        description.set("FFmpegKit for Android, Full-GPL variant, with FFmpeg 8.1.2 (n8.1.2) shared libraries")
+        inceptionYear.set("2025")
+        url.set("https://github.com/sk3llo/ffmpeg_kit_flutter_android")
+        licenses {
+            license {
+                name.set("LGPL 3.0")
+                url.set("https://www.gnu.org/licenses/lgpl-3.0.en.html")
+                distribution.set("https://www.gnu.org/licenses/lgpl-3.0.en.html")
+            }
+            // GPL License
+            license {
+                name.set("GPL 3.0")
+                url.set("https://www.gnu.org/licenses/gpl-3.0.en.html")
+                distribution.set("https://www.gnu.org/licenses/gpl-3.0.en.html")
+            }
+        }
+        developers {
+            developer {
+                id.set("sk3llo")
+                name.set("Anton Karpenko")
+                email.set("kapraton@gmail.com")
+            }
+        }
+        scm {
+            connection.set("scm:git:https://github.com/sk3llo/ffmpeg_kit_flutter_android.git")
+            developerConnection.set("scm:git:ssh://git@github.com/sk3llo/ffmpeg_kit_flutter_android.git")
+            url.set("https://github.com/sk3llo/ffmpeg_kit_flutter_android/tree/full-gpl")
+        }
+    }
+}
+
+android {
+    namespace = "com.antonkarpenko"
+    compileSdk = 36
+    version = "2.2.3"
+
+    defaultConfig {
+        minSdk = 24
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles("consumer-rules.pro")
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release {
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+}
+
+// Task to generate sources JAR
+tasks.register<Jar>("sourcesJar") {
+    from(android.sourceSets.getByName("main").java.srcDirs)
+    archiveClassifier.set("sources")
+}
+
+// Only create Javadoc JAR if Dokka is available
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
+    // Skip if Dokka is not available
+    val dokkaTask = tasks.findByName("dokkaJavadoc")
+    if (dokkaTask != null) {
+        from(dokkaTask)
+    }
+}
+
+// Ensure the sources JAR is built during assemble
+tasks.named("assemble") {
+    dependsOn("sourcesJar")
+}
+
+// Publish task
+tasks.withType<PublishToMavenRepository> {
+    dependsOn(tasks.withType<Sign>())
+}
+
+// Signing Configuration
+signing {
+    val signingKey = providers.gradleProperty("signing.key")
+    val signingPassword = providers.gradleProperty("signing.password")
+
+    if (signingKey.isPresent && signingPassword.isPresent) {
+        useInMemoryPgpKeys(signingKey.get(), signingPassword.get())
+        sign(publishing.publications)
+    } else {
+        // Delegate to the local `gpg` binary (signing.gnupg.keyName /
+        // signing.gnupg.passphrase in ~/.gradle/gradle.properties). GnuPG 2.4+
+        // stores/exports secret keys in an AEAD format that Gradle's bundled
+        // BouncyCastle cannot decrypt — a secretKeyRingFile export fails with
+        // "PGPException: checksum mismatch" even when the passphrase is correct.
+        useGpgCmd()
+    }
+}

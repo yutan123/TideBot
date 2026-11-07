@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'db.dart';
+import 'future_tasks_page.dart';
 import 'memory_retrieval_policy.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -881,23 +882,24 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     return null;
   }
 
-  InputDecoration _fieldDecoration(TideTheme theme, String label) {
+  InputDecoration _fieldDecoration(TideTheme theme, String? label) {
+    final shape = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide.none,
+    );
     return InputDecoration(
       labelText: label,
+      floatingLabelBehavior: FloatingLabelBehavior.never,
+      labelStyle: TextStyle(color: theme.textWeak, fontSize: 14),
+      hintStyle: TextStyle(color: theme.textFaint, fontSize: 13),
       filled: true,
-      fillColor: theme.surfaceVariant.withValues(alpha: .56),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: theme.border.withValues(alpha: .65)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: theme.primary, width: 1.2),
-      ),
+      fillColor:
+          theme.surfaceVariant.withValues(alpha: theme.isDark ? .72 : .62),
+      border: shape,
+      enabledBorder: shape,
+      focusedBorder: shape,
+      disabledBorder: shape,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
     );
   }
 
@@ -909,12 +911,27 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     int minLines = 1,
     int maxLines = 1,
   }) {
-    return TextField(
-      contextMenuBuilder: androidTextContextMenu,
-      controller: controller,
-      minLines: minLines,
-      maxLines: maxLines,
-      decoration: _fieldDecoration(theme, label).copyWith(hintText: hint),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(label,
+              style: TextStyle(
+                  color: theme.textWeak,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ),
+        TextField(
+          contextMenuBuilder: androidTextContextMenu,
+          controller: controller,
+          minLines: minLines,
+          maxLines: maxLines,
+          cursorColor: theme.primary,
+          style: TextStyle(color: theme.textStrong, fontSize: 15, height: 1.5),
+          decoration: _fieldDecoration(theme, null).copyWith(hintText: hint),
+        ),
+      ],
     );
   }
 
@@ -1067,6 +1084,27 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                   ),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => FutureTasksPage(
+                  botId: widget.botId,
+                  botName: widget.botName,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.schedule_rounded, size: 17),
+            label: const Text('未来任务'),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.primary,
+              backgroundColor: theme.primary.withValues(alpha: .10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
           ),
         ],
