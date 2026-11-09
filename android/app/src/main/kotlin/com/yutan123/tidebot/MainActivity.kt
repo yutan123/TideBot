@@ -212,6 +212,10 @@ class MainActivity: FlutterActivity() {
                     }
                 }
                 "drainBackgroundLogs" -> backgroundResult(result, "LOG_FAILED") { TideBackgroundLog.drain(applicationContext) }
+                "interruptProactiveReply" -> {
+                    val botId = call.argument<String>("botId").orEmpty()
+                    TideProactiveReplyEngine.interrupt(botId) { result.success(null) }
+                }
                 "synchronizeBackgroundTasks" -> backgroundResult(result, "SYNC_FAILED") {
                     TideFutureTasks.reconcile(applicationContext)
                     for (id in TideConfigReader.getEnabledBotIds(applicationContext)) {

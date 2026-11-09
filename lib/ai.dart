@@ -1,3 +1,7 @@
+import 'proactive_request_gate.dart';
+import 'native_background_coordinator.dart';
+import 'global_notice.dart';
+import 'mimo_voice_clone.dart';
 import 'audit_redaction.dart';
 import 'tool_package_catalog.dart';
 import 'tool_package_runtime.dart';
@@ -59,6 +63,15 @@ import 'chat_cache_diagnostics.dart';
 import 'voice_call_state_service.dart';
 
 class AICancellationToken {
+  AICancellationToken({this.beforeRequest});
+  final Future<void> Function()? beforeRequest;
+
+  Future<void> checkRequestAllowed() async {
+    throwIfCancelled();
+    await beforeRequest?.call();
+    throwIfCancelled();
+  }
+
   bool _cancelled = false;
   final List<void Function()> _callbacks = [];
   bool get isCancelled => _cancelled;
@@ -219,153 +232,182 @@ class AIManager {
     AICancellationToken? cancellationToken,
     void Function(String delta)? onDelta,
   }) async {
-    return await MediaStorageService.instance.withMediaUse(() async {
-      if (imagePath != null)
-        imagePath = await MediaStorageService.instance.resolve(imagePath!);
-      if (imagePaths != null)
-        imagePaths = await Future.wait(
-            imagePaths!.map(MediaStorageService.instance.resolve));
-      if (imageAttachments != null)
-        imageAttachments = await Future.wait(
-            imageAttachments!.map(MediaStorageService.instance.resolve));
-      if (audioPath != null)
-        audioPath = await MediaStorageService.instance.resolve(audioPath!);
-
-      cancellationToken?.throwIfCancelled();
-      final executionLease = await RequestExecutionLease.acquire();
-      try {
-        if (diaryTask) task = AIRequestTask.diary;
-        if (quoteTask) task = AIRequestTask.dailyQuote;
-        diaryTask = task == AIRequestTask.diary;
-        quoteTask = task == AIRequestTask.dailyQuote;
-        if (task.internal) {
-          persistResponse = false;
-          includeChatHistory = false;
-          requestHistory = null;
-          enableAutoSummary = false;
-          skipLifeState = true;
-          allowTools = false;
-          allowStickers = false;
-          useJarvis = false;
-          activeGame = null;
-          onDelta = null;
-          forceSingleReply = true;
-        }
-        final prefs = await SharedPreferences.getInstance();
-        const primaryLocal = '';
-        const backupLocal = '';
-        final backupRemote =
-            (prefs.getString('backup_model_$botId') ?? '').trim();
-        final matchingBots = (await DBManager().getAllBots())
-            .where((bot) => bot['id']?.toString() == botId)
-            .toList();
-        final primaryRemote = matchingBots.isEmpty
-            ? ''
-            : (matchingBots.first['chat_model']?.toString().trim() ?? '');
-        // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
-        // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
-        final primary = {'local': primaryLocal, 'provider': primaryRemote};
-        final backup = {'local': backupLocal, 'provider': backupRemote};
-        bool configured(Map<String, String> candidate) =>
-            candidate['local']!.isNotEmpty || candidate['provider']!.isNotEmpty;
-        // Never attempt an empty primary. A configured backup must be usable even
-        // when the bot has no primary model selected.
-        final attempts = <Map<String, String>>[
-          if (configured(primary)) primary,
-          if (configured(backup) && backup['provider'] != primary['provider'])
-            backup,
-        ];
-        if (attempts.isEmpty) {
-          return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
-        }
-
-        final vitalTracked =
-            persistResponse && !skipLifeState && activeGame == null;
-        final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
-        if (vitalTracked) {
-          AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
-          final vitalContext = await BotVitalSignsService.instance
-              .beforeRequest(botId, allowSilence: allowTools);
-          AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
-          extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
-        }
-        try {
-          Map<String, dynamic>? lastFailure;
-          var attempted = 0;
-          for (var index = 0; index < attempts.length; index++) {
-            cancellationToken?.throwIfCancelled();
-            final candidate = attempts[index];
-            final selectedImagePaths = <String>[
-              if (imagePath?.isNotEmpty == true) imagePath!,
-              ...?imagePaths,
-              ...?imageAttachments,
-            ];
-            try {
-              attempted++;
-              final result = await _sendMessageOnce(
-                botId: botId,
-                text: text,
-                imagePath: selectedImagePaths.isEmpty
-                    ? null
-                    : selectedImagePaths.first,
-                imagePaths: selectedImagePaths,
-                audioPath: audioPath,
-                activeGame: activeGame,
-                persistResponse: persistResponse,
-                currentMessageIds: currentMessageIds,
-                beginResponseCommit: beginResponseCommit,
-                includeChatHistory: includeChatHistory,
-                requestHistory: requestHistory,
-                enableAutoSummary: enableAutoSummary,
-                skipLifeState: skipLifeState,
-                task: task,
-                diaryTask: diaryTask,
-                quoteTask: quoteTask,
-                allowTools: allowTools,
-                allowStickers: allowStickers,
-                forceSingleReply: forceSingleReply,
-                notifyResponse: notifyResponse,
-                extraSystemPrompt: extraSystemPrompt,
-                isVoiceCall: isVoiceCall,
-                useJarvis: useJarvis,
-                cancellationToken: cancellationToken,
-                // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
-                // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
-                onDelta: onDelta,
-                forcedLocalId: candidate['local']!,
-                forcedProviderId: candidate['provider']!,
-              );
-              if (result['success'] == true) {
-                if (vitalTracked)
-                  await BotVitalSignsService.instance
-                      .afterRequest(botId, result, vitalCutoff);
-                return result;
-              }
-              lastFailure = result;
-              final code =
-                  int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
-              final retryable = result['error_code']?.toString() == 'network' ||
-                  code == 429 ||
-                  code >= 500;
-              if (!retryable || index == attempts.length - 1) break;
-            } on AICancelledException {
-              rethrow;
-            }
-          }
-          if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-          return {
-            ...?lastFailure,
-            'error':
-                '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
-          };
-        } catch (_) {
-          if (vitalTracked) BotVitalSignsService.instance.failedRequest(botId);
-          rethrow;
-        }
-      } finally {
-        await executionLease.release();
+    final activity = task == AIRequestTask.chat && !diaryTask && !quoteTask
+        ? await ProactiveRequestGate.begin(await DBManager().database, botId)
+        : null;
+    if (activity != null) {
+      AppLogService.instance
+          .add('PROACTIVE_GATE', '普通聊天开始，取消旧主动回复并占用请求：bot=$botId');
+    }
+    try {
+      if (activity != null) {
+        await NativeBackgroundCoordinator.interruptProactiveReply(botId);
+        unawaited(NativeBackgroundCoordinator.synchronize());
       }
-    });
+      return await MediaStorageService.instance.withMediaUse(() async {
+        if (imagePath != null)
+          imagePath = await MediaStorageService.instance.resolve(imagePath!);
+        if (imagePaths != null)
+          imagePaths = await Future.wait(
+              imagePaths!.map(MediaStorageService.instance.resolve));
+        if (imageAttachments != null)
+          imageAttachments = await Future.wait(
+              imageAttachments!.map(MediaStorageService.instance.resolve));
+        if (audioPath != null)
+          audioPath = await MediaStorageService.instance.resolve(audioPath!);
+
+        cancellationToken?.throwIfCancelled();
+        final executionLease = await RequestExecutionLease.acquire();
+        try {
+          if (diaryTask) task = AIRequestTask.diary;
+          if (quoteTask) task = AIRequestTask.dailyQuote;
+          diaryTask = task == AIRequestTask.diary;
+          quoteTask = task == AIRequestTask.dailyQuote;
+          if (task.internal) {
+            persistResponse = false;
+            includeChatHistory = false;
+            requestHistory = null;
+            enableAutoSummary = false;
+            skipLifeState = true;
+            allowTools = false;
+            allowStickers = false;
+            useJarvis = false;
+            activeGame = null;
+            onDelta = null;
+            forceSingleReply = true;
+          }
+          final prefs = await SharedPreferences.getInstance();
+          const primaryLocal = '';
+          const backupLocal = '';
+          final backupRemote =
+              (prefs.getString('backup_model_$botId') ?? '').trim();
+          final matchingBots = (await DBManager().getAllBots())
+              .where((bot) => bot['id']?.toString() == botId)
+              .toList();
+          final primaryRemote = matchingBots.isEmpty
+              ? ''
+              : (matchingBots.first['chat_model']?.toString().trim() ?? '');
+          // 首次严格使用主模型；失败后优先使用备用模型，再给备用模型一次重试。
+          // 过去主模型是远程时 provider 被错误置空，导致永远落到列表第一个服务商。
+          final primary = {'local': primaryLocal, 'provider': primaryRemote};
+          final backup = {'local': backupLocal, 'provider': backupRemote};
+          bool configured(Map<String, String> candidate) =>
+              candidate['local']!.isNotEmpty ||
+              candidate['provider']!.isNotEmpty;
+          // Never attempt an empty primary. A configured backup must be usable even
+          // when the bot has no primary model selected.
+          final attempts = <Map<String, String>>[
+            if (configured(primary)) primary,
+            if (configured(backup) && backup['provider'] != primary['provider'])
+              backup,
+          ];
+          if (attempts.isEmpty) {
+            return {'error': '未配置聊天模型，请先在角色设置中选择聊天或备用模型'};
+          }
+
+          final vitalTracked =
+              persistResponse && !skipLifeState && activeGame == null;
+          final vitalCutoff = DateTime.now().millisecondsSinceEpoch;
+          if (vitalTracked) {
+            AppLogService.instance.add('AI_TRACE', '请求前生活状态开始 bot=$botId');
+            final vitalContext = await BotVitalSignsService.instance
+                .beforeRequest(botId, allowSilence: allowTools);
+            AppLogService.instance.add('AI_TRACE', '请求前生活状态完成 bot=$botId');
+            extraSystemPrompt = '$vitalContext\n$extraSystemPrompt';
+          }
+          try {
+            Map<String, dynamic>? lastFailure;
+            var attempted = 0;
+            for (var index = 0; index < attempts.length; index++) {
+              await cancellationToken?.checkRequestAllowed();
+              final candidate = attempts[index];
+              final selectedImagePaths = <String>[
+                if (imagePath?.isNotEmpty == true) imagePath!,
+                ...?imagePaths,
+                ...?imageAttachments,
+              ];
+              try {
+                attempted++;
+                final result = await _sendMessageOnce(
+                  botId: botId,
+                  text: text,
+                  imagePath: selectedImagePaths.isEmpty
+                      ? null
+                      : selectedImagePaths.first,
+                  imagePaths: selectedImagePaths,
+                  audioPath: audioPath,
+                  activeGame: activeGame,
+                  persistResponse: persistResponse,
+                  currentMessageIds: currentMessageIds,
+                  beginResponseCommit: beginResponseCommit,
+                  includeChatHistory: includeChatHistory,
+                  requestHistory: requestHistory,
+                  enableAutoSummary: enableAutoSummary,
+                  skipLifeState: skipLifeState,
+                  task: task,
+                  diaryTask: diaryTask,
+                  quoteTask: quoteTask,
+                  allowTools: allowTools,
+                  allowStickers: allowStickers,
+                  forceSingleReply: forceSingleReply,
+                  notifyResponse: notifyResponse,
+                  extraSystemPrompt: extraSystemPrompt,
+                  isVoiceCall: isVoiceCall,
+                  useJarvis: useJarvis,
+                  cancellationToken: cancellationToken,
+                  // 不要为了备用重试延迟主请求的 SSE：此前首两次被强制关闭流式，
+                  // 部分服务商在非流式模式下长期不返回，聊天室最终只看到超时。
+                  onDelta: onDelta,
+                  forcedLocalId: candidate['local']!,
+                  forcedProviderId: candidate['provider']!,
+                );
+                if (result['success'] == true) {
+                  if (vitalTracked)
+                    await BotVitalSignsService.instance
+                        .afterRequest(botId, result, vitalCutoff);
+                  return result;
+                }
+                lastFailure = result;
+                final code =
+                    int.tryParse(result['error_code']?.toString() ?? '') ?? 0;
+                final retryable =
+                    result['error_code']?.toString() == 'network' ||
+                        code == 429 ||
+                        code >= 500;
+                if (!retryable || index == attempts.length - 1) break;
+              } on AICancelledException {
+                rethrow;
+              }
+            }
+            if (vitalTracked)
+              BotVitalSignsService.instance.failedRequest(botId);
+            return {
+              ...?lastFailure,
+              'error':
+                  '模型请求未成功（实际尝试 $attempted 次）。${lastFailure?['error'] ?? ''}',
+            };
+          } catch (_) {
+            if (vitalTracked)
+              BotVitalSignsService.instance.failedRequest(botId);
+            rethrow;
+          }
+        } finally {
+          await executionLease.release();
+        }
+      });
+    } finally {
+      if (activity != null) {
+        try {
+          await activity.release();
+        } catch (error) {
+          AppLogService.instance
+              .add('PROACTIVE_GATE', '普通聊天租约释放失败，将自动过期：$error');
+        }
+        unawaited(NativeBackgroundCoordinator.synchronize());
+        AppLogService.instance
+            .add('PROACTIVE_GATE', '普通聊天结束，按正常间隔等待下次主动回复：bot=$botId');
+      }
+    }
   }
 
   Map<String, dynamic> _decodeToolArguments(dynamic raw) {
@@ -651,11 +693,18 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             ..body = jsonEncode(payload);
       void cancelRequest() => client.close();
       cancellationToken?.addOnCancel(cancelRequest);
-      final streamed =
-          await client.send(request).timeout(const Duration(seconds: 30));
-      cancellationToken?.removeOnCancel(cancelRequest);
-      final response = await http.Response.fromStream(streamed);
-      client.close();
+      late http.StreamedResponse streamed;
+      late http.Response response;
+      try {
+        await cancellationToken?.checkRequestAllowed();
+        streamed =
+            await client.send(request).timeout(const Duration(seconds: 30));
+        response = await http.Response.fromStream(streamed);
+        cancellationToken?.throwIfCancelled();
+      } finally {
+        cancellationToken?.removeOnCancel(cancelRequest);
+        client.close();
+      }
       if (streamed.statusCode != 200) {
         AppLogService.instance
             .add('JARVIS', '军师请求失败：HTTP ${streamed.statusCode}');
@@ -1503,6 +1552,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       AppLogService.instance.add('AI_TRACE',
           'HTTP 请求开始 model=$modelName url=$baseUrl/chat/completions stream=${onDelta != null}');
       final httpStarted = DateTime.now();
+      await token?.checkRequestAllowed();
       final streamedResponse = await client.send(request);
       token?.throwIfCancelled();
       statusCode = streamedResponse.statusCode;
@@ -1637,6 +1687,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             throw const AICancelledException();
           }
           await _runStreamedTools(
+            cancellationToken: token,
             db: db,
             botId: botId,
             calls: streamedToolCalls,
@@ -1737,13 +1788,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                   responseMetadata: responseMetadata);
             hadToolCalls = true;
             messages.add(toolAssistantMessage(message));
-            token?.throwIfCancelled();
+            await token?.checkRequestAllowed();
             if (persistResponse &&
                 beginResponseCommit != null &&
                 !beginResponseCommit()) {
               throw const AICancelledException();
             }
             await _runStreamedTools(
+              cancellationToken: token,
               db: db,
               botId: botId,
               calls: toolCalls,
@@ -2471,7 +2523,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     AICancellationToken? token,
     Future<T> Function(http.Client client) action,
   ) async {
-    token?.throwIfCancelled();
+    await token?.checkRequestAllowed();
     final client = http.Client();
     void cancel() => client.close();
     token?.addOnCancel(cancel);
@@ -2903,7 +2955,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       _ => 0,
     };
     final modelName = (provider['model']?.toString() ?? '').trim();
-    final model = modelName.isEmpty
+    var model = modelName.isEmpty
         ? (provider['name']?.toString() ?? 'tts-1')
         : modelName;
     if (protocol == 'unsupported') {
@@ -2916,6 +2968,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
 
     try {
+      var requestVoice = voice;
+      if (protocol == 'mimo') {
+        final clone = provider['mimo_clone'] is Map
+            ? Map<String, dynamic>.from(provider['mimo_clone'] as Map)
+            : null;
+        model = mimoSynthesisModel(model, configuredVoice, clone);
+        if (isMimoClone(protocol, configuredVoice)) {
+          requestVoice = await mimoReferenceVoice(clone);
+        }
+      }
       final endpoint = switch (protocol) {
         'minimax' => miniMaxTtsEndpoint(baseUrl),
         'mimo' => _chatCompletionsEndpoint(baseUrl),
@@ -2959,7 +3021,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
             'messages': [
               {'role': 'assistant', 'content': text},
             ],
-            'audio': {'voice': voice, 'format': 'wav'},
+            'audio': {'voice': requestVoice, 'format': 'wav'},
           },
         _ => {
             'model': model,
@@ -2996,7 +3058,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                     headers: headers,
                     body: jsonEncode(body),
                   )
-                  .timeout(const Duration(seconds: 30)));
+                  .timeout(Duration(
+                      seconds:
+                          isMimoClone(protocol, configuredVoice) ? 90 : 30)));
       var res = await request(payload);
       // Only retry rejected expressive parameters; no retry on auth/rate limits.
       if (speechStyle != null &&
@@ -3139,6 +3203,9 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     } catch (e) {
       cancellationToken?.throwIfCancelled();
       AppLogService.instance.add('TTS', '语音合成异常：$e');
+      if (isMimoClone(protocol, configuredVoice) && e is FormatException) {
+        GlobalNotice.show(e.message);
+      }
       return null;
     }
   }
@@ -3664,6 +3731,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   /// 统一执行工具调用并取得模型 follow-up 文本。供流式与非流式两条链路复用，
   /// 保证「工具结果 → 最终回答」在两种模式下行为一致。
   Future<void> _runStreamedTools({
+    AICancellationToken? cancellationToken,
     required DBManager db,
     required String botId,
     required List<Map<String, dynamic>> calls,
@@ -3730,6 +3798,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
 
     Future<Map<String, dynamic>> executeOnce(Map<String, dynamic> call) async {
+      await cancellationToken?.checkRequestAllowed();
       final name = (call['function'] as Map?)?['name']?.toString() ?? '';
       if (!requestTools
           .any((tool) => (tool['function'] as Map?)?['name'] == name)) {
@@ -3770,6 +3839,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
           'result': {'ok': false, 'error': '工具执行异常：$error'}
         };
       }
+      await cancellationToken?.checkRequestAllowed();
       final outcome = result['result'];
       AppLogService.instance.addJson('TOOLS', '工具执行结果：$name', {
         'tool_call_id': call['id'],
@@ -3816,16 +3886,19 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       });
       _logRequestPrefix('$cacheScope|$requestId|tool_chain', followUpId,
           followUpPayload, const {});
-      final followUp = await http
-          .post(
-            Uri.parse('$baseUrl/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $apiKey',
-            },
-            body: jsonEncode(followUpPayload),
-          )
-          .timeout(const Duration(seconds: 60));
+      final followUp = await _withCancellableClient(
+          cancellationToken,
+          (client) => client
+              .post(
+                Uri.parse('$baseUrl/chat/completions'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $apiKey',
+                },
+                body: jsonEncode(followUpPayload),
+              )
+              .timeout(const Duration(seconds: 60)));
+      await cancellationToken?.checkRequestAllowed();
       if (followUp.statusCode != 200) {
         AppLogService.instance
             .add('TOOLS', '工具后续请求失败：HTTP ${followUp.statusCode}');
@@ -4043,7 +4116,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         tools.add(_requestVoiceReplyToolSchema());
       }
     }
-    tools.addAll(await _buildExternalTools(db));
+    tools.addAll(await _buildExternalTools(db, botId));
 
     // 发起语音通话工具
     tools.add({
@@ -4063,15 +4136,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     return tools;
   }
 
-  Future<ToolPackageCatalog> _toolPackages(DBManager db) async =>
+  Future<ToolPackageCatalog> _toolPackages(DBManager db, String botId) async =>
       ToolPackageCatalog(
-          skills: await db.querySkills(),
-          servers: await db.queryMcpServers(),
-          skillTools: await db.queryEnabledSkillTools(),
-          mcpTools: await db.queryEnabledMcpTools());
+          skills: await db.querySkills(botId: botId),
+          servers: await db.queryMcpServers(botId: botId),
+          skillTools: await db.queryEnabledSkillTools(botId: botId),
+          mcpTools: await db.queryEnabledMcpTools(botId: botId));
 
-  Future<List<Map<String, dynamic>>> _buildExternalTools(DBManager db) async =>
-      (await _toolPackages(db)).schemas();
+  Future<List<Map<String, dynamic>>> _buildExternalTools(
+          DBManager db, String botId) async =>
+      (await _toolPackages(db, botId)).schemas();
 
   Future<Map<String, dynamic>> _executePackageTool({
     required DBManager db,
@@ -4081,7 +4155,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   }) async {
     try {
       return await executeToolPackage(
-          catalog: await _toolPackages(db),
+          catalog: await _toolPackages(db, botId),
           name: name,
           args: args,
           execute: (source, id, toolName, arguments, referenceReader) async {
@@ -4095,10 +4169,16 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
                 });
               }
               return _executeSkillToolCall(
-                  db: db, name: skillToolName(id, toolName), args: arguments);
+                  db: db,
+                  botId: botId,
+                  name: skillToolName(id, toolName),
+                  args: arguments);
             }
             return _executeMcpToolCall(
-                db: db, name: mcpToolName(id, toolName), args: arguments);
+                db: db,
+                botId: botId,
+                name: mcpToolName(id, toolName),
+                args: arguments);
           });
     } catch (error) {
       return {
@@ -4285,11 +4365,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   String _redactToolInput(Map<String, dynamic> args) => redactToolInput(args);
 
   Future<Map<String, dynamic>> _executeSkillToolCall({
+    required String botId,
     required DBManager db,
     required String name,
     required Map<String, dynamic> args,
   }) async {
-    final rows = await db.queryEnabledSkillTools();
+    final rows = await db.queryEnabledSkillTools(botId: botId);
     final row = rows
         .where((item) => skillToolName(item['skill_id'], item['name']) == name)
         .firstOrNull;
@@ -4299,7 +4380,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       };
     final skillId = row['skill_id'];
     final toolName = row['name'];
-    final skillRows = await db.querySkills();
+    final skillRows = await db.querySkills(botId: botId);
     final skill = skillRows.firstWhere(
       (item) => item['id'] == skillId,
       orElse: () => <String, dynamic>{},
@@ -4320,6 +4401,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final executor = row['executor']?.toString() ?? '';
     if (executor == 'mcp_proxy') {
       return _executeSkillMcpProxy(
+        botId: botId,
         db: db,
         skillName: name,
         definition: Map<String, dynamic>.from(definition),
@@ -4388,6 +4470,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   }
 
   Future<Map<String, dynamic>> _executeSkillMcpProxy({
+    required String botId,
     required DBManager db,
     required String skillName,
     required Map<String, dynamic> definition,
@@ -4397,14 +4480,14 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     final targetTool = definition['mcp_tool']?.toString().trim() ?? '';
     final started = DateTime.now();
     try {
-      final server = (await db.queryMcpServers()).firstWhere(
+      final server = (await db.queryMcpServers(botId: botId)).firstWhere(
         (item) => item['id']?.toString() == serverId && item['enabled'] == 1,
         orElse: () => <String, dynamic>{},
       );
       if (server.isEmpty) {
         throw StateError('目标 MCP 服务不可用');
       }
-      final enabledTool = (await db.queryEnabledMcpTools()).any(
+      final enabledTool = (await db.queryEnabledMcpTools(botId: botId)).any(
         (item) =>
             item['server_id']?.toString() == serverId &&
             item['name']?.toString() == targetTool,
@@ -4471,11 +4554,12 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
   }
 
   Future<Map<String, dynamic>> _executeMcpToolCall({
+    required String botId,
     required DBManager db,
     required String name,
     required Map<String, dynamic> args,
   }) async {
-    final rows = await db.queryEnabledMcpTools();
+    final rows = await db.queryEnabledMcpTools(botId: botId);
     final row = resolveMcpTool(rows, name);
     if (row == null)
       return {
@@ -4591,7 +4675,7 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
     }
     if (name == 'read_skill_file') {
       try {
-        final skill = (await db.querySkills())
+        final skill = (await db.querySkills(botId: botId))
             .where((s) => s['id'] == args['id'] && s['enabled'] == 1)
             .firstOrNull;
         if (skill == null) throw const FormatException('技能不存在或已停用');
@@ -4626,10 +4710,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
       }
     }
     if (name.startsWith('mcp_')) {
-      return _executeMcpToolCall(db: db, name: name, args: args);
+      return _executeMcpToolCall(db: db, botId: botId, name: name, args: args);
     }
     if (name.startsWith('skill_')) {
-      return _executeSkillToolCall(db: db, name: name, args: args);
+      return _executeSkillToolCall(
+          db: db, botId: botId, name: name, args: args);
     }
     if (name == 'set_emotion') {
       const moods = {'平静', '开心', '伤心', '生气', '害羞', '兴奋'};

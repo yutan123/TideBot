@@ -1,3 +1,5 @@
+import 'proactive_request_gate.dart';
+import 'tool_bot_scope.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'native_background_coordinator.dart';
 import 'media_storage_service.dart';
@@ -512,6 +514,8 @@ class DBManager {
         } else {
           await _ensureVoiceCallStorage(db);
         }
+        await _ensureColumns(db, 'skills', const {'bot_scope': 'TEXT'});
+        await _ensureColumns(db, 'mcp_servers', const {'bot_scope': 'TEXT'});
         await db.update(
           'memories',
           {'category': '记忆'},
@@ -1156,6 +1160,7 @@ class DBManager {
       description TEXT DEFAULT '', manifest_json TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ready',
       built_in INTEGER NOT NULL DEFAULT 0, recommended INTEGER NOT NULL DEFAULT 0,
+      bot_scope TEXT,
       error TEXT, updated_at INTEGER NOT NULL)''');
     await _execSql(db, '''CREATE TABLE IF NOT EXISTS skill_tools (
       id TEXT PRIMARY KEY, skill_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -1169,6 +1174,7 @@ class DBManager {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       service_description TEXT NOT NULL DEFAULT '',
+      bot_scope TEXT,
       headers_key TEXT, timeout_ms INTEGER NOT NULL DEFAULT 20000,
       auto_connect INTEGER NOT NULL DEFAULT 0,
       resources_json TEXT NOT NULL DEFAULT '[]',
@@ -1188,24 +1194,40 @@ class DBManager {
       error TEXT, created_at INTEGER NOT NULL)''');
   }
 
-  Future<List<Map<String, dynamic>>> queryEnabledSkillTools() async {
+  Future<List<Map<String, dynamic>>> queryEnabledSkillTools(
+      {String? botId}) async {
     final db = await database;
-    return db.rawQuery(
-      "SELECT * FROM skill_tools WHERE enabled = 1 AND (risk_level != 'sensitive' OR authorized = 1) AND skill_id IN (SELECT id FROM skills WHERE enabled = 1)",
+    final rows = await db.rawQuery(
+      "SELECT t.*, s.bot_scope FROM skill_tools t JOIN skills s ON s.id=t.skill_id WHERE t.enabled=1 AND s.enabled=1 AND (t.risk_level != 'sensitive' OR t.authorized=1)",
     );
+    return toolRowsForBot(rows, botId);
   }
 
-  Future<List<Map<String, dynamic>>> queryEnabledMcpTools() async {
+  Future<List<Map<String, dynamic>>> queryEnabledMcpTools(
+      {String? botId}) async {
     final db = await database;
-    return db.rawQuery(
-      'SELECT t.*, s.url, s.headers_key, s.timeout_ms FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1',
+    final rows = await db.rawQuery(
+      'SELECT t.*, s.url, s.headers_key, s.timeout_ms, s.bot_scope FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.enabled=1 AND s.enabled=1',
     );
+    return toolRowsForBot(rows, botId);
   }
 
-  Future<List<Map<String, dynamic>>> querySkills() async =>
-      (await database).query('skills', orderBy: 'updated_at DESC');
-  Future<List<Map<String, dynamic>>> queryMcpServers() async =>
-      (await database).query('mcp_servers', orderBy: 'updated_at DESC');
+  Future<List<Map<String, dynamic>>> querySkills({String? botId}) async =>
+      toolRowsForBot(
+          await (await database).query('skills', orderBy: 'updated_at DESC'),
+          botId);
+  Future<List<Map<String, dynamic>>> queryMcpServers({String? botId}) async =>
+      toolRowsForBot(
+          await (await database)
+              .query('mcp_servers', orderBy: 'updated_at DESC'),
+          botId);
+
+  Future<void> setToolBotScope(String id,
+      {required bool skill, String? scope}) async {
+    await (await database).update(
+        skill ? 'skills' : 'mcp_servers', {'bot_scope': scope},
+        where: 'id = ?', whereArgs: [id]);
+  }
 
   Future<void> saveSkill(
     Map<String, dynamic> skill,
@@ -1639,6 +1661,9 @@ class DBManager {
   }) async {
     final db = await database;
     await db.transaction((txn) async {
+      if (msg['role'] == 'user' && msg['bot_id'] != null) {
+        await ProactiveRequestGate.userActivity(txn, msg['bot_id'].toString());
+      }
       final path = msg['file_path'];
       if (path is String) {
         final aliases = await txn.query('media_storage_jobs',
@@ -3386,6 +3411,7 @@ class DBManager {
           'api_key': m['key'] ?? '',
           'model': m['model'] ?? '',
           'voice': m['voice'] ?? '',
+          'mimo_clone': m['mimo_clone'],
           'protocol': m['protocol'] ?? 'openai',
           'supports_instructions': m['supports_instructions'] == true,
         });

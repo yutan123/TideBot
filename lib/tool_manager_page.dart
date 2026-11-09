@@ -1,3 +1,4 @@
+import 'tool_bot_scope_field.dart';
 import 'android_selection_menu.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -84,6 +85,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
       final validatedManifest = package.manifest;
       var title = validatedManifest['name'].toString();
       var description = validatedManifest['description']?.toString() ?? '';
+      String? botScope = (await _db.querySkills())
+          .where((row) => row['id'] == validatedManifest['id'])
+          .firstOrNull?['bot_scope'] as String?;
       if (!mounted) return;
       final accepted = await TideDialogs.show<bool>(
         context: context,
@@ -136,6 +140,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
               if ((validatedManifest['script_files'] as List).isNotEmpty)
                 Text('附带脚本可读取；当前不支持运行脚本。',
                     style: TextStyle(color: theme.textWeak, fontSize: 12)),
+              ToolBotScopeField(
+                  initialScope: botScope,
+                  onChanged: (value) => botScope = value),
               const SizedBox(height: 20),
               Row(children: [
                 Expanded(
@@ -191,6 +198,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         'version': validatedManifest['version'].toString(),
         'description': validatedManifest['description']?.toString() ?? '',
         'manifest_json': jsonEncode(validatedManifest),
+        'bot_scope': botScope,
         'enabled': 1,
         'status': 'ready',
         'updated_at': now,
@@ -247,6 +255,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
 
   Future<void> _editMcp([Map<String, dynamic>? item]) async {
     final editing = item != null;
+    String? botScope = item?['bot_scope'] as String?;
     final id = item?['id']?.toString() ??
         'mcp_${DateTime.now().millisecondsSinceEpoch}';
     const storage = FlutterSecureStorage();
@@ -391,6 +400,9 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                               : '请输入 5 到 120 之间的整数';
                         }),
                     const SizedBox(height: 12),
+                    ToolBotScopeField(
+                        initialScope: botScope,
+                        onChanged: (value) => botScope = value),
                     StatefulBuilder(
                       builder: (context, setDialogState) => Row(children: [
                         Expanded(
@@ -448,6 +460,7 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
         'headers_key': item?['headers_key'],
         'timeout_ms': timeoutMs,
         'auto_connect': autoConnect ? 1 : 0,
+        'bot_scope': botScope,
         'resources_json':
             connectionChanged ? '[]' : item?['resources_json'] ?? '[]',
         'prompts_json':
@@ -543,6 +556,25 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
     );
   }
 
+  Future<void> _editBotScope(Map<String, dynamic> item) async {
+    final skill = _isSkill;
+    final rows = skill ? await _db.querySkills() : await _db.queryMcpServers();
+    final current = rows.where((row) => row['id'] == item['id']).firstOrNull;
+    if (!mounted || current == null) return;
+    final result = await showToolBotScopePicker(context,
+        initialScope: current['bot_scope'] as String?);
+    if (result == null) return;
+    try {
+      await _db.setToolBotScope(item['id'].toString(),
+          skill: skill, scope: result.scope);
+      await _reload();
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('机器人设置保存失败，请重试')));
+    }
+  }
+
   Future<void> _showDetails(Map<String, dynamic> item) async {
     final id = item['id'].toString();
     final tools =
@@ -580,6 +612,10 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                               false)
                           ? item['service_description'].toString()
                           : '机器人根据包内工具摘要选择此包，查看后按需调用。'),
+                TextButton.icon(
+                    onPressed: () => _editBotScope(item),
+                    icon: const Icon(Icons.smart_toy_outlined),
+                    label: const Text('修改启用机器人')),
                 const SizedBox(height: 16),
                 if (_isSkill) ...[
                   const Text('指引与附带文件'),
@@ -806,6 +842,12 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                                     ],
                                   ),
                                 ),
+                                if (_isSkill)
+                                  IconButton(
+                                    tooltip: '修改启用机器人',
+                                    icon: const Icon(Icons.smart_toy_outlined),
+                                    onPressed: () => _editBotScope(item),
+                                  ),
                                 if (!_isSkill)
                                   IconButton(
                                     tooltip: '刷新连接',

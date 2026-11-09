@@ -35,12 +35,19 @@ object TideProactiveTasks {
                     continue
                 }
                 val due = TideStore.transaction(db) {
-                    val existing = TideStore.kv(db, "proactive_due_at_$id")?.toLongOrNull() ?: 0L
-                    if (existing > 0) existing else {
-                        val next = nextDeadline(db, false)
+                    // Keep a recovery alarm beyond the live reservation. On normal
+                    // completion Dart replaces it with a fresh normal interval.
+                    if (TideProactiveRequestGate.busy(db, id)) {
+                        val next = nextDeadline(db, false).coerceAtLeast(System.currentTimeMillis() + 10 * 60_000L)
                         TideStore.put(db, "proactive_due_at_$id", next.toString())
-
                         next
+                    } else {
+                        val existing = TideStore.kv(db, "proactive_due_at_$id")?.toLongOrNull() ?: 0L
+                        if (existing > 0) existing else {
+                            val next = nextDeadline(db, false)
+                            TideStore.put(db, "proactive_due_at_$id", next.toString())
+                            next
+                        }
                     }
                 }
                 TideMasterScheduler.registerTask(context, "proactive:$id", "PROACTIVE_REPLY", id, due, false,

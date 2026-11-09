@@ -79,7 +79,9 @@ jobs:
         run: flutter pub get
 
       - name: 生成应用图标
-        run: dart run flutter_launcher_icons
+        run: |
+          dart run flutter_launcher_icons
+          dart run tool/generate_launch_assets.dart
 
       - name: 检查 Dart 代码
         run: dart analyze --no-fatal-warnings

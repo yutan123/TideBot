@@ -20,6 +20,19 @@ class NativeBackgroundCoordinator {
   static bool _synchronizeAgain = false;
   static AppLifecycleListener? _lifecycleListener;
 
+  static Future<void> interruptProactiveReply(String botId) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _channel
+          .invokeMethod<void>('interruptProactiveReply', {'botId': botId});
+    } on MissingPluginException {
+      // Headless engines and workers still enforce the persisted generation.
+    } on PlatformException catch (error) {
+      AppLogService.instance
+          .add('PROACTIVE_GATE', '主动回复取消通知失败，使用持久化版本拦截：${error.code}');
+    }
+  }
+
   static Future<void> synchronize() {
     if (defaultTargetPlatform != TargetPlatform.android) return Future.value();
     _synchronizeAgain = true;

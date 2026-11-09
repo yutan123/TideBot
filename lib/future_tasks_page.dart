@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'android_selection_menu.dart';
 import 'db.dart';
 import 'future_task_scheduler.dart';
+import 'future_task_button.dart';
 import 'global_notice.dart';
 import 'theme.dart';
 import 'ui_components.dart';
@@ -33,6 +34,7 @@ class _FutureTasksPageState extends State<FutureTasksPage>
   bool _failed = false;
   String _filter = 'all';
   final _busy = <String>{};
+  final _expanded = <String>{};
 
   @override
   void initState() {
@@ -101,15 +103,18 @@ class _FutureTasksPageState extends State<FutureTasksPage>
             const SizedBox(height: 24),
             Row(children: [
               Expanded(
-                  child: TideDialogs.glassButton('保留',
+                  child: FutureTaskButton(
                       color: theme.surfaceVariant,
-                      textColor: theme.textStrong,
-                      onTap: () => Navigator.pop(ctx, false))),
+                      foregroundColor: theme.textStrong,
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text("保留"))),
               const SizedBox(width: 12),
               Expanded(
-                  child: TideDialogs.glassButton('删除',
+                  child: FutureTaskButton(
                       color: const Color(0xffd86872),
-                      onTap: () => Navigator.pop(ctx, true))),
+                      foregroundColor: Colors.white,
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text("删除"))),
             ]),
           ]));
         });
@@ -136,13 +141,19 @@ class _FutureTasksPageState extends State<FutureTasksPage>
   }
 
   Widget _surface(TideTheme theme, Widget child) => Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
             color: theme.surface,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-                color: theme.border.withValues(alpha: .35), width: .5)),
-        child: child,
+                color: theme.border.withValues(alpha: .16), width: .5)),
+        child: AnimatedSize(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: child),
       );
 
   Widget _card(TideTheme theme, Map<String, dynamic> task) {
@@ -161,67 +172,97 @@ class _FutureTasksPageState extends State<FutureTasksPage>
                 ? '等待重试'
                 : '待执行';
     final disabled = running || _busy.contains(task['id'].toString());
+    final id = task['id'].toString();
+    final expanded = _expanded.contains(id);
+    final prompt = task['prompt']?.toString() ?? task['note']?.toString() ?? '';
     return _surface(
         theme,
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(_clock(time),
+                style: TextStyle(
+                    color: theme.textStrong,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -.6)),
+            const SizedBox(width: 10),
             Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(_clock(time),
-                      style: TextStyle(
-                          color: theme.textStrong,
-                          fontSize: 30,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -1)),
-                  const SizedBox(height: 3),
-                  Text(
-                      daily ? '每天 · 下次 ${_date(time)}' : '${_date(time)} · 仅一次',
-                      style: TextStyle(color: theme.textWeak, fontSize: 12)),
-                ])),
+                child: Text(
+                    daily ? '每天 · 下次 ${_date(time)}' : '${_date(time)} · 仅一次',
+                    style: TextStyle(color: theme.textWeak, fontSize: 11))),
             Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                    color: color.withValues(alpha: .1),
-                    borderRadius: BorderRadius.circular(12)),
+                    color: color.withValues(alpha: .09),
+                    borderRadius: BorderRadius.circular(8)),
                 child: Text(label,
                     style: TextStyle(
                         color: color,
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: FontWeight.w600))),
           ]),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
           Text(task['title']?.toString() ?? '未命名任务',
+              maxLines: expanded ? null : 2,
+              overflow: expanded ? null : TextOverflow.ellipsis,
               style: TextStyle(
                   color: theme.textStrong,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-          Text(task['prompt']?.toString() ?? task['note']?.toString() ?? '',
-              style:
-                  TextStyle(color: theme.textWeak, height: 1.65, fontSize: 14)),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35)),
+          if (prompt.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(prompt,
+                maxLines: expanded ? null : 2,
+                overflow: expanded ? null : TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: theme.textWeak, height: 1.45, fontSize: 12)),
+          ],
           if (failed || retry > 0) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
                 failed
-                    ? '本次执行未完成，可编辑时间后重新安排。'
+                    ? '执行未完成，可编辑时间后重新安排。'
                     : '下次尝试：${_date(DateTime.fromMillisecondsSinceEpoch(retry))} ${_clock(DateTime.fromMillisecondsSinceEpoch(retry))}',
-                style: TextStyle(color: color, fontSize: 12, height: 1.5)),
+                style: TextStyle(color: color, fontSize: 11, height: 1.4)),
           ],
-          const SizedBox(height: 12),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            TextButton.icon(
+          const SizedBox(height: 4),
+          Row(children: [
+            FutureTaskButton(
+                foregroundColor: theme.textWeak,
+                onPressed: () => setState(() {
+                      if (expanded) {
+                        _expanded.remove(id);
+                      } else {
+                        _expanded.add(id);
+                      }
+                    }),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(expanded ? '收起' : '详情',
+                      style: const TextStyle(fontSize: 12)),
+                  Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 16),
+                ])),
+            const Spacer(),
+            FutureTaskButton(
+                foregroundColor: theme.primary,
                 onPressed: disabled ? null : () => _edit(task),
-                icon: const Icon(Icons.edit_outlined, size: 16),
-                label: const Text('编辑'),
-                style: TextButton.styleFrom(foregroundColor: theme.primary)),
-            TextButton.icon(
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.edit_outlined, size: 15),
+                  SizedBox(width: 5),
+                  Text('编辑', style: TextStyle(fontSize: 12)),
+                ])),
+            FutureTaskButton(
+                foregroundColor: theme.textWeak,
                 onPressed: disabled ? null : () => _delete(task),
-                icon: const Icon(Icons.delete_outline_rounded, size: 17),
-                label: const Text('删除'),
-                style: TextButton.styleFrom(foregroundColor: theme.textWeak)),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.delete_outline_rounded, size: 16),
+                  SizedBox(width: 5),
+                  Text('删除', style: TextStyle(fontSize: 12)),
+                ])),
           ]),
         ]));
   }
@@ -238,18 +279,39 @@ class _FutureTasksPageState extends State<FutureTasksPage>
       appBar: AppBar(
           title: const Text('未来任务'),
           backgroundColor: Colors.transparent,
+          leading: FutureTaskButton(
+              tooltip: '返回',
+              foregroundColor: theme.textStrong,
+              onPressed: () => Navigator.maybePop(context),
+              child: const Icon(Icons.arrow_back_rounded, size: 22)),
           actions: [
-            IconButton(
+            FutureTaskButton(
                 tooltip: '刷新',
+                foregroundColor: theme.textWeak,
                 onPressed: _load,
-                icon: const Icon(Icons.refresh_rounded))
+                child: const Icon(Icons.refresh_rounded, size: 22)),
+            const SizedBox(width: 8)
           ]),
-      floatingActionButton: FloatingActionButton.extended(
-          backgroundColor: theme.primary,
-          foregroundColor: Colors.white,
-          onPressed: () => _edit(),
-          icon: const Icon(Icons.add_rounded),
-          label: const Text('添加任务')),
+      floatingActionButton: DecoratedBox(
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                    color: theme.primary.withValues(alpha: .22),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6))
+              ]),
+          child: FutureTaskButton(
+              color: theme.primary,
+              foregroundColor: Colors.white,
+              onPressed: () => _edit(),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.add_rounded, size: 20),
+                SizedBox(width: 6),
+                Text('添加任务',
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              ]))),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: theme.primary))
           : RefreshIndicator(
@@ -260,53 +322,64 @@ class _FutureTasksPageState extends State<FutureTasksPage>
                       parent: BouncingScrollPhysics()),
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
                   children: [
-                    _surface(
-                        theme,
-                        Column(
+                    Padding(
+                        padding: const EdgeInsets.fromLTRB(2, 6, 2, 18),
+                        child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.schedule_rounded,
-                                  color: theme.primary, size: 28),
-                              const SizedBox(height: 14),
-                              Text('把约定留给未来',
-                                  style: TextStyle(
-                                      color: theme.textStrong,
-                                      fontSize: 23,
-                                      fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 8),
-                              Text(
-                                  '属于 ${widget.botName} 的任务清单。到时间后，任务会交给机器人执行。',
-                                  style: TextStyle(
-                                      color: theme.textWeak, height: 1.6)),
-                              const SizedBox(height: 14),
-                              Text('试着对TA说：“每天早上10点，告诉我天气预报。”',
-                                  style: TextStyle(
-                                      color: theme.primary,
-                                      fontSize: 13,
-                                      height: 1.5)),
+                              Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                      color:
+                                          theme.primary.withValues(alpha: .1),
+                                      borderRadius: BorderRadius.circular(14)),
+                                  child: Icon(Icons.schedule_rounded,
+                                      color: theme.primary, size: 22)),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                    Text('${widget.botName} 的安排',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: theme.textStrong,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 4),
+                                    Text('共 ${_tasks.length} 项 · 到时间后交给TA执行',
+                                        style: TextStyle(
+                                            color: theme.textWeak,
+                                            fontSize: 12)),
+                                  ])),
                             ])),
-                    const SizedBox(height: 20),
-                    Wrap(spacing: 8, children: [
+                    Row(children: [
                       for (final entry in const {
                         'all': '全部',
                         'daily': '每天',
                         'once': '仅一次'
                       }.entries)
-                        ChoiceChip(
-                            label: Text(entry.value),
-                            selected: _filter == entry.key,
-                            onSelected: (_) =>
-                                setState(() => _filter = entry.key),
-                            selectedColor: theme.primary.withValues(alpha: .14),
-                            backgroundColor: theme.surface,
-                            labelStyle: TextStyle(
-                                color: _filter == entry.key
-                                    ? theme.primary
-                                    : theme.textWeak),
-                            side: BorderSide.none,
-                            showCheckmark: false,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14))),
+                        Expanded(
+                            child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 3),
+                                child: Semantics(
+                                    selected: _filter == entry.key,
+                                    child: FutureTaskButton(
+                                        color: _filter == entry.key
+                                            ? theme.primary
+                                                .withValues(alpha: .12)
+                                            : theme.surface,
+                                        foregroundColor: _filter == entry.key
+                                            ? theme.primary
+                                            : theme.textWeak,
+                                        onPressed: () =>
+                                            setState(() => _filter = entry.key),
+                                        child: Text(entry.value,
+                                            style: const TextStyle(
+                                                fontSize: 13)))))),
                     ]),
                     const SizedBox(height: 12),
                     if (_failed)
@@ -315,7 +388,7 @@ class _FutureTasksPageState extends State<FutureTasksPage>
                           Column(children: [
                             Text('暂时无法读取任务',
                                 style: TextStyle(color: theme.textStrong)),
-                            TextButton(
+                            FutureTaskButton(
                                 onPressed: _load,
                                 child: Text('重新加载',
                                     style: TextStyle(color: theme.primary))),
@@ -508,7 +581,12 @@ class _FutureTaskEditorState extends State<_FutureTaskEditor> {
       backgroundColor: Colors.transparent,
       appBar: AppBar(
           title: Text(widget.task == null ? '添加未来任务' : '编辑未来任务'),
-          backgroundColor: Colors.transparent),
+          backgroundColor: Colors.transparent,
+          leading: FutureTaskButton(
+              tooltip: '返回',
+              foregroundColor: theme.textStrong,
+              onPressed: () => Navigator.maybePop(context),
+              child: const Icon(Icons.arrow_back_rounded, size: 22))),
       body: Form(
           key: _form,
           child: ListView(padding: const EdgeInsets.all(20), children: [
@@ -534,20 +612,19 @@ class _FutureTaskEditorState extends State<_FutureTaskEditor> {
             const SizedBox(height: 10),
             Wrap(spacing: 10, children: [
               for (final option in const {'once': '仅一次', 'daily': '每天'}.entries)
-                ChoiceChip(
-                    label: Text(option.value),
+                Semantics(
                     selected: _frequency == option.key,
-                    showCheckmark: false,
-                    selectedColor: theme.primary.withValues(alpha: .14),
-                    backgroundColor: theme.surface,
-                    side: BorderSide.none,
-                    labelStyle: TextStyle(
+                    child: FutureTaskButton(
                         color: _frequency == option.key
+                            ? theme.primary.withValues(alpha: .14)
+                            : theme.surface,
+                        foregroundColor: _frequency == option.key
                             ? theme.primary
-                            : theme.textWeak),
-                    onSelected: _saving
-                        ? null
-                        : (_) => setState(() => _frequency = option.key))
+                            : theme.textWeak,
+                        onPressed: _saving
+                            ? null
+                            : () => setState(() => _frequency = option.key),
+                        child: Text(option.value)))
             ]),
             const SizedBox(height: 22),
             if (_frequency == 'once') ...[
@@ -561,8 +638,11 @@ class _FutureTaskEditorState extends State<_FutureTaskEditor> {
                 style: TextStyle(
                     color: theme.textFaint, fontSize: 12, height: 1.5)),
             const SizedBox(height: 32),
-            TideDialogs.glassButton(_saving ? '正在保存…' : '保存任务',
-                color: theme.primary, onTap: _save),
+            FutureTaskButton(
+                color: theme.primary,
+                foregroundColor: Colors.white,
+                onPressed: _saving ? null : _save,
+                child: Text(_saving ? '正在保存…' : '保存任务')),
             const SizedBox(height: 24),
           ])),
     ));

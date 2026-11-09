@@ -1,3 +1,5 @@
+import 'mimo_voice_clone.dart';
+import 'mimo_voice_workbench.dart';
 import 'permission_management_page.dart';
 import 'android_selection_menu.dart';
 import 'bot_reference_images_page.dart';
@@ -2913,6 +2915,30 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     );
   }
 
+  Widget _mimoVoiceField(BuildContext ctx, TextEditingController voice,
+      TextEditingController model, Map<String, dynamic>? Function() current,
+      void Function(Map<String, dynamic>) apply) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+      Expanded(child: _f('音色', voice)),
+      const SizedBox(width: 8),
+      SizedBox(width: 108, child: TextButton(
+        onPressed: () async {
+          final result = await Navigator.of(ctx, rootNavigator: true)
+              .push<Map<String, dynamic>>(MaterialPageRoute(
+                fullscreenDialog: true,
+                builder: (_) => MimoVoiceWorkbench(initial: current()),
+              ));
+          if (!ctx.mounted || result == null) return;
+          apply(result);
+          model.text = result['model'] as String;
+          voice.text = mimoCloneVoice;
+        },
+        child: Text('mimo音色克隆工作台', textAlign: TextAlign.center,
+            style: TextStyle(color: TideTheme.of(ctx).primary)),
+      )),
+    ]);
+  }
+
   void _showTtsDialog(
     String name,
     String url,
@@ -2927,6 +2953,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final kCtrl = TextEditingController(text: key);
     final mCtrl = TextEditingController(text: models);
     final vCtrl = TextEditingController(text: voice);
+    Map<String, dynamic>? clone;
     var supportsInstructions = false;
     TideDialogs.show(
       context: context,
@@ -2954,7 +2981,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
             const SizedBox(height: 8),
-            _f('音色', vCtrl),
+            if (protocol == 'mimo')
+              _mimoVoiceField(ctx, vCtrl, mCtrl, () => clone, (value) => clone = value)
+            else
+              _f('音色', vCtrl),
             const SizedBox(height: 8),
             Text(
               protocol == 'mimo'
@@ -2990,6 +3020,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   child: TideDialogs.glassButton(
                     '添加',
                     onTap: () {
+                      if (isMimoClone(protocol, vCtrl.text) && clone == null) {
+                        GlobalNotice.show('请先在 MiMo 音色克隆工作台应用参考音频');
+                        return;
+                      }
                       String model = mCtrl.text.trim();
                       if (model.contains(',') || model.contains('，')) {
                         final parts = model.split(RegExp('[，,]'));
@@ -3009,6 +3043,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'key': kCtrl.text.trim(),
                           'model': model,
                           'voice': vCtrl.text.trim(),
+                          if (clone != null) 'mimo_clone': clone,
                           'protocol': protocol,
                           'supports_instructions': supportsInstructions,
                           'id': 'tts_${DateTime.now().microsecondsSinceEpoch}',
@@ -3581,6 +3616,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final kCtrl = TextEditingController(text: p['key']);
     final mCtrl = TextEditingController(text: p['model']);
     final hasVoice = p.containsKey('voice');
+    Map<String, dynamic>? clone = p['mimo_clone'] is Map
+        ? Map<String, dynamic>.from(p['mimo_clone'] as Map) : null;
     final vCtrl = TextEditingController(text: p['voice']?.toString() ?? '');
     final isDashScope =
         hasVoice &&
@@ -3613,7 +3650,12 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             _f('API Key', kCtrl, obscure: true, keyUrl: _providerKeyUrl(p)),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
-            if (hasVoice) ...[const SizedBox(height: 8), _f('音色', vCtrl)],
+            if (hasVoice) ...[
+              const SizedBox(height: 8),
+              if (p['protocol'] == 'mimo')
+                _mimoVoiceField(ctx, vCtrl, mCtrl, () => clone, (value) => clone = value)
+              else _f('音色', vCtrl),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -3630,6 +3672,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   child: TideDialogs.glassButton(
                     '保存',
                     onTap: () {
+                      if (isMimoClone(p['protocol']?.toString() ?? '', vCtrl.text) && clone == null) {
+                        GlobalNotice.show('请先在 MiMo 音色克隆工作台应用参考音频');
+                        return;
+                      }
                       if (!p.containsKey('is_custom')) {
                         final preset = _findPreset(
                           p['name']?.toString() ?? '',
@@ -3643,6 +3689,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       p['key'] = kCtrl.text.trim();
                       p['model'] = mCtrl.text.trim();
                       if (hasVoice) p['voice'] = vCtrl.text.trim();
+                      if (clone != null) p['mimo_clone'] = clone;
                       Navigator.pop(ctx);
                       _saveList();
                       setState(() {});

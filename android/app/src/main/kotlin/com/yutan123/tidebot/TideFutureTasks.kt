@@ -36,6 +36,7 @@ object TideFutureTasks {
                 row
             }
         } ?: throw IllegalStateException("Future task is not runnable")
+        val started = android.os.SystemClock.elapsedRealtime()
         try {
             val botId = task.getString("bot_id")
             val bot = TideConfigReader.getBotConfig(context, botId) ?: error("Bot not found")
@@ -51,7 +52,17 @@ object TideFutureTasks {
                 model.baseUrl, model.apiKey, model.model,
                 listOf(TideAiClient.Message("system", TidePromptContext.system(context, bot))) + history +
                     TideAiClient.Message("user", "这是一个定时任务，请完成：$prompt"), bot.maxTokens
-            )).getOrThrow()
+            )) { url, body, attempt ->
+                if (TideBackgroundLog.enabled(context)) {
+                    TideBackgroundLog.add(context, "未来任务完整请求（已脱敏）\n" + JSONObject()
+                        .put("task_id", taskId).put("execution_id", executionId)
+                        .put("bot_id", botId).put("title", task.optString("title"))
+                        .put("attempt", attempt).put("method", "POST").put("url", url)
+                        .put("headers", JSONObject().put("Content-Type", "application/json")
+                            .put("Authorization", "[REDACTED]"))
+                        .put("body", JSONObject(body)).toString(2), "FUTURE_TASK_REQUEST")
+                }
+            }.getOrThrow()
             TideStore.open(context).use { db ->
                 TideStore.transaction(db) {
                     val lease = TideStore.rows(db, "SELECT locked_at,status FROM schedule_tasks WHERE id=?", taskId).firstOrNull()
@@ -68,7 +79,14 @@ object TideFutureTasks {
                     db.execSQL("UPDATE background_tasks SET enabled=0,updated_at=? WHERE task_id=?", arrayOf(System.currentTimeMillis(), taskId))
                 }
             }
+            runCatching { TideBackgroundLog.add(context,
+                "未来任务完成：task=$taskId，execution=$executionId，耗时=${android.os.SystemClock.elapsedRealtime() - started}ms，finish=${response.finishReason}" +
+                    if (TideBackgroundLog.enabled(context)) "\n响应：${response.content}" else "",
+                "FUTURE_TASK_RESPONSE") }
         } catch (e: Exception) {
+            runCatching { TideBackgroundLog.add(context,
+                "未来任务${if (e is CancellationException) "取消" else "失败"}：task=$taskId，execution=$executionId，耗时=${android.os.SystemClock.elapsedRealtime() - started}ms，错误=${e.message}",
+                "FUTURE_TASK_ERROR") }
             TideStore.open(context).use { db ->
                 val attempts = task.optInt("attempts") + if (e is CancellationException) 0 else 1
                 db.execSQL("UPDATE schedule_tasks SET status=?,attempts=?,last_error=?,retry_at=?,locked_at=NULL WHERE id=? AND status='running' AND locked_at=?",

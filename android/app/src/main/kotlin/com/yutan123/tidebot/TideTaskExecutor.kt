@@ -67,7 +67,16 @@ object TideTaskExecutor {
             runCatching { TideNativeNotifications.deliverPending(context) }
         } catch (e: CancellationException) {
             withContext(NonCancellable + Dispatchers.IO) {
-                markExecutionFinished(context, executionId, "failed", null, "Cancelled")
+                val cancelledTask = getTaskConfig(context, taskId)
+                val interrupted = cancelledTask?.optString("task_type") == "PROACTIVE_REPLY" &&
+                    TideStore.open(context).use { db ->
+                        val botId = cancelledTask?.optString("bot_id").orEmpty()
+                        TideProactiveRequestGate.busy(db, botId) ||
+                            TideStore.kv(db, "proactive_due_at_$botId")?.toLongOrNull() != scheduledTime
+                    }
+                markExecutionFinished(context, executionId, if (interrupted) "skipped" else "failed", null,
+                    if (interrupted) "User chat has priority" else "Cancelled")
+                if (interrupted) TideProactiveTasks.reconcile(context)
             }
             throw e
         } catch (e: Exception) {
@@ -106,7 +115,21 @@ object TideTaskExecutor {
 
         val model = botConfig.chatModel
 
-        val initialDue = TideStore.open(context).use { TideStore.kv(it, "proactive_due_at_$botId") }
+        val snapshot = TideStore.open(context).use { db ->
+            TideStore.transaction(db) {
+                Triple(TideStore.kv(db, "proactive_due_at_$botId"),
+                    TideProactiveRequestGate.generation(db, botId),
+                    TideProactiveRequestGate.busy(db, botId))
+            }
+        }
+        val initialDue = snapshot.first
+        val generation = snapshot.second
+        // An alarm already dispatched before a chat began must also be retired.
+        if (snapshot.third || initialDue?.toLongOrNull() != taskConfig.optLong("scheduled_time")) {
+            markExecutionFinished(context, executionId, "skipped", null, "User chat has priority")
+            TideProactiveTasks.reconcile(context)
+            return
+        }
         val latestUser = TideStore.open(context).use { db ->
             TideStore.rows(db, "SELECT id FROM chat_history WHERE bot_id=? AND role='user' ORDER BY timestamp DESC,id DESC LIMIT 1", botId).firstOrNull()?.optString("id")
         }
@@ -115,7 +138,7 @@ object TideTaskExecutor {
         val lateMs = (System.currentTimeMillis() - taskConfig.optLong("scheduled_time", System.currentTimeMillis())).coerceAtLeast(0)
         TideBackgroundLog.add(context, "主动回复到期请求：bot=$botId，execution=$executionId，model=${model?.model.orEmpty()}，延迟=${lateMs}ms，使用普通聊天请求链路", "PROACTIVE_REQUEST")
         val result = runCatching {
-            TideProactiveReplyEngine.generate(context, botId).also { response ->
+            TideProactiveReplyEngine.generate(context, botId, generation, initialDue).also { response ->
                 if (TideBackgroundLog.enabled(context)) {
                     response.optJSONArray("request_logs")?.let { logs ->
                         for (index in 0 until logs.length()) {
@@ -134,7 +157,7 @@ object TideTaskExecutor {
                 val currentUser = TideStore.rows(db, "SELECT id FROM chat_history WHERE bot_id=? AND role='user' ORDER BY timestamp DESC,id DESC LIMIT 1", botId).firstOrNull()?.optString("id")
                 val state = JSONObject(TideStore.kv(db, "bot_vitals_v1_$botId") ?: "{}")
                 val disabled = TideStore.rows(db, "SELECT is_disabled FROM bots WHERE id=?", botId).firstOrNull()?.optInt("is_disabled", 1) != 0
-                if (disabled || currentUser != latestUser || (TideStore.kv(db, "proactive_unanswered_$botId")?.toIntOrNull() ?: 0) >= 3 || TideStore.kv(db, "proactive_due_at_$botId") != initialDue ||
+                if (!TideProactiveRequestGate.allowed(db, botId, generation, initialDue) || disabled || currentUser != latestUser || (TideStore.kv(db, "proactive_unanswered_$botId")?.toIntOrNull() ?: 0) >= 3 || TideStore.kv(db, "proactive_due_at_$botId") != initialDue ||
                     TideStore.kv(db, "proactive_reply") == "false" || state.optJSONObject("sleep") != null) {
                     db.execSQL("UPDATE background_task_executions SET status='skipped',finished_at=?,error_message='Context changed during request' WHERE execution_id=?", arrayOf(System.currentTimeMillis(),executionId))
                     TideBackgroundLog.add(context, "主动回复丢弃：bot=$botId，请求期间对话或设置已改变")

@@ -1,3 +1,4 @@
+import 'proactive_request_gate.dart';
 import 'media_storage_service.dart';
 import 'chat_message_debounce.dart';
 import 'photo_image_provider.dart';
@@ -752,14 +753,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
 
   bool get _hasBg => _customBg != null && _customBg!.isNotEmpty;
 
-  // The persistent Android service is the sole proactive scheduler. The chat
-  // page only clears the unanswered counter after an actual user interaction.
-  void _onUserInteracted() {
+  Future<void> _onUserInteracted() async {
     final botId = _bot['id']?.toString() ?? '';
-    if (botId.isNotEmpty) {
-      unawaited(DBManager().setKV('proactive_unanswered_$botId', '0'));
-      unawaited(DBManager().setKV('proactive_due_at_$botId', '0'));
-    }
+    if (botId.isEmpty) return;
+    final db = await DBManager().database;
+    await db
+        .transaction((txn) => ProactiveRequestGate.userActivity(txn, botId));
   }
 
   // 手机操控确认流程已移除。
@@ -1165,6 +1164,8 @@ class _ChatRoomPageState extends State<ChatRoomPage>
         if (mounted) setState(() => _hasText = false);
         return;
       }
+      // Reserve the user turn before attachment work, debounce or history writes.
+      await _onUserInteracted();
       if (!noUserBubble && images.isNotEmpty) {
         try {
           images = await _persistChatImages(images);
@@ -1201,8 +1202,6 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             : '$mediaContext\n$expressionContext';
       }
 
-      // 用户主动发言：清零主动回复未应答计数并重置计时。
-      _onUserInteracted();
       unawaited(EmotionStateService.instance.observeUserMessage(botId, text));
 
       // 检测告别词，立即触发世界书判断；否则重置5分钟计时器

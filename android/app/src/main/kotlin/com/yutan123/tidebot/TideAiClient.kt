@@ -63,13 +63,16 @@ object TideAiClient {
      * 发送 AI 请求，支持重试。
      * 整个任务的总超时是 5 分钟，不是每次重试 5 分钟。
      */
-    suspend fun sendRequest(request: AiRequest): Result<AiResponse> = withContext(Dispatchers.IO) {
+    suspend fun sendRequest(
+        request: AiRequest,
+        onRequest: ((url: String, body: String, attempt: Int) -> Unit)? = null
+    ): Result<AiResponse> = withContext(Dispatchers.IO) {
         try {
             withTimeout(TOTAL_TIMEOUT_MS) {
                 var lastError: Throwable = IOException("Request failed")
                 for (attempt in 0..MAX_RETRIES) {
                     ensureActive()
-                    val result = doRequest(request)
+                    val result = doRequest(request, attempt + 1, onRequest)
                     if (result.isSuccess) return@withTimeout result
                     lastError = result.exceptionOrNull() ?: lastError
                     if (lastError is HttpException && !lastError.retryable) break
@@ -86,7 +89,11 @@ object TideAiClient {
     /**
      * 执行单次请求
      */
-    private suspend fun doRequest(req: AiRequest): Result<AiResponse> {
+    private suspend fun doRequest(
+        req: AiRequest,
+        attempt: Int,
+        onRequest: ((String, String, Int) -> Unit)?
+    ): Result<AiResponse> {
         val body = buildRequestBody(req)
 
         // 规范化 URL：移除尾部 /v1，然后统一添加 /v1/chat/completions
@@ -96,6 +103,10 @@ object TideAiClient {
             root.endsWith("/v1") -> "$root/chat/completions"
             else -> "$root/v1/chat/completions"
         }
+
+        // Observe the exact serialized body used below, including each retry.
+        // Diagnostics must never turn a valid request into a failed task.
+        runCatching { onRequest?.invoke(url, body, attempt) }
 
         val httpRequest = Request.Builder()
             .url(url)
