@@ -1490,6 +1490,18 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
     );
   }
 
+  String _entryModifiedTime(Map<String, dynamic> row) {
+    final updatedAt = (row['updated_at'] as num?)?.toInt();
+    final createdAt = (row['timestamp'] as num?)?.toInt();
+    final timestamp =
+        updatedAt != null && updatedAt > 0 ? updatedAt : createdAt;
+    if (timestamp == null || timestamp <= 0) return '最新修改：未记录';
+    final time = DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '最新修改：${time.year}-${two(time.month)}-${two(time.day)} '
+        '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+  }
+
   Widget _entryCard(TideTheme theme, Map<String, dynamic> row) {
     final id = row['id'].toString();
     final expanded = _expanded.contains(id);
@@ -1583,6 +1595,16 @@ class _WorldBookDetailPageState extends State<WorldBookDetailPage> {
                           fontSize: 12,
                           height: 1.5,
                         ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _entryModifiedTime(row),
+                      style: TextStyle(
+                        color: theme.textFaint,
+                        fontFamily: 'TideFont',
+                        fontSize: 10,
+                        height: 1.4,
                       ),
                     ),
                     if (expanded) ...[

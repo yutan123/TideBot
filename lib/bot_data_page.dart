@@ -982,7 +982,7 @@ class _VitalDetailPageState extends State<VitalDetailPage> {
                 borderRadius: BorderRadius.circular(20),
                 color: selected
                     ? theme.primary
-                    : Colors.white.withValues(alpha: 0.9),
+                    : theme.surface.withValues(alpha: 0.9),
                 boxShadow: selected
                     ? [
                         BoxShadow(

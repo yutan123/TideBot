@@ -1,3 +1,5 @@
+import 'bot_avatar_crop_page.dart';
+import 'image_detail_page.dart';
 import 'proactive_request_gate.dart';
 import 'media_storage_service.dart';
 import 'chat_message_debounce.dart';
@@ -245,6 +247,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   @override
   void didPopNext() {
     _showChat();
+    _loadChatPreferences();
     unawaited(_syncLatestMessages());
   }
 
@@ -276,6 +279,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   int _recSecs = 0;
   String? _customBg;
   bool _showMessageTime = true;
+  bool _dimParentheticalText = true;
   bool _showChatAvatar = false;
   bool _showSearchSources = false;
   late Map<String, dynamic> _bot;
@@ -527,11 +531,13 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   void _loadChatPreferences() async {
     final db = DBManager();
     final showTime = await db.getKV('show_message_time');
+    final dimParentheticalText = await db.getKV('dim_parenthetical_text');
     final showAvatar = await db.getKV('show_chat_avatar');
     final showSources = await db.getKV('show_web_search_sources');
     if (mounted) {
       setState(() {
         _showMessageTime = showTime != 'false';
+        _dimParentheticalText = dimParentheticalText != 'false';
         _showChatAvatar = showAvatar == 'true';
         _showSearchSources = showSources == 'true';
       });
@@ -2343,29 +2349,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (c, a, s) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            actions: [
-              IconButton(
-                onPressed: () => _saveImageToGallery(path),
-                icon: const Icon(Icons.download_rounded, color: Colors.white),
-                tooltip: '保存到相册',
-              ),
-            ],
-            leading: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: const Icon(Icons.close, color: Colors.white),
-            ),
-          ),
-          body: Center(
-            child: InteractiveViewer(
-              child:
-                  Image(image: photoImageProvider(path), fit: BoxFit.contain),
-            ),
-          ),
+        pageBuilder: (c, a, s) => ImageDetailPage(
+          path: path,
+          onSave: () => _saveImageToGallery(path),
         ),
         transitionsBuilder: (c, a, s, child) =>
             FadeTransition(opacity: a, child: child),
@@ -2400,11 +2386,9 @@ class _ChatRoomPageState extends State<ChatRoomPage>
                     if (converted != null) path = converted;
                   } catch (_) {}
                 }
-                final dir = await getApplicationDocumentsDirectory();
-                final dest =
-                    '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';
-                await File(path).copy(dest);
-                if (mounted) setSt(() => avatar = dest);
+                if (!mounted) return;
+                final dest = await selectBotAvatarCrop(context, path);
+                if (mounted && dest != null) setSt(() => avatar = dest);
               }
             } catch (_) {}
           }
@@ -4356,8 +4340,10 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     );
     final spans = <TextSpan>[];
     final reg = RegExp(r'\(.*?\)');
+    final matches =
+        _dimParentheticalText ? reg.allMatches(text) : const <RegExpMatch>[];
     int last = 0;
-    for (var m in reg.allMatches(text)) {
+    for (final m in matches) {
       if (m.start > last) {
         spans.add(
           TextSpan(text: text.substring(last, m.start), style: baseStyle),

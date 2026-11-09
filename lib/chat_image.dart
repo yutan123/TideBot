@@ -70,7 +70,7 @@ class _ChatImageState extends State<ChatImage> {
       child: Image(
         image: _provider,
         fit: BoxFit.cover,
-        alignment: Alignment.topCenter,
+        alignment: Alignment.center,
         errorBuilder: (_, __, ___) =>
             const Center(child: Icon(Icons.broken_image_outlined)),
       ),

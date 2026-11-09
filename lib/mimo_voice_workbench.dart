@@ -5,14 +5,24 @@ import 'package:file_picker/file_picker.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:crypto/crypto.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'global_notice.dart';
 import 'mimo_voice_clone.dart';
+import 'mimo_audio_import.dart';
 import 'theme.dart';
+import 'android_selection_menu.dart';
 
 class MimoVoiceWorkbench extends StatefulWidget {
-  const MimoVoiceWorkbench({super.key, this.initial});
+  const MimoVoiceWorkbench(
+      {super.key,
+      this.initial,
+      required this.model,
+      required this.fetchModels});
   final Map<String, dynamic>? initial;
+  final String model;
+  final Future<void> Function(BuildContext, TextEditingController) fetchModels;
   @override
   State<MimoVoiceWorkbench> createState() => _MimoVoiceWorkbenchState();
 }
@@ -22,11 +32,20 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
   Map<String, dynamic>? _sample;
   bool _busy = false;
   bool _playing = false;
+  bool _fetchingModels = false;
+  String? _error;
+  Directory? _temporarySampleDirectory;
+  int? _conversionSessionId;
+  late final TextEditingController _model;
   late final StreamSubscription<void> _completion;
 
   @override
   void initState() {
     super.initState();
+    _model = TextEditingController(
+        text: widget.model.trim().isNotEmpty
+            ? widget.model
+            : widget.initial?['model']?.toString() ?? '');
     _sample = widget.initial == null ? null : Map.of(widget.initial!);
     _completion = _player.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playing = false);
@@ -36,57 +55,122 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
   Future<Map<String, dynamic>> _inspect(String path, String name) async {
     final file = File(path);
     validateMimoSampleSize(await file.length());
-    final session = await FFprobeKit.getMediaInformation(path)
-        .timeout(const Duration(seconds: 30));
-    final info = session.getMediaInformation();
-    final duration = double.tryParse(info?.getDuration() ?? '') ?? 0;
-    if (!duration.isFinite || duration < 5 || duration > 30) {
-      throw const FormatException('参考音频时长必须为 5～30 秒');
-    }
-    final format = info?.getFormat() ?? '';
-    final streams = info?.getStreams() ?? [];
-    if (!streams.any((stream) => stream.getType() == 'audio') ||
-        streams.any((stream) => stream.getType() == 'video') ||
-        !(format.split(',').contains('mp3') ||
-            format.split(',').contains('wav'))) {
-      throw const FormatException('请选择有效的 MP3 或 WAV 音频文件');
-    }
+    final metadata = inspectMimoAudio(await _probe(path));
     return {
-      'model': mimoCloneModel,
+      'model': _model.text.trim(),
       'path': path,
       'name': name,
-      'mime': format.split(',').contains('mp3') ? 'audio/mpeg' : 'audio/wav',
-      'duration': duration,
+      ...metadata,
       'bytes': await file.length(),
     };
   }
 
+  Future<Map<dynamic, dynamic>> _probe(String path) async {
+    final session = await FFprobeKit.getMediaInformation(path)
+        .timeout(const Duration(seconds: 30));
+    final info = session.getMediaInformation()?.getAllProperties();
+    if (info == null) {
+      throw const FormatException('无法读取音频信息，请重新选择本机音频');
+    }
+    return info;
+  }
+
+  Future<void> _convert(List<String> arguments) async {
+    final done = Completer<bool>();
+    final session =
+        await FFmpegKit.executeWithArgumentsAsync(arguments, (finished) async {
+      try {
+        final success = ReturnCode.isSuccess(await finished.getReturnCode());
+        if (!done.isCompleted) done.complete(success);
+      } catch (_) {
+        if (!done.isCompleted) done.complete(false);
+      }
+    });
+    _conversionSessionId = session.getSessionId();
+    try {
+      if (!mounted) {
+        await FFmpegKit.cancel(session.getSessionId());
+        throw const FormatException('音频转换已取消');
+      }
+      final success = await done.future.timeout(const Duration(seconds: 90));
+      if (!success) {
+        throw const FormatException('无法转换此音频，请选择其他录音文件');
+      }
+    } on TimeoutException {
+      await FFmpegKit.cancel(session.getSessionId());
+      await done.future
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+      throw const FormatException('音频转换超时，请选择较短的录音');
+    } finally {
+      _conversionSessionId = null;
+    }
+  }
+
+  Future<void> _removeTemporary(Directory? directory) async {
+    if (directory == null) return;
+    try {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } on FileSystemException catch (error) {
+      debugPrint('MiMo temporary audio cleanup failed: $error');
+    }
+  }
+
   Future<void> _pick() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    Directory? candidate;
     try {
       await _player.stop();
       if (mounted) setState(() => _playing = false);
-      final result = await FilePicker.platform
-          .pickFiles(type: FileType.custom, allowedExtensions: ['mp3', 'wav']);
-      if (result == null) return;
+      final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom, allowedExtensions: mimoAudioExtensions);
+      if (result == null || !mounted) return;
       final picked = result.files.single;
       if (picked.path == null) throw const FormatException('无法读取所选音频');
-      final sample = await _inspect(picked.path!, picked.name);
-      if (mounted) setState(() => _sample = sample);
+      candidate =
+          await (await getTemporaryDirectory()).createTemp('mimo_voice_');
+      final sample = await prepareMimoReferenceAudio(
+        sourcePath: picked.path!,
+        sourceName: picked.name,
+        directory: candidate,
+        probe: _probe,
+        convert: _convert,
+      );
+      if (!mounted) return;
+      final previous = _temporarySampleDirectory;
+      setState(() {
+        _sample = sample;
+        _temporarySampleDirectory = candidate;
+      });
+      candidate = null;
+      await _removeTemporary(previous);
     } catch (error) {
-      GlobalNotice.show('音频选择失败：$error');
+      _showError(error, '音频导入失败');
     } finally {
+      await _removeTemporary(candidate);
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _apply() async {
     if (_sample == null) return;
-    setState(() => _busy = true);
+    if (_model.text.trim().isEmpty) {
+      _showError(const FormatException('请填写支持音色克隆的模型名'), '无法应用');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       await _player.stop();
-      final sample = await _inspect(
-          _sample!['path'] as String, _sample!['name']?.toString() ?? '参考音频');
+      final sample = {
+        ..._sample!,
+        ...await _inspect(
+            _sample!['path'] as String, _sample!['name']?.toString() ?? '参考音频')
+      };
       final bytes = await File(sample['path'] as String).readAsBytes();
       validateMimoSampleSize(bytes.length);
       final root = await getApplicationSupportDirectory();
@@ -100,13 +184,29 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
       sample['path'] = target.path;
       if (mounted) Navigator.pop(context, sample);
     } catch (error) {
-      GlobalNotice.show('无法应用克隆音色：$error');
+      _showError(error, '无法应用克隆音色');
     } finally {
       if (mounted)
         setState(() {
           _busy = false;
           _playing = false;
         });
+    }
+  }
+
+  void _showError(Object error, String prefix) {
+    debugPrint('MiMo audio error: $error');
+    final message =
+        error is FormatException ? error.message : '音频读取或转换失败，请重新选择本机音频';
+    if (mounted) setState(() => _error = '$prefix：$message');
+  }
+
+  Future<void> _fetchModels() async {
+    setState(() => _fetchingModels = true);
+    try {
+      await widget.fetchModels(context, _model);
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
     }
   }
 
@@ -126,16 +226,33 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
 
   @override
   void dispose() {
+    _model.dispose();
     unawaited(_completion.cancel());
-    unawaited(_player.dispose());
+    unawaited(_releaseResources());
     super.dispose();
+  }
+
+  Future<void> _releaseResources() async {
+    final sessionId = _conversionSessionId;
+    if (sessionId != null) {
+      try {
+        await FFmpegKit.cancel(sessionId);
+      } catch (error) {
+        debugPrint('MiMo conversion cancellation failed: $error');
+      }
+    }
+    try {
+      await _player.dispose();
+    } finally {
+      await _removeTemporary(_temporarySampleDirectory);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = TideTheme.of(context);
     return PopScope(
-      canPop: !_busy,
+      canPop: !_busy && !_fetchingModels,
       child: Scaffold(
         backgroundColor: theme.bgColor,
         appBar: AppBar(
@@ -144,7 +261,8 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
           foregroundColor: theme.textStrong,
           actions: [
             TextButton(
-              onPressed: _busy || _sample == null ? null : _apply,
+              onPressed:
+                  _busy || _fetchingModels || _sample == null ? null : _apply,
               child: Text('应用', style: TextStyle(color: theme.primary)),
             )
           ],
@@ -159,18 +277,31 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
                   fontWeight: FontWeight.w600,
                   color: theme.textStrong)),
           const SizedBox(height: 28),
-          DropdownButtonFormField<String>(
-            initialValue: mimoCloneModel,
-            decoration: const InputDecoration(
-                labelText: '音色克隆模型', border: OutlineInputBorder()),
-            isExpanded: true,
-            items: const [
-              DropdownMenuItem(
-                  value: mimoCloneModel,
-                  child: Text(mimoCloneModel, style: TextStyle(fontSize: 13)))
-            ],
-            onChanged: _busy ? null : (_) {},
+          TextField(
+            controller: _model,
+            contextMenuBuilder: androidTextContextMenu,
+            enabled: !_busy && !_fetchingModels,
+            style: TextStyle(color: theme.textStrong, fontSize: 14),
+            decoration: InputDecoration(
+              labelText: '音色克隆模型',
+              hintText: '手动输入或获取后选择',
+              filled: true,
+              fillColor: theme.surfaceVariant,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              suffixIcon: TextButton.icon(
+                onPressed: _busy || _fetchingModels ? null : _fetchModels,
+                icon: Icon(Icons.cloud_download_outlined,
+                    size: 18, color: theme.primary),
+                label: Text('获取', style: TextStyle(color: theme.primary)),
+              ),
+            ),
           ),
+          const SizedBox(height: 8),
+          Text('请使用支持音色克隆的模型；可手动输入新模型名称，或通过当前提供商获取。',
+              style: TextStyle(fontSize: 12, color: theme.textWeak)),
           const SizedBox(height: 24),
           Text('参考音频',
               style: TextStyle(
@@ -179,16 +310,18 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
                   color: theme.textStrong)),
           const SizedBox(height: 8),
           const Text(
-              'MP3 / WAV · 5～30 秒 · 10 MB 以内\n编码后的数据也须在 10 MB 以内，建议使用清晰、无背景音乐的单人录音。'),
+              '支持 MP3、WAV、M4A、AAC、FLAC、OGG、OPUS、AMR、WMA、AIFF、CAF 等音频，选中后自动转换为 WAV。\n建议使用 5～30 秒清晰、无背景音乐的单人录音；转换后 Base64 编码须在 10 MB 以内。'),
           const SizedBox(height: 16),
           OutlinedButton.icon(
-              onPressed: _busy ? null : _pick,
+              onPressed: _busy || _fetchingModels ? null : _pick,
               icon: const Icon(Icons.audio_file_outlined),
               label: Text(_sample == null ? '选择克隆音频' : '更换克隆音频')),
           if (_sample != null) ...[
             const SizedBox(height: 16),
             Text(_sample!['name']?.toString() ?? '参考音频',
                 style: TextStyle(color: theme.textStrong)),
+            if (_sample!['source_name'] != null)
+              Text('已自动转换为 WAV', style: TextStyle(color: theme.textWeak)),
             Text(
                 '${((_sample!['duration'] as num?) ?? 0).toStringAsFixed(1)} 秒 · ${(((_sample!['bytes'] as num?) ?? 0) / 1000000).toStringAsFixed(2)} MB'),
             TextButton.icon(
@@ -197,13 +330,23 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
                     _playing ? Icons.stop_rounded : Icons.play_arrow_rounded),
                 label: Text(_playing ? '停止' : '试听参考音频')),
           ],
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(_error!,
+                  style: const TextStyle(color: Color(0xFFE74C3C))),
+            ),
           if (_busy)
             const Padding(
                 padding: EdgeInsets.all(20),
-                child: Center(child: CircularProgressIndicator())),
+                child: Column(children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('正在读取并处理参考音频…')
+                ])),
           const SizedBox(height: 24),
           const Text(
-              '应用后返回提供商编辑页，再保存提供商。仅当音色为“克隆音色”时，每次合成会发送这份参考音频；修改音色即可恢复普通合成。'),
+              '应用后返回提供商编辑页，再保存提供商。仅当音色为“克隆音色”时，每次合成会发送这份参考音频；切换普通音色时，请同时选择支持普通合成的模型。'),
         ]),
       ),
     );

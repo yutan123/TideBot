@@ -1,10 +1,10 @@
+import 'bot_avatar_crop_page.dart';
 import 'android_selection_menu.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:heif_converter/heif_converter.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'db.dart';
 import 'ui_components.dart';
@@ -108,11 +108,9 @@ class _CreateBotPageState extends State<CreateBotPage> {
             if (converted != null) path = converted;
           } catch (_) {}
         }
-        final dir = await getApplicationDocumentsDirectory();
-        final dest =
-            '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.png';
-        await File(path).copy(dest);
-        setState(() => _avatar = dest);
+        if (!mounted) return;
+        final dest = await selectBotAvatarCrop(context, path);
+        if (mounted && dest != null) setState(() => _avatar = dest);
       }
     } catch (_) {}
   }

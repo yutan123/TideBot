@@ -292,25 +292,29 @@ class _FutureTasksPageState extends State<FutureTasksPage>
                 child: const Icon(Icons.refresh_rounded, size: 22)),
             const SizedBox(width: 8)
           ]),
-      floatingActionButton: DecoratedBox(
-          decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                    color: theme.primary.withValues(alpha: .22),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6))
-              ]),
-          child: FutureTaskButton(
-              color: theme.primary,
-              foregroundColor: Colors.white,
-              onPressed: () => _edit(),
+      floatingActionButton: BouncyTap(
+          onTap: () => _edit(),
+          scaleAmount: .04,
+          child: Container(
+              height: 52,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              decoration: BoxDecoration(
+                  color: theme.primary,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                        color: theme.primary.withValues(alpha: .28),
+                        blurRadius: 18,
+                        offset: const Offset(0, 7))
+                  ]),
               child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.add_rounded, size: 20),
-                SizedBox(width: 6),
+                Icon(Icons.add_rounded, color: Colors.white, size: 21),
+                SizedBox(width: 7),
                 Text('添加任务',
-                    style:
-                        TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontFamily: 'TideFont',
+                        fontWeight: FontWeight.w700)),
               ]))),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: theme.primary))

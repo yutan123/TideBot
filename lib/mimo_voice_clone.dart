@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 const mimoCloneVoice = '克隆音色';
-const mimoCloneModel = 'mimo-v2.5-tts-voiceclone';
-const mimoDefaultTtsModel = 'mimo-v2.5-tts';
 const mimoAudioLimit = 10 * 1000 * 1000;
 
 bool isMimoClone(String protocol, String voice) =>
@@ -18,16 +16,54 @@ void validateMimoSampleSize(int bytes) {
   }
 }
 
-/// Only the exact display marker opts into reference-audio synthesis.
+/// Reference uploads are MP3/WAV; local imports may use any decodable audio.
+Map<String, dynamic> inspectMimoAudio(Map<dynamic, dynamic> info,
+    {bool requireCompatible = true}) {
+  final format = info['format'] is Map ? info['format'] as Map : const {};
+  final formats = (format['format_name']?.toString() ?? '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .toSet();
+  final streams = info['streams'] is List ? info['streams'] as List : const [];
+  final audio =
+      streams.whereType<Map>().where((s) => s['codec_type'] == 'audio');
+  final hasVideo = streams.whereType<Map>().any((stream) {
+    if (stream['codec_type'] != 'video') return false;
+    final disposition = stream['disposition'];
+    return disposition is! Map || '${disposition['attached_pic']}' != '1';
+  });
+  if (audio.isEmpty || hasVideo) {
+    throw const FormatException('请选择包含有效音轨的音频文件，不支持视频');
+  }
+  if (requireCompatible &&
+      !(formats.contains('mp3') || formats.contains('wav'))) {
+    throw const FormatException('参考音频须为 MP3 / WAV，请在工作台重新导入');
+  }
+  final duration = double.tryParse('${format['duration']}') ??
+      double.tryParse('${audio.first['duration']}') ??
+      0;
+  if (!duration.isFinite || duration <= 0) {
+    throw const FormatException('无法读取有效音频时长，请重新选择');
+  }
+  return {
+    if (formats.contains('mp3')) 'mime': 'audio/mpeg',
+    if (formats.contains('wav')) 'mime': 'audio/wav',
+    'duration': duration,
+  };
+}
+
+/// The provider model remains editable, including for future clone models.
 String mimoSynthesisModel(
     String configured, String voice, Map<String, dynamic>? clone) {
   if (voice.trim() == mimoCloneVoice) {
-    if (clone == null || clone['model'] != mimoCloneModel) {
+    if (clone == null) {
       throw const FormatException('请先在 MiMo 音色克隆工作台配置参考音频');
     }
-    return mimoCloneModel;
+    if (configured.trim().isEmpty) {
+      throw const FormatException('请填写支持音色克隆的模型名');
+    }
   }
-  return configured == mimoCloneModel ? mimoDefaultTtsModel : configured;
+  return configured.trim();
 }
 
 Future<String> mimoReferenceVoice(Map<String, dynamic>? clone) async {

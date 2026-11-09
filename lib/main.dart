@@ -1,3 +1,4 @@
+import 'internet_reachability_monitor.dart';
 import 'proactive_reply_engine.dart';
 import 'native_background_coordinator.dart';
 import 'bot_vital_signs_service.dart';
@@ -815,6 +816,9 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    InternetReachabilityMonitor.instance.setForeground(
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(tideTheme.precacheGlobalBackground(context));
     });
@@ -829,6 +833,7 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    InternetReachabilityMonitor.instance.setForeground(false);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -836,6 +841,9 @@ class _TideBotAppState extends State<TideBotApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppState.updateLifecycle(state);
+    InternetReachabilityMonitor.instance.setForeground(
+      state == AppLifecycleState.resumed,
+    );
     if (_servicesReady && state == AppLifecycleState.resumed) {
       unawaited(DiaryService.instance.catchUp());
       unawaited(CognitionReviewService.instance.runDue());

@@ -612,10 +612,6 @@ class _ToolManagerPageState extends State<ToolManagerPage> {
                               false)
                           ? item['service_description'].toString()
                           : '机器人根据包内工具摘要选择此包，查看后按需调用。'),
-                TextButton.icon(
-                    onPressed: () => _editBotScope(item),
-                    icon: const Icon(Icons.smart_toy_outlined),
-                    label: const Text('修改启用机器人')),
                 const SizedBox(height: 16),
                 if (_isSkill) ...[
                   const Text('指引与附带文件'),

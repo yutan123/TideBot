@@ -1,3 +1,4 @@
+import 'internet_reachability_monitor.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -108,12 +109,18 @@ class _ChatSidebarState extends State<ChatSidebar> {
   String _quote = '';
   Timer? _clock;
   DateTime _now = DateTime.now();
-  bool _online = false;
+  bool? _online;
+  StreamSubscription<bool>? _reachabilitySubscription;
   int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _online = InternetReachabilityMonitor.instance.online;
+    _reachabilitySubscription =
+        InternetReachabilityMonitor.instance.changes.listen((online) {
+      if (mounted) setState(() => _online = online);
+    });
     _load();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
@@ -155,53 +162,20 @@ class _ChatSidebarState extends State<ChatSidebar> {
       _userAvatar = results[2] as String? ?? '';
       _now = now;
     });
-    unawaited(_checkOnline());
     if (botId.isEmpty) return;
     unawaited(
-      DailyQuoteService.instance
-          .get(botId)
-          .then((quote) {
-            if (!mounted ||
-                generation != _loadGeneration ||
-                quote.trim().isEmpty)
-              return;
-            setState(() => _quote = quote);
-          })
-          .catchError((_) {}),
+      DailyQuoteService.instance.get(botId).then((quote) {
+        if (!mounted || generation != _loadGeneration || quote.trim().isEmpty)
+          return;
+        setState(() => _quote = quote);
+      }).catchError((_) {}),
     );
-  }
-
-  Future<void> _checkOnline() async {
-    // A single DNS lookup can fail behind private DNS, captive portals, or a
-    // filtered resolver. The state represents device internet reachability,
-    // not any model/API provider health.
-    final endpoints = <InternetAddress>[
-      InternetAddress('1.1.1.1'),
-      InternetAddress('8.8.8.8'),
-    ];
-    var online = false;
-    for (final endpoint in endpoints) {
-      Socket? socket;
-      try {
-        socket = await Socket.connect(
-          endpoint,
-          53,
-          timeout: const Duration(seconds: 2),
-        );
-        online = true;
-        break;
-      } catch (_) {
-        // Try the next independent resolver endpoint.
-      } finally {
-        await socket?.close();
-      }
-    }
-    if (mounted) setState(() => _online = online);
   }
 
   @override
   void dispose() {
     _clock?.cancel();
+    unawaited(_reachabilitySubscription?.cancel());
     super.dispose();
   }
 
@@ -352,13 +326,13 @@ class _ChatSidebarState extends State<ChatSidebar> {
                     Icon(
                       Icons.circle,
                       size: 8,
-                      color: _online
+                      color: _online == true
                           ? const Color(0xFF34C759)
                           : theme.iconMuted,
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      _online ? '在线' : '离线',
+                      _online == null ? '检测中' : (_online! ? '在线' : '离线'),
                       style: TextStyle(fontSize: 12, color: theme.textWeak),
                     ),
                   ],
@@ -377,160 +351,162 @@ class _ChatSidebarState extends State<ChatSidebar> {
   }
 
   Widget _timeCard(TideTheme theme) => _panel(
-    theme,
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
-          style: const TextStyle(
-            fontSize: 30,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
-          ),
-        ),
-        Text(
-          '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
-          style: const TextStyle(color: Color(0xDFFFFFFF)),
-        ),
-        if (_quote.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(
-            '“$_quote”',
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ],
-    ),
-  );
-
-  Widget _statusCard(TideTheme theme, Map<String, dynamic> bot) => _panel(
-    theme,
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+        theme,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TideBotAvatar(
-              name: bot['name']?.toString() ?? 'TideBot',
-              path: bot['avatar']?.toString(),
-              size: 38,
+            Text(
+              '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}',
+              style: const TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                bot['name']?.toString() ?? 'TideBot',
-                maxLines: 1,
+            Text(
+              '${_now.year}年${_now.month}月${_now.day}日  ${_weekday(_now.weekday)}',
+              style: const TextStyle(color: Color(0xDFFFFFFF)),
+            ),
+            if (_quote.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                '“$_quote”',
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: theme.textStrong,
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: Colors.white,
                 ),
               ),
+            ],
+          ],
+        ),
+      );
+
+  Widget _statusCard(TideTheme theme, Map<String, dynamic> bot) => _panel(
+        theme,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                TideBotAvatar(
+                  name: bot['name']?.toString() ?? 'TideBot',
+                  path: bot['avatar']?.toString(),
+                  size: 38,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    bot['name']?.toString() ?? 'TideBot',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: theme.textStrong,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('当前心情：${_mood(bot)}', style: TextStyle(color: theme.textWeak)),
+            const SizedBox(height: 5),
+            FutureBuilder<Map<String, int>>(
+              future: _db.todayBotStats(bot['id']?.toString() ?? ''),
+              builder: (context, snapshot) {
+                final stats =
+                    snapshot.data ?? const {'messages': 0, 'tokens': 0};
+                return Text(
+                  '今日发送 ${stats['messages']} 条  ·  ${stats['tokens']} token',
+                  style: TextStyle(color: theme.textWeak),
+                );
+              },
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        Text('当前心情：${_mood(bot)}', style: TextStyle(color: theme.textWeak)),
-        const SizedBox(height: 5),
-        FutureBuilder<Map<String, int>>(
-          future: _db.todayBotStats(bot['id']?.toString() ?? ''),
-          builder: (context, snapshot) {
-            final stats = snapshot.data ?? const {'messages': 0, 'tokens': 0};
-            return Text(
-              '今日发送 ${stats['messages']} 条  ·  ${stats['tokens']} token',
-              style: TextStyle(color: theme.textWeak),
-            );
-          },
-        ),
-      ],
-    ),
-  );
+      );
 
   Widget _postCard(TideTheme theme, Map<String, dynamic> bot) => _panel(
-    theme,
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '最新动态 —— ${bot['name']?.toString() ?? 'TideBot'}',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: theme.textStrong,
-          ),
+        theme,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '最新动态 —— ${bot['name']?.toString() ?? 'TideBot'}',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: theme.textStrong,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _latestPost?['content']?.toString().trim().isNotEmpty == true
+                  ? _latestPost!['content'].toString()
+                  : '还没有新的动态',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(height: 1.4, color: theme.textWeak),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          _latestPost?['content']?.toString().trim().isNotEmpty == true
-              ? _latestPost!['content'].toString()
-              : '还没有新的动态',
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(height: 1.4, color: theme.textWeak),
-        ),
-      ],
-    ),
-  );
+      );
 
   Widget _managerButton(
     TideTheme theme,
     IconData icon,
     String label,
     String id,
-  ) => BouncyTap(
-    onTap: () => widget.onOpenManager(id),
-    child: Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: theme.surfaceVariant,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: theme.primary, width: 1.5),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: theme.primary),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: TextStyle(
-              color: theme.textStrong,
-              fontWeight: FontWeight.w600,
-            ),
+  ) =>
+      BouncyTap(
+        onTap: () => widget.onOpenManager(id),
+        child: Container(
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: theme.surfaceVariant,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: theme.primary, width: 1.5),
           ),
-          const Spacer(),
-          Icon(Icons.chevron_right_rounded, color: theme.iconMuted),
-        ],
-      ),
-    ),
-  );
+          child: Row(
+            children: [
+              Icon(icon, color: theme.primary),
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  color: theme.textStrong,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Icon(Icons.chevron_right_rounded, color: theme.iconMuted),
+            ],
+          ),
+        ),
+      );
 
   Widget _panel(TideTheme theme, Widget child) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: theme.primary,
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: DefaultTextStyle.merge(
-      style: const TextStyle(color: Colors.white),
-      child: IconTheme.merge(
-        data: const IconThemeData(color: Colors.white),
-        child: child,
-      ),
-    ),
-  );
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: theme.primary,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: DefaultTextStyle.merge(
+          style: const TextStyle(color: Colors.white),
+          child: IconTheme.merge(
+            data: const IconThemeData(color: Colors.white),
+            child: child,
+          ),
+        ),
+      );
 
   String _mood(Map<String, dynamic> bot) =>
       bot['mood']?.toString().trim().isNotEmpty == true
-      ? bot['mood'].toString()
-      : '平静';
+          ? bot['mood'].toString()
+          : '平静';
   String _weekday(int day) =>
       const ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][day - 1];
 }
