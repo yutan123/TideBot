@@ -267,7 +267,7 @@ class _ChatRoomPageState extends State<ChatRoomPage>
   bool _typing = false;
   bool _msgsLoading = true;
   final AudioRecorder _rec = AudioRecorder();
-  final AudioPlayer _player = AudioPlayer();
+  late final AudioPlayer _player;
   StreamSubscription<Duration>? _audioPositionSub;
   StreamSubscription<Duration>? _audioDurationSub;
   StreamSubscription<PlayerState>? _audioStateSub;
@@ -394,6 +394,11 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     _highlightedMessageId = widget.initialMessageId;
     _msgC.addListener(_msgChanged);
     _inputFocus.addListener(_handleInputFocus);
+    _player = AudioPlayer()
+      ..positionUpdater = TimerPositionUpdater(
+        interval: const Duration(milliseconds: 200),
+        getPosition: () => _player.getCurrentPosition(),
+      );
     _audioPositionSub = _player.onPositionChanged.listen((v) {
       if (!mounted) return;
       setState(() => _audioPosition = v);
@@ -3059,7 +3064,12 @@ class _ChatRoomPageState extends State<ChatRoomPage>
             _audioPosition = Duration.zero;
             _audioDuration = Duration.zero;
           });
-          await _player.play(DeviceFileSource(path));
+          await _player.setSource(DeviceFileSource(path));
+          final duration = await _player.getDuration();
+          if (duration != null && duration > Duration.zero && mounted) {
+            setState(() => _audioDuration = duration);
+          }
+          await _player.resume();
           return;
         }
         if (_audioPlaying) {
@@ -3099,14 +3109,15 @@ class _ChatRoomPageState extends State<ChatRoomPage>
     final duration = active && _audioDuration > Duration.zero
         ? _audioDuration
         : Duration(seconds: fallbackSeconds);
-    final max =
-        duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0;
-    final value = position.inMilliseconds.clamp(0, max.toInt()).toDouble();
+    final knownDuration = duration.inMilliseconds > 0;
+    final max = knownDuration ? duration.inMilliseconds.toDouble() : 1.0;
+    final value = knownDuration
+        ? position.inMilliseconds.clamp(0, max.toInt()).toDouble()
+        : 0.0;
     final foreground = isUser ? Colors.white : TideTheme.of(context).textStrong;
     final muted = isUser
         ? Colors.white.withValues(alpha: 0.78)
         : TideTheme.of(context).textWeak;
-    final knownDuration = duration.inMilliseconds > 0;
     final width = MediaQuery.sizeOf(context).width.clamp(250.0, 420.0) - 175;
     return Container(
       constraints: BoxConstraints(minWidth: 154, maxWidth: width),

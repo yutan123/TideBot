@@ -154,9 +154,6 @@ TideBot 的原创源代码、应用界面、文档及项目自有资源，除另
 本项目按协议以“现状”提供，不作任何担保，具体以协议全文为准。
 
 ## 第三方许可
-
-第三方组件、内置字体与模型、Flutter/Dart 锁定依赖、原生依赖声明及其来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。各组件保留原版权和许可；Google ML Kit 等 SDK 另适用其服务条款。完整快照索引及 SHA-256 见 [notices_manifest.json](third_party/notices_manifest.json)，证据来源见 [上游材料说明](third_party/upstream/README.md)。
-
-应用内通过“关于 TideBot → 开源许可与第三方声明”离线查看已收录的许可原文，并可搜索组件和打开上游来源。原生清单区分请求版本与发布包解析版本；FFmpeg 原生库尚未披露的版本、附加声明及对应构建材料已在声明末尾明确列出，不能把声明清单视为已完成发布二进制许可证审计。
+第三方组件、内置字体与模型、Flutter/Dart 锁定依赖、原生依赖声明及其来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。各组件保留原版权和许可；Google ML Kit 等 SDK 另适用其服务条款。完整快照索引及 SHA-256 见 [notices_manifest.json](third_party/notices_manifest.json)，证据来源见 [上游材料说明](third_party/upstream/README.md)。应用内不提供许可浏览页面；请在仓库查看上述声明文件。原生清单区分请求版本与发布包解析版本；FFmpeg 原生库尚未披露的版本、附加声明及对应构建材料已在声明末尾明确列出，不能把声明清单视为已完成发布二进制许可证审计。
 
 依赖变更后，在已有匹配 SDK、锁定包和 Maven 缓存的环境运行 `python3 third_party/update_notices.py --root <项目绝对路径>`；添加 `--check` 校验生成结果。该工具不执行 Flutter/Gradle 构建。

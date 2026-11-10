@@ -116,7 +116,10 @@ class _ImageDetailPageState extends State<ImageDetailPage> {
                     _ImageScaleGestureRecognizer:
                         GestureRecognizerFactoryWithHandlers<
                             _ImageScaleGestureRecognizer>(
-                      () => _ImageScaleGestureRecognizer(),
+                      () => _ImageScaleGestureRecognizer()
+                        ..gestureSettings = const DeviceGestureSettings(
+                          touchSlop: 4,
+                        ),
                       (recognizer) => recognizer
                         ..onStart = (details) {
                           _gestureStartScale =
@@ -281,8 +284,8 @@ class _ImageIslandButton extends StatelessWidget {
       );
 }
 
-/// Start a pinch as soon as both fingers are down instead of waiting for the
-/// default scale slop. Single-finger taps still compete normally with panning.
+/// Start pinches immediately, while allowing a lower-slop one-finger pan. Taps
+/// still win if the pointer stays within the pan recognizer's tolerance.
 class _ImageScaleGestureRecognizer extends ScaleGestureRecognizer {
   @override
   void handleEvent(PointerEvent event) {

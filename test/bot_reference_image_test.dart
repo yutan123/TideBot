@@ -111,6 +111,10 @@ void main() {
     'transparent PNG is composited onto white before JPEG encoding',
     () async {
       final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawColor(
+        const ui.Color(0x00000000),
+        ui.BlendMode.src,
+      );
       final picture = recorder.endRecording();
       final image = await picture.toImage(8, 8);
       try {

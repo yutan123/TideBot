@@ -335,21 +335,6 @@ def main():
               '依赖变更后运行 `python3 third_party/update_notices.py --root <项目绝对路径>`；加 `--check` 校验快照。此工具只读取 SDK、锁定包和本地 Maven 材料，不执行编译。逐文件 SHA-256 及来源见 [notices_manifest.json](third_party/notices_manifest.json)。', '']
     markdown = '\n'.join(lines)
     output('THIRD_PARTY_NOTICES.md', markdown)
-    # One offline asset avoids adding hundreds of filesystem paths to pubspec.
-    bundle_entries = []
-    texts = {}
-    overview = dict(name='第三方声明与来源总览', version='', category='说明', source='',
-                    license='许可与范围说明', description='组件版本、用途和许可范围。',
-                    documents=[{'name': '第三方声明与来源', 'text': markdown}])
-    bundle_entries.append(overview)
-    for item in entries:
-        bundled = {k: v for k, v in item.items() if k != 'files'}
-        bundled['documents'] = [{'name': '许可/条款来源', 'text': '\n'.join(item['license_urls'])}] if item.get('license_urls') else []
-        for f in item['files']:
-            texts[f['sha256']] = (outputs[f['path']] if f['path'] in outputs else (root/f['path']).read_bytes()).decode('utf-8')
-            bundled['documents'].append({'name': f['name'], 'sha256': f['sha256']})
-        bundle_entries.append(bundled)
-    output('assets/legal/notices.json', json.dumps(dict(schema=1, entries=bundle_entries, texts=texts), ensure_ascii=False, separators=(',', ':')) + '\n')
     if args.check:
         bad = [name for name, data in outputs.items() if not (root/name).is_file() or (root/name).read_bytes() != data]
         if bad:

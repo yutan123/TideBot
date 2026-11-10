@@ -1469,9 +1469,11 @@ intent说明：confirm_care试探是否记得/在意；vent需倾听接住情绪
         'model': modelName,
         'messages': prepareOpenAIChatCompletionMessages(messages),
         'max_tokens': maxContext,
+        if (provider['thinking_mode'] == true)
+          'reasoning_effort': provider['reasoning_effort'] ?? 'medium',
         if (toolCallingEnabled && tools.isNotEmpty) 'tools': tools,
         if (toolCallingEnabled && tools.isNotEmpty)
-          'tool_choice': randomVoice
+          'tool_choice': randomVoice && provider['thinking_mode'] != true
               ? {
                   'type': 'function',
                   'function': {'name': 'request_voice_reply'}

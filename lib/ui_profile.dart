@@ -2830,6 +2830,8 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                           'url': uCtrl.text.trim(),
                           'key': kCtrl.text.trim(),
                           'model': model,
+                          'thinking_mode': false,
+                          'reasoning_effort': 'medium',
                           'id':
                               'provider_${DateTime.now().microsecondsSinceEpoch}',
                         };
@@ -3647,6 +3649,11 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
     final uCtrl = TextEditingController(text: p['url']);
     final kCtrl = TextEditingController(text: p['key']);
     final mCtrl = TextEditingController(text: p['model']);
+    var thinkingMode = p['thinking_mode'] == true;
+    var reasoningEffort = ['low', 'medium', 'high', 'xhigh', 'max']
+            .contains(p['reasoning_effort'])
+        ? p['reasoning_effort'].toString()
+        : 'medium';
     final hasVoice = p.containsKey('voice');
     Map<String, dynamic>? clone = p['mimo_clone'] is Map
         ? Map<String, dynamic>.from(p['mimo_clone'] as Map)
@@ -3682,6 +3689,51 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
             _f('API Key', kCtrl, obscure: true, keyUrl: _providerKeyUrl(p)),
             const SizedBox(height: 8),
             _modelField(ctx, mCtrl, uCtrl, kCtrl),
+            if (!isStt && !hasVoice)
+              StatefulBuilder(
+                builder: (settingContext, updateSetting) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: const Text('思考模式'),
+                      value: thinkingMode,
+                      onChanged: (value) =>
+                          updateSetting(() => thinkingMode = value),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      child: thinkingMode
+                          ? Column(children: [
+                              Slider(
+                                value: ['low', 'medium', 'high', 'xhigh', 'max']
+                                    .indexOf(reasoningEffort)
+                                    .toDouble(),
+                                min: 0,
+                                max: 4,
+                                divisions: 4,
+                                label: reasoningEffort,
+                                onChanged: (value) => updateSetting(() =>
+                                    reasoningEffort = [
+                                      'low',
+                                      'medium',
+                                      'high',
+                                      'xhigh',
+                                      'max'
+                                    ][value.round()]),
+                              ),
+                              Text('思考程度：$reasoningEffort',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: TideTheme.of(ctx).textWeak)),
+                            ])
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              ),
             if (hasVoice) ...[
               const SizedBox(height: 8),
               if (p['protocol'] == 'mimo')
@@ -3724,6 +3776,10 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       p['url'] = uCtrl.text.trim();
                       p['key'] = kCtrl.text.trim();
                       p['model'] = mCtrl.text.trim();
+                      if (!isStt && !hasVoice) {
+                        p['thinking_mode'] = thinkingMode;
+                        p['reasoning_effort'] = reasoningEffort;
+                      }
                       if (hasVoice) p['voice'] = vCtrl.text.trim();
                       if (clone != null) p['mimo_clone'] = clone;
                       Navigator.pop(ctx);

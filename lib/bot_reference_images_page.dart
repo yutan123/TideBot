@@ -105,8 +105,14 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
         }
       }
       if (pickedSource != null) {
-        await removePickedImportCopy(
-            pickedSource, await getTemporaryDirectory());
+        try {
+          await removePickedImportCopy(
+            pickedSource,
+            await getTemporaryDirectory(),
+          );
+        } catch (error) {
+          debugPrint('Picked reference image cleanup failed: $error');
+        }
       }
       if (mounted) setState(() => _busy.remove(id));
     }

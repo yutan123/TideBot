@@ -3341,6 +3341,8 @@ class DBManager {
           'base_url': m['url'] ?? '',
           'api_key': m['key'] ?? '',
           'model': m['model'] ?? '',
+          'thinking_mode': m['thinking_mode'] == true,
+          'reasoning_effort': m['reasoning_effort'] ?? 'medium',
         });
       }
     } catch (_) {}
