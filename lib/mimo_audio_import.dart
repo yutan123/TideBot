@@ -19,8 +19,18 @@ const mimoAudioExtensions = [
   'caf',
   'ape',
   'webm',
+  'mp4',
+  'mov',
+  'mkv',
+  'avi',
+  '3gp',
+  'm4v',
+  'mpeg',
+  'mpg',
+  'ts',
 ];
 
+/// Export only the first audio track, without other media or metadata.
 /// WAV keeps the reference lossless after decoding and needs no optional encoder.
 List<String> mimoReferenceAudioArguments(String input, String output) => [
       '-nostdin',
@@ -33,6 +43,8 @@ List<String> mimoReferenceAudioArguments(String input, String output) => [
       '-sn',
       '-dn',
       '-map_metadata',
+      '-1',
+      '-map_chapters',
       '-1',
       '-ac',
       '1',
@@ -57,8 +69,8 @@ Future<Map<String, dynamic>> prepareMimoReferenceAudio({
   if (!await source.exists() || await source.length() == 0) {
     throw const FormatException('无法读取音频，请重新选择非空音频文件');
   }
-  final original =
-      inspectMimoAudio(await probe(sourcePath), requireCompatible: false);
+  final original = inspectMimoAudio(await probe(sourcePath),
+      requireCompatible: false, allowVideo: true);
   // Bound the converted payload, not the original lossless/high-bitrate file.
   // Leave room for the WAV header and Base64 data URI prefix. Do not truncate.
   final pcmBytes = ((original['duration'] as double) * 24000).ceil() * 2 + 4096;

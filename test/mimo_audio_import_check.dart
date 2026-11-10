@@ -60,6 +60,14 @@ Future<void> main() async {
     Future<void> convert(List<String> arguments) async {
       check(arguments[arguments.indexOf('-i') + 1] == source.path,
           'Paths containing spaces and quotes must remain one argument');
+      check(
+          arguments[arguments.indexOf('-map') + 1] == '0:a:0' &&
+              arguments.contains('-vn') &&
+              arguments.contains('-sn') &&
+              arguments.contains('-dn') &&
+              arguments[arguments.indexOf('-map_metadata') + 1] == '-1' &&
+              arguments[arguments.indexOf('-map_chapters') + 1] == '-1',
+          'Export audio only without other media or metadata');
       check(!arguments.contains('-t'),
           'Import must never silently truncate audio');
       converted++;
@@ -102,9 +110,34 @@ Future<void> main() async {
     }
     check(converted == 13, 'Every supported import passes through conversion');
 
+    final renamed = File('${root.path}/renamed.mp3');
+    await source.copy(renamed.path);
+    final extracted = await prepareMimoReferenceAudio(
+      sourcePath: renamed.path,
+      sourceName: 'renamed.mp3',
+      directory: Directory('${root.path}/extracted'),
+      probe: (path) async => path == renamed.path
+          ? media('mov,mp4,m4a,3gp,3g2,mj2', video: true, duration: 1)
+          : media('wav', duration: 1),
+      convert: (arguments) async {
+        check(arguments[arguments.indexOf('-i') + 1] == renamed.path,
+            'Conversion uses original path regardless of suffix');
+        check(!arguments.contains('mp3'), 'Do not force the input decoder');
+        await File(arguments.last).writeAsBytes(wav);
+      },
+    );
+    check(
+        extracted['name'] == 'renamed.wav' && extracted['mime'] == 'audio/wav',
+        'Renamed video exports WAV only');
+    check(await renamed.length() == 12000000, 'Video source is unchanged');
     final before = converted;
     for (final metadata in [
-      media('flac', video: true),
+      {
+        'format': {'format_name': 'mp4', 'duration': '1'},
+        'streams': [
+          {'codec_type': 'video'}
+        ]
+      },
       media('flac', duration: 200),
       media('flac', duration: 0),
       <String, dynamic>{}
@@ -117,7 +150,7 @@ Future<void> main() async {
           probe: (_) async => metadata,
           convert: convert,
         );
-      }, 'Reject video, invalid audio and oversized output before conversion');
+      }, 'Reject files without audio, invalid duration and oversized output before conversion');
     }
     check(converted == before, 'Rejected sources must not invoke FFmpeg');
 

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'global_notice.dart';
 import 'mimo_voice_clone.dart';
 import 'mimo_audio_import.dart';
+import 'transfer_import_cache.dart';
 import 'theme.dart';
 import 'android_selection_menu.dart';
 
@@ -121,6 +122,7 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
       _error = null;
     });
     Directory? candidate;
+    String? pickedSource;
     try {
       await _player.stop();
       if (mounted) setState(() => _playing = false);
@@ -128,6 +130,7 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
           type: FileType.custom, allowedExtensions: mimoAudioExtensions);
       if (result == null || !mounted) return;
       final picked = result.files.single;
+      pickedSource = picked.path;
       if (picked.path == null) throw const FormatException('无法读取所选音频');
       candidate =
           await (await getTemporaryDirectory()).createTemp('mimo_voice_');
@@ -150,6 +153,10 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
       _showError(error, '音频导入失败');
     } finally {
       await _removeTemporary(candidate);
+      if (pickedSource != null) {
+        await removePickedImportCopy(
+            pickedSource, await getTemporaryDirectory());
+      }
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -310,7 +317,7 @@ class _MimoVoiceWorkbenchState extends State<MimoVoiceWorkbench> {
                   color: theme.textStrong)),
           const SizedBox(height: 8),
           const Text(
-              '支持 MP3、WAV、M4A、AAC、FLAC、OGG、OPUS、AMR、WMA、AIFF、CAF 等音频，选中后自动转换为 WAV。\n建议使用 5～30 秒清晰、无背景音乐的单人录音；转换后 Base64 编码须在 10 MB 以内。'),
+              '支持 MP3、WAV、M4A、AAC、FLAC 等音频及 MP4、MOV、MKV 等视频。按文件实际内容识别，兼容改过后缀的文件；仅提取第一条音轨并转换为 WAV，不保留画面、字幕或其他轨道。\n建议使用 5～30 秒清晰、无背景音乐的单人录音；转换后 Base64 编码须在 10 MB 以内。'),
           const SizedBox(height: 16),
           OutlinedButton.icon(
               onPressed: _busy || _fetchingModels ? null : _pick,

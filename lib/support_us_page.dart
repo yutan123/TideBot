@@ -339,7 +339,7 @@ class _SupportPaymentDialogState extends State<_SupportPaymentDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              Text('可切换支付方式，双指缩放查看。付款前请核对收款人及金额，无需付款也可退出。',
+              Text('可切换支付方式。付款前请核对收款人及金额，无需付款也可退出。',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       fontFamily: 'TideFont',

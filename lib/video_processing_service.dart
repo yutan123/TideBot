@@ -89,15 +89,19 @@ class VideoProcessingService {
                   '-threads 1 -ss ${timestamp.toStringAsFixed(2)} -i "$videoPath" -vframes 1 -vf scale=$targetWidth:-1 -threads 1 -q:v 3 "$outputPath"';
               final session = await FFmpegKit.execute(command);
               final returnCode = await session.getReturnCode();
-              return ReturnCode.isSuccess(returnCode) &&
-                      await File(outputPath).exists()
-                  ? outputPath
-                  : null;
+              if (ReturnCode.isSuccess(returnCode) &&
+                  await File(outputPath).exists()) return outputPath;
+              final partial = File(outputPath);
+              if (await partial.exists()) await partial.delete();
+              return null;
             }(),
         ]);
         framePaths.addAll(batch.whereType<String>());
       }
 
+      if (framePaths.isEmpty && await outputDir.exists()) {
+        await outputDir.delete(recursive: true);
+      }
       return framePaths;
     } catch (e) {
       // Future.wait has settled every decoder, including the current batch.
@@ -110,10 +114,12 @@ class VideoProcessingService {
 
   /// 提取音频并转为 WAV
   Future<String?> extractAudio(String videoPath) async {
+    String? pendingOutput;
     try {
       final tempDir = await getTemporaryDirectory();
       final outputPath =
           '${tempDir.path}/video_audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+      pendingOutput = outputPath;
 
       final command =
           '-i "$videoPath" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$outputPath"';
@@ -125,16 +131,21 @@ class VideoProcessingService {
         // 检查文件大小，如果太小可能没有音频
         final fileSize = await File(outputPath).length();
         if (fileSize < 1024) {
-          // 小于1KB，可能是无声视频
           await File(outputPath).delete();
+          pendingOutput = null;
           return null;
         }
+        pendingOutput = null;
         return outputPath;
       }
 
       return null;
     } catch (e) {
       return null;
+    } finally {
+      if (pendingOutput != null) {
+        await cleanupTempFiles([pendingOutput]);
+      }
     }
   }
 

@@ -3,18 +3,26 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 import 'bot_avatar_storage.dart';
+import 'package:path_provider/path_provider.dart';
+import 'transfer_import_cache.dart';
 import 'theme.dart';
 import 'ui_components.dart';
 
 /// Returns a saved square avatar only after explicit confirmation.
-Future<String?> selectBotAvatarCrop(BuildContext context, String path) =>
-    Navigator.of(context).push<String>(MaterialPageRoute(
+Future<String?> selectBotAvatarCrop(BuildContext context, String path) async {
+  try {
+    return await Navigator.of(context).push<String>(MaterialPageRoute(
       builder: (_) => BotAvatarCropPage(path: path),
       fullscreenDialog: true,
     ));
+  } finally {
+    await removePickedImportCopy(path, await getTemporaryDirectory());
+  }
+}
 
 class BotAvatarCropPage extends StatefulWidget {
   const BotAvatarCropPage({super.key, required this.path});
@@ -33,8 +41,8 @@ class _BotAvatarCropPageState extends State<BotAvatarCropPage> {
   Offset _offset = Offset.zero;
   double _scale = 1;
   double _minimumScale = 1;
-  double _startScale = 1;
-  Offset _anchor = Offset.zero;
+  double _lastGestureScale = 1;
+  Offset _lastFocalPoint = Offset.zero;
 
   @override
   void initState() {
@@ -139,24 +147,38 @@ class _BotAvatarCropPageState extends State<BotAvatarCropPage> {
             }
             return Stack(fit: StackFit.expand, children: [
               if (_image != null)
-                GestureDetector(
+                RawGestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onScaleStart: _saving
-                      ? null
-                      : (details) {
-                          _startScale = _scale;
-                          _anchor =
-                              (details.localFocalPoint - _offset) / _scale;
-                        },
-                  onScaleUpdate: _saving
-                      ? null
-                      : (details) => setState(() {
-                            _scale = (_startScale * details.scale)
-                                .clamp(_minimumScale, _minimumScale * 8)
-                                .toDouble();
-                            _offset = _bounded(
-                                details.localFocalPoint - _anchor * _scale);
-                          }),
+                  gestures: {
+                    if (!_saving)
+                      _AvatarScaleGestureRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              _AvatarScaleGestureRecognizer>(
+                        () => _AvatarScaleGestureRecognizer(),
+                        (recognizer) => recognizer
+                          ..gestureSettings = const DeviceGestureSettings(
+                            touchSlop: 3,
+                          )
+                          ..onStart = (details) {
+                            _lastGestureScale = 1;
+                            _lastFocalPoint = details.localFocalPoint;
+                          }
+                          ..onUpdate = (details) => setState(() {
+                                final anchor =
+                                    (_lastFocalPoint - _offset) / _scale;
+                                _scale =
+                                    (_scale * details.scale / _lastGestureScale)
+                                        .clamp(_minimumScale, _minimumScale * 8)
+                                        .toDouble();
+                                _offset = _bounded(
+                                    details.localFocalPoint - anchor * _scale);
+                                // Rebase after clamping: reversing at an edge
+                                // responds immediately without a dead zone.
+                                _lastGestureScale = details.scale;
+                                _lastFocalPoint = details.localFocalPoint;
+                              }),
+                      ),
+                  },
                   child: CustomPaint(
                       painter: _AvatarCropPainter(
                     image: _image!,
@@ -270,4 +292,15 @@ class _AvatarCropPainter extends CustomPainter {
       old.crop != crop ||
       old.offset != offset ||
       old.scale != scale;
+}
+
+/// Accept two fingers immediately; a small pan threshold keeps taps stable.
+class _AvatarScaleGestureRecognizer extends ScaleGestureRecognizer {
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    if (event is PointerDownEvent && pointerCount >= 2) {
+      resolve(GestureDisposition.accepted);
+    }
+  }
 }

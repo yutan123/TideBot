@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'image_upload_format.dart';
+import 'transfer_import_cache.dart';
 import 'db.dart';
 import 'theme.dart';
 
@@ -45,12 +46,14 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
     if (_busy.contains(id)) return;
     setState(() => _busy.add(id));
     File? saved;
+    String? pickedSource;
     try {
       // Document providers do not require a resolvable MediaStore image URI.
       final result = await FilePicker.platform
           .pickFiles(type: FileType.image, withData: true);
       if (result == null || result.files.isEmpty) return;
       final picked = result.files.single;
+      pickedSource = picked.path;
       if (picked.size > 20 * 1024 * 1024)
         throw const FormatException('图片不能超过 20 MB');
       final bytes = picked.bytes ??
@@ -79,8 +82,8 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
       final dir = await getApplicationDocumentsDirectory();
       final folder = Directory('${dir.path}/bot_reference_images');
       await folder.create(recursive: true);
-      saved =
-          File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}.${imageUploadExtension(imageUploadMime(image))}');
+      saved = File(
+          '${folder.path}/${DateTime.now().microsecondsSinceEpoch}.${imageUploadExtension(imageUploadMime(image))}');
       await saved.writeAsBytes(image, flush: true);
       await DBManager().setKV('bot_image_reference_$id', saved.path);
       if (mounted) setState(() => _paths[id] = saved!.path);
@@ -100,6 +103,10 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
         } catch (error) {
           debugPrint('Reference image cleanup failed: $error');
         }
+      }
+      if (pickedSource != null) {
+        await removePickedImportCopy(
+            pickedSource, await getTemporaryDirectory());
       }
       if (mounted) setState(() => _busy.remove(id));
     }
@@ -126,7 +133,8 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
                     maxScale: 5,
                     child: Hero(
                       tag: 'bot_reference_$id',
-                      child: Image(image: photoImageProvider(path),
+                      child: Image(
+                          image: photoImageProvider(path),
                           fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) => const Text('图片已失效',
                               style: TextStyle(color: Colors.white70))),
@@ -217,7 +225,8 @@ class _BotReferenceImagesPageState extends State<BotReferenceImagesPage> {
                                             style: TextStyle(
                                                 color: theme.textWeak,
                                                 fontSize: 13)))
-                                    : Image(image: photoImageProvider(path),
+                                    : Image(
+                                        image: photoImageProvider(path),
                                         fit: BoxFit.cover,
                                         errorBuilder: (_, __, ___) => Center(
                                             child: Text('失效',

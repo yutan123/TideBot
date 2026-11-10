@@ -1,6 +1,7 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 import 'photo_image_provider.dart';
@@ -32,6 +33,8 @@ class _ImageDetailPageState extends State<ImageDetailPage> {
   bool _interacting = false;
   bool _saving = false;
   bool _opening = false;
+  double _gestureStartScale = 1;
+  Offset _gestureAnchor = Offset.zero;
 
   @override
   void dispose() {
@@ -101,25 +104,55 @@ class _ImageDetailPageState extends State<ImageDetailPage> {
                 onPointerDown: (event) => _pointers.add(event.pointer),
                 onPointerUp: _releasePointer,
                 onPointerCancel: _releasePointer,
-                child: InteractiveViewer(
-                  transformationController: _transformation,
-                  minScale: 0.5,
-                  maxScale: 8,
-                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                  onInteractionStart: (_) => _setInteracting(true),
-                  onInteractionEnd: (_) {
-                    // Changing from two fingers to one may end a scale phase;
-                    // keep controls hidden until the final finger is released.
-                    if (_pointers.isEmpty) _setInteracting(false);
+                child: RawGestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  gestures: {
+                    TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<
+                        TapGestureRecognizer>(
+                      () => TapGestureRecognizer(),
+                      (recognizer) =>
+                          recognizer.onTap = immersive ? null : _openImmersive,
+                    ),
+                    _ImageScaleGestureRecognizer:
+                        GestureRecognizerFactoryWithHandlers<
+                            _ImageScaleGestureRecognizer>(
+                      () => _ImageScaleGestureRecognizer(),
+                      (recognizer) => recognizer
+                        ..onStart = (details) {
+                          _gestureStartScale =
+                              _transformation.value.getMaxScaleOnAxis();
+                          _gestureAnchor =
+                              _transformation.toScene(details.localFocalPoint);
+                          _setInteracting(true);
+                        }
+                        ..onUpdate = (details) {
+                          // Keep the same image point under the moving focal point
+                          // while applying pan and pinch in the same update.
+                          final scale = (_gestureStartScale * details.scale)
+                              .clamp(0.5, 8.0);
+                          final offset =
+                              details.localFocalPoint - _gestureAnchor * scale;
+                          _transformation.value = Matrix4.identity()
+                            ..setEntry(0, 0, scale)
+                            ..setEntry(1, 1, scale)
+                            ..setEntry(0, 3, offset.dx)
+                            ..setEntry(1, 3, offset.dy);
+                        }
+                        ..onEnd = (_) {
+                          if (_pointers.isEmpty) _setInteracting(false);
+                        },
+                    ),
                   },
-                  // Both the hit area and transformed child fill the viewport;
-                  // a short image never becomes the clipping boundary.
-                  child: SizedBox(
-                    width: viewport.maxWidth,
-                    height: viewport.maxHeight,
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: immersive ? null : _openImmersive,
+                  child: AnimatedBuilder(
+                    animation: _transformation,
+                    builder: (context, child) => Transform(
+                      transform: _transformation.value,
+                      child: child,
+                    ),
+                    child: SizedBox(
+                      width: viewport.maxWidth,
+                      height: viewport.maxHeight,
+                      child: Center(
                         child: Image(
                           image: photoImageProvider(widget.path),
                           fit: BoxFit.contain,
@@ -202,36 +235,39 @@ class _ImageIslandButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
             ),
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(20),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Container(
-              width: 52,
-              height: 52,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.94),
-                borderRadius: BorderRadius.circular(28),
+                borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
               ),
               child: IconButton(
                 onPressed: onPressed,
                 tooltip: label,
                 color: Colors.black87,
-                iconSize: 27,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints.tightFor(width: 40, height: 40),
+                iconSize: 21,
                 icon: busy
                     ? const SizedBox(
-                        width: 22,
-                        height: 22,
+                        width: 18,
+                        height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
                           color: Colors.black87,
@@ -243,4 +279,17 @@ class _ImageIslandButton extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// Start a pinch as soon as both fingers are down instead of waiting for the
+/// default scale slop. Single-finger taps still compete normally with panning.
+class _ImageScaleGestureRecognizer extends ScaleGestureRecognizer {
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    // ScaleGestureRecognizer updates pointerCount while handling the down event.
+    if (event is PointerDownEvent && pointerCount >= 2) {
+      resolve(GestureDisposition.accepted);
+    }
+  }
 }

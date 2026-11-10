@@ -16,9 +16,9 @@ void validateMimoSampleSize(int bytes) {
   }
 }
 
-/// Reference uploads are MP3/WAV; local imports may use any decodable audio.
+/// Reference uploads are MP3/WAV; imports may extract audio from video containers.
 Map<String, dynamic> inspectMimoAudio(Map<dynamic, dynamic> info,
-    {bool requireCompatible = true}) {
+    {bool requireCompatible = true, bool allowVideo = false}) {
   final format = info['format'] is Map ? info['format'] as Map : const {};
   final formats = (format['format_name']?.toString() ?? '')
       .split(',')
@@ -32,8 +32,11 @@ Map<String, dynamic> inspectMimoAudio(Map<dynamic, dynamic> info,
     final disposition = stream['disposition'];
     return disposition is! Map || '${disposition['attached_pic']}' != '1';
   });
-  if (audio.isEmpty || hasVideo) {
-    throw const FormatException('请选择包含有效音轨的音频文件，不支持视频');
+  if (audio.isEmpty) {
+    throw const FormatException('所选文件不包含有效音轨，请选择带声音的音频或视频文件');
+  }
+  if (hasVideo && !allowVideo) {
+    throw const FormatException('参考音频不能包含视频轨道，请在工作台重新导入并提取音频');
   }
   if (requireCompatible &&
       !(formats.contains('mp3') || formats.contains('wav'))) {

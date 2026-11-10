@@ -72,6 +72,9 @@ Future<({String? scope})?> showToolBotScopePicker(BuildContext context,
     context: context,
     builder: (ctx) => StatefulBuilder(builder: (ctx, update) {
       final theme = TideTheme.of(ctx);
+      final fullySelected = all ||
+          (bots.isNotEmpty &&
+              bots.every((bot) => selected.contains(bot['id'].toString())));
       return TideDialogSurface(
           child: TideDialogs.glassContent(
         context: ctx,
@@ -82,20 +85,27 @@ Future<({String? scope})?> showToolBotScopePicker(BuildContext context,
                   fontSize: 18,
                   fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          Row(children: [
-            TextButton(
-                onPressed: () => update(() {
-                      all = true;
-                      selected.addAll(bots.map((bot) => bot['id'].toString()));
-                    }),
-                child: Text('全选', style: TextStyle(color: theme.primary))),
-            TextButton(
-                onPressed: () => update(() {
-                      all = false;
-                      selected.clear();
-                    }),
-                child: Text('取消全选', style: TextStyle(color: theme.primary))),
-          ]),
+          TextButton(
+            onPressed: () => update(() {
+              final fullySelected = all ||
+                  (bots.isNotEmpty &&
+                      bots.every(
+                          (bot) => selected.contains(bot['id'].toString())));
+              if (fullySelected) {
+                all = false;
+                selected.clear();
+              } else {
+                all = true;
+                selected
+                  ..clear()
+                  ..addAll(bots.map((bot) => bot['id'].toString()));
+              }
+            }),
+            child: Text(
+              fullySelected ? '取消全选' : '全选',
+              style: TextStyle(color: theme.primary),
+            ),
+          ),
           if (bots.isEmpty)
             const Padding(padding: EdgeInsets.all(16), child: Text('暂无机器人')),
           ConstrainedBox(

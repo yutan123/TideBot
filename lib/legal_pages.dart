@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart';
 import 'ota_update.dart';
-import 'open_source_notices_page.dart';
 import 'theme.dart';
 
 const String tideBotLegalText = '''TideBot 用户协议与免责声明
@@ -43,7 +42,7 @@ AI 生成的文字、图片、语音、视频理解结果、转写和摘要可�
 
 八、版权与开源许可证
 Copyright (C) 2025-2026 yutan123.
-TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 GNU Affero General Public License v3.0（AGPL-3.0-only）授权。项目版权声明和完整许可证随源码中的 COPYRIGHT、LICENSE 文件提供。第三方组件保留各自的版权和许可证；逐项版本、来源、版权和随附许可可在“关于 TideBot → 开源许可与第三方声明”中查阅。Flutter/Dart 及 Engine、AndroidX、Rive、ONNX Runtime、字体、表情和音视频组件的许可分别保留；Google ML Kit 等第三方 SDK 另适用其服务条款，不整体归入本项目的 AGPL 授权。
+TideBot 的原创源代码、应用界面、文档及项目自有资源，除另有说明外，采用 GNU Affero General Public License v3.0（AGPL-3.0-only）授权。项目版权声明和完整许可证随源码中的 COPYRIGHT、LICENSE 文件提供。第三方组件保留各自的版权和许可证；逐项版本、来源、版权和随附许可可在项目仓库的 THIRD_PARTY_NOTICES.md 及 third_party 目录中查阅。Flutter/Dart 及 Engine、AndroidX、Rive、ONNX Runtime、字体、表情和音视频组件的许可分别保留；Google ML Kit 等第三方 SDK 另适用其服务条款，不整体归入本项目的 AGPL 授权。
 应用主字体为霞鹜漫黑（LXGW Marker Gothic），Copyright 2024 The LXGW Marker Gothic Project Authors，采用 SIL Open Font License 1.1：https://openfontlicense.org；项目：https://github.com/lxgw/LxgwMarkerGothic。
 内置 EmojiTwo 表情图像源于 Ranks.com 的 EmojiOne 2.2 及 EmojiTwo 社区贡献，采用 CC BY 4.0：https://creativecommons.org/licenses/by/4.0/legalcode；来源：https://github.com/EmojiTwo/emojitwo/、https://www.emojione.com。图像内容未修改；随附 JSON 索引采用 MIT 许可。
 使用、修改和分发时，请按许可证要求保留 TideBot 的版权与许可声明。本应用按许可证以“现状”提供，不作任何担保，具体以许可证全文及适用法律为准。
@@ -333,20 +332,6 @@ class TideBotAboutPage extends StatelessWidget {
                           ),
                         ),
                         child: const Text('查看用户协议与免责声明'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: theme.primary),
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const OpenSourceNoticesPage(),
-                          ),
-                        ),
-                        child: const Text('开源许可与第三方声明'),
                       ),
                     ),
                     const SizedBox(height: 12),
