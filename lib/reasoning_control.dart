@@ -196,16 +196,11 @@ class _ReasoningTrack extends CustomPainter {
         rect,
         Paint()
           ..color = dark ? const Color(0xFF2C303B) : const Color(0xFFE3E7EB));
-    // Keep the rounded fill cap directly beneath the thumb at each stop.
-    // Only the final approach to max expands it to cover the entire rail.
-    final full =
-        Curves.easeInOut.transform(((level - 3.85) / .15).clamp(0.0, 1.0));
-    final halfHeight = 8.5 + (rect.height / 2 - 8.5) * full;
-    final fillEnd = x + 8.5 + (size.width - x - 8.5) * full;
+    // Match the fill and thumb to the rail height at every level, including max.
+    final thumbRadius = rect.height / 2;
     final active = RRect.fromRectAndRadius(
-      Rect.fromLTRB(
-          0, rect.center.dy - halfHeight, fillEnd, rect.center.dy + halfHeight),
-      Radius.circular(halfHeight),
+      Rect.fromLTRB(0, rect.top, x + thumbRadius, rect.bottom),
+      Radius.circular(thumbRadius),
     );
     canvas.save();
     canvas.clipRRect(active);
@@ -270,22 +265,22 @@ class _ReasoningTrack extends CustomPainter {
     final thumb = Offset(x, rect.center.dy);
     canvas.drawCircle(
         thumb + const Offset(0, 1),
-        10,
+        thumbRadius,
         Paint()
           ..color = Colors.black.withValues(alpha: .22)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
     canvas.drawCircle(
         thumb,
-        8.5,
+        thumbRadius,
         Paint()
           ..shader = const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [Colors.white, Color(0xFFE4E9EF)],
-          ).createShader(Rect.fromCircle(center: thumb, radius: 8.5)));
+          ).createShader(Rect.fromCircle(center: thumb, radius: thumbRadius)));
     canvas.drawCircle(
         thumb,
-        8.5,
+        thumbRadius,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = .7
