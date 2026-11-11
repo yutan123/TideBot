@@ -196,9 +196,19 @@ class _ReasoningTrack extends CustomPainter {
         rect,
         Paint()
           ..color = dark ? const Color(0xFF2C303B) : const Color(0xFFE3E7EB));
-    final active = Rect.fromLTRB(0, rect.top, x + 10, rect.bottom);
+    // Keep the rounded fill cap directly beneath the thumb at each stop.
+    // Only the final approach to max expands it to cover the entire rail.
+    final full =
+        Curves.easeInOut.transform(((level - 3.85) / .15).clamp(0.0, 1.0));
+    final halfHeight = 8.5 + (rect.height / 2 - 8.5) * full;
+    final fillEnd = x + 8.5 + (size.width - x - 8.5) * full;
+    final active = RRect.fromRectAndRadius(
+      Rect.fromLTRB(
+          0, rect.center.dy - halfHeight, fillEnd, rect.center.dy + halfHeight),
+      Radius.circular(halfHeight),
+    );
     canvas.save();
-    canvas.clipRect(active);
+    canvas.clipRRect(active);
     canvas.drawRect(
         rect,
         Paint()
