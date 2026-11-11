@@ -185,9 +185,13 @@ class _ReasoningTrack extends CustomPainter {
         _colors[lower], _colors[math.min(4, lower + 1)], level - lower)!;
     final galaxy = (level - 3).clamp(0.0, 1.0);
     final t = phase();
-    final rect = Rect.fromLTWH(0, 7, size.width, 22);
-    final rail = RRect.fromRectAndRadius(rect, const Radius.circular(11));
     final inset = size.width / 10;
+    const thumbRadius = 11.0;
+    // End caps coincide with the thumb edges at the first and last stops.
+    final rect = Rect.fromLTRB(
+        inset - thumbRadius, 7, size.width - inset + thumbRadius, 29);
+    final rail =
+        RRect.fromRectAndRadius(rect, const Radius.circular(thumbRadius));
     final x = inset + (size.width - inset * 2) * level / 4;
     // All effects and the thumb shadow share one clip and one position.
     canvas.save();
@@ -197,10 +201,9 @@ class _ReasoningTrack extends CustomPainter {
         Paint()
           ..color = dark ? const Color(0xFF2C303B) : const Color(0xFFE3E7EB));
     // Match the fill and thumb to the rail height at every level, including max.
-    final thumbRadius = rect.height / 2;
     final active = RRect.fromRectAndRadius(
-      Rect.fromLTRB(0, rect.top, x + thumbRadius, rect.bottom),
-      Radius.circular(thumbRadius),
+      Rect.fromLTRB(rect.left, rect.top, x + thumbRadius, rect.bottom),
+      const Radius.circular(thumbRadius),
     );
     canvas.save();
     canvas.clipRRect(active);
