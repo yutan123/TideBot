@@ -1,3 +1,4 @@
+import 'reasoning_control.dart';
 import 'bot_avatar_crop_page.dart';
 import 'support_us_page.dart';
 import 'mimo_voice_clone.dart';
@@ -3706,29 +3707,12 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                       duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
                       child: thinkingMode
-                          ? Column(children: [
-                              Slider(
-                                value: ['low', 'medium', 'high', 'xhigh', 'max']
-                                    .indexOf(reasoningEffort)
-                                    .toDouble(),
-                                min: 0,
-                                max: 4,
-                                divisions: 4,
-                                label: reasoningEffort,
-                                onChanged: (value) => updateSetting(() =>
-                                    reasoningEffort = [
-                                      'low',
-                                      'medium',
-                                      'high',
-                                      'xhigh',
-                                      'max'
-                                    ][value.round()]),
+                          ? ReasoningControl(
+                              value: reasoningEffort,
+                              onChanged: (value) => updateSetting(
+                                () => reasoningEffort = value,
                               ),
-                              Text('思考程度：$reasoningEffort',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: TideTheme.of(ctx).textWeak)),
-                            ])
+                            )
                           : const SizedBox.shrink(),
                     ),
                   ],
