@@ -59,7 +59,7 @@ android {
         jvmTarget = '17'
     }
     defaultConfig {
-        applicationId = "com.yutan123.tidebot.dev"
+        applicationId = "com.yutan123.tidebot"
         minSdkVersion = 26
 
         targetSdk = flutter.targetSdkVersion

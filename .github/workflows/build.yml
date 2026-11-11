@@ -1,4 +1,4 @@
-name: Build TideBot Dev APK
+name: Build TideBot Release APK
 
 on:
   workflow_dispatch:
@@ -19,8 +19,8 @@ permissions:
 
 jobs:
   build-release:
-    name: Android Dev 构建
-    if: github.repository == 'yutan123/TideBot-Dev'
+    name: Android 正式版构建
+    if: github.repository == 'yutan123/TideBot'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: 准备临时签名路径
-        run: echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/tidebot-dev.keystore" >> "$GITHUB_ENV"
+        run: echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/tidebot-release.keystore" >> "$GITHUB_ENV"
 
       - name: 获取源码
         uses: actions/checkout@v4
@@ -48,7 +48,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: 恢复并检查 Dev 签名
+      - name: 恢复并检查正式版签名
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -108,9 +108,9 @@ jobs:
         if: always()
         run: rm -f "$ANDROID_KEYSTORE_PATH"
 
-      - name: 上传已验证的 Dev APK
+      - name: 上传已验证的正式版 APK
         uses: actions/upload-artifact@v4
         with:
-          name: TideBot-Dev-APK
+          name: TideBot-Release-APK
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

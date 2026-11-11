@@ -34,7 +34,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
   bool _logging = AppLogService.instance.enabled;
   bool _haptics = false;
   bool _extraContext = false;
-  bool _operationProactive = false;
   bool _externalApiEnabled = false;
   String _externalApiPort = '6666';
   String _externalApiKey = '';
@@ -96,8 +95,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
         _logging = enabled;
         _haptics = prefs.getBool('tide_haptics_enabled') ?? true;
         _extraContext = prefs.getBool('extra_context_enabled') ?? false;
-        _operationProactive =
-            prefs.getBool('operation_proactive_enabled') ?? false;
         _externalApiEnabled = externalEnabled;
         _externalApiPort = externalPort;
         _externalApiKey = externalKey;
@@ -743,25 +740,6 @@ class _AdvancedSettingsPageState extends State<AdvancedSettingsPage> {
                 ),
                 _featureFooter(
                     DeviceCapabilityService.contextFeature, const {'battery'}),
-                const Divider(),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('操作触发主动回复',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  subtitle: const Text('收到已授权的通知时，可低概率触发已绑定机器人的主动消息。',
-                      style: TextStyle(fontFamily: 'TideFont')),
-                  value: _operationProactive,
-                  onChanged: (value) => _setProtectedToggle(
-                      key: 'operation_proactive_enabled',
-                      feature: DeviceCapabilityService.proactiveFeature,
-                      value: value,
-                      title: '授权操作触发主动回复',
-                      description: '机器人只会收到你允许的触发类型。消息发送仍受主动回复设置、频率限制和绑定机器人约束。',
-                      defaultWhitelist: const {'new_notification'},
-                      update: (v) => _operationProactive = v),
-                ),
-                _featureFooter(DeviceCapabilityService.proactiveFeature,
-                    const {'new_notification'}),
                 // 机器人操控手机与悬浮窗功能已移除。
               ]),
             ),
